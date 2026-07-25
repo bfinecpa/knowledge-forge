@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="01-java-kotlin/deadlock-analysis-prevention" style="--hue:25">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>데드락 — 스레드 덤프에서 찾는 법, 성립 4조건, 코드 레벨 예방 전략 | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(25%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#01-java-kotlin">1. Java / Kotlin 언어</a>
+    <span class="sep">/</span>
+    <span class="cur">데드락</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">스레드 덤프에서 데드락 찾기</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-2-1"><span class="t">1-1. 가장 빠른 방법 — JVM 자동 탐지 문구</span></a></li><li><a href="#sec-2-2"><span class="t">1-2. 수동으로 찾기 — 락 주소로 사이클 추적</span></a></li><li><a href="#sec-2-3"><span class="t">1-3. 함정 — 덤프에 deadlock 문구가 없는데도 멈춰 있다면</span></a></li></ul></li>
+<li><a href="#sec-3"><span class="n">2</span><span class="t">데드락 성립 4조건 (Coffman 조건)</span></a></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">실무 예방 방법</span></a></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">[면접] 코드 레벨 원천 차단 규칙 하나 — 전역 락 순서(lock ordering)</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-5-1"><span class="t">4-1. 규칙</span></a></li><li><a href="#sec-5-2"><span class="t">4-2. 락 객체가 동적으로 정해질 때 — 고유값으로 순서 정규화</span></a></li></ul></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">[면접] 순서를 통제할 수 없을 때의 차선책 — tryLock 타임아웃 + 백오프</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">1. Java / Kotlin 언어</span>
+      <h1>데드락 — 스레드 덤프에서 찾는 법, 성립 4조건, 코드 레벨 예방 전략</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>7분</b></span>
+        <span>🧩 <b>6</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/6 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>데드락은 4가지 조건(Coffman)이 전부 동시에 성립해야만 발생하므로, 예방이란 &quot;그중 하나를 구조적으로 깨는 것&quot;이다. 코드 레벨의 정석은 순환 대기를 깨는 전역 락 순서(lock ordering) 규칙이고, 순서를 통제할 수 없을 때의 차선책은 점유 대기/비선점을 완화하는 tryLock 타임아웃 + 백오프다. 진단은 JVM이 스레드 덤프 맨 끝에 <code>Found one Java-level deadlock</code>으로 답을 써주지만, j.u.c 락과 유사 증상(스레드풀 고갈 등)을 오독하지 않는 게 실력 포인트.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;스레드 덤프에서 데드락을 어떻게 찾나요? 데드락의 4가지 조건과 실무적 예방 방법은?&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>데드락은 서비스가 &quot;죽지 않고 멈추는&quot; 형태라 재시작으로 덮기 쉽고, 근본 원인을 못 찾으면 반복된다. 덤프를 읽어 락 순환을 찾는 능력은 반복 장애를 끊는 능력이며, 4조건과 예방 전략까지 답할 수 있는지로 재발 방지책을 설계할 수 있는 사람인지를 가린다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>스레드 덤프에서 데드락 찾기</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<h3 id="sec-2-1">1-1. 가장 빠른 방법 — JVM 자동 탐지 문구</h3>
+<p><code>jcmd &lt;pid&gt; Thread.print</code> / <code>jstack &lt;pid&gt;</code> / <code>kill -3 &lt;pid&gt;</code>로 뜬 덤프의 <strong>맨 아래</strong>를 먼저 본다. JVM이 데드락을 자동 탐지해서 결론까지 써준다:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>Found one Java-level deadlock:
+=============================
+&quot;Thread-A&quot;:
+  waiting to lock monitor 0x00007f... (object 0x000000076b..., a java.lang.Object),
+  which is held by &quot;Thread-B&quot;
+&quot;Thread-B&quot;:
+  waiting to lock monitor 0x00007f... (object 0x000000076c..., a java.lang.Object),
+  which is held by &quot;Thread-A&quot;
+
+Java stack information for the threads listed above: ...
+Found 1 deadlock.</code></pre>
+</div>
+<p><code>synchronized</code> 모니터 락뿐 아니라 <code>ReentrantLock</code> 등 <code>java.util.concurrent</code> 락(ownable synchronizer)도 탐지 대상이다.</p>
+<h3 id="sec-2-2">1-2. 수동으로 찾기 — 락 주소로 사이클 추적</h3>
+<ol>
+<li>상태가 <code>BLOCKED (on object monitor)</code>인 스레드를 모은다  (<code>ReentrantLock</code> 대기는 <code>WAITING (parking)</code> + <code>parking to wait for &lt;0x...&gt;</code>)</li>
+<li>각 스레드의 <code>- waiting to lock &lt;0x주소&gt;</code> 와 <code>- locked &lt;0x주소&gt;</code> 를 대조</li>
+<li>&quot;A가 기다리는 락을 B가 쥐고, B가 기다리는 락을 A가 쥔&quot; <strong>순환 고리</strong> 확인</li>
+</ol>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>&quot;Thread-A&quot;: BLOCKED
+    - waiting to lock &lt;0x...c90&gt;     ← B가 쥔 락
+    - locked &lt;0x...c80&gt;              ← A가 쥔 락
+
+&quot;Thread-B&quot;: BLOCKED
+    - waiting to lock &lt;0x...c80&gt;     ← A가 쥔 락  → 사이클 성립
+    - locked &lt;0x...c90&gt;</code></pre>
+</div>
+<ul>
+<li>락 주소 짝 맞추기는 <strong>한 덤프 안에서만</strong> 유효 (GC로 객체 이동 시 주소가 바뀜)</li>
+<li>코드 레벨 상시 탐지: <code>ThreadMXBean.findDeadlockedThreads()</code> — 헬스체크·모니터링에 심어 런타임 감지 가능</li>
+</ul>
+<h3 id="sec-2-3">1-3. 함정 — 덤프에 deadlock 문구가 없는데도 멈춰 있다면</h3>
+<p>데드락이 아니라 유사 증상일 수 있다. <code>WAITING</code> 스레드들의 <strong>스택 위치</strong>로 판별:</p>
+<ul>
+<li><strong>스레드풀 고갈</strong> — 모든 워커가 외부 I/O·<code>getConnection</code> 등에서 대기</li>
+<li><strong>커넥션 풀 데드락</strong> — 한 스레드가 커넥션 2개를 필요로 하는 구조에서 풀 소진</li>
+<li><strong>라이브락</strong> — 상태는 계속 바뀌는데 진전이 없음 (덤프 여러 장 비교로만 확인)</li>
+<li><code>ReentrantLock</code> 데드락인데 <code>jstack</code>에 <code>-l</code> 옵션을 안 줘서 소유자 정보 (&quot;Locked ownable synchronizers&quot; 섹션)를 못 본 경우</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>데드락 성립 4조건 (Coffman 조건)</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p><strong>4가지가 모두 동시에 성립해야</strong> 데드락이 발생한다. 역으로, 하나만 깨면 예방된다.</p>
+<div class="tw"><table><thead><tr><th>조건</th><th>의미</th><th>이걸 깨는 실무 기법</th></tr></thead><tbody>
+<tr><td><strong>상호 배제</strong> (Mutual Exclusion)</td><td>자원을 한 번에 한 스레드만 사용</td><td>락 프리 자료구조·CAS, 불변 객체</td></tr>
+<tr><td><strong>점유 대기</strong> (Hold and Wait)</td><td>자원을 쥔 채 다른 자원을 기다림</td><td>필요한 락 한 번에 획득, tryLock 실패 시 전부 반납</td></tr>
+<tr><td><strong>비선점</strong> (No Preemption)</td><td>남이 쥔 자원을 강제로 뺏을 수 없음</td><td>타임아웃 있는 락 (<code>tryLock(timeout)</code>)</td></tr>
+<tr><td><strong>순환 대기</strong> (Circular Wait)</td><td>대기 관계가 원형 고리를 이룸</td><td><strong>전역 락 순서 고정</strong> ← 가장 표준</td></tr>
+</tbody></table></div>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>실무 예방 방법</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li><strong>락 순서 고정 (lock ordering)</strong> — 순환 대기 제거. 가장 표준적 (→ 4장)</li>
+<li><strong>타임아웃 있는 락 획득</strong> — <code>ReentrantLock.tryLock(timeout)</code>. 못 잡으면 쥔 락을 놓고 물러남 (→ 5장)</li>
+<li><strong>락 자체를 줄이기</strong> — <code>ConcurrentHashMap</code>, <code>AtomicLong</code> 같은 동시성 자료구조·CAS, 불변 객체, 스레드 한정(thread confinement)</li>
+<li><strong>락 범위 최소화 + open call</strong> — 락을 쥔 채 외부 메서드(콜백, 다른 객체의 synchronized 메서드, DB/네트워크 호출)를 부르지 않는다. 락 안에서 무슨 락을 또 잡을지 예측 불가능해지는 것이 데드락의 온상</li>
+<li><strong>한 번에 하나의 락만</strong> — 애초에 락 2개가 필요 없게 설계. 락 분할 대신 단일 락, 또는 메시지 큐/단일 스레드 이벤트 루프로 접근 직렬화</li>
+<li><strong>DB도 같은 원리</strong> — 여러 행 갱신 시 항상 같은 순서(예: PK 오름차순), <code>SELECT ... FOR UPDATE</code> 순서 통일. DB 데드락도 순환 대기가 본질</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>[면접] 코드 레벨 원천 차단 규칙 하나 — 전역 락 순서(lock ordering)</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<h3 id="sec-5-1">4-1. 규칙</h3>
+<p><strong>&quot;어떤 스레드든 락1과 락2를 둘 다 잡아야 한다면, 반드시 정해진 전역 순서(예: 락1 → 락2)로만 잡는다.&quot;</strong></p>
+<p>모든 스레드가 같은 순서로 잡으면 순환 대기 조건이 <strong>구조적으로 성립 불가</strong> → 데드락 원천 차단. 전형적 발생 코드(A: 락1→락2, B: 락2→락1)에서 B를 락1→락2로 고치면 끝.</p>
+<h3 id="sec-5-2">4-2. 락 객체가 동적으로 정해질 때 — 고유값으로 순서 정규화</h3>
+<p><code>transfer(from, to)</code> 계좌 이체처럼 호출에 따라 인자 순서가 뒤집히는 경우:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">void</span> <span class="tk-fn">transfer</span>(<span class="tk-type">Account</span> a, <span class="tk-type">Account</span> b) {
+    <span class="tk-type">Account</span> first  = a.<span class="tk-fn">getId</span>() &lt; b.<span class="tk-fn">getId</span>() ? a : b;
+    <span class="tk-type">Account</span> second = a.<span class="tk-fn">getId</span>() &lt; b.<span class="tk-fn">getId</span>() ? b : a;
+    <span class="tk-kw">synchronized</span> (first) {
+        <span class="tk-kw">synchronized</span> (second) { <span class="tk-com">/* 이체 */</span> }
+    }
+}</code></pre>
+</div>
+<p>고유 ID가 없으면 <code>System.identityHashCode(a) &lt; identityHashCode(b)</code> 비교 + <strong>동률일 때만 tie-breaking 락</strong>을 추가로 잡는 패턴 (Java Concurrency in Practice의 정석 풀이).</p>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>[면접] 순서를 통제할 수 없을 때의 차선책 — tryLock 타임아웃 + 백오프</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>서드파티 라이브러리가 내부에서 락을 잡거나, 콜백 안에서 락 획득이 일어나는 등 <strong>락 순서를 코드로 강제할 수 없는 상황</strong>에서는 &quot;무한정 기다리지 않는 것&quot;으로 대응:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">while</span> (<span class="tk-kw">true</span>) {
+    <span class="tk-kw">if</span> (lock1.<span class="tk-fn">tryLock</span>(timeout, <span class="tk-type">MILLISECONDS</span>)) {
+        <span class="tk-kw">try</span> {
+            <span class="tk-kw">if</span> (lock2.<span class="tk-fn">tryLock</span>(timeout, <span class="tk-type">MILLISECONDS</span>)) {
+                <span class="tk-kw">try</span> { <span class="tk-com">/* 작업 */</span> <span class="tk-kw">return</span>; }
+                <span class="tk-kw">finally</span> { lock2.<span class="tk-fn">unlock</span>(); }
+            }
+        } <span class="tk-kw">finally</span> { lock1.<span class="tk-fn">unlock</span>(); }
+    }
+    <span class="tk-type">Thread</span>.<span class="tk-fn">sleep</span>(<span class="tk-fn">randomBackoff</span>());   <span class="tk-com">// 랜덤 백오프 후 재시도</span>
+}</code></pre>
+</div>
+<p>핵심 포인트 3가지:</p>
+<ol>
+<li>데드락을 <strong>예방</strong>하는 게 아니라, 걸려도 <strong>빠져나오게</strong> 하는 전략  (비선점 조건을 깨는 효과)</li>
+<li>실패 시 <strong>쥐고 있던 락을 전부 놓고</strong> 물러나야 한다 — 그래야 점유 대기가 풀림</li>
+<li>재시도에 <strong>랜덤 백오프</strong> 필수 — 없으면 두 스레드가 계속 동시에  잡았다 놨다 반복하는 <strong>라이브락</strong>으로 변질</li>
+</ol>
+<p>추가 차선책:</p>
+<ul>
+<li><code>ThreadMXBean</code> 기반 <strong>탐지 후 복구</strong> — 모니터링 + 알람/재시작</li>
+<li><strong>설계 변경으로 우회</strong> — 해당 자원 접근을 단일 스레드 큐로 직렬화</li>
+</ul>
+<div class="callout"><span class="ic">💡</span><div><p>한 줄 요약: &quot;덤프 맨 끝의 Found deadlock 문구 또는 BLOCKED 스레드들의 locked/waiting to lock 주소 사이클로 찾는다. 성립 조건은 상호배제·점유대기· 비선점·순환대기 4가지가 동시에 만족될 때고, 예방은 하나를 깨는 것 — 정석은 전역 락 순서로 순환 대기를 원천 차단(동적 락은 ID 정규화 + tie-breaking), 순서 통제가 불가능하면 tryLock 타임아웃 + 전부 반납 + 랜덤 백오프로 걸려도 빠져나오게 한다&quot;</p></div></div>
+</div>
+</section>
+
+
+
+    <nav class="pager">
+<a class="prev" href="../01-java-kotlin/concurrenthashmap-internals.html"><span class="dir">← 이전</span><span class="ttl">ConcurrentHashMap 내부 메커니즘 — 버킷 단위 락 + CAS, 무락 읽기</span></a>
+<a class="next" href="../01-java-kotlin/g1gc-vs-zgc.html"><span class="dir">다음 →</span><span class="ttl">G1GC vs ZGC — 동작 원리와 특징 비교</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/01-java-kotlin/deadlock-analysis-prevention.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

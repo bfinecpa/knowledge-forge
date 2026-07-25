@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="02-spring/thread-pool-connection-pool-sizing" style="--hue:132">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>톰캣 스레드풀 / HikariCP 크기 산정 — 코어 수가 아니라 &quot;점유 시간&quot;으로 계산한다 | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(132%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#02-spring">2. Spring / Spring Boot</a>
+    <span class="sep">/</span>
+    <span class="cur">톰캣 스레드풀 / HikariCP 크기 산정</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">산정 골격 — Little's law</span></a></li>
+<li><a href="#sec-3"><span class="n">2</span><span class="t">오개념 교정 1 — &quot;스레드 수 = 코어 수&quot;가 아니다</span></a></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">오개념 교정 2 — 블로킹 MVC에서 대기 중 스레드는 다른 요청을 처리하지 못한다</span></a></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">코어 수의 실제 역할 — CPU 연산 총량의 상한</span></a></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">HikariCP 공식 권장 — &quot;풀은 작을수록 좋다&quot;</span></a></li>
+<li><a href="#sec-7"><span class="n">6</span><span class="t">계산은 출발점 — 실측으로 검증</span></a></li>
+<li><a href="#sec-8"><span class="n">7</span><span class="t">꼬리질문 대비 포인트</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">2. Spring / Spring Boot</span>
+      <h1>톰캣 스레드풀 / HikariCP 크기 산정 — 코어 수가 아니라 &quot;점유 시간&quot;으로 계산한다</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>7분</b></span>
+        <span>🧩 <b>8</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/8 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>풀 크기는 감이 아니라 <strong>Little's law(동시수 L = 처리량 λ × 체류시간 W)</strong>로 계산하는 공학적 결정이다. 요청이 <strong>그 자원을 점유하는 시간</strong>을 기준으로 — 톰캣 스레드는 <strong>전체 응답시간</strong> 동안, DB 커넥션은 <strong>커넥션 점유 시간</strong> 동안만 붙잡히므로 — 각각 따로 계산한다. 코어 수는 스레드 수의 기준이 아니라 <strong>CPU 연산 총량의 상한</strong>일 뿐이다(블로킹 I/O 바운드 서버는 스레드 ≫ 코어). 계산값은 출발점이고, 최종 숫자는 부하 테스트와 메트릭으로 검증한다.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;톰캣 스레드풀(max-threads), DB 커넥션풀(HikariCP) 크기는 어떤 기준으로 산정하나요?&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>&quot;기본값 그대로&quot; 또는 &quot;많을수록 좋다&quot;는 답을 거르는 질문이다. 풀 크기는 계산 가능한 공학적 결정(동시 요청 수 × 요청당 점유 시간)이고, 이 계산을 해본 사람만 용량 산정 회의에서 근거 있는 숫자를 낼 수 있다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>산정 골격 — Little's law</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>동시에 자원을 점유 중인 요청 수 = TPS × 그 자원의 점유 시간</code></pre>
+</div>
+<p>예제: <strong>4코어 장비, 평균 응답 100ms(그중 DB 커넥션 점유 50ms), 목표 500 TPS</strong></p>
+<div class="tw"><table><thead><tr><th>자원</th><th>점유 시간</th><th>계산</th><th>필요 개수</th></tr></thead><tbody>
+<tr><td>톰캣 스레드</td><td>요청 전체 응답시간 <strong>100ms</strong> (블로킹 MVC에선 처음부터 끝까지 묶임)</td><td>500 × 0.1s</td><td><strong>50</strong> (+여유)</td></tr>
+<tr><td>Hikari 커넥션</td><td>트랜잭션/쿼리 구간 <strong>50ms</strong>만</td><td>500 × 0.05s</td><td><strong>25</strong></td></tr>
+</tbody></table></div>
+<ul>
+<li>같은 요청이라도 <strong>자원마다 점유 시간이 다르므로 풀 크기도 달라진다</strong> — &quot;스레드 수 = 커넥션 수&quot;로 맞추는 건 근거 없는 낭비(또는 부족)다.</li>
+<li>커넥션 점유 시간을 줄이면(트랜잭션 밖으로 외부 호출 빼기, 쿼리 튜닝) 같은 TPS를 더 작은 풀로 감당한다 — 풀 늘리기 전에 점유 시간부터 의심.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>오개념 교정 1 — &quot;스레드 수 = 코어 수&quot;가 아니다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li><strong>코어 수 = 어느 한 순간에 CPU 위에서 실제로 실행(RUNNING) 중일 수 있는 스레드의 최대 개수</strong>이지, 존재할 수 있는 스레드 수의 제한이 아니다.</li>
+<li><p>4코어에서 스레드 50개가 돌아가는 방식(OS 시분할 다중화):</p>
+<ul>
+<li><strong>BLOCKED/WAITING (대부분)</strong> — DB 소켓 응답 대기 중. 스케줄링 대상에서 아예 빠져 <strong>CPU 0%</strong>, 스택 메모리(~1MB)만 점유. 응답이 도착하면 OS가 깨워 run queue에 넣는다.</li>
+<li><strong>RUNNABLE (소수)</strong> — 코어가 비기를 대기. 스케줄러가 수 ms 타임 슬라이스로 4개 코어에 번갈아 태운다.</li>
+</ul></li>
+<li>어느 순간의 스냅샷: 50개 중 ~25개는 DB 대기, 다수는 클라이언트 네트워크 I/O 대기, <strong>실제 CPU가 필요한 스레드는 몇 개뿐</strong> → 4코어로 충분.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>오개념 교정 2 — 블로킹 MVC에서 대기 중 스레드는 다른 요청을 처리하지 못한다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 블로킹 서블릿 MVC + JDBC — 스레드는 요청에 100ms 내내 묶인다</span>
+<span class="tk-kw">public</span> <span class="tk-type">OrderResponse</span> <span class="tk-fn">getOrder</span>(<span class="tk-type">Long</span> id) {
+    <span class="tk-type">Order</span> order = orderRepository.<span class="tk-fn">findById</span>(id);  <span class="tk-com">// DB 응답 50ms 대기</span>
+    <span class="tk-com">// ← 이 50ms 동안 이 스레드는 '블로킹'되어 아무것도 못 한다.</span>
+    <span class="tk-com">//    CPU만 놓아줄 뿐, 다른 요청을 처리하는 게 아니다.</span>
+    <span class="tk-kw">return</span> <span class="tk-fn">toResponse</span>(order);
+}</code></pre>
+</div>
+<ul>
+<li>&quot;대기하는 동안 스레드가 다른 요청을 처리한다&quot;는 <strong>WebFlux 같은 논블로킹 모델</strong>의 이야기다(적은 이벤트 루프 스레드가 콜백으로 여러 요청을 오간다).</li>
+<li>블로킹 모델에서 대기 시간을 흡수하는 수단은 <strong>스레드 개수</strong>뿐 → 그래서 I/O 바운드 서버는 코어 수보다 훨씬 많은 스레드가 필요하다.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>코어 수의 실제 역할 — CPU 연산 총량의 상한</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li>요청당 실제 CPU 연산이 8ms라면: 4코어 = 초당 4,000ms의 CPU 예산 → <strong>최대 500 TPS가 CPU 한계</strong>. 이 한계는 스레드를 아무리 늘려도 안 올라간다.</li>
+<li><p>정리:</p>
+<ul>
+<li><strong>I/O 바운드</strong> (일반적인 웹 API): 스레드 ≫ 코어. 스레드 수는 Little's law로.</li>
+<li><strong>CPU 바운드</strong> (암호화, 인코딩, 대량 연산): 스레드 ≈ 코어(±1~2). 그 이상은 컨텍스트 스위칭·캐시 오염 비용만 늘어 오히려 처리량이 떨어진다.</li>
+</ul></li>
+<li>과도한 스레드의 비용: 스택 메모리(스레드당 ~1MB), 컨텍스트 스위칭, GC 루트 증가. &quot;많을수록 좋다&quot;는 답은 이 비용을 모른다는 자백이다.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>HikariCP 공식 권장 — &quot;풀은 작을수록 좋다&quot;</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li>HikariCP 위키의 출발점 공식: <code>connections = (core_count × 2) + effective_spindle_count</code> — 단, 이때 core_count는 <strong>DB 서버</strong>의 코어다. 커넥션이 많아도 DB가 동시에 실행할 수 있는 양은 DB의 CPU·디스크가 상한이기 때문.</li>
+<li>애플리케이션 쪽 계산(Little's law, 25개)과 DB 쪽 한계(공식) 중 <strong>작은 쪽이 실질 상한</strong> — 커넥션을 늘려도 DB가 못 받으면 대기 줄만 DB 앞으로 옮겨질 뿐이다. 앱 인스턴스가 N대면 DB에는 N × pool 커넥션이 꽂힌다는 것도 함께 계산.</li>
+<li>풀이 작을수록 커넥션 캐시 적중·DB 부하 안정에 유리 — &quot;고갈 나니 늘리자&quot;가 아니라 점유 시간 단축이 먼저.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-7">
+<div class="sec-head">
+  <span class="sec-n">6</span>
+  <h2>계산은 출발점 — 실측으로 검증</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li><p>부하 테스트로 목표 TPS를 걸고 확인할 메트릭:</p>
+<ul>
+<li><code>tomcat.threads.busy</code> (active threads) — max에 붙어 있으면 스레드 부족 또는 응답시간 악화</li>
+<li><code>hikaricp.connections.active</code> / <code>hikaricp.connections.pending</code> / <strong>connection acquire wait time</strong> — 대기 시간이 생기기 시작하면 커넥션 부족(또는 점유 시간 증가)</li>
+<li>CPU 사용률 — 스레드를 늘렸는데 TPS가 안 오르고 CPU가 포화면 CPU 바운드 한계</li>
+</ul></li>
+<li>응답시간 분포(p99)가 평균과 크게 다르면 평균 기반 계산이 깨진다 — 느린 쿼리 하나가 점유 시간을 끌어올려 풀을 잠식.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-8">
+<div class="sec-head">
+  <span class="sec-n">7</span>
+  <h2>꼬리질문 대비 포인트</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p class="qa-hint">질문을 눌러 답을 펼쳐보세요 — 먼저 스스로 답해본 뒤 확인하면 훨씬 오래 남습니다.</p><div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q1</span><span>트래픽이 2배(1000 TPS)가 되면?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>산술적으로 스레드 100/커넥션 50이지만, 먼저 CPU 예산(요청당 CPU × 1000 ≤ 코어 수 × 1000ms?)과 DB 쪽 한계를 재검토. 한 대의 수직 확장이 아니라 인스턴스 증설(수평)로 나누는 게 일반적.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q2</span><span>응답시간이 갑자기 늘어나면 무슨 일이?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>체류시간 W가 늘면 같은 TPS에서 필요 동시수 L이 비례 증가 → 풀이 먼저 마르고, 대기가 응답시간을 더 늘리는 악순환(고갈 연쇄). 풀 크기 문제가 아니라 W 악화(느린 쿼리, 외부 API 지연)가 근본 원인인 경우가 많다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q3</span><span>톰캣 max-threads를 그냥 크게(예: 2000) 잡으면 안 되나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>대기 요청까지 다 받아들여 메모리·컨텍스트 스위칭 비용 증가 + 뒷단(DB)에 과부하 전달. 처리 못 할 요청은 빨리 거절(큐 제한)하는 게 전체 시스템에 낫다 — backpressure 관점.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q4</span><span>가상 스레드(Virtual Threads, Java 21)면?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>스레드 점유 비용이 사라져 톰캣 스레드 산정 문제는 완화되지만, <strong>DB 커넥션은 여전히 물리 자원</strong>이라 Hikari 산정(점유 시간 기준)은 그대로 유효. 병목이 스레드에서 커넥션으로 이동할 뿐.</p></div>
+</div>
+</div>
+</section>
+
+    <section class="summary maskable">
+      <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="mask-target"><p>풀 크기는 &quot;동시수 = TPS × 점유시간&quot;(Little's law)으로 자원별 점유 시간 기준 계산한다 — 블로킹 MVC에서 스레드는 응답시간 내내 묶이므로 톰캣 = TPS×응답시간(예제: 50), 커넥션은 트랜잭션 구간만이므로 Hikari = TPS×점유시간(25) — 코어 수는 스레드 수 기준이 아니라 CPU 연산 총량과 CPU 바운드 작업의 상한이며, 최종 숫자는 부하 테스트의 active/pending 메트릭으로 검증한다.</p></div>
+    </section>
+
+    <nav class="pager">
+<a class="prev" href="../02-spring/spring-security-filter-chain-authentication.html"><span class="dir">← 이전</span><span class="ttl">Spring Security 필터 체인 — 인증은 언제 처리되고, 커스텀 필터는 어디에 끼우는가</span></a>
+<a class="next" href="../02-spring/transaction-synchronization-connection-binding.html"><span class="dir">다음 →</span><span class="ttl">트랜잭션 동기화(TransactionSynchronizationManager)와 커넥션 바인딩 원리 — 한 트랜잭션의 쿼리는 어떻게 같은 커넥션을 타는가</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/02-spring/thread-pool-connection-pool-sizing.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

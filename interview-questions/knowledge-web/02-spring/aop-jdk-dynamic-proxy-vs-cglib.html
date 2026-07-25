@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="02-spring/aop-jdk-dynamic-proxy-vs-cglib" style="--hue:132">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AOP 동작 원리 — JDK Dynamic Proxy vs CGLIB, &quot;붙였는데 동작 안 함&quot;의 뿌리 | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(132%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#02-spring">2. Spring / Spring Boot</a>
+    <span class="sep">/</span>
+    <span class="cur">AOP 동작 원리</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">동작 원리 — 프록시가 메서드 호출을 가로챈다</span></a></li>
+<li><a href="#sec-3"><span class="n">2</span><span class="t">프록시는 어떻게 &quot;원본인 척&quot;하나 — 두 가지 방법</span></a></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">스프링 부트의 선택 — 기본값은 CGLIB</span></a></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">상속 기반이라서 생기는 함정 — final</span></a></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">자기 호출은 왜 안 걸리나 — &quot;어떤 메서드를 감쌌나&quot;가 아니라 &quot;어느 객체로 들어왔나&quot;</span></a></li>
+<li><a href="#sec-7"><span class="n">6</span><span class="t">꼬리질문 대비 포인트</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">2. Spring / Spring Boot</span>
+      <h1>AOP 동작 원리 — JDK Dynamic Proxy vs CGLIB, &quot;붙였는데 동작 안 함&quot;의 뿌리</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>13분</b></span>
+        <span>🧩 <b>7</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/7 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>스프링 AOP는 대상 빈을 감싸는 프록시 객체를 만들어 컨테이너에 등록하고, 주입받는 쪽은 전부 이 프록시를 받는 구조다. 프록시가 &quot;원본인 척&quot;하는 방법은 자바에 딱 두 가지 — 인터페이스를 구현하거나(JDK Dynamic Proxy), 원본 클래스를 상속하거나(CGLIB). 스프링 부트 기본값은 CGLIB이며, 상속 기반이라는 사실에서 <code>final</code> 클래스(기동 실패)·<code>final</code> 메서드(조용한 미적용)라는 실무 함정이 그대로 따라 나온다. @Transactional, @Cacheable, @Async가 &quot;붙였는데 동작 안 하는&quot; 상황은 전부 이 프록시 구조로 설명된다.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;AOP의 동작 원리(JDK Dynamic Proxy vs CGLIB)를 설명해주세요.&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>프록시 기반이라는 사실을 모르면 <code>@Transactional</code>, <code>@Async</code>, <code>@Cacheable</code>이 &quot;붙였는데 동작 안 하는&quot; 상황을 이해할 수 없다. 스프링의 마법 대부분이 이 하나의 원리로 설명되므로, 이걸 아는지가 스프링을 &quot;쓰는&quot; 사람과 &quot;이해하는&quot; 사람의 분기점이다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>동작 원리 — 프록시가 메서드 호출을 가로챈다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>AOP(관점 지향 프로그래밍)는 트랜잭션, 로깅, 캐싱처럼 여러 곳에 반복되는 부가 기능(횡단 관심사)을 비즈니스 코드에서 분리하는 기법이다. 스프링 AOP의 구현 방식은 <strong>런타임 프록시</strong>다: 빈을 만들 때 원본 대신 원본을 감싼 대리인 객체를 컨테이너에 등록한다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 프록시가 하는 일 (개념적으로)</span>
+<span class="tk-kw">public</span> <span class="tk-type">Order</span> <span class="tk-fn">order</span>(<span class="tk-type">OrderRequest</span> request) {
+    <span class="tk-com">// ① 전작업 (예: 트랜잭션 시작, 캐시 조회, 로그)</span>
+    <span class="tk-type">Order</span> result = target.<span class="tk-fn">order</span>(request);   <span class="tk-com">// ② 진짜 객체의 메서드 실행</span>
+    <span class="tk-com">// ③ 후작업 (예: 커밋, 캐시 저장)</span>
+    <span class="tk-kw">return</span> result;                           <span class="tk-com">// ④ 리턴값 그대로 반환</span>
+}</code></pre>
+</div>
+<p>핵심은 <strong>다른 빈이 주입받는 것이 원본이 아니라 프록시</strong>라는 점이다. 부가 기능 코드는 프록시에만 있으므로, 프록시를 거치지 않는 호출 (자기 호출 <code>this.method()</code>)에는 부가 기능이 걸리지 않는다.</p>
+<p>전체 구도를 그려두면 각 기술의 위치가 분명해진다. JDK Dynamic Proxy와 CGLIB은 <strong>&quot;프록시 방식 안에서의&quot; 선택지</strong>이고, AspectJ는 프록시 방식 자체의 바깥에 있는 <strong>다른 계열</strong>이다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>AOP를 구현하는 방법
+├─ ① 프록시 방식 (스프링 AOP)
+│   ├─ JDK Dynamic Proxy  ← 인터페이스 구현으로 &quot;척&quot;
+│   └─ CGLIB              ← 상속으로 &quot;척&quot;
+└─ ② 바이트코드 위빙 방식 (AspectJ)
+    └─ 컴파일/로드 시점에 클래스 코드 자체를 수정</code></pre>
+</div>
+<p>AspectJ가 이 문서에 등장하는 이유는 <strong>대조군</strong>이기 때문이다. 자기 호출 미적용, <code>final</code>/<code>private</code> 미적용 같은 함정은 &quot;AOP의 한계&quot;가 아니라 &quot;프록시 방식의 한계&quot;다. AspectJ는 프록시를 만들지 않고 원본 클래스의 바이트코드에 부가 기능 코드를 <strong>직접 박아넣기</strong> 때문에, 프록시를 거칠 필요가 없어서 이 제약이 전부 사라진다. 대조군이 있어야 &quot;이 함정의 원인은 프록시 구조다&quot;라는 진단이 완성된다. 비유하면 — 프록시는 담당자 앞에 안내원을 앉히는 방식이고, AspectJ는 담당자 본인을 교육시켜서 기록까지 하게 만드는 방식이라, 안내원 방식의 문제(직접 말 걸면 기록 안 됨)가 후자에는 아예 없다.</p>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>프록시는 어떻게 &quot;원본인 척&quot;하나 — 두 가지 방법</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>프록시의 존재 조건은 <strong>원본과 같은 타입으로 취급될 수 있어야 한다</strong>는 것이다. 주입받는 쪽 코드는 <code>OrderService orderService = ...</code>처럼 원래 타입 변수에 담아 쓰기 때문이다. 자바에서 어떤 객체가 다른 타입 &quot;인 척&quot;할 수 있는 방법은 정확히 두 가지고, 그것이 두 프록시 기술의 정체다.</p>
+<div class="tw"><table><thead><tr><th></th><th>JDK Dynamic Proxy</th><th>CGLIB</th></tr></thead><tbody>
+<tr><td>같은 타입인 척하는 방법</td><td>대상의 <strong>인터페이스를 구현</strong></td><td>대상 클래스를 <strong>상속</strong>한 자식 클래스 생성</td></tr>
+<tr><td>필요한 것</td><td>인터페이스가 반드시 있어야 함</td><td>클래스만 있으면 됨</td></tr>
+<tr><td>구현 수단</td><td>JDK 내장 리플렉션 (<code>java.lang.reflect.Proxy</code> + <code>InvocationHandler</code>)</td><td>바이트코드 생성 라이브러리 (런타임에 자식 클래스를 찍어냄)</td></tr>
+<tr><td>프록시의 타입</td><td>인터페이스 타입으로만 캐스팅 가능</td><td>구체 클래스 타입으로도 캐스팅 가능</td></tr>
+<tr><td>못 만드는 경우</td><td>인터페이스가 없으면 불가</td><td><code>final</code> 클래스면 불가</td></tr>
+</tbody></table></div>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// JDK Dynamic Proxy: 인터페이스를 구현한 가짜 객체</span>
+<span class="tk-kw">public</span> <span class="tk-kw">interface</span> <span class="tk-type">OrderService</span> {
+
+    <span class="tk-type">Order</span> <span class="tk-fn">order</span>(<span class="tk-type">OrderRequest</span> request);
+}
+
+<span class="tk-type">OrderService</span> proxy = (<span class="tk-type">OrderService</span>) <span class="tk-type">Proxy</span>.<span class="tk-fn">newProxyInstance</span>(
+    classLoader,
+    <span class="tk-kw">new</span> <span class="tk-type">Class</span>[]{<span class="tk-type">OrderService</span>.<span class="tk-kw">class</span>},   <span class="tk-com">// &quot;이 인터페이스인 척 해라&quot;</span>
+    invocationHandler                  <span class="tk-com">// 가로챈 호출을 처리할 로직</span>
+);
+
+<span class="tk-com">// CGLIB: 런타임에 이런 자식 클래스를 바이트코드로 생성하는 것과 같음</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">OrderServiceProxy</span> <span class="tk-kw">extends</span> <span class="tk-type">OrderService</span> {
+
+    <span class="tk-anno">@Override</span>
+    <span class="tk-kw">public</span> <span class="tk-type">Order</span> <span class="tk-fn">order</span>(<span class="tk-type">OrderRequest</span> request) {
+        <span class="tk-com">// 전작업 → super 격의 원본 호출 → 후작업</span>
+    }
+}</code></pre>
+</div>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>스프링 부트의 선택 — 기본값은 CGLIB</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>스프링 부트는 <code>proxyTargetClass=true</code>, 즉 <strong>인터페이스가 있어도 CGLIB</strong>을 기본으로 쓴다. 이유는 두 가지다.</p>
+<ol>
+<li><strong>인터페이스 없는 빈도 프록시할 수 있어야 한다.</strong> 요즘 실무는  구현체가 하나뿐인 서비스에 인터페이스를 강제로 만들지 않는 경우가  많다. JDK 프록시만 쓰면 이런 빈에는 @Transactional을 못 건다.</li>
+<li><strong>타입 캐스팅 사고 방지.</strong> JDK 프록시는 인터페이스인 척만 할 수 있어서  구체 클래스로 캐스팅하면 <code>ClassCastException</code>이 난다.</li>
+</ol>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// JDK 프록시 환경에서 나는 고전적 사고</span>
+<span class="tk-type">OrderService</span> bean = context.<span class="tk-fn">getBean</span>(<span class="tk-type">OrderService</span>.<span class="tk-kw">class</span>);       <span class="tk-com">// OK (인터페이스)</span>
+<span class="tk-type">OrderServiceImpl</span> impl = (<span class="tk-type">OrderServiceImpl</span>) bean;                <span class="tk-com">// ❌ ClassCastException!</span>
+<span class="tk-com">// bean은 OrderServiceImpl의 자식이 아니라 &quot;OrderService 인터페이스를 구현한 남남&quot;이기 때문</span></code></pre>
+</div>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>상속 기반이라서 생기는 함정 — final</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>CGLIB이 &quot;상속받은 자식 클래스&quot;라는 사실에서 함정이 기계적으로 따라 나온다. 자바에서 상속과 오버라이드를 금지하는 키워드는 <code>final</code>이다.</p>
+<div class="tw"><table><thead><tr><th>위치</th><th>무슨 일이 벌어지나</th><th>발견 시점</th></tr></thead><tbody>
+<tr><td><code>final</code> 클래스</td><td>상속 자체가 불가 → <strong>프록시 생성 실패, 기동 에러</strong></td><td>시끄럽게, 즉시</td></tr>
+<tr><td><code>final</code> 메서드</td><td>프록시는 생성되지만 그 메서드는 오버라이드 불가 → <strong>그 메서드만 조용히 부가 기능 미적용</strong></td><td>조용히, 한참 뒤</td></tr>
+</tbody></table></div>
+<p>둘 중 악질은 <strong><code>final</code> 메서드</strong> 쪽이다. <code>final</code> 클래스는 기동이 실패하니 바로 발견되지만, <code>final</code> 메서드는 애플리케이션이 멀쩡히 뜨고 <code>@Transactional</code>이 붙은 메서드가 <strong>트랜잭션 없이 조용히 실행</strong>된다. 예외도 경고도 없어서, 장애가 나고 데이터가 반쯤 커밋된 뒤에야 발견된다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>
+<span class="tk-anno">@Service</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">SettlementService</span> {
+
+    <span class="tk-anno">@Transactional</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">final</span> <span class="tk-kw">void</span> <span class="tk-fn">settle</span>(<span class="tk-type">Long</span> orderId) {   <span class="tk-com">// ❌ final — 프록시가 오버라이드 못 함</span>
+        <span class="tk-com">// 트랜잭션 없이 실행된다. 컴파일도 기동도 멀쩡하다.</span>
+    }
+}</code></pre>
+</div>
+<p>같은 원리로 <code>private</code> 메서드도 오버라이드 대상이 아니므로 부가 기능이 걸리지 않는다. 코틀린에서 이 함정이 더 자주 터지는 이유도 여기 있다 — <strong>코틀린 클래스/메서드는 기본이 final</strong>이라, <code>open</code>을 붙이거나 <code>kotlin-spring</code>(allopen) 플러그인으로 스프링 애너테이션이 붙은 클래스를 자동으로 열어줘야 한다.</p>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>자기 호출은 왜 안 걸리나 — &quot;어떤 메서드를 감쌌나&quot;가 아니라 &quot;어느 객체로 들어왔나&quot;</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>여기서 흔한 오해: &quot;프록시가 특정 메서드만 감싸는 것도 아니고 모든 메서드를 감쌀 텐데, 왜 자기 호출은 부가 기능이 안 붙지?&quot; 맞다 — <strong>프록시는 모든 public 메서드를 감싼다.</strong> 그런데 부가 기능이 실행되는 조건은 &quot;감싸져 있느냐&quot;가 아니라 <strong>호출이 프록시 객체를 통과했느냐</strong>다. 프록시 구조에서는 메모리에 객체가 <strong>두 개</strong> 존재한다는 사실이 핵심이다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>[프록시 객체]  ──원본을 참조──▶  [원본 객체(target)]
+ order() ← 부가기능 있음           order() ← 순수 비즈니스 로직
+ inner() ← 부가기능 있음           inner() ← 순수 비즈니스 로직</code></pre>
+</div>
+<p>자기 호출이 일어나는 순간을 따라가 보면:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>
+<span class="tk-anno">@Service</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">OrderService</span> {
+
+    <span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">order</span>() {
+        <span class="tk-kw">this</span>.<span class="tk-fn">inner</span>();   <span class="tk-com">// ← 문제의 자기 호출</span>
+    }
+
+    <span class="tk-anno">@Transactional</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">inner</span>() { ...}
+}</code></pre>
+</div>
+<ol>
+<li>컨트롤러가 <code>orderService.order()</code> 호출 → 이 참조는 프록시니까 <strong>프록시의 <code>order()</code></strong> 실행</li>
+<li>프록시는 부가 기능 처리 후 <strong>원본 객체의 <code>order()</code>에 위임</strong> — 이 순간부터 실행 흐름은 원본 객체 안</li>
+<li>원본의 <code>order()</code> 안에서 <code>this.inner()</code> 실행 — 이때 <code>this</code>는 <strong>원본 객체 자신</strong>이지 프록시가 아님</li>
+<li>원본의 <code>inner()</code>가 직접 실행됨. 프록시의 <code>inner()</code>는 감싸고 있지만 <strong>그쪽으로 호출이 들어오지 않았으므로</strong> 부가 기능 미적용</li>
+</ol>
+<p>비유하면 회사 대표번호(프록시)로 걸려온 전화는 안내원이 기록을 남기고 담당자(원본)에게 연결하지만, 담당자가 옆자리 동료에게 직접 말을 걸면 (<code>this.inner()</code>) 대표번호를 안 거쳤으니 기록이 남지 않는다. 안내원이 &quot;모든 직원의 전화&quot;를 받을 수 있다는 사실과는 무관하게, <strong>그 경로로 들어오지 않은 호출은 잡을 수 없다.</strong></p>
+<h3 id="">&quot;CGLIB은 상속이라며? 오버라이드됐으면 this.inner()도 프록시 걸로 불려야 하는 것 아닌가&quot;</h3>
+<p>자바의 동적 디스패치대로라면 맞는 지적이다. 그게 안 되는 이유는 <strong>스프링의 CGLIB 프록시가 <code>super</code> 호출 방식으로 동작하지 않기 때문</strong>이다. 상속은 &quot;같은 타입인 척&quot;하기 위한 수단일 뿐이고, 실제 동작은 <strong>별도 인스턴스에 대한 위임</strong>이다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 상속이니까 이렇게 동작할 것 같지만 (이 방식이면 자기 호출도 걸린다)</span>
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">order</span>() {
+    부가기능();
+    <span class="tk-kw">super</span>.<span class="tk-fn">order</span>();        <span class="tk-com">// ❌ 스프링은 이 방식이 아님</span>
+}
+
+<span class="tk-com">// 실제로는 별도의 원본 인스턴스에게 위임</span>
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">order</span>() {
+    부가기능();
+    target.<span class="tk-fn">order</span>();       <span class="tk-com">// ✅ 완전히 다른 객체의 메서드 호출</span>
+}</code></pre>
+</div>
+<p><code>super</code> 호출이었다면 실행 주체가 프록시 인스턴스 하나뿐이라 <code>this</code> = 프록시가 되어 자기 호출도 걸렸을 것이다. 하지만 스프링은 프록시 인스턴스와 원본 인스턴스를 따로 두고 위임하므로, 원본 안으로 흐름이 넘어간 순간 <code>this</code>는 순수한 원본이고 프록시는 호출 경로에서 완전히 빠진다. 해결책이 &quot;별도 빈으로 분리해서 주입받기&quot;인 이유도 이것 — <strong>프록시라는 문을 다시 통과하게 만드는 것</strong>이다.</p>
+<p>참고로 주입과 관련된 디테일 하나: 의존성 주입은 원본 객체에 일어나고 프록시는 호출을 넘기는 껍데기라서, 디버거로 프록시 객체의 필드를 보면 전부 <code>null</code>인 경우가 있다. &quot;주입이 안 됐나?&quot; 싶지만 실제 일은 필드가 채워진 원본(target)이 하므로 정상이다.</p>
+</div>
+</section>
+<section class="sec" id="sec-7">
+<div class="sec-head">
+  <span class="sec-n">6</span>
+  <h2>꼬리질문 대비 포인트</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p class="qa-hint">질문을 눌러 답을 펼쳐보세요 — 먼저 스스로 답해본 뒤 확인하면 훨씬 오래 남습니다.</p><div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q1</span><span>프록시는 원본과 '같은 타입인 척'해야 한다 — 자바에서 같은 타입인 척하는 두 가지 방법은?&quot; (실제 면접 흐름)</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>인터페이스 구현과 상속. 이 두 가지가 각각 JDK Dynamic Proxy(대상의 인터페이스를 구현한 객체를 리플렉션으로 생성)와 CGLIB(대상 클래스를 상속한 자식 클래스를 바이트코드로 생성)의 정체다. &quot;추상 클래스&quot;가 아니라 <strong>상속 그 자체</strong>라는 점에 주의 — CGLIB은 평범한 구체 클래스를 그대로 extends 한다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q2</span><span>CGLIB이 상속 기반이라면, 프록시가 안 만들어지거나 부가 기능이 안 걸리는 경우는?&quot; (실제 면접 흐름)</span><span class="arw">▾</span></button>
+<div class="qa-a"><p><code>final</code> 클래스는 상속이 불가능해 프록시 생성 자체가 실패한다(기동 에러). <code>final</code> 메서드는 프록시는 만들어지지만 해당 메서드를 오버라이드할 수 없어 그 메서드만 부가 기능이 빠진다. <code>private</code> 메서드도 마찬가지. &quot;대상이 이미 다른 클래스를 상속한 경우&quot;는 함정이 <strong>아니다</strong> — 프록시가 대상을 상속하는 것이므로 프록시→대상→부모로 체인이 이어질 뿐이다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q3</span><span>final이 클래스에 붙었을 때와 메서드에 붙었을 때, 어느 쪽이 더 악질적인 장애인가?&quot; (실제 면접 흐름)</span><span class="arw">▾</span></button>
+<div class="qa-a"><p><code>final</code> 메서드 쪽. <code>final</code> 클래스는 기동 실패라 즉시 발견되지만(fail-fast), <code>final</code> 메서드는 기동도 실행도 멀쩡한 채 <strong>부가 기능만 조용히 빠진다.</strong> @Transactional이면 트랜잭션 없이 돌다가 정합성 사고로 발견되는, &quot;조용한 미적용&quot; 유형이다. 장애의 악질성은 에러의 크기가 아니라 <strong>발견되기까지의 침묵</strong>으로 결정된다는 관점을 보여주면 좋다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q4</span><span>스프링 부트는 왜 CGLIB을 기본값으로 골랐나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>인터페이스 없는 빈도 프록시해야 하고(구현체 하나짜리 서비스에 인터페이스 강제하지 않는 실무 흐름), JDK 프록시의 구체 클래스 캐스팅 불가(<code>ClassCastException</code>) 사고를 피하기 위해서다. <code>proxyTargetClass=true</code>가 그 설정이다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q5</span><span>그 프록시 구조 때문에 @Transactional이 안 먹는 다른 경우도 있지 않나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>자기 호출(self-invocation). 부가 기능은 프록시에 있는데 <code>this.method()</code>는 프록시를 거치지 않고 원본을 직접 부르기 때문이다. final 메서드와 마찬가지로 <strong>조용히</strong> 미적용된다. 해결은 별도 빈으로 분리해 프록시를 통해 호출되게 하는 것. — 상세는 <a href="transactional-default-behavior-rollback.html">@Transactional 문서</a>의 자기 호출 절 참고.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q6</span><span>프록시는 모든 메서드를 감싸는데, 왜 자기 호출만 부가 기능이 빠지나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>부가 기능의 실행 조건이 &quot;메서드가 감싸져 있는가&quot;가 아니라 <strong>&quot;호출이 프록시 객체를 통과했는가&quot;</strong>이기 때문. 프록시와 원본은 별도의 두 인스턴스이고, 프록시가 원본에 위임한 뒤 원본 안에서 실행되는 <code>this.method()</code>의 <code>this</code>는 원본 자신이라 프록시가 호출 경로에서 빠진다. &quot;CGLIB은 상속인데 오버라이드된 프록시 메서드가 불려야 하지 않나&quot;라는 재반문에는 — 스프링 CGLIB 프록시는 <code>super</code> 호출이 아니라 <strong>별도 target 인스턴스에 위임</strong>하는 구조라서 동적 디스패치가 개입할 여지가 없다고 답하면 된다(§5).</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q7</span><span>스프링 AOP와 AspectJ의 차이는?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>스프링 AOP는 런타임 프록시 기반이라 (1) 스프링 빈에만, (2) 메서드 실행 지점에만, (3) 프록시를 거치는 호출에만 적용된다. AspectJ는 컴파일/로드 타임에 바이트코드를 직접 수정(위빙)하므로 자기 호출·final· private·생성자·필드 접근까지 전부 가능하지만, 빌드 파이프라인이 복잡해진다. &quot;제약을 만나면 AspectJ로 도망가는 게 아니라, 대부분은 빈 분리 같은 설계로 푸는 게 실무 관례&quot;까지 말하면 판단력을 보여준다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q8</span><span>@Aspect, @Around 쓰고 있으면 AspectJ를 쓰고 있는 것 아닌가?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>아니다 — 자주 혼동되는 지점. 스프링 AOP는 AspectJ의 <strong>애너테이션과 포인트컷 표현식 문법만 빌려온 것</strong>이고(<code>@Aspect</code>, <code>@Around(&quot;execution(...)&quot;)</code>), 실제 동작 방식은 여전히 런타임 프록시다. &quot;AspectJ 문법을 쓰니까 AspectJ 위빙이 된다&quot;가 아니라, 문법은 AspectJ / 엔진은 프록시라는 조합이다. 그래서 <code>@Aspect</code>를 쓰고 있어도 자기 호출· final 함정은 그대로 적용된다. 진짜 AspectJ 위빙을 쓰려면 컴파일 타임 위빙(ajc)이나 로드 타임 위빙(LTW) 설정이 별도로 필요하다.</p></div>
+</div>
+</div>
+</section>
+
+    <section class="summary maskable">
+      <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="mask-target"><p>스프링 AOP는 &quot;원본인 척하는 대리인&quot;을 끼워 넣는 구조고, 척하는 방법이 인터페이스 구현(JDK Proxy)이냐 상속(CGLIB, 부트 기본값)이냐의 차이라서 — final 클래스는 기동 실패로, final 메서드·private·자기 호출은 <strong>조용한 미적용</strong>으로 이어지며, &quot;붙였는데 동작 안 함&quot; 계열 장애는 전부 &quot;이 호출이 프록시를 거쳤는가, 프록시가 이 메서드를 오버라이드할 수 있는가&quot; 두 질문으로 진단된다.</p></div>
+    </section>
+
+    <nav class="pager">
+<a class="prev" href="../02-spring/actuator-endpoints-security.html"><span class="dir">← 이전</span><span class="ttl">Actuator 운영 활용 엔드포인트와 외부 노출 보안 — 관측 도구가 공격 표면이 되지 않게</span></a>
+<a class="next" href="../02-spring/application-yml-profile.html"><span class="dir">다음 →</span><span class="ttl">application.yml Profile 활용 — 환경 분리는 &quot;운영이 로컬 DB에 붙는&quot; 사고를 막는 기본 방어선</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/02-spring/aop-jdk-dynamic-proxy-vs-cglib.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

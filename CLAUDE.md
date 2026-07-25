@@ -10,6 +10,7 @@
 | `interview-questions/interview-questions-rationale.md` | 출제 의도 문서 |
 | `interview-questions/interview-state.md` | 면접 진행 상태 (재개 지점) |
 | `interview-questions/knowledge/` | 학습 지식 문서 (26개 카테고리: 01-java-kotlin ~ 26-auth-session) |
+| `interview-questions/knowledge-web/` | 위 문서의 웹 버전 (HTML, 1:1 매핑). `node build.mjs`로 재생성 — HTML 직접 수정 금지 |
 | `interview-questions/transcript/` | 섹션별 문답 기록 + 약점 노트 |
 | `.claude/skills/interview/` | 모의면접 스킬 — "면접 연습하자" 또는 `/interview`로 시작 |
 

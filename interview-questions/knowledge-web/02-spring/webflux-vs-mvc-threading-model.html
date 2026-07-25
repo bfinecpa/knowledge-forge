@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="02-spring/webflux-vs-mvc-threading-model" style="--hue:132">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Spring WebFlux vs MVC 스레딩 모델 — &quot;대기를 스레드 개수로 흡수하나, 이벤트로 흡수하나&quot; | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(132%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#02-spring">2. Spring / Spring Boot</a>
+    <span class="sep">/</span>
+    <span class="cur">Spring WebFlux vs MVC 스레딩 모델</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">MVC — thread-per-request (대기 = 스레드 점유)</span></a></li>
+<li><a href="#sec-3"><span class="n">2</span><span class="t">WebFlux(Netty) — 이벤트 루프 (대기 = 스레드 반납)</span></a></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">두 모델 비교</span></a></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">WebFlux가 독이 되는 경우</span></a></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">블로킹이 불가피할 때의 우회 — 그리고 그 대가</span></a></li>
+<li><a href="#sec-7"><span class="n">6</span><span class="t">제3의 선택지 — Java 21 가상 스레드(Loom)</span></a></li>
+<li><a href="#sec-8"><span class="n">7</span><span class="t">꼬리질문 대비 포인트</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">2. Spring / Spring Boot</span>
+      <h1>Spring WebFlux vs MVC 스레딩 모델 — &quot;대기를 스레드 개수로 흡수하나, 이벤트로 흡수하나&quot;</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>9분</b></span>
+        <span>🧩 <b>8</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/8 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>MVC는 <strong>thread-per-request</strong> — 요청당 스레드 1개가 응답까지 묶이고, 대기 시간을 <strong>스레드 개수</strong>로 흡수한다(톰캣 기본 200개 = 동시 요청 상한). WebFlux(Netty)는 <strong>이벤트 루프</strong> — 스레드를 코어 수만큼만 띄우고, I/O를 걸어놓은 뒤 스레드를 <strong>즉시 반납</strong>해 다음 이벤트를 처리한다(대기를 이벤트 통지로 흡수 → 적은 스레드로 수만 동시 연결). 그래서 WebFlux의 전제는 <strong>전 구간 논블로킹</strong>이다 — 이벤트 루프 위에서 블로킹(JDBC 등) 한 번이면 코어 수만큼뿐인 스레드가 잠겨 전체가 마비되므로, 블로킹 스택·CPU 바운드·팀 역량에 따라 오히려 독이 된다.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;Spring WebFlux와 MVC의 스레딩 모델 차이를 설명해주세요. WebFlux 도입이 오히려 독이 되는 경우는?&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>기술 선택에서 &quot;우리 팀의 학습 비용, 디버깅 난이도, 블로킹 라이브러리 의존성&quot;까지 넣어 판단하는지 본다. 이력서에 WebFlux를 쓴 지원자의 이해가 튜토리얼 수준인지 운영 수준인지 가르는 질문이기도 하다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>MVC — thread-per-request (대기 = 스레드 점유)</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li>요청 1개 = 톰캣 스레드 1개가 <strong>응답을 쓸 때까지</strong> 전담. DB 50ms 대기 중에도 스레드는 BLOCKED로 묶여 있다(다른 요청을 처리하지 못한다 — <a href="../02-spring/thread-pool-connection-pool-sizing.html" class="xref"><code>thread-pool-connection-pool-sizing.md</code></a> 오개념 교정 2).</li>
+<li>동시 요청 상한 = 스레드풀 크기(기본 200). 필요 스레드 수는 Little's law로: 500 TPS × 응답 100ms = 동시 50개.</li>
+<li>대기가 길어질수록(외부 API 지연 등) 같은 TPS에 더 많은 스레드가 필요 — <strong>대기 시간을 스레드 개수로 사는 모델</strong>. 스레드는 스택 ~1MB·컨텍스트 스위칭 비용이 있어 수천~수만 동시 연결에는 한계.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>WebFlux(Netty) — 이벤트 루프 (대기 = 스레드 반납)</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li>이벤트 루프 스레드는 <strong>코어 수만큼만</strong>(Netty 기본 = 가용 코어 수, 최소 4). 스레드가 요청에 전속되지 않는다.</li>
+<li><p>동작 방식:</p>
+<ol>
+<li>요청 도착 → 이벤트 루프 스레드가 핸들러 체인 실행</li>
+<li>DB/외부 API 호출을 <strong>논블로킹으로 걸어놓고(콜백 등록)</strong> 스레드는 <strong>즉시 다음 이벤트 처리로 이동</strong></li>
+<li>50ms 뒤 응답이 소켓에 도착하면 → OS(epoll/kqueue)가 이벤트로 통지 → 이벤트 루프가 등록된 콜백(리액티브 체인의 다음 단계)을 이어서 실행</li>
+</ol></li>
+<li>스레드는 &quot;요청을 기다리는&quot; 일이 없고 <strong>항상 실행할 이벤트만 처리</strong> → 대기 시간이 스레드를 소모하지 않아, 4~8개 스레드로 수만 동시 연결 감당.</li>
+<li>Reactor의 <code>Mono</code>/<code>Flux</code>는 이 &quot;걸어놓고 나중에 이어 하기&quot;를 선언적 체인으로 표현한 것. 백프레셔(소비 측이 감당할 만큼만 당겨 받기)도 스펙에 내장.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>두 모델 비교</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="tw"><table><thead><tr><th></th><th>MVC (Tomcat)</th><th>WebFlux (Netty)</th></tr></thead><tbody>
+<tr><td>스레드 수</td><td>동시 요청만큼 (기본 200)</td><td>≈ 코어 수</td></tr>
+<tr><td>I/O 대기 시 스레드</td><td>BLOCKED로 점유(그 요청 전속)</td><td>반납 — 다른 이벤트 처리</td></tr>
+<tr><td>동시성 한계 결정 요인</td><td>스레드풀 크기 (Little's law)</td><td>소켓/메모리 한계 (스레드 아님)</td></tr>
+<tr><td>블로킹 호출 1건의 피해</td><td>스레드 200개 중 1개 잠김 — 미미</td><td>스레드 4개 중 1개 잠김 — <strong>처리량 25% 증발</strong></td></tr>
+<tr><td>백프레셔</td><td>없음 (큐잉·거절로 대응)</td><td>Reactive Streams에 내장</td></tr>
+<tr><td>적합 워크로드</td><td>일반 CRUD API, 블로킹 스택(JDBC), 팀 친숙도 우선</td><td>대량 동시 연결(스트리밍·SSE·게이트웨이), I/O 대기 비중 큰 중계 호출, 전 구간 논블로킹 가능할 때</td></tr>
+</tbody></table></div>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>WebFlux가 독이 되는 경우</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ol>
+<li><strong>이벤트 루프 위 블로킹 호출</strong> — JDBC, 블로킹 HTTP 클라이언트, 파일 I/O, 심지어 느린 로깅까지. MVC에서 블로킹은 &quot;200개 중 1개&quot;의 국소 피해지만, WebFlux에서는 &quot;4개 중 1개&quot;라 <strong>폭발 반경이 정반대로 크다</strong>. DB가 JDBC(R2DBC 아님)면 결국 어딘가에서 블로킹 — WebFlux의 이득이 사라지고 위험만 남는다. <strong>한 구간이라도 블로킹이면 전 구간 논블로킹이라는 전제가 깨진다.</strong></li>
+<li><strong>CPU 바운드 작업</strong> — 대기가 없으면 반납할 것도 없다. 이벤트 루프가 연산에 잡혀 있는 동안 그 루프에 배정된 모든 연결이 지연. CPU 바운드는 모델과 무관하게 코어 수가 상한(<a href="../02-spring/thread-pool-connection-pool-sizing.html" class="xref"><code>thread-pool-connection-pool-sizing.md</code></a> §4).</li>
+<li><strong>팀·운영 비용</strong> — 리액티브 학습 곡선, 체인 곳곳에서 끊기는 스택트레이스로 디버깅 난이도 급상승, ThreadLocal 전제(MDC, SecurityContext, <code>@Transactional</code>의 트랜잭션 동기화 — <a href="../02-spring/transaction-synchronization-connection-binding.html" class="xref"><code>transaction-synchronization-connection-binding.md</code></a>) 전부 재작업. 의존 라이브러리 중 하나라도 블로킹이면 도루묵이므로 <strong>전체 의존성의 논블로킹 여부 점검</strong>이 도입 전 필수. &quot;튜토리얼 수준 이해로 도입한 WebFlux&quot;는 같은 하드웨어의 MVC보다 느리고 장애만 어렵게 만든다.</li>
+</ol>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>블로킹이 불가피할 때의 우회 — 그리고 그 대가</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 이벤트 루프에서 블로킹 JDBC를 직접 호출하면 안 되므로 별도 스레드풀로 격리</span>
+<span class="tk-type">Mono</span>.<span class="tk-fn">fromCallable</span>(() -&gt; jdbcRepository.<span class="tk-fn">findById</span>(id))   <span class="tk-com">// 블로킹 호출</span>
+    .<span class="tk-fn">subscribeOn</span>(<span class="tk-type">Schedulers</span>.<span class="tk-fn">boundedElastic</span>())          <span class="tk-com">// 전용 워커 풀에서 실행</span></code></pre>
+</div>
+<ul>
+<li><code>boundedElastic</code>은 블로킹 작업용 워커 풀(기본 상한 = 코어 × 10) — 이벤트 루프는 지키지만, 그 구간은 <strong>결국 thread-per-request로 회귀</strong>한 것이라 워커 풀 크기 산정 문제(Little's law)가 그대로 되살아난다. 이 우회가 코드의 주류가 되면 WebFlux를 쓸 이유가 없다.</li>
+<li><code>publishOn</code>은 체인의 이후 단계 실행 스레드를 바꾸고, <code>subscribeOn</code>은 구독(소스 실행) 스레드를 바꾼다 — 블로킹 소스 격리는 <code>subscribeOn</code>.</li>
+<li><strong>BlockHound</strong>: 이벤트 루프 스레드에서 블로킹 호출이 일어나면 예외를 던져주는 감지 도구 — 테스트 단계에서 &quot;숨은 블로킹&quot;을 잡는 안전망.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-7">
+<div class="sec-head">
+  <span class="sec-n">6</span>
+  <h2>제3의 선택지 — Java 21 가상 스레드(Loom)</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li>가상 스레드는 블로킹 시 캐리어 스레드에서 <strong>자동으로 마운트 해제</strong> — &quot;블로킹 코드를 그대로 두고&quot; 스레드를 사실상 무한정 띄우는 모델. thread-per-request의 프로그래밍 단순함 + 이벤트 루프급 동시성.</li>
+<li>Spring Boot 3.2+에서 <code>spring.threads.virtual.enabled=true</code>로 톰캣 요청 처리에 적용 가능 — 리액티브 재작성 없이 MVC 스타일 유지. &quot;동시 연결 때문에 WebFlux&quot;라는 근거는 상당 부분 약화됐다(단, 백프레셔·스트리밍 조합은 여전히 WebFlux 영역이고, DB 커넥션 등 물리 자원 산정은 그대로 유효).</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-8">
+<div class="sec-head">
+  <span class="sec-n">7</span>
+  <h2>꼬리질문 대비 포인트</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p class="qa-hint">질문을 눌러 답을 펼쳐보세요 — 먼저 스스로 답해본 뒤 확인하면 훨씬 오래 남습니다.</p><div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q1</span><span>이벤트 루프 스레드가 하나 블로킹되면 정확히 무슨 일이?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>그 루프에 배정된 <strong>모든 채널(연결)의 이벤트 처리가 멈춘다</strong>. Netty는 채널을 루프에 고정 배정하므로 다른 루프가 대신 처리해주지 않는다 — 1/N 마비가 아니라 해당 연결들 전면 정지.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q2</span><span>WebFlux 쓰면 성능이 좋아지나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>단일 요청 응답시간은 <strong>빨라지지 않는다</strong>(DB 50ms는 그대로 50ms). 좋아지는 건 같은 하드웨어로 감당하는 <strong>동시 연결 수와 자원 효율</strong>. 처리량 병목이 스레드가 아니라면(대부분의 사내 API가 그렇다) 이득이 없다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q3</span><span>MVC에서 WebClient만 쓰는 건?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>가능하고 흔한 절충. 외부 API 병렬 호출 구간만 논블로킹으로 얻고 서블릿 모델은 유지 — 단 <code>block()</code> 하는 순간 그 스레드는 여전히 묶인다는 것을 인지할 것.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q4</span><span>@Transactional이 WebFlux에서 동작하나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>ThreadLocal 기반 트랜잭션 동기화는 스레드가 바뀌는 리액티브 체인에서 무의미 — R2DBC + Reactor Context 기반의 리액티브 트랜잭션 관리로 대체해야 한다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q5</span><span>어떤 기준으로 도입 판단?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>① 동시 연결이 실제로 스레드 한계에 부딪히는가(메트릭 근거) ② 전 의존성이 논블로킹 가능한가(DB 드라이버 포함) ③ 팀이 리액티브 디버깅을 감당하는가 ④ 가상 스레드로 충분하지 않은가 — 넷 다 통과해야 도입.</p></div>
+</div>
+</div>
+</section>
+
+    <section class="summary maskable">
+      <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="mask-target"><p>MVC는 요청당 스레드 1개가 응답까지 묶여 대기를 &quot;스레드 개수&quot;로 흡수하고(상한 = 풀 크기), WebFlux는 코어 수만큼의 이벤트 루프가 I/O를 걸어놓고 스레드를 반납해 대기를 &quot;이벤트 통지&quot;로 흡수한다(적은 스레드로 수만 연결) — 대신 전 구간 논블로킹이 전제라 이벤트 루프 위 블로킹 한 번(JDBC 등)의 폭발 반경이 MVC와 정반대로 크며, 블로킹 스택·CPU 바운드·팀 역량 부족이면 독이 되고, Java 21 가상 스레드가 &quot;블로킹 코드 그대로&quot;라는 제3의 선택지다.</p></div>
+    </section>
+
+    <nav class="pager">
+<a class="prev" href="../02-spring/value-vs-configuration-properties.html"><span class="dir">← 이전</span><span class="ttl">@Value vs @ConfigurationProperties — 설정 주입 두 방식의 차이와 선택 기준</span></a>
+<a class="next" href="../04-rdb-sql/transaction-isolation-levels.html"><span class="dir">다음 →</span><span class="ttl">트랜잭션 격리 수준 4가지와 이상 현상 — &quot;같은 걸 두 번 읽었는데 값이 다른&quot; 문제의 지도</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/02-spring/webflux-vs-mvc-threading-model.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

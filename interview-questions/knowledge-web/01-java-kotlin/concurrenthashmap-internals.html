@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="01-java-kotlin/concurrenthashmap-internals" style="--hue:25">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ConcurrentHashMap 내부 메커니즘 — 버킷 단위 락 + CAS, 무락 읽기 | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(25%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#01-java-kotlin">1. Java / Kotlin 언어</a>
+    <span class="sep">/</span>
+    <span class="cur">ConcurrentHashMap 내부 메커니즘</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">선행 개념: CAS (Compare-And-Swap)</span></a></li>
+<li><a href="#sec-3"><span class="n">1</span><span class="t">전체 구조 — Java 7 vs Java 8의 락 단위 변화</span></a></li>
+<li><a href="#sec-4"><span class="n">2</span><span class="t">쓰기(put) 경로 — CAS와 synchronized의 역할 분담</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-4-1"><span class="t">2-1. 빈 버킷이면 → CAS (락 없음)</span></a></li><li><a href="#sec-4-2"><span class="t">2-2. 버킷에 이미 노드가 있으면 → 첫 노드에 synchronized</span></a></li></ul></li>
+<li><a href="#sec-5"><span class="n">3</span><span class="t">읽기(get) — 락이 전혀 없는 이유</span></a></li>
+<li><a href="#sec-6"><span class="n">4</span><span class="t">트레이드오프: 약한 일관성 (weakly consistent)</span></a></li>
+<li><a href="#sec-7"><span class="n">5</span><span class="t">곁들이면 좋은 두 가지</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-7-1"><span class="t">5-1. size 집계 — CounterCell 분산</span></a></li><li><a href="#sec-7-2"><span class="t">5-2. 협력적 리사이즈 — helpTransfer</span></a></li></ul></li>
+<li><a href="#sec-8"><span class="n">2</span><span class="t">부록: 자주 헷갈리는 포인트 Q&amp;A</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">1. Java / Kotlin 언어</span>
+      <h1>ConcurrentHashMap 내부 메커니즘 — 버킷 단위 락 + CAS, 무락 읽기</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>7분</b></span>
+        <span>🧩 <b>8</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/8 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>동시성 자료구조의 설계는 결국 &quot;락의 범위를 얼마나 좁히고, 어디까지 락 없이 처리하느냐&quot;의 문제다. ConcurrentHashMap은 쓰기를 &quot;빈 버킷이면 CAS, 있으면 head 노드 synchronized&quot;로 락 범위를 버킷 1개까지 좁혔고, 읽기는 volatile의 happens-before 보장에 기대어 아예 락을 없앴다. 그 대가가 약한 일관성(weak consistency)이다.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;<code>ConcurrentHashMap</code>은 어떻게 thread-safe를 보장하나요? <code>Collections.synchronizedMap</code>과의 차이는?&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>&quot;thread-safe 컬렉션을 쓰면 안전하다&quot;는 착각(복합 연산은 여전히 원자적이지 않음)을 갖고 있는지 검사한다. 이 착각은 부하가 걸려야만 드러나는 최악의 버그를 만들기에, 내부 락 구조까지 정확한 동작 모델을 갖고 있는지를 본다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>선행 개념: CAS (Compare-And-Swap)</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p><strong>&quot;현재 값이 내가 기대한 값이면 새 값으로 바꿔라&quot;</strong>를 하나의 원자적 연산으로 수행하는 CPU 명령어 (x86의 <code>CMPXCHG</code> 등 하드웨어 명령).</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>CAS(메모리 위치 V, 기대값 A, 새 값 B)
+→ V의 현재 값이 A와 같으면 B로 교체하고 true
+→ 다르면 아무것도 안 하고 false</code></pre>
+</div>
+<h3 id="">왜 필요한가</h3>
+<p><code>count++</code>는 사실 &quot;읽기 → 계산 → 쓰기&quot; 3단계 → 두 스레드가 동시에 하면 갱신 유실. 락으로 감싸면 해결되지만 블로킹 비용이 크다. CAS는 락 없이 이렇게 푼다:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// AtomicInteger.incrementAndGet()의 동작 원리</span>
+<span class="tk-kw">do</span> {
+    <span class="tk-kw">int</span> current = value;          <span class="tk-com">// 1. 현재 값 읽기</span>
+    <span class="tk-kw">int</span> next = current + <span class="tk-num">1</span>;       <span class="tk-com">// 2. 새 값 계산</span>
+} <span class="tk-kw">while</span> (!<span class="tk-fn">compareAndSet</span>(current, next));  <span class="tk-com">// 3. &quot;아직 current면 next로&quot; 시도</span>
+<span class="tk-com">// 실패 = 그 사이 누가 바꿈 → 다시 읽어서 재시도</span></code></pre>
+</div>
+<ul>
+<li>실패해도 스레드가 잠들지 않고 즉시 재시도 → <strong>논블로킹(lock-free)</strong></li>
+<li>경합이 적으면 락보다 훨씬 쌈 / 경합이 극심하면 재시도 반복으로 오히려 손해</li>
+<li><code>AtomicInteger</code>, <code>AtomicReference</code>, <code>LongAdder</code> 전부 CAS 기반 (내부적으로 <code>Unsafe</code>/<code>VarHandle</code>의 compareAndSet 계열 호출)</li>
+</ul>
+<p><strong>ABA 문제</strong>: 값이 A→B→A로 바뀌면 CAS는 &quot;안 바뀌었다&quot;고 착각. 대부분(참조 교체, 카운터)은 문제없지만, 필요하면 <code>AtomicStampedReference</code>처럼 버전 스탬프를 함께 비교해 해결.</p>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>전체 구조 — Java 7 vs Java 8의 락 단위 변화</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>내부는 <code>HashMap</code>처럼 <code>Node&lt;K,V&gt;[] table</code> 배열 하나.</p>
+<div class="tw"><table><thead><tr><th></th><th>Java 7까지</th><th>Java 8부터</th></tr></thead><tbody>
+<tr><td>락 구조</td><td><code>Segment</code> 배열 (기본 16개, 락 스트라이핑)</td><td>Segment 제거, <strong>버킷의 head 노드 자체가 락</strong></td></tr>
+<tr><td>락 단위</td><td>테이블의 1/16</td><td><strong>버킷 1개</strong></td></tr>
+<tr><td>동시 쓰기 상한</td><td>세그먼트 수 (기본 16)</td><td>이론상 버킷 수 N</td></tr>
+</tbody></table></div>
+<p>체인이 8개 초과 + 테이블 64 이상이면 레드블랙 트리(<code>TreeBin</code>)로 전환되는 것도 HashMap과 동일 (이때 락은 TreeBin 노드에 걸림).</p>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>쓰기(put) 경로 — CAS와 synchronized의 역할 분담</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p><code>putVal()</code>은 버킷 상태에 따라 두 가지 전략을 쓴다.</p>
+<h3 id="sec-4-1">2-1. 빈 버킷이면 → CAS (락 없음)</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">if</span> ((f = <span class="tk-fn">tabAt</span>(tab, i = (n - <span class="tk-num">1</span>) &amp; hash)) == <span class="tk-kw">null</span>) {
+    <span class="tk-kw">if</span> (<span class="tk-fn">casTabAt</span>(tab, i, <span class="tk-kw">null</span>, <span class="tk-kw">new</span> <span class="tk-type">Node</span>&lt;&gt;(hash, key, value)))
+        <span class="tk-kw">break</span>;  <span class="tk-com">// 성공하면 끝. 락을 아예 안 잡음</span>
+}</code></pre>
+</div>
+<ul>
+<li>&quot;그 슬롯이 여전히 null이면 새 노드를 꽂는다&quot;를 원자적으로 시도</li>
+<li>경합 없으면 락 비용 0</li>
+<li>CAS 실패(다른 스레드가 먼저 꽂음) → 루프 돌아 아래 락 경로로</li>
+</ul>
+<h3 id="sec-4-2">2-2. 버킷에 이미 노드가 있으면 → 첫 노드에 synchronized</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">synchronized</span> (f) {   <span class="tk-com">// f = 해당 버킷의 head 노드</span>
+    <span class="tk-kw">if</span> (<span class="tk-fn">tabAt</span>(tab, i) == f) {  <span class="tk-com">// 락 잡은 사이 head가 안 바뀌었는지 재확인</span>
+        <span class="tk-com">// 체인 순회하며 덮어쓰기 or 꼬리에 추가</span>
+    }
+}</code></pre>
+</div>
+<ul>
+<li><strong>락의 범위 = 그 버킷 하나</strong> → 서로 다른 버킷에는 동시 쓰기 가능</li>
+<li><code>tabAt(tab, i) == f</code> 재검사 이유: 락을 기다리는 동안 리사이즈/트리화로 head 노드가 교체됐을 수 있음 → 교체됐으면 재시도</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>읽기(get) — 락이 전혀 없는 이유</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">public</span> <span class="tk-type">V</span> <span class="tk-fn">get</span>(<span class="tk-type">Object</span> key) {
+    <span class="tk-com">// synchronized도, CAS 재시도 루프도 없음</span>
+    <span class="tk-type">Node</span>&lt;<span class="tk-type">K</span>,<span class="tk-type">V</span>&gt; e = <span class="tk-fn">tabAt</span>(tab, (n - <span class="tk-num">1</span>) &amp; h);
+    ...
+}</code></pre>
+</div>
+<p>무락(lock-free) 읽기의 근거: <strong>가시성(visibility)을 락 대신 volatile로 보장.</strong></p>
+<div class="tw"><table><thead><tr><th>필드</th><th>선언</th><th>역할</th></tr></thead><tbody>
+<tr><td><code>Node.val</code>, <code>Node.next</code></td><td><strong>volatile</strong></td><td>쓰기 스레드의 갱신이 happens-before로 읽기 스레드에 즉시 보임</td></tr>
+<tr><td><code>table</code></td><td>volatile + <code>tabAt()</code>은 <code>Unsafe.getObjectAcquire</code>(volatile read 시맨틱)</td><td>슬롯 접근 가시성</td></tr>
+<tr><td><code>Node.key</code>, <code>hash</code></td><td><strong>final</strong></td><td>생성 이후 불변 → 안전한 발행(safe publication)</td></tr>
+</tbody></table></div>
+<p>읽기 스레드는 &quot;그 순간의 일관된 스냅샷 노드&quot;를 따라가기만 하면 되고, 쓰는 쪽과 충돌할 게 없다 → get은 경합이 아무리 심해도 블로킹되지 않음.</p>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>트레이드오프: 약한 일관성 (weakly consistent)</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>무락 읽기의 대가:</p>
+<ul>
+<li><strong>get</strong>: 락으로 직렬화된 최신 상태가 아니라 &quot;어느 시점엔가 유효했던 상태&quot; 반환 가능</li>
+<li><strong>iterator</strong>: 순회 중 발생한 수정이 보일 수도, 안 보일 수도 있음. <code>ConcurrentModificationException</code>을 던지지 않음 (fail-safe)</li>
+<li><strong>size()</strong>: 정확한 순간값이 아닌 근사치</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-7">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>곁들이면 좋은 두 가지</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<h3 id="sec-7-1">5-1. size 집계 — CounterCell 분산</h3>
+<p>모든 스레드가 하나의 count 필드를 CAS하면 그게 병목 → <code>LongAdder</code>와 같은 원리의 <strong><code>baseCount + CounterCell[]</code></strong>로 카운트를 분산, <code>size()</code> 호출 시 합산.</p>
+<h3 id="sec-7-2">5-2. 협력적 리사이즈 — helpTransfer</h3>
+<ul>
+<li>리사이즈 중인 버킷에는 <code>ForwardingNode</code>(hash = MOVED)가 꽂힘</li>
+<li>put 하러 온 스레드가 이걸 만나면 대기하는 대신 <code>helpTransfer()</code>로 <strong>리사이즈 작업을 나눠서 돕는다</strong></li>
+<li>그동안 get은 ForwardingNode를 통해 새 테이블로 넘어가 읽기를 계속</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-8">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>부록: 자주 헷갈리는 포인트 Q&amp;A</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p class="qa-hint">질문을 눌러 답을 펼쳐보세요 — 먼저 스스로 답해본 뒤 확인하면 훨씬 오래 남습니다.</p><div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q1</span><span>Java 8 CHM에도 Segment가 있나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>없다. Java 7까지의 구조(기본 16개 세그먼트, 락 스트라이핑)이고, Java 8에서 제거되어 버킷 head 노드 자체를 락으로 쓴다. 락 단위가 테이블의 1/16 → 버킷 1개로 훨씬 잘게 쪼개졌다. (§1)</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q2</span><span>put은 항상 락을 잡나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>아니다. 빈 버킷이면 CAS만으로 삽입하고 락을 아예 안 잡는다. 버킷에 노드가 이미 있을 때만 head 노드에 synchronized. (§2)</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q3</span><span>get이 락 없이도 안전한 근거는?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p><code>Node.val</code>/<code>Node.next</code>/<code>table</code>이 volatile이라 happens-before로 가시성이 보장되고, <code>key</code>/<code>hash</code>는 final이라 안전하게 발행된다. 읽기는 스냅샷을 따라가기만 하면 되므로 쓰기와 충돌하지 않는다. (§3)</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q4</span><span>락을 잡은 뒤 <code>tabAt(tab, i) == f</code>를 다시 확인하는 이유는?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>락을 기다리는 동안 리사이즈나 트리화로 head 노드가 교체됐을 수 있어서. 교체됐으면 그 락은 무효 → 루프 돌아 재시도. (§2-2)</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q5</span><span>size()는 왜 정확하지 않나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>단일 count 필드 CAS는 병목이라 <code>baseCount + CounterCell[]</code>로 분산 집계하고 호출 시 합산하기 때문. 합산하는 동안에도 맵은 변하므로 근사치다. (§4, §5-1)</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q6</span><span>CAS가 락보다 항상 빠른가?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>아니다. 경합이 적으면 블로킹이 없어 훨씬 싸지만, 경합이 극심하면 재시도가 반복되며 오히려 손해일 수 있다. CHM이 &quot;빈 버킷=CAS 1회 시도, 실패하면 synchronized&quot;로 섞어 쓰는 이유다. (선행 개념 절, §2)</p></div>
+</div>
+</div>
+</section>
+
+    <section class="summary maskable">
+      <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="mask-target"><div class="callout"><span class="ic">💡</span><div><p>쓰기는 &quot;빈 버킷이면 CAS, 있으면 head 노드에 synchronized&quot;로 락 범위를 버킷 1개로 최소화하고, 읽기는 volatile 필드(val/next/table)의 happens-before 보장에 기대어 락 없이 수행한다. 그 대가로 읽기·순회·size는 약한 일관성을 가진다.</p></div></div></div>
+    </section>
+
+    <nav class="pager">
+<a class="prev" href="../01-java-kotlin/bigdecimal-equals-compareto.html"><span class="dir">← 이전</span><span class="ttl">BigDecimal의 equals vs compareTo — 스케일이 만드는 금액 비교 버그</span></a>
+<a class="next" href="../01-java-kotlin/deadlock-analysis-prevention.html"><span class="dir">다음 →</span><span class="ttl">데드락 — 스레드 덤프에서 찾는 법, 성립 4조건, 코드 레벨 예방 전략</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/01-java-kotlin/concurrenthashmap-internals.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

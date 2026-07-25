@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="02-spring/scheduled-tasks-threading" style="--hue:132">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>@Scheduled 실행 스레드와 지연 전파 — 기본은 스레드 &quot;1개&quot;를 전원이 나눠 쓴다 | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(132%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#02-spring">2. Spring / Spring Boot</a>
+    <span class="sep">/</span>
+    <span class="cur">@Scheduled 실행 스레드와 지연 전파</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">기본 동작 — 단일 스레드 공유가 만드는 연쇄 지연</span></a></li>
+<li><a href="#sec-3"><span class="n">2</span><span class="t">진단 — 스레드 이름과 스레드 덤프</span></a></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">대책 3가지</span></a></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">파생 문제 — 병렬화하면 &quot;같은 작업의 중복 실행&quot;이 등장한다</span></a></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">다중 인스턴스 — 서버가 2대면 배치도 2번 돈다</span></a></li>
+<li><a href="#sec-7"><span class="n">6</span><span class="t">예외가 나면 다음 회차는 도는가</span></a></li>
+<li><a href="#sec-8"><span class="n">1</span><span class="t">꼬리질문 대비 포인트</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">2. Spring / Spring Boot</span>
+      <h1>@Scheduled 실행 스레드와 지연 전파 — 기본은 스레드 &quot;1개&quot;를 전원이 나눠 쓴다</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>6분</b></span>
+        <span>🧩 <b>8</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/8 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>Spring Boot의 <code>@Scheduled</code>는 기본적으로 <strong>풀 크기 1짜리 <code>ThreadPoolTaskScheduler</code></strong>(<code>scheduling-1</code> 스레드)에서 실행된다. 애플리케이션의 <strong>모든 @Scheduled 작업이 이 한 스레드를 공유</strong>하므로, 한 작업이 지연·블록되면 <strong>무관해 보이는 다른 스케줄 작업까지 전부 밀린다.</strong> 대책은 풀 확장 / @Async로 트리거·실행 분리 / 작업군별 스케줄러 분리 — 단, 실행을 병렬화하는 순간 <strong>같은 작업의 중복 실행</strong>과 <strong>다중 인스턴스 동시 실행</strong>이라는 파생 문제를 함께 막아야 한다(fixedDelay vs fixedRate 의미, ShedLock).</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;<code>@Scheduled</code> 작업들은 기본적으로 어떤 스레드에서 실행되나요? 한 작업의 지연이 다른 작업에 미치는 영향과 대책은?&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>기본이 단일 스레드 풀이라 느린 작업 하나가 다른 모든 스케줄을 밀리게 하는데, 증상(특정 작업이 제때 안 돎)에서 원인(스레드 공유)으로 가는 연결이 어렵다. &quot;프레임워크 기본값을 확인하고 쓰는&quot; 습관의 표본으로서 묻는다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>기본 동작 — 단일 스레드 공유가 만드는 연쇄 지연</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li>부트가 자동 구성하는 스케줄러: <code>ThreadPoolTaskScheduler</code>, <strong>pool size 1</strong>, 스레드 이름 <code>scheduling-1</code>.</li>
+<li>장애 시나리오: 새벽 3시 정산 배치가 외부 API 지연으로 40분간 블록 → 같은 스레드에서 돌아야 할 <strong>5분마다의 토큰 정리, 10분마다의 통계 집계가 40분간 전부 실행되지 않음.</strong> 코드상 아무 관련이 없는 작업들이 스레드 하나를 공유한다는 이유만으로 서로를 막는다.</li>
+<li>이 구조를 모르면 &quot;통계 배치가 안 돌았다&quot;는 장애의 원인을 통계 코드에서만 찾게 된다 — 진범은 옆 작업.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>진단 — 스레드 이름과 스레드 덤프</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li>스케줄 작업 로그의 스레드 이름이 전부 <code>scheduling-1</code>이면 단일 스레드 공유 상태라는 자백이다.</li>
+<li>작업이 안 돌 때: 스레드 덤프(jstack)에서 <code>scheduling-1</code>이 <strong>어느 스택에서 블록</strong>돼 있는지 확인 — 외부 API 대기인지, DB 락인지 즉시 드러난다 (<a href="../02-spring/slow-application-startup-diagnosis.html" class="xref"><code>slow-application-startup-diagnosis.md</code></a>의 침묵 구간 진단과 같은 도구).</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>대책 3가지</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="code">
+<div class="code-bar"><span class="code-lang">yaml</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com"># ① 풀 확장 — 작업들이 서로를 막지 않게</span>
+<span class="tk-key">spring</span>:
+<span class="tk-key">  task</span>:
+<span class="tk-key">    scheduling</span>:
+<span class="tk-key">      pool</span>:
+<span class="tk-key">        size</span>: <span class="tk-num">5</span></code></pre>
+</div>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// ② @Async 조합 — 스케줄러 스레드는 '트리거'만, 실행은 별도 풀에서</span>
+<span class="tk-anno">@Async</span>(<span class="tk-str">&quot;batchExecutor&quot;</span>)
+<span class="tk-anno">@Scheduled</span>(fixedDelay = <span class="tk-num">300_000</span>)
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">cleanUpTokens</span>() { ... }   <span class="tk-com">// async-annotation.md 의 실행 풀 설정·예외 처리 함정 참고</span></code></pre>
+</div>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// ③ 작업군별 스케줄러 분리 — 중요 작업을 무거운 작업군과 격리</span>
+<span class="tk-anno">@Configuration</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">SchedulerConfig</span> <span class="tk-kw">implements</span> <span class="tk-type">SchedulingConfigurer</span> {
+    <span class="tk-anno">@Override</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">configureTasks</span>(<span class="tk-type">ScheduledTaskRegistrar</span> registrar) {
+        <span class="tk-type">ThreadPoolTaskScheduler</span> scheduler = <span class="tk-kw">new</span> <span class="tk-type">ThreadPoolTaskScheduler</span>();
+        scheduler.<span class="tk-fn">setPoolSize</span>(<span class="tk-num">3</span>);
+        scheduler.<span class="tk-fn">setThreadNamePrefix</span>(<span class="tk-str">&quot;critical-sched-&quot;</span>);
+        scheduler.<span class="tk-fn">initialize</span>();
+        registrar.<span class="tk-fn">setTaskScheduler</span>(scheduler);
+    }
+}</code></pre>
+</div>
+<ul>
+<li>③을 더 밀면: 무거운 배치는 아예 <strong>배치 전용 인스턴스</strong>(또는 Spring Batch)로 분리해 API 서버의 스케줄러와 물리적으로 격리.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>파생 문제 — 병렬화하면 &quot;같은 작업의 중복 실행&quot;이 등장한다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="tw"><table><thead><tr><th>속성</th><th>간격의 기준</th><th>이전 회차가 오래 걸리면</th></tr></thead><tbody>
+<tr><td><code>fixedDelay</code></td><td>이전 실행 <strong>종료</strong> 후 N ms</td><td>다음 회차가 그만큼 늦춰짐 — <strong>절대 겹치지 않음</strong></td></tr>
+<tr><td><code>fixedRate</code></td><td>이전 실행 <strong>시작</strong> 기준 N ms</td><td>다음 회차가 밀려서 대기하다 <strong>연달아</strong> 실행됨</td></tr>
+</tbody></table></div>
+<ul>
+<li>주의할 정밀 포인트: 순수 스케줄러에서는 <code>fixedRate</code>라도 <strong>같은 작업이 동시에 2개 실행되지는 않는다</strong>(JDK <code>scheduleAtFixedRate</code> 계약 — 늦게라도 순차 실행). 풀을 늘려도 마찬가지다.</li>
+<li><strong>중복 실행이 실제로 생기는 순간은 ② @Async를 조합했을 때</strong> — 스케줄러는 정시에 트리거만 하고 실행은 다른 스레드가 하므로, 작업 시간이 주기보다 길면 이전 회차가 끝나기 전에 다음 회차가 시작된다. 멱등하지 않은 배치(정산, 발송)라면 사고. 가드: <code>fixedDelay</code> 유지, <code>AtomicBoolean</code> 실행 중 플래그, 또는 락.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>다중 인스턴스 — 서버가 2대면 배치도 2번 돈다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li><code>@Scheduled</code>는 인스턴스마다 각자 실행된다. 스케일 아웃한 순간 정산 배치가 N번 실행되는 사고.</li>
+<li>대책: <strong>ShedLock</strong> 같은 분산 락(DB/Redis에 락 레코드, <code>@SchedulerLock(name=..., lockAtMostFor=...)</code>) — 한 인스턴스만 실행하고 나머지는 스킵. 또는 스케줄 작업을 배치 전용 인스턴스 1대로 분리.</li>
+<li><code>lockAtMostFor</code>는 실행 인스턴스가 죽었을 때 락이 영원히 안 풀리는 것을 막는 안전핀 — 작업 최장 소요 시간보다 길게.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-7">
+<div class="sec-head">
+  <span class="sec-n">6</span>
+  <h2>예외가 나면 다음 회차는 도는가</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li>Spring이 작업을 에러 핸들러로 감싸므로 <strong>예외는 로깅되고 다음 회차는 계속 실행된다</strong> (raw JDK <code>scheduleAtFixedRate</code>에서 예외가 이후 실행 전체를 죽이는 것과 다른 점 — Spring의 래핑 덕분).</li>
+<li>다만 &quot;로그만 남고 조용히 실패가 반복&quot;되는 게 기본값이라는 뜻이기도 하다 — 실패 알림이 필요하면 <code>TaskScheduler</code>에 커스텀 <code>ErrorHandler</code>를 설정하거나 작업 내부에서 실패를 메트릭/알림으로 승격.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-8">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>꼬리질문 대비 포인트</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p class="qa-hint">질문을 눌러 답을 펼쳐보세요 — 먼저 스스로 답해본 뒤 확인하면 훨씬 오래 남습니다.</p><div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q1</span><span>풀을 5로 늘리면 중복 실행 걱정은?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>순수 스케줄러는 같은 작업을 겹쳐 실행하지 않는다(JDK 계약). 겹침은 @Async 조합 시의 문제.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q2</span><span>fixedDelay 5분 작업이 6분 걸리면?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>종료 기준이므로 실행 간격이 11분꼴이 될 뿐 겹치지 않는다. 주기 보장이 중요하면 fixedRate + 멱등성/락.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q3</span><span>서버 2대인데 배치가 두 번 돌았다</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>ShedLock 분산 락 또는 배치 인스턴스 분리. cron 표기 시간대(<code>zone</code> 속성)도 함께 점검.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q4</span><span>@Scheduled 메서드에 @Transactional 붙이면?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>스케줄러 스레드에서 프록시를 거쳐 정상 적용된다(자기 호출 아님). 단 긴 트랜잭션이면 커넥션 점유 시간 문제는 그대로(<a href="../02-spring/hikaricp-connection-pool-exhaustion.html" class="xref"><code>hikaricp-connection-pool-exhaustion.md</code></a>).</p></div>
+</div>
+</div>
+</section>
+
+    <section class="summary maskable">
+      <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="mask-target"><p><code>@Scheduled</code>의 기본값은 &quot;스레드 1개를 전 작업이 공유&quot;라서 한 작업의 블록이 무관한 작업 전체를 밀리게 한다 — 풀 확장·@Async 분리·스케줄러 분리로 격리하되, 병렬화가 만드는 같은 작업 중복 실행(fixedDelay vs fixedRate + @Async 함정)과 다중 인스턴스 동시 실행(ShedLock)까지 막아야 완성이다.</p></div>
+    </section>
+
+    <nav class="pager">
+<a class="prev" href="../02-spring/resttemplate-webclient-restclient.html"><span class="dir">← 이전</span><span class="ttl">RestTemplate vs WebClient vs RestClient — &quot;최신이니까 WebClient&quot;가 왜 틀린 판단인가</span></a>
+<a class="next" href="../02-spring/slow-application-startup-diagnosis.html"><span class="dir">다음 →</span><span class="ttl">애플리케이션 시작 시간이 갑자기 길어졌을 때 — 추적과 개선</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/02-spring/scheduled-tasks-threading.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

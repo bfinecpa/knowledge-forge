@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="02-spring/slow-application-startup-diagnosis" style="--hue:132">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>애플리케이션 시작 시간이 갑자기 길어졌을 때 — 추적과 개선 | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(132%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#02-spring">2. Spring / Spring Boot</a>
+    <span class="sep">/</span>
+    <span class="cur">애플리케이션 시작 시간이 갑자기 길어졌을 때</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">진단 순서 — 데이터를 단계적으로 뜬다</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-2-1"><span class="t">① 부트 로그: 타임스탬프 간격 분석</span></a></li><li><a href="#sec-2-2"><span class="t">② 로그 침묵 구간: 기동 중 스레드 덤프</span></a></li><li><a href="#sec-2-3"><span class="t">③ 체계적 계측: BufferingApplicationStartup + /actuator/startup</span></a></li></ul></li>
+<li><a href="#sec-3"><span class="n">2</span><span class="t">흔한 범인</span></a></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">개선</span></a></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">AI 활용의 관점</span></a></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">꼬리질문 대비 포인트</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">2. Spring / Spring Boot</span>
+      <h1>애플리케이션 시작 시간이 갑자기 길어졌을 때 — 추적과 개선</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>7분</b></span>
+        <span>🧩 <b>6</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/6 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>진단 순서는 ① <strong>부트 로그의 타임스탬프 간격</strong>으로 어느 단계가 벌어졌는지 특정 → ② 로그가 <strong>침묵하는 구간</strong>은 로그로는 답이 안 나오므로 기동 중 프로세스에 <strong>스레드 덤프(jstack)</strong>를 떠서 main 스레드가 어디에 블록돼 있는지 확인(DB 커넥션 대기·DNS·외부 API가 단골) → ③ 재발 방지를 위해 <strong>BufferingApplicationStartup + Actuator <code>startup</code> 엔드포인트</strong>로 빈 단위 초기화 타임라인을 계측. 개선은 무거운 초기화의 지연(@Lazy)·비동기화와 예열의 <code>ApplicationReadyEvent</code> 이후 이동 — 단 전역 lazy는 fail-fast와 긴장 관계라는 트레이드오프까지 말해야 완성.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;애플리케이션 시작 시간이 갑자기 길어졌습니다. 어떻게 추적하고 개선하나요?&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>시작이 느리면 스케일 아웃 반응과 배포 속도가 함께 느려진다. 빈 초기화 비용을 측정하고 지연(lazy)하는 방법을 아는지 — 잘 안 보는 지표에서 운영 품질을 찾는 시야를 본다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>진단 순서 — 데이터를 단계적으로 뜬다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<h3 id="sec-2-1">① 부트 로그: 타임스탬프 간격 분석</h3>
+<p>로그를 &quot;읽는&quot; 게 아니라 <strong>어느 두 줄 사이가 벌어졌는지</strong>를 본다. 벌어진 지점의 앞줄이 어떤 단계였는지로 범인 계열을 특정한다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>10:00:01.123  ... HikariPool-1 - Starting...
+10:00:01.456  ... HikariPool-1 - Start completed.        # 정상: 수백 ms
+10:00:01.500  ... Initializing JPA EntityManagerFactory
+10:01:02.789  ... Initialized JPA EntityManagerFactory   # ← 61초! 여기가 범인 구간</code></pre>
+</div>
+<h3 id="sec-2-2">② 로그 침묵 구간: 기동 중 스레드 덤프</h3>
+<p>로그가 1분간 아무것도 안 찍는다면 그 1분은 로그를 백 번 봐도 답이 없다. <strong>기동 중인 프로세스에 <code>jstack &lt;pid&gt;</code></strong> — main 스레드의 스택을 보면 무엇을 기다리는지 즉시 드러난다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>&quot;main&quot; #1 ... RUNNABLE
+   at java.net.SocketInputStream.socketRead0(Native Method)   # ← 소켓 응답 대기
+   at com.mysql.cj.protocol.a.NativeProtocol...               # ← DB에 붙는 중
+   at com.zaxxer.hikari.pool.HikariPool.checkFailFast(...)</code></pre>
+</div>
+<ul>
+<li><code>socketRead</code>/<code>connect</code> + DB 드라이버 스택 → DB 연결·응답 지연</li>
+<li><code>InetAddress.getByName</code> → DNS 조회 지연 (역방향 조회 포함)</li>
+<li>HTTP 클라이언트 스택 → <code>@PostConstruct</code>류의 외부 API 호출 대기</li>
+<li>특정 빈 생성자/<code>afterPropertiesSet</code> → 그 빈의 초기화 로직</li>
+</ul>
+<p>장애 중 커넥션 점유 스레드를 찾을 때와 같은 도구다 — <a href="../02-spring/hikaricp-connection-pool-exhaustion.html" class="xref"><code>hikaricp-connection-pool-exhaustion.md</code></a>의 스레드 덤프 활용(피해자 vs 용의자 구분)과 같은 방법론.</p>
+<h3 id="sec-2-3">③ 체계적 계측: BufferingApplicationStartup + <code>/actuator/startup</code></h3>
+<p>일회성 진단을 넘어 <strong>빈 단위 초기화 시간 타임라인</strong>을 남기려면:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">public</span> <span class="tk-kw">static</span> <span class="tk-kw">void</span> <span class="tk-fn">main</span>(<span class="tk-type">String</span>[] args) {
+    <span class="tk-type">SpringApplication</span> app = <span class="tk-kw">new</span> <span class="tk-type">SpringApplication</span>(<span class="tk-type">MyApplication</span>.<span class="tk-kw">class</span>);
+    app.<span class="tk-fn">setApplicationStartup</span>(<span class="tk-kw">new</span> <span class="tk-type">BufferingApplicationStartup</span>(<span class="tk-num">2048</span>)); <span class="tk-com">// 스텝 버퍼</span>
+    app.<span class="tk-fn">run</span>(args);
+}</code></pre>
+</div>
+<div class="code">
+<div class="code-bar"><span class="code-lang">yaml</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-key">management</span>:
+<span class="tk-key">  endpoints</span>:
+<span class="tk-key">    web</span>:
+<span class="tk-key">      exposure</span>:
+<span class="tk-key">        include</span>: health, startup   <span class="tk-com"># startup 노출 (보안 주의는 actuator 문서 참조)</span></code></pre>
+</div>
+<p><code>POST /actuator/startup</code> 이 <code>spring.beans.instantiate</code> 스텝별 소요 시간을 반환 — 어떤 빈이 몇 ms 먹었는지 정렬해서 보면 된다. 노출 시 보안은 <a href="../02-spring/actuator-endpoints-security.html" class="xref"><code>actuator-endpoints-security.md</code></a> 기준을 따른다.</p>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>흔한 범인</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="tw"><table><thead><tr><th>계열</th><th>구체 사례</th><th>단서</th></tr></thead><tbody>
+<tr><td>외부 시스템 대기</td><td>DB 커넥션 풀 init 지연, DNS 역방향 조회, 외부 설정 서버</td><td>스레드 덤프의 socket/connect 스택</td></tr>
+<tr><td><code>@PostConstruct</code> 무거운 작업</td><td>캐시 예열, 원격 API 호출, 대량 조회</td><td>특정 빈 초기화 구간에서 침묵</td></tr>
+<tr><td>JPA/Hibernate 초기화</td><td>엔티티 수 증가, <code>ddl-auto: validate</code>의 스키마 대조</td><td>&quot;Initializing JPA EntityManagerFactory&quot; 구간 팽창</td></tr>
+<tr><td>DB 마이그레이션</td><td>flyway/liquibase가 대형 스크립트 실행</td><td>flyway 로그 직후 침묵</td></tr>
+<tr><td>스캔·구성 증가</td><td>클래스패스 스캔 범위 확대, 의존성 추가로 auto-configuration 후보 증가</td><td>의존성 추가 시점과 일치, 스텝 계측으로 확인</td></tr>
+</tbody></table></div>
+<p>&quot;갑자기&quot; 길어졌다면 <strong>그 사이에 바뀐 것</strong>(의존성 추가, 엔티티 추가, 마이그레이션 누적, 인프라 변경)과 교차 검증하는 것이 지름길이다.</p>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>개선</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li><strong>무거운 초기화 지연</strong>: 해당 빈에 <code>@Lazy</code> — 첫 사용 시점으로 미룬다.</li>
+<li><strong>예열은 기동 후로</strong>: <code>@PostConstruct</code>의 캐시 예열·원격 호출을 <code>ApplicationReadyEvent</code> 리스너(+<code>@Async</code>)로 이동 — 서버는 먼저 뜨고 예열은 뒤에서.</li>
+<li><strong>원인 자체 제거</strong>: DNS 설정 교정, 마이그레이션 베이스라인 정리, <code>ddl-auto</code> 전략 조정.</li>
+<li><strong>전역 <code>spring.main.lazy-initialization: true</code>의 트레이드오프</strong>: 기동은 빨라지지만 ① 첫 요청이 초기화 비용을 뒤집어쓰고 ② 잘못된 빈 구성이 기동 시점이 아니라 <strong>첫 사용 시점에야 터진다</strong> — <a href="../02-spring/application-yml-profile.html" class="xref"><code>application-yml-profile.md</code></a>의 fail-fast 원칙(잘못된 구성은 시끄러운 기동 실패로 드러나야 한다)과 정면으로 긴장 관계. 운영 서비스에서는 전역 lazy보다 문제 빈만 선별 지연이 정석.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>AI 활용의 관점</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>&quot;AI에게 분석시킨다&quot;는 답 자체는 현대적 워크플로로 유효하다. 단, AI는 <strong>준 데이터만큼만</strong> 진단한다 — 침묵 구간은 로그를 아무리 줘도 답이 없다. &quot;타임스탬프 로그 + 기동 중 스레드 덤프 + startup 타임라인을 떠서 주며 묻는다&quot;라고 말할 수 있어야 한다. <strong>무엇을 떠서 줄지 아는 것</strong>이 곧 진단 역량이고, 면접이 확인하는 것도 그것이다.</p>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>꼬리질문 대비 포인트</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p class="qa-hint">질문을 눌러 답을 펼쳐보세요 — 먼저 스스로 답해본 뒤 확인하면 훨씬 오래 남습니다.</p><div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q1</span><span>스레드 덤프에서 main이 RUNNABLE인데도 안 나가요</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>RUNNABLE이라도 native socket read는 커널에서 대기 중일 수 있다(스택 내용으로 판단). 몇 초 간격으로 2~3회 떠서 스택이 같은 곳에 머무는지 확인.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q2</span><span>운영에서만 느리고 로컬은 빠릅니다</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>환경 차이 계열: DNS/방화벽(연결 타임아웃까지 대기), 외부 설정 서버, DB 원격 지연, 프로파일별 빈 구성 차이.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q3</span><span>K8s에서 기동이 느려지면 무슨 일이?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>liveness/startup probe 타임아웃에 걸려 무한 재시작 루프 가능. <code>startupProbe</code>로 기동 시간을 벌어주는 구성과 연결(graceful-shutdown 문서의 probe 논의 참조).</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q4</span><span>CDS·AOT·CRaC 같은 기동 최적화는?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>Spring Boot 3의 AOT/네이티브 이미지, CDS 아카이브는 '항상 느린 기동'의 개선책. 단 이 질문의 본령은 &quot;갑자기 길어진&quot; 회귀의 원인 추적이 먼저다.</p></div>
+</div>
+</div>
+</section>
+
+    <section class="summary maskable">
+      <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="mask-target"><p>기동 지연 추적은 &quot;로그 타임스탬프 간격으로 구간 특정 → 침묵 구간은 기동 중 스레드 덤프로 main의 블록 지점 확인 → BufferingApplicationStartup으로 빈 단위 계측&quot;의 순서고, 개선은 무거운 초기화의 @Lazy 지연과 예열의 ApplicationReadyEvent 이후 이동 — 전역 lazy는 fail-fast를 희생하는 트레이드오프임을 함께 말해야 한다.</p></div>
+    </section>
+
+    <nav class="pager">
+<a class="prev" href="../02-spring/scheduled-tasks-threading.html"><span class="dir">← 이전</span><span class="ttl">@Scheduled 실행 스레드와 지연 전파 — 기본은 스레드 &quot;1개&quot;를 전원이 나눠 쓴다</span></a>
+<a class="next" href="../02-spring/spring-boot-auto-configuration.html"><span class="dir">다음 →</span><span class="ttl">Spring Boot Auto Configuration — &quot;알아서 해주는 마법&quot;의 실체는 조건부 빈 등록</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/02-spring/slow-application-startup-diagnosis.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="01-java-kotlin/jit-compiler-performance" style="--hue:25">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JIT 컴파일러 — 동작 원리와 성능 영향 (쉬운 용어 버전) | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(25%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#01-java-kotlin">1. Java / Kotlin 언어</a>
+    <span class="sep">/</span>
+    <span class="cur">JIT 컴파일러</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">용어 사전 — 본문 읽기 전에</span></a></li>
+<li><a href="#sec-3"><span class="n">1</span><span class="t">기본 동작 — 통역사와 번역가</span></a></li>
+<li><a href="#sec-4"><span class="n">2</span><span class="t">JIT가 빠르게 만드는 방법 — 핵심은 &quot;지켜본 다음 번역한다&quot;</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-4-1"><span class="t">2-1. 인라이닝 — 가장 중요한 최적화</span></a></li><li><a href="#sec-4-2"><span class="t">2-2. 탈가상화 — &quot;매번 타입 확인&quot;을 베팅으로 없애기</span></a></li><li><a href="#sec-4-3"><span class="t">2-3. 탈출 분석 + 스칼라 치환 — 객체를 아예 안 만들기</span></a></li><li><a href="#sec-4-4"><span class="t">2-4. 나머지 최적화들</span></a></li></ul></li>
+<li><a href="#sec-5"><span class="n">3</span><span class="t">[면접] 대가와 부작용 — 실무에서 체감하는 5가지</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-5-1"><span class="t">3-1. 워밍업 — 배포 직후가 느리다</span></a></li><li><a href="#sec-5-2"><span class="t">3-2. 역최적화 — 베팅이 틀리는 순간</span></a></li><li><a href="#sec-5-3"><span class="t">3-3. 메가모픽 — 다형성의 숨은 비용</span></a></li><li><a href="#sec-5-4"><span class="t">3-4. 코드 캐시 고갈 — 번역본 보관함이 가득 차면</span></a></li><li><a href="#sec-5-5"><span class="t">3-5. 프로파일 오염 — 잘못 지켜보고 번역하면</span></a></li></ul></li>
+<li><a href="#sec-6"><span class="n">4</span><span class="t">[면접] 워밍업의 근본 대안 — CDS vs Leyden vs Native Image</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-6-1"><span class="t">4-1. CDS / AppCDS — &quot;책 준비 작업&quot;을 저장</span></a></li><li><a href="#sec-6-2"><span class="t">4-2. AOT 캐시 / Project Leyden — &quot;번역가의 관찰 노트&quot;까지 저장</span></a></li><li><a href="#sec-6-3"><span class="t">4-3. GraalVM Native Image — 아예 &quot;출판 전에 전부 번역</span></a></li><li><a href="#sec-6-4"><span class="t">4-4. 비교 — 무엇을 저장하는가</span></a></li><li><a href="#sec-6-5"><span class="t">4-5. [실전] AOT 캐시 × 파드 오토스케일링</span></a></li><li><a href="#sec-6-6"><span class="t">4-6. [실전] 운영 파드에서 캐시 수확하기 — CI 훈련의 대안</span></a></li><li><a href="#sec-6-7"><span class="t">4-7. CRaC — &quot;예열된 파드 복제&quot;를 끝까지 밀어붙인 것</span></a></li></ul></li>
+<li><a href="#sec-7"><span class="n">5</span><span class="t">관측 방법</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">1. Java / Kotlin 언어</span>
+      <h1>JIT 컴파일러 — 동작 원리와 성능 영향 (쉬운 용어 버전)</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>18분</b></span>
+        <span>🧩 <b>7</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/7 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>JIT는 &quot;일단 통역으로 시작하고, 자주 실행되는 코드만 실행을 지켜본 뒤 그 관찰 결과를 근거로 기계어로 번역&quot;하는 방식이다. 덕분에 예열된 후의 성능은 매우 좋지만, 대가로 ① 시동 직후엔 느리고(워밍업) ② 관찰 기반 베팅이 틀리면 순간 느려지며(역최적화) ③ 번역본 보관함이 차면 성능이 서서히 죽는다(코드 캐시 고갈). 면접 포인트는 최적화 이름 나열이 아니라 &quot;런타임 관찰 → 베팅 → 틀리면 무르기&quot;라는 원리와 실무 증상(배포 직후 스파이크)을 연결하는 것.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;JIT 컴파일러의 동작(C1/C2, 인라이닝, 탈최적화)이 성능에 미치는 영향을 설명해주세요.&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>배포 직후 latency 상승, 부하 테스트의 워밍업 필요성 같은 &quot;측정을 오염시키는 요인&quot;을 아는지 본다. 이걸 모르면 성능 측정 자체를 잘못해서 잘못된 결론으로 튜닝한다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>용어 사전 — 본문 읽기 전에</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="tw"><table><thead><tr><th>용어</th><th>쉬운 말로</th></tr></thead><tbody>
+<tr><td>인터프리터</td><td>바이트코드를 한 줄씩 그때그때 해석해 실행하는 방식 (동시통역사)</td></tr>
+<tr><td>JIT 컴파일</td><td>자주 쓰는 코드를 기계어로 미리 번역해 두는 것 (번역가)</td></tr>
+<tr><td>핫스팟(hotspot)</td><td>자주 실행되는 뜨거운 코드 구간</td></tr>
+<tr><td>call site (호출 지점)</td><td>메서드를 호출하는 코드의 &quot;그 줄&quot;</td></tr>
+<tr><td>인라이닝</td><td>호출 대신 메서드 내용을 그 자리에 복사해 넣기</td></tr>
+<tr><td>가상 메서드 호출</td><td>실제 타입에 따라 실행 코드가 달라지는 호출 (오버라이딩)</td></tr>
+<tr><td>모노/바이/메가모픽</td><td>그 호출 줄에 실제로 오는 타입이 1개 / 2개 / 3개 이상</td></tr>
+<tr><td>탈가상화</td><td>&quot;매번 타입 확인&quot;을 &quot;한 타입으로 가정한 직접 호출&quot;로 바꾸기</td></tr>
+<tr><td>추측 실행</td><td>관찰 결과를 근거로 &quot;아마 이럴 것&quot;이라 베팅하고 빠른 길 만들기</td></tr>
+<tr><td>역최적화(deoptimization)</td><td>베팅이 틀렸을 때 번역본을 버리고 통역 모드로 복귀</td></tr>
+<tr><td>탈출 분석</td><td>객체가 메서드 밖으로 새나가는지 조사</td></tr>
+<tr><td>스칼라 치환</td><td>안 새나가는 객체를 힙에 안 만들고 낱개 변수(int 등)로 분해</td></tr>
+<tr><td>워밍업</td><td>번역이 쌓여서 제 속도가 날 때까지의 예열 구간</td></tr>
+<tr><td>코드 캐시</td><td>번역된 기계어를 보관하는 전용 메모리</td></tr>
+<tr><td>AOT (Ahead-Of-Time)</td><td>실행 전에 미리 번역하는 방식 (JIT의 반대말)</td></tr>
+<tr><td>훈련 실행 (training run)</td><td>캐시를 만들기 위해 배포 전에 앱을 한 번 돌려보는 것</td></tr>
+<tr><td>AOT 캐시</td><td>훈련 실행의 클래스 로딩 결과 + 관찰 노트를 저장한 파일 (JDK 24/25, Leyden)</td></tr>
+<tr><td>CRaC</td><td>예열 끝난 JVM 프로세스를 통째로 스냅샷 → 복원하며 기동하는 기술</td></tr>
+</tbody></table></div>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>기본 동작 — 통역사와 번역가</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>자바 프로그램 실행을 &quot;외국어 문서 읽기&quot;에 비유하면:</p>
+<ul>
+<li><strong>인터프리터 = 동시통역사.</strong> 문장을 만날 때마다 그 자리에서 한 줄씩 통역. 바로 시작할 수 있지만, 같은 문장을 100번 만나면 100번 다시 통역한다. 느리다.</li>
+<li><strong>JIT 컴파일러 = 번역가.</strong> 자주 나오는 페이지를 발견하면 아예 번역해서 붙여둔다. 번역하는 데 시간은 걸리지만, 다음부터는 읽기만 하면 되니 빠르다.</li>
+</ul>
+<p>JVM은 둘을 섞어 쓴다. <strong>처음엔 전부 통역(인터프리트)으로 시작</strong>하면서 메서드 호출 횟수·루프 반복 횟수를 세고, 임계치를 넘은 <strong>핫스팟만 골라 기계어로 번역(컴파일)</strong>한다.</p>
+<p>왜 전부 번역하지 않는가 — 실행 시간의 대부분은 극히 일부 코드가 차지하므로 (파레토), <strong>실제로 뜨거운 곳에만 번역 비용을 집중</strong>하는 게 이득이기 때문.</p>
+<h3 id="">계층형 컴파일 (Tiered Compilation) — 2단 로켓</h3>
+<p>&quot;빨리 어느 정도 빨라지게 → 데이터가 쌓이면 최대로 빠르게&quot;의 2단계. 현재 기본값.</p>
+<div class="tw"><table><thead><tr><th>단계</th><th>담당</th><th>특징</th></tr></thead><tbody>
+<tr><td>Level 0</td><td>인터프리터</td><td>즉시 실행 + &quot;어떻게 실행되는지&quot; 기록 시작</td></tr>
+<tr><td>Level 1~3</td><td><strong>C1</strong> 컴파일러</td><td>빠르게 번역, 가벼운 최적화 + 관찰 코드 삽입</td></tr>
+<tr><td>Level 4</td><td><strong>C2</strong> 컴파일러</td><td>느리게 번역, 관찰 기록을 근거로 공격적 최적화</td></tr>
+</tbody></table></div>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>JIT가 빠르게 만드는 방법 — 핵심은 &quot;지켜본 다음 번역한다&quot;</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>JIT의 진짜 무기는 번역 자체가 아니라, <strong>실제로 프로그램이 어떻게 돌아가는지 지켜본 다음에 번역한다</strong>는 점. 미리 번역하는 방식(AOT)은 &quot;실제로 어떻게 쓰이는지&quot;를 모르니 아래의 과감한 최적화들을 못 한다.</p>
+<h3 id="sec-4-1">2-1. 인라이닝 — 가장 중요한 최적화</h3>
+<p>메서드를 호출하는 것 자체에 비용이 든다(점프했다 돌아오기). 짧은 메서드는 호출하는 대신 <strong>내용을 호출한 자리에 복사해 붙여넣는다</strong>.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 개발자가 쓴 코드</span>
+<span class="tk-type">String</span> name = user.<span class="tk-fn">getName</span>();   <span class="tk-com">// getName()을 &quot;호출&quot;</span>
+
+<span class="tk-com">// JIT가 바꾼 코드 (개념상)</span>
+<span class="tk-type">String</span> name = user.name;        <span class="tk-com">// 호출 없이 내용물을 그 자리에 박아넣음</span></code></pre>
+</div>
+<p>getter/setter를 마음껏 써도 느려지지 않는 이유.</p>
+<p><strong>진짜 이득은 &quot;다른 최적화의 문을 여는 것&quot;.</strong> JIT는 코드를 한 덩어리 단위로 분석하는데, 메서드 호출이 있으면 저 너머가 안 보여서 분석이 끊긴다. 인라이닝으로 다 펼쳐 놓으면 전부 한 덩어리가 되어, 그제서야 보이는 낭비를 지울 수 있다:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 인라이닝 전: check() 안에서 뭘 하는지 몰라 손을 못 댐</span>
+<span class="tk-kw">if</span> (<span class="tk-fn">check</span>(x)) { ... }
+
+<span class="tk-com">// 인라이닝 후: &quot;x는 위에서 항상 양수 → 이 if는 항상 true → if 자체를 삭제&quot;</span></code></pre>
+</div>
+<h3 id="sec-4-2">2-2. 탈가상화 — &quot;매번 타입 확인&quot;을 베팅으로 없애기</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">for</span> (<span class="tk-type">Shape</span> s : shapes) {
+    s.<span class="tk-fn">draw</span>();    <span class="tk-com">// ← 이 줄이 call site (호출 지점)</span>
+}</code></pre>
+</div>
+<p><code>s.draw()</code>는 <code>s</code>가 <code>Circle</code>이냐 <code>Square</code>냐에 따라 실행되는 코드가 달라지는 <strong>가상 메서드 호출</strong>(오버라이딩). 매번 &quot;실제 타입이 뭐지?&quot;를 확인해야 하니 직접 호출보다 느리다.</p>
+<p>JIT가 지켜봤더니 이 줄에 <strong>실제로는 <code>Circle</code>만 계속 온다</strong>(= 모노모픽)면, 이렇게 <strong>베팅</strong>한다:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// JIT의 베팅: &quot;지금까지 전부 Circle이었으니 앞으로도 Circle일 거야&quot;</span>
+<span class="tk-kw">if</span> (s <span class="tk-kw">instanceof</span> <span class="tk-type">Circle</span>) {
+    <span class="tk-com">// Circle.draw()를 직접 실행 + 인라이닝까지 (빠름)</span>
+} <span class="tk-kw">else</span> {
+    <span class="tk-com">// 베팅 실패! 번역본 버리고 원래 방식으로 복귀 (역최적화)</span>
+}</code></pre>
+</div>
+<p>확실하진 않지만 관찰을 근거로 빠른 길을 만들어두는 것 — 이게 <strong>추측 실행</strong>.</p>
+<h3 id="sec-4-3">2-3. 탈출 분석 + 스칼라 치환 — 객체를 아예 안 만들기</h3>
+<p>객체가 <strong>메서드 안에서 태어나 밖으로 나가지 않고 안에서 죽는다</strong>면 (= 탈출하지 않으면), 힙에 만들 필요가 없다. <strong>낱개 변수로 분해</strong>해 버린다:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 개발자가 쓴 코드</span>
+<span class="tk-type">Point</span> p = <span class="tk-kw">new</span> <span class="tk-type">Point</span>(<span class="tk-num">3</span>, <span class="tk-num">5</span>);
+<span class="tk-kw">return</span> p.x + p.y;
+
+<span class="tk-com">// JIT가 바꾼 코드 (개념상): 객체가 사라지고 낱개 값만 남음</span>
+<span class="tk-kw">int</span> x = <span class="tk-num">3</span>;                       <span class="tk-com">// 힙 할당 없음, GC 부담 없음</span>
+<span class="tk-kw">int</span> y = <span class="tk-num">5</span>;
+<span class="tk-kw">return</span> x + y;</code></pre>
+</div>
+<p>객체(값의 묶음)를 스칼라(int 같은 낱개 값)로 바꿔치기해서 <strong>스칼라 치환</strong>. &quot;루프 안에서 임시 객체 좀 만들어도 생각보다 괜찮다&quot;의 근거. 탈출 안 하는 객체로 잡는 락도 지워준다(락 제거, lock elision).</p>
+<h3 id="sec-4-4">2-4. 나머지 최적화들</h3>
+<ul>
+<li><strong>루프 최적화</strong> — 반복문 펼치기(언롤링), 배열 범위 검사 제거, CPU의 묶음 연산 명령 활용(벡터화)</li>
+<li><strong>인트린식</strong> — <code>System.arraycopy</code>, <code>Math.min</code> 같은 유명 메서드를 CPU 전용 명령으로 통째로 치환</li>
+</ul>
+<p>이 덕분에 충분히 예열된 JVM의 핫 코드는 C/C++에 근접한 처리량을 낸다.</p>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>[면접] 대가와 부작용 — 실무에서 체감하는 5가지</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<h3 id="sec-5-1">3-1. 워밍업 — 배포 직후가 느리다</h3>
+<p>기동 직후엔 모든 코드가 통역 모드라 느리고, 번역 작업 자체도 CPU를 쓴다.</p>
+<ul>
+<li><strong>실무 증상: 배포/재시작 직후 몇 분간 레이턴시 스파이크, 첫 요청들 타임아웃</strong></li>
+<li>대응: 배포 시 트래픽을 서서히 올리기(램프업), 헬스체크 통과 전 예열 요청 태우기</li>
+<li><strong>벤치마크는 반드시 예열 후 측정</strong> — JMH가 워밍업 반복을 강제하는 이유. 예열 없이 재면 통역사의 속도를 재는 것</li>
+<li>근본 대안: CDS/AppCDS, AOT 캐시(Project Leyden), GraalVM Native Image (→ 4장에서 상세히)</li>
+</ul>
+<h3 id="sec-5-2">3-2. 역최적화 — 베팅이 틀리는 순간</h3>
+<p>C2의 최적화는 추측(베팅)에 기반한다. 새 클래스가 로딩되거나 예상 밖 타입이 들어와 <strong>가정이 깨지면 번역본을 찢고 통역 모드로 복귀</strong> 후 재번역. 순간 성능 저하 + 재예열이 발생하고, 반복되면(deopt storm) 지속적 성능 문제.</p>
+<h3 id="sec-5-3">3-3. 메가모픽 — 다형성의 숨은 비용</h3>
+<p>한 호출 지점에 오는 타입이 1개(모노모픽)·2개(바이모픽)까지는 베팅 + 인라이닝이 되지만, <strong>3개 이상(메가모픽)이면 &quot;가정 자체가 불가능&quot;이라 최적화를 포기</strong>하고 매번 타입 조회로 간다. 같은 인터페이스의 구현체가 여럿 섞여 지나가는 핫 루프는 눈에 안 보이는 성능 절벽이 될 수 있다.</p>
+<h3 id="sec-5-4">3-4. 코드 캐시 고갈 — 번역본 보관함이 가득 차면</h3>
+<p>번역된 기계어는 <strong>코드 캐시</strong>(기본 240MB, <code>-XX:ReservedCodeCacheSize</code>)에 보관된다. 가득 차면 <code>CodeCache is full. Compiler has been disabled</code> 경고와 함께 <strong>이후 번역이 중단</strong> → 새로 뜨거워진 코드가 전부 통역 모드로 돌아 전체 성능이 서서히 떨어진다. 클래스를 동적 생성하는 프레임워크(프록시 남발) 에서 실제 발생하는 장애 유형.</p>
+<h3 id="sec-5-5">3-5. 프로파일 오염 — 잘못 지켜보고 번역하면</h3>
+<p>공용 유틸 메서드가 초기에 특정 패턴으로만 호출되면 그 관찰 기록으로 번역되고, 이후 다른 패턴이 오면 역최적화되거나 최적이 아닌 코드로 돈다. 예열 트래픽이 실제 트래픽과 다르면 같은 문제.</p>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>[면접] 워밍업의 근본 대안 — CDS vs Leyden vs Native Image</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>문제의 본질: JVM은 재시작할 때마다 지난번에 했던 일을 전부 처음부터 다시 한다. 번역가 비유로, 서버를 껐다 켤 때마다 <strong>번역본과 관찰 노트를 전부 버리고 백지에서 시작</strong>하는 것. 세 대안은 전부 &quot;어차피 매번 똑같이 하는 일이면 한 번 해서 저장해두고 재사용하자&quot;인데, <strong>어디까지 저장하느냐</strong>가 다르다.</p>
+<h3 id="sec-6-1">4-1. CDS / AppCDS — &quot;책 준비 작업&quot;을 저장</h3>
+<p>JVM이 기동할 때 번역 이전에 하는 일: 수천 개의 <code>.class</code> 파일을 <strong>읽고 → 검증하고 → JVM 내부용 자료구조로 조립</strong>하는 클래스 로딩. 결과물은 매번 100% 똑같다.</p>
+<p><strong>CDS(Class Data Sharing)</strong> 는 이 조립 결과물을 한 번 만들어 파일(아카이브)로 저장해두고, 다음 기동부터는 조립을 생략하고 메모리에 그대로 얹는다. 즉석밥 원리 — 밥 짓는 과정(로딩·검증)을 생략하고 데우기만.</p>
+<ul>
+<li><strong>CDS</strong>: JDK 기본 클래스(String, HashMap 등)만 대상. 요즘 JDK엔 기본 탑재</li>
+<li><strong>AppCDS</strong>: 대상을 <strong>내 애플리케이션 클래스까지</strong> 확장 (App + CDS)</li>
+</ul>
+<p>한계: <strong>&quot;책 준비&quot;만 빨라진다.</strong> 번역(JIT)과는 무관해서, 기동 후 코드는 여전히 통역 모드에서 시작 → <strong>기동 시간은 줄지만 워밍업은 그대로</strong>.</p>
+<h3 id="sec-6-2">4-2. AOT 캐시 / Project Leyden — &quot;번역가의 관찰 노트&quot;까지 저장</h3>
+<p><strong>Project Leyden</strong> = OpenJDK 공식 프로젝트. 목표를 한 문장으로: &quot;런타임에 하던 일을 앞 시점으로 옮기자&quot;. <strong>훈련 실행(training run)</strong> 방식을 쓴다:</p>
+<ol>
+<li>배포 전에 앱을 <strong>한 번 실제로 돌려본다</strong> (녹화 모드)</li>
+<li>&quot;어떤 클래스가 로딩됐고, 어떤 메서드가 뜨거웠고, 어떤 타입이 지나갔는지&quot;를  <strong>AOT 캐시 파일로 저장</strong></li>
+<li>실제 기동 때 캐시를 얹고 시작 → <strong>지난 실행의 기억을 이어받은 상태로 출발</strong></li>
+</ol>
+<p>단계적 확장:</p>
+<ul>
+<li><strong>JDK 24</strong> — 클래스 로딩·링킹 결과를 캐시 (AppCDS의 강화판 수준)</li>
+<li><strong>JDK 25</strong> — <strong>JIT의 관찰 노트(프로파일)까지 캐시.</strong> 기동 직후부터 &quot;어디가 핫스팟인지, 어떤 타입이 오는지&quot;를 이미 알고 있으니 다시 지켜보는 기간 없이 바로 고품질 번역(C2)에 들어간다 → <strong>워밍업 구간 자체가 단축</strong></li>
+</ul>
+<p>핵심 특징: <strong>여전히 보통의 JIT JVM이다.</strong> 최고 속도(피크 성능)는 그대로, 거기 <strong>도달하는 시간만 단축</strong> — 잃는 게 거의 없는 접근.</p>
+<h3 id="sec-6-3">4-3. GraalVM Native Image — 아예 &quot;출판 전에 전부 번역&quot;</h3>
+<p>가장 급진적. <strong>빌드 시점에 자바 코드를 통째로 기계어로 번역해서, JVM 없이 혼자 도는 네이티브 실행 파일</strong>을 만든다. 통역사도 번역가도 배에 안 태운다.</p>
+<p><strong>얻는 것:</strong></p>
+<ul>
+<li>기동 <strong>밀리초 단위</strong> (JVM 기동 + 워밍업이 통째로 없음), 메모리 대폭 감소</li>
+<li>어울리는 곳: <strong>서버리스</strong>(요청마다 새로 뜨는 환경), CLI 도구, 수시로 스케일 아웃하는 k8s 환경</li>
+</ul>
+<p><strong>잃는 것:</strong></p>
+<ul>
+<li><strong>&quot;지켜본 다음 최적화&quot;를 포기.</strong> 번역이 실행 전에 끝나므로 관찰 기반 베팅(탈가상화 등)이 불가 → 충분히 예열된 JIT 대비 <strong>피크 성능은 보통 낮다</strong></li>
+<li><strong>&quot;닫힌 세계&quot; 가정</strong> — 빌드 시점에 모든 코드가 확정돼야 하므로 리플렉션· 동적 프록시·런타임 클래스 생성은 설정으로 미리 알려줘야 함. 스프링이 별도 AOT 처리를 지원하는 이유</li>
+<li>빌드가 매우 느림 (수 분)</li>
+</ul>
+<p>보완책 <strong>PGO</strong>(profile-guided optimization): 계측용 빌드를 한 번 돌려 프로파일을 수집한 뒤 반영해 재빌드 — &quot;지켜본 다음 번역&quot;을 빌드 단계에서 흉내 내는 것. 그래도 실행 중 계속 관찰·수정하는 JIT만큼 유연하진 않다.</p>
+<h3 id="sec-6-4">4-4. 비교 — 무엇을 저장하는가</h3>
+<div class="tw"><table><thead><tr><th></th><th>저장하는 것</th><th>기동 속도</th><th>워밍업 단축</th><th>피크 성능</th></tr></thead><tbody>
+<tr><td><strong>CDS/AppCDS</strong></td><td>클래스 조립 결과</td><td>조금 개선</td><td>✕ (없음)</td><td>그대로</td></tr>
+<tr><td><strong>Leyden AOT 캐시</strong></td><td>클래스 + <strong>관찰 노트(프로파일)</strong></td><td>크게 개선</td><td>◯ (크게 단축)</td><td>그대로</td></tr>
+<tr><td><strong>Native Image</strong></td><td><strong>번역 완제품</strong> (실행 파일)</td><td>밀리초</td><td>개념 자체가 없음</td><td><strong>보통 더 낮음</strong></td></tr>
+</tbody></table></div>
+<div class="callout"><span class="ic">💡</span><div><p>선택 기준: &quot;오래 떠서 최고 처리량이 중요한 서버 → JIT + Leyden 방향, 수시로 켜지고 꺼지는 서버리스 → Native Image&quot;</p></div></div>
+<h3 id="sec-6-5">4-5. [실전] AOT 캐시 × 파드 오토스케일링</h3>
+<p>오토스케일링의 고질병: 새 파드가 뜰 때마다 JVM이 백지에서 시작 → <strong>스케일 아웃이 필요한 순간(트래픽 급증)에 하필 제일 느린 파드가 투입</strong>된다. AOT 캐시가 딱 이 시나리오를 겨냥한다.</p>
+<p>핵심은 <strong>AOT 캐시가 &quot;실행 중인 서버&quot;가 아니라 &quot;파일&quot;</strong> 이라는 것. 파일이니까 컨테이너 이미지에 구울 수 있다:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>[CI/CD 파이프라인]
+1. 앱 빌드
+2. 훈련 실행: 앱을 잠깐 띄우고 대표 트래픽 태움 → app.aot 캐시 파일 생성
+3. 캐시 파일을 컨테이너 이미지에 포함시켜 빌드
+
+[운영 - 오토스케일링 발생]
+새 파드 기동 → 이미지 안의 캐시를 얹고 시작
+→ 클래스 로딩 생략 + 핫스팟을 이미 아는 상태로 출발 → 바로 C2 번역</code></pre>
+</div>
+<p><strong>훈련은 빌드 때 1번, 혜택은 스케일 아웃으로 뜨는 모든 파드가</strong> 받는다. 100번째 파드도 첫 파드와 똑같이 &quot;예열된 기억&quot;을 갖고 시작.</p>
+<p>현실적인 조건과 한계 4가지:</p>
+<ol>
+<li><strong>&quot;줄인다&quot;이지 &quot;없앤다&quot;가 아니다</strong> — 컴파일 자체는 여전히 기동 후에  일어난다(관찰 기간을 건너뛸 뿐). JVM 프로세스 기동 시간도 남는다.  기대치는 &quot;몇 분 예열 → 수십 초&quot; 수준. 밀리초 기동이 필요하면  Native Image나 CRaC의 영역</li>
+<li><strong>훈련 트래픽이 실제 트래픽과 비슷해야 한다</strong> — 3-5절 프로파일 오염이  그대로 적용. 단 치명적이진 않다: 여전히 JIT JVM이라 실행하면서 계속  다시 관찰·재번역하므로, 최악에도 &quot;캐시 없는 것과 비슷한 수준&quot;으로 떨어질 뿐</li>
+<li><strong>캐시는 환경에 묶인다</strong> — 같은 JDK 버전·클래스패스·주요 JVM 옵션에서만  유효. 코드가 바뀌면 캐시도 재생성 → &quot;빌드마다 훈련 실행&quot;을 파이프라인에  넣는 게 전제 (그만큼 빌드 시간 증가)</li>
+<li><strong>JDK 버전 제약</strong> — 클래스 캐시는 24부터, 알맹이인 프로파일 캐시는 25부터.  JDK 17/21에서는 아직 못 쓴다</li>
+</ol>
+<h3 id="sec-6-6">4-6. [실전] 운영 파드에서 캐시 수확하기 — CI 훈련의 대안</h3>
+<p>&quot;오토스케일링은 같은 환경의 파드를 늘리는 것이니, 훈련 없이 <strong>기존 파드가 만든 캐시</strong>를 새 파드가 받으면 되지 않나?&quot; — 맞는 직관이고 실제로 가능하다. 같은 이미지라 캐시 호환성이 자동 보장되고, 기존 파드가 받던 트래픽은 <strong>진짜 운영 트래픽</strong>이라 프로파일 대표성이 CI 합성 트래픽보다 좋다 (프로파일 오염 걱정이 원천적으로 없음).</p>
+<p>다만 걸림돌 두 가지:</p>
+<ul>
+<li><strong>캐시는 아무 때나 못 꺼낸다</strong> — 실행 중인 JVM에서 즉석으로 뽑는 게 아니라, ① 파드를 <strong>녹화 모드로 시작</strong>해야 하고 (<code>-XX:AOTMode=record</code> 계열) ② 파일은 <strong>JVM이 정상 종료될 때</strong> 기록된다. k8s의 SIGTERM + grace period 정상 종료 타이밍을 활용</li>
+<li><strong>전달 배관이 필요하다</strong> — 캐시는 파드 로컬에 떨어지는데 파드는 죽으면 사라지므로 공유 저장소(S3/PVC) + init container 다운로드 구성이 필요:</li>
+</ul>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>[1세대 파드] 녹화 모드 기동 → 운영 트래픽 처리
+     ↓ (종료/롤링 시)
+캐시 생성 → 공유 저장소 업로드
+
+[새 파드] init container가 캐시 다운로드 → 얹고 기동(-XX:AOTMode=on)</code></pre>
+</div>
+<p>제약: <strong>새 버전 배포 직후에는 캐시가 없다.</strong> 캐시는 빌드에 묶이므로 구버전 파드의 캐시는 신버전에 못 쓴다 → 배포 직후 1세대 파드들은 캐시 없이 뜨고, 이후 파드부터 혜택.</p>
+<div class="tw"><table><thead><tr><th></th><th>CI 훈련 (이미지에 굽기)</th><th>운영 파드에서 수확</th></tr></thead><tbody>
+<tr><td>프로파일 품질</td><td>합성 트래픽 — 대표성 한계</td><td><strong>진짜 운영 트래픽 — 최상</strong></td></tr>
+<tr><td>첫 파드부터 혜택</td><td><strong>◯</strong> (이미지에 이미 있음)</td><td>✕ (1세대는 캐시 없음)</td></tr>
+<tr><td>필요한 배관</td><td>파이프라인에 훈련 단계</td><td>공유 저장소 + init container + 종료 훅</td></tr>
+<tr><td>재현성/단순성</td><td>빌드 산출물 — 단순</td><td>런타임 상태 의존 — 관리 포인트 증가</td></tr>
+</tbody></table></div>
+<p>정석은 <strong>하이브리드</strong>: CI 훈련 캐시를 이미지에 구워 첫 파드를 커버하고, 운영 수확 캐시가 저장소에 생기면 그걸 우선 사용(품질 업그레이드).</p>
+<h3 id="sec-6-7">4-7. CRaC — &quot;예열된 파드 복제&quot;를 끝까지 밀어붙인 것</h3>
+<p><strong>CRaC</strong>(Coordinated Restore at Checkpoint): &quot;기존 파드가 이미 예열돼 있으니 결과물을 복제하자&quot;는 발상을 프로파일 <strong>파일</strong> 수준이 아니라 <strong>프로세스 전체</strong> 수준으로 밀어붙인 방식.</p>
+<ul>
+<li><strong>예열이 끝난 JVM 프로세스를 통째로 스냅샷</strong>(메모리 덤프) 찍어두고, 새 파드는 스냅샷을 <strong>복원</strong>하며 시작 — 번역본·관찰 노트뿐 아니라 <strong>커넥션 풀·캐시 등 애플리케이션 상태까지</strong> 예열된 채 밀리초~초 단위 기동</li>
+<li>대가: 스냅샷 전에 열린 리소스(소켓·파일)를 정리했다가 복원 후 다시 여는 코드가 필요 — Spring Boot 3.2+가 프레임워크 차원에서 지원</li>
+<li>주의: 스냅샷에 힙이 통째로 들어가므로 <strong>비밀번호·토큰이 파일에 남는</strong> 보안 이슈 관리 필요 (힙 덤프와 같은 문제)</li>
+<li>JDK 25를 못 쓰는 환경(17/21)에서 오토스케일링 워밍업을 줄이는 현실적 대안</li>
+</ul>
+<div class="tw"><table><thead><tr><th>상황</th><th>추천 방향</th></tr></thead><tbody>
+<tr><td>JDK 25+ 사용 가능</td><td><strong>AOT 캐시</strong> — 코드 수정 없이 파이프라인에 훈련만 추가</td></tr>
+<tr><td>JDK 17/21 + Spring Boot</td><td><strong>CRaC</strong> 검토, 또는 k8s 레벨 완화(readiness probe + 예열 요청, startupProbe)</td></tr>
+<tr><td>서버리스급 즉시 기동</td><td>Native Image (피크 성능 트레이드오프 감수)</td></tr>
+</tbody></table></div>
+</div>
+</section>
+<section class="sec" id="sec-7">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>관측 방법</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<ul>
+<li><code>-XX:+PrintCompilation</code> — 번역/역최적화(<code>made not entrant</code>) 이벤트 로그</li>
+<li><code>-XX:+UnlockDiagnosticVMOptions -XX:+PrintInlining</code> — 인라이닝 성공/실패 이유</li>
+<li>JFR의 Compilation 이벤트, JITWatch로 시각화</li>
+<li>코드 캐시 상태: <code>jcmd &lt;pid&gt; Compiler.codecache</code></li>
+</ul>
+<hr class="rule">
+<div class="callout"><span class="ic">💡</span><div><p>한 줄 요약: &quot;JIT는 '자주 실행되는 코드만, 실행을 지켜본 관찰 기록을 근거로' 기계어로 번역한다. 인라이닝(내용을 그 자리에 펼침)·탈가상화(한 타입이라고 베팅)·스칼라 치환(안 새나가는 객체는 낱개 변수로 분해)으로 예열 후 성능을 끌어올리는 대신, 시동 직후엔 느리고(워밍업 → 배포 램프업으로 대응), 베팅이 틀리면 무르고 다시 하며(역최적화), 타입이 3개 이상 섞이면 포기하고 (메가모픽), 번역본 보관함이 차면 서서히 죽는다(코드 캐시 고갈)&quot;</p></div></div>
+</div>
+</section>
+
+
+
+    <nav class="pager">
+<a class="prev" href="../01-java-kotlin/generics-type-erasure.html"><span class="dir">← 이전</span><span class="ttl">제네릭의 타입 소거(Type Erasure) — 원리와 실무 제약</span></a>
+<a class="next" href="../01-java-kotlin/jmm-happens-before.html"><span class="dir">다음 →</span><span class="ttl">Java Memory Model의 happens-before 관계</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/01-java-kotlin/jit-compiler-performance.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

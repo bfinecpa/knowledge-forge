@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="02-spring/spring-event-transactional-event-listener" style="--hue:132">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Spring Event와 @TransactionalEventListener — &quot;커밋도 안 됐는데 알림부터 나간&quot; 사고를 막는 도구 | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(132%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#02-spring">2. Spring / Spring Boot</a>
+    <span class="sep">/</span>
+    <span class="cur">Spring Event와 @TransactionalEventListener</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">Spring Event 기본 구조 — 발행과 구독, 그리고 &quot;동기&quot;라는 진실</span></a></li>
+<li><a href="#sec-3"><span class="n">2</span><span class="t">@TransactionalEventListener — 실행 시점을 트랜잭션 phase에 묶는다</span></a></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">AFTER_COMMIT이 유용한 이유 — 외부 시스템은 트랜잭션에 참여하지 않는다</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-4-1"><span class="t">사고 나는 코드 (before)</span></a></li><li><a href="#sec-4-2"><span class="t">고친 코드 (after)</span></a></li><li><a href="#sec-4-3"><span class="t">실전 예시 — 보안 설정 변경 후 Redis 토큰 차단</span></a></li></ul></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">실패 경로 설계 — 커밋 뒤의 실패에는 롤백이 없다 (시니어 변별 핵심)</span></a></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">함정 3종 — 알고 쓰지 않으면 조용히 당한다</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-6-1"><span class="t">5-1. AFTER_COMMIT 리스너 안의 DB 쓰기 — 조용히 커밋 안 됨</span></a></li><li><a href="#sec-6-2"><span class="t">5-2. 여전히 동기 — 느린 리스너가 응답을 붙잡는다</span></a></li><li><a href="#sec-6-3"><span class="t">5-3. 트랜잭션 밖에서 발행하면 실행 안 됨</span></a></li></ul></li>
+<li><a href="#sec-7"><span class="n">6</span><span class="t">꼬리질문 대비 포인트</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">2. Spring / Spring Boot</span>
+      <h1>Spring Event와 @TransactionalEventListener — &quot;커밋도 안 됐는데 알림부터 나간&quot; 사고를 막는 도구</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>13분</b></span>
+        <span>🧩 <b>7</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/7 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>ApplicationEventPublisher로 발행한 이벤트는 기본이 동기·같은 스레드·같은 트랜잭션이다 — &quot;이벤트니까 비동기겠지&quot;는 오해. @EventListener는 발행 즉시 실행되지만, @TransactionalEventListener는 트랜잭션 phase(기본 AFTER_COMMIT)에 맞춰 실행을 지연시킨다. 외부 시스템(Redis, 메일, MQ)은 DB 트랜잭션에 참여하지 않으므로, 커밋 확정 전에 건드리면 롤백 시 &quot;DB는 안 바뀌었는데 외부만 바뀐&quot; 불일치가 생긴다 — AFTER_COMMIT은 이 거짓 알림/거짓 캐시를 막는 도구다. 단, 커밋 후 리스너가 실패하면 롤백이란 없다. 그 실패 경로를 어떻게 설계하는가(수용/재시도/보상/아웃박스)가 시니어 변별 지점이다.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;Spring Event(<code>ApplicationEventPublisher</code>)를 활용해본 경험이 있나요? <code>@TransactionalEventListener</code>는 언제 유용한가요?&quot; &quot;DB 커밋 후에 이벤트를 발행해야 하는 요구사항을 어떻게 구현하나요? (AFTER_COMMIT, Transactional Outbox)&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>결합도를 낮추면서 &quot;커밋 후에만 알림 발송&quot; 같은 정합성 요구를 지키는 실무 패턴을 아는지 본다. 이벤트를 써봤다는 사람에게 커밋 전/후 실행 시점을 물으면 진짜 이해도가 드러난다. 고난이도 버전에서는 &quot;커밋됐는데 발행 실패&quot; / &quot;발행됐는데 롤백&quot;의 양쪽 실패를 다 짚는지 — 분산 시스템 정합성의 축소판이라, 이 문제를 이해한 사람은 Kafka·MSA 정합성 문제 전반을 이해할 준비가 된 것이다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>Spring Event 기본 구조 — 발행과 구독, 그리고 &quot;동기&quot;라는 진실</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>이벤트는 &quot;한 컴포넌트가 무슨 일이 일어났다고 외치면, 관심 있는 컴포넌트들이 각자 알아서 반응하는&quot; 구조다. 발행자는 구독자가 누군지, 몇 명인지 몰라도 된다 — 결합도를 낮추는 것이 핵심 목적이다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 발행: &quot;주문이 완료됐다&quot;고 외치기만 한다</span>
+<span class="tk-anno">@Service</span>
+<span class="tk-anno">@RequiredArgsConstructor</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">OrderService</span> {
+    <span class="tk-kw">private</span> <span class="tk-kw">final</span> <span class="tk-type">ApplicationEventPublisher</span> eventPublisher;
+
+    <span class="tk-anno">@Transactional</span>
+    <span class="tk-kw">public</span> <span class="tk-type">Order</span> <span class="tk-fn">complete</span>(<span class="tk-type">Long</span> orderId) {
+        <span class="tk-type">Order</span> order = orderRepository.<span class="tk-fn">findById</span>(orderId).<span class="tk-fn">orElseThrow</span>();
+        order.<span class="tk-fn">complete</span>();
+        eventPublisher.<span class="tk-fn">publishEvent</span>(<span class="tk-kw">new</span> <span class="tk-type">OrderCompletedEvent</span>(order.<span class="tk-fn">getId</span>()));
+        <span class="tk-kw">return</span> order;
+    }
+}
+
+<span class="tk-com">// 구독: 알림/통계/캐시가 각자의 리스너로 반응 — 서로를 모른다</span>
+<span class="tk-anno">@Component</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">NotificationListener</span> {
+    <span class="tk-anno">@EventListener</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">on</span>(<span class="tk-type">OrderCompletedEvent</span> event) { <span class="tk-com">/* 알림 발송 */</span> }
+}
+
+<span class="tk-anno">@Component</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">StatisticsListener</span> {
+    <span class="tk-anno">@EventListener</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">on</span>(<span class="tk-type">OrderCompletedEvent</span> event) { <span class="tk-com">/* 통계 집계 */</span> }
+}</code></pre>
+</div>
+<p>이벤트가 없었다면 <code>OrderService</code>가 알림·통계·캐시 서비스를 전부 주입받아 순서대로 호출해야 한다. 이벤트를 쓰면 &quot;주문 완료 후 할 일&quot;이 늘어나도 <code>OrderService</code>는 한 줄도 안 바뀐다 — 리스너만 추가하면 된다.</p>
+<h3 id="">가장 흔한 오해: &quot;이벤트 = 비동기&quot;</h3>
+<p>아니다. <strong>기본은 동기, 같은 스레드, 같은 트랜잭션이다.</strong> <code>publishEvent()</code>를 호출하는 순간 그 자리에서 리스너들이 순차 실행되고, 전부 끝나야 다음 줄로 넘어간다. 사실상 &quot;발행자가 리스너 메서드를 직접 호출하는 것&quot;과 실행 흐름이 같다 — 다른 점은 발행자가 리스너의 존재를 컴파일 타임에 모른다는 것뿐이다.</p>
+<p>이 사실에서 두 가지가 따라온다:</p>
+<ul>
+<li>리스너가 던진 예외는 <strong>발행자에게 그대로 전파</strong>된다. 리스너의 RuntimeException이 발행자의 트랜잭션을 롤백시킬 수 있다.</li>
+<li>리스너 안의 DB 작업은 발행자와 <strong>같은 트랜잭션</strong>에서 실행된다. 아직 커밋 전이라는 뜻이다.</li>
+</ul>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>@TransactionalEventListener — 실행 시점을 트랜잭션 phase에 묶는다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p><code>@EventListener</code>가 &quot;발행 즉시 실행&quot;이라면, <code>@TransactionalEventListener</code>는 &quot;발행은 해두되, 실행은 트랜잭션의 특정 단계까지 미룬다&quot;이다. 발행 시점에 이벤트를 큐에 담아뒀다가, 트랜잭션이 해당 phase에 도달했을 때 실행한다.</p>
+<p>phase는 4종이다:</p>
+<div class="tw"><table><thead><tr><th>phase</th><th>실행 시점</th><th>용도</th></tr></thead><tbody>
+<tr><td><code>BEFORE_COMMIT</code></td><td>커밋 직전</td><td>커밋 전 마지막 검증/플러시 (같은 트랜잭션 안)</td></tr>
+<tr><td><code>AFTER_COMMIT</code></td><td><strong>커밋 성공 후 (기본값)</strong></td><td>외부 시스템 반영 — 알림, 캐시, MQ 발행</td></tr>
+<tr><td><code>AFTER_ROLLBACK</code></td><td>롤백 후</td><td>실패 알림, 실패 메트릭</td></tr>
+<tr><td><code>AFTER_COMPLETION</code></td><td>커밋이든 롤백이든 완료 후</td><td>정리 작업 (락 해제 등)</td></tr>
+</tbody></table></div>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Component</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">NotificationListener</span> {
+    <span class="tk-com">// phase 생략 시 AFTER_COMMIT — 커밋이 확정된 뒤에만 실행된다</span>
+    <span class="tk-anno">@TransactionalEventListener</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">on</span>(<span class="tk-type">OrderCompletedEvent</span> event) { <span class="tk-com">/* 알림 발송 */</span> }
+}</code></pre>
+</div>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>AFTER_COMMIT이 유용한 이유 — 외부 시스템은 트랜잭션에 참여하지 않는다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>이 질문의 핵심이다. DB 트랜잭션의 롤백은 <strong>DB 안의 변경만</strong> 되돌린다. Redis 쓰기, 메일 발송, 푸시, MQ 발행은 트랜잭션 밖의 세계라서 한번 나가면 롤백으로 되돌릴 수 없다.</p>
+<p>그래서 커밋이 확정되기 <strong>전에</strong> 외부 시스템을 건드리면, 트랜잭션이 롤백됐을 때 &quot;DB는 안 바뀌었는데 외부만 바뀐&quot; 불일치가 생긴다.</p>
+<h3 id="sec-4-1">사고 나는 코드 (before)</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Service</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">OrderService</span> {
+    <span class="tk-anno">@Transactional</span>
+    <span class="tk-kw">public</span> <span class="tk-type">Order</span> <span class="tk-fn">complete</span>(<span class="tk-type">Long</span> orderId) {
+        <span class="tk-type">Order</span> order = orderRepository.<span class="tk-fn">findById</span>(orderId).<span class="tk-fn">orElseThrow</span>();
+        order.<span class="tk-fn">complete</span>();
+        eventPublisher.<span class="tk-fn">publishEvent</span>(<span class="tk-kw">new</span> <span class="tk-type">OrderCompletedEvent</span>(order.<span class="tk-fn">getId</span>()));
+        <span class="tk-com">// @EventListener라면 이 시점(커밋 전!)에 알림이 이미 나감</span>
+        <span class="tk-fn">applyCoupon</span>(order);   <span class="tk-com">// 여기서 RuntimeException → 전체 롤백</span>
+        <span class="tk-kw">return</span> order;
+    }
+}
+<span class="tk-com">// 결과: DB의 주문은 &quot;완료 안 됨&quot;으로 롤백됐는데,</span>
+<span class="tk-com">// 고객은 &quot;주문이 완료되었습니다&quot; 푸시를 받았다 — 거짓 알림.</span></code></pre>
+</div>
+<h3 id="sec-4-2">고친 코드 (after)</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Component</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">NotificationListener</span> {
+    <span class="tk-anno">@TransactionalEventListener</span>(phase = <span class="tk-type">TransactionPhase</span>.<span class="tk-type">AFTER_COMMIT</span>)
+    <span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">on</span>(<span class="tk-type">OrderCompletedEvent</span> event) {
+        <span class="tk-com">// 커밋이 확정된 뒤에만 실행 — 롤백됐다면 아예 실행되지 않는다</span>
+        pushService.<span class="tk-fn">send</span>(event.<span class="tk-fn">orderId</span>(), <span class="tk-str">&quot;주문이 완료되었습니다&quot;</span>);
+    }
+}</code></pre>
+</div>
+<p>롤백되면 리스너가 <strong>실행 자체가 안 되므로</strong> 거짓 알림·거짓 캐시가 원천 차단된다.</p>
+<h3 id="sec-4-3">실전 예시 — 보안 설정 변경 후 Redis 토큰 차단</h3>
+<p>실제로 겪은 사례를 각색하면: 보안 설정(예: 특정 앱 접근 차단)이 변경되면, Redis에 살아 있는 해당 사용자들의 토큰을 차단(blocking)해야 하는 요구사항이 있었다.</p>
+<ul>
+<li>설정 저장과 같은 트랜잭션 안에서(또는 BEFORE_COMMIT에서) 토큰을 차단하면 — 이후 로직에서 예외가 나 설정 저장이 롤백됐을 때, <strong>설정은 안 바뀌었는데 사용자 토큰만 차단된</strong> 상태가 된다. 사용자는 아무 이유 없이 강제 로그아웃당한다.</li>
+<li><code>@TransactionalEventListener(phase = AFTER_COMMIT)</code>로 옮기면 설정 변경이 DB에 확정된 경우에만 토큰이 차단된다. 롤백 시나리오에서 Redis는 손도 대지 않는다.</li>
+</ul>
+<p>&quot;외부 시스템 반영은 커밋이라는 사실 확정 뒤에&quot; — 이 한 문장이 AFTER_COMMIT의 존재 이유다.</p>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>실패 경로 설계 — 커밋 뒤의 실패에는 롤백이 없다 (시니어 변별 핵심)</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>AFTER_COMMIT은 &quot;롤백됐는데 외부만 바뀐&quot; 문제를 막지만, 반대 방향의 문제를 새로 만든다. <strong>커밋은 이미 확정됐는데 리스너가 실패하면?</strong> DB는 바뀌었는데 Redis 토큰 차단은 안 된 상태 — 이번엔 되돌릴 트랜잭션이 없다. 롤백이란 없다.</p>
+<p>이 실패를 어떻게 다룰지는 요구사항의 심각도에 따라 스펙트럼으로 고른다:</p>
+<p><strong>① 불일치를 유계(bounded)로 만들고 수용</strong></p>
+<p>불일치가 &quot;영원히&quot;가 아니라 &quot;최대 N분&quot;이라면 수용 가능한 경우가 많다. 예: 토큰 TTL이 30분이면, 차단에 실패해도 최악의 불일치 지속 시간은 30분이다 — TTL이 곧 불일치의 상한이 된다. &quot;우리 보안 스펙상 30분 지연은 허용되는가?&quot;라는 <strong>스펙 레벨 의사결정</strong>으로 격상시켜 답을 얻는 접근. 기술로 다 막으려 하지 않고 비즈니스와 합의하는 것도 설계다.</p>
+<p><strong>② 재시도 (retry)</strong></p>
+<p>일시적 장애(Redis 순단 등)라면 재시도로 흡수한다. 단 무한 재시도는 금물 — 재시도 상한 + 최종 실패 시 알람/모니터링이 세트다. 재시도로도 안 되는 실패는 결국 ①이나 ③으로 넘어간다.</p>
+<p><strong>③ 보상 트랜잭션 (compensating transaction)</strong></p>
+<p>리스너 실패 시 <strong>새 트랜잭션으로 원래 커밋의 역연산</strong>을 수행해 DB를 되돌리는 것. 겉보기엔 깔끔하지만 허점이 있다:</p>
+<ul>
+<li>원 커밋 ~ 보상 커밋 사이의 시간 동안 다른 요청이 이미 변경된 상태를 <strong>읽고 행동</strong>했을 수 있다 — 그 행동은 되돌릴 수 없다.</li>
+<li>보상 트랜잭션 자체가 실패하면? 실패 처리의 실패라는 무한 후퇴.</li>
+</ul>
+<p><strong>④ 아웃박스 패턴 (outbox pattern) — 신뢰성이 필수라면</strong></p>
+<p>&quot;커밋됐으면 반드시 (언젠가는) 외부 반영도 된다&quot;가 요구사항이라면, 이벤트를 메모리가 아니라 <strong>DB에 남긴다</strong>:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Transactional</span>
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">changeSecuritySetting</span>(<span class="tk-type">SettingRequest</span> request) {
+    settingRepository.<span class="tk-fn">save</span>(setting);
+    outboxRepository.<span class="tk-fn">save</span>(<span class="tk-type">OutboxEvent</span>.<span class="tk-fn">of</span>(<span class="tk-str">&quot;TOKEN_BLOCK&quot;</span>, payload));
+    <span class="tk-com">// 설정 변경과 이벤트 레코드가 같은 트랜잭션 — 원자적으로 함께 커밋/롤백</span>
+}
+
+<span class="tk-com">// 별도 릴레이(스케줄러/CDC)가 outbox 테이블을 읽어 발행하고,</span>
+<span class="tk-com">// 성공한 것만 처리 완료로 마킹 — 실패하면 다음 주기에 재시도</span></code></pre>
+</div>
+<p>같은 트랜잭션이므로 &quot;커밋됐는데 이벤트가 유실&quot;도, &quot;롤백됐는데 이벤트만 발행&quot;도 불가능하다. 대가는 테이블·릴레이·중복 발행 대비 (멱등 소비자) 등 운영 복잡도다.</p>
+<p>①→④로 갈수록 신뢰성이 올라가고 복잡도도 올라간다. &quot;무조건 아웃박스&quot;가 아니라 <strong>요구사항이 감당할 불일치의 크기</strong>로 도구를 고르는 답변이 시니어 답변이다.</p>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>함정 3종 — 알고 쓰지 않으면 조용히 당한다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<h3 id="sec-6-1">5-1. AFTER_COMMIT 리스너 안의 DB 쓰기 — 조용히 커밋 안 됨</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// ❌ before</span>
+<span class="tk-anno">@TransactionalEventListener</span>(phase = <span class="tk-type">TransactionPhase</span>.<span class="tk-type">AFTER_COMMIT</span>)
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">on</span>(<span class="tk-type">OrderCompletedEvent</span> event) {
+    historyRepository.<span class="tk-fn">save</span>(<span class="tk-kw">new</span> <span class="tk-type">OrderHistory</span>(event.<span class="tk-fn">orderId</span>()));
+    <span class="tk-com">// 예외도 없고 로그도 없는데, DB에 안 들어가 있다?!</span>
+}</code></pre>
+</div>
+<p>AFTER_COMMIT 리스너는 <strong>이미 커밋이 끝난 트랜잭션의 잔여 리소스(커넥션)에 편승</strong>해서 실행된다. 트랜잭션 동기화는 아직 살아 있어서 save()가 에러 없이 돌지만, 그 트랜잭션은 이미 commit이 끝났으므로 <strong>다시 커밋될 일이 없다</strong> — 쓰기가 조용히 증발한다. 예외가 안 나서 더 위험한 함정이다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// ✅ after: 새 트랜잭션을 명시적으로 열어야 한다</span>
+<span class="tk-anno">@TransactionalEventListener</span>(phase = <span class="tk-type">TransactionPhase</span>.<span class="tk-type">AFTER_COMMIT</span>)
+<span class="tk-anno">@Transactional</span>(propagation = <span class="tk-type">Propagation</span>.<span class="tk-type">REQUIRES_NEW</span>)
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">on</span>(<span class="tk-type">OrderCompletedEvent</span> event) {
+    historyRepository.<span class="tk-fn">save</span>(<span class="tk-kw">new</span> <span class="tk-type">OrderHistory</span>(event.<span class="tk-fn">orderId</span>()));
+}</code></pre>
+</div>
+<h3 id="sec-6-2">5-2. 여전히 동기 — 느린 리스너가 응답을 붙잡는다</h3>
+<p><code>@TransactionalEventListener</code>도 실행 시점만 미뤄질 뿐 <strong>여전히 요청 스레드에서 동기로</strong> 돈다. 커밋 직후, 응답이 나가기 전에 실행되므로 리스너의 메일 발송이 3초 걸리면 사용자 응답도 3초 늦어진다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 응답과 무관한 부수 작업이라면 @Async 조합</span>
+<span class="tk-anno">@Async</span>
+<span class="tk-anno">@TransactionalEventListener</span>(phase = <span class="tk-type">TransactionPhase</span>.<span class="tk-type">AFTER_COMMIT</span>)
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">on</span>(<span class="tk-type">OrderCompletedEvent</span> event) { mailService.<span class="tk-fn">send</span>(...); }</code></pre>
+</div>
+<p>단 @Async를 붙이는 순간 별도 스레드로 넘어가므로, 스레드풀 설정·예외 처리(AsyncUncaughtExceptionHandler)·SecurityContext/MDC 미전파 등 @Async 문서의 이슈 세트가 그대로 따라온다. &quot;@Async 붙이면 끝&quot;이 아니라 그 비용까지 언급하면 가산점.</p>
+<h3 id="sec-6-3">5-3. 트랜잭션 밖에서 발행하면 실행 안 됨</h3>
+<p><code>@TransactionalEventListener</code>는 &quot;진행 중인 트랜잭션&quot;에 실행을 거는 장치라서, <strong>트랜잭션이 없는 곳에서 publishEvent() 하면 (기본 설정에서) 리스너가 아예 실행되지 않는다.</strong> 에러도 없다 — 그냥 조용히 스킵된다. 발행 지점 메서드에서 @Transactional이 빠졌거나 self-invocation으로 프록시를 안 탔을 때 &quot;이벤트가 왜 안 오지?&quot;의 단골 원인이다. 트랜잭션 없이도 즉시 실행되게 하려면 <code>fallbackExecution = true</code>를 명시해야 한다.</p>
+</div>
+</section>
+<section class="sec" id="sec-7">
+<div class="sec-head">
+  <span class="sec-n">6</span>
+  <h2>꼬리질문 대비 포인트</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p class="qa-hint">질문을 눌러 답을 펼쳐보세요 — 먼저 스스로 답해본 뒤 확인하면 훨씬 오래 남습니다.</p><div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q1</span><span>@EventListener와 @TransactionalEventListener의 차이는?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>실행 <strong>시점</strong>이 다르다. @EventListener는 publishEvent() 호출 즉시 그 자리에서 실행된다(발행자의 트랜잭션 안, 커밋 전). @TransactionalEventListener는 이벤트를 붙잡아 뒀다가 트랜잭션 phase에 맞춰 실행한다 — 기본값 AFTER_COMMIT이면 커밋이 확정된 뒤에만 실행되고, 롤백되면 실행 자체가 안 된다. &quot;커밋이라는 사실이 확정된 뒤에만 해야 하는 일(외부 시스템 반영)&quot;이 후자의 존재 이유다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q2</span><span>이벤트 발행-리스너는 기본이 비동기인가?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>아니다 — <strong>동기, 같은 스레드</strong>다. publishEvent()가 리턴하기 전에 리스너들이 전부 실행되고, 리스너의 예외는 발행자에게 전파되며, 리스너의 DB 작업은 발행자와 같은 트랜잭션에 합류한다. 비동기로 만들려면 @Async를 명시적으로 조합해야 한다. &quot;이벤트니까 당연히 비동기&quot;라고 답하면 바로 감점되는 지점.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q3</span><span>AFTER_COMMIT 리스너에서 repository.save()가 조용히 안 먹는 이유는?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>리스너가 이미 커밋이 완료된 트랜잭션의 리소스에 편승해서 실행되기 때문이다. 트랜잭션 동기화가 아직 살아 있어 save()는 에러 없이 돌지만, 그 트랜잭션은 다시 커밋되지 않으므로 쓰기가 증발한다. 예외가 없어서 운영에서 한참 뒤에 발견되는 유형. 해결은 리스너 메서드에 <code>@Transactional(propagation = REQUIRES_NEW)</code>로 새 트랜잭션을 여는 것.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q4</span><span>AFTER_COMMIT 리스너가 실패하면? 커밋은 이미 됐는데 — 정합성은 어떻게 지키나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>롤백은 불가능하다는 사실부터 인정하고, 방어 스펙트럼으로 답한다: ① 불일치를 유계로 만들고 수용(예: 토큰 TTL 30분 = 불일치 상한, 스펙 레벨 의사결정) → ② 재시도 + 상한 + 실패 알람 → ③ 보상 트랜잭션(단, 원 커밋~보상 사이에 읽힌 상태와 보상 자체의 실패라는 허점) → ④ 신뢰성이 필수면 아웃박스 패턴(이벤트 레코드를 같은 트랜잭션에 저장, 별도 릴레이가 발행 — 원자성 확보, 대신 운영 복잡도). 요구사항의 심각도로 단계를 고른다고 답하면 시니어 답변이다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q5</span><span>Spring Event로 계속 갈지, Kafka 같은 MQ로 갈아탈지 — 기준은?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>Spring Event는 <strong>한 프로세스 안</strong>의 결합도 낮추기 도구다. 이벤트가 메모리에만 존재하므로 서버가 죽으면 유실되고, 다른 서비스(프로세스)에는 전달할 수 없다. 갈아타는 신호는: 소비자가 다른 프로세스/서비스일 때, 이벤트 유실이 허용되지 않을 때(내구성 — 브로커가 디스크에 저장), 소비 속도를 발행 속도와 분리해야 할 때(버퍼링), 재처리/리플레이가 필요할 때. 반대로 같은 프로세스 안의 부수 작업 분리가 목적이라면 MQ는 과투자다 — 아웃박스 + MQ 조합은 그 신뢰성이 실제 요구사항일 때 꺼내는 카드다.</p></div>
+</div>
+</div>
+</section>
+
+    <section class="summary maskable">
+      <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="mask-target"><p>Spring Event는 기본이 동기·같은 트랜잭션이라 결합도만 낮출 뿐 실행 흐름은 직접 호출과 같고, @TransactionalEventListener(AFTER_COMMIT)는 &quot;트랜잭션에 참여하지 못하는 외부 시스템은 커밋 확정 후에만 건드린다&quot;는 원칙을 코드로 강제해 거짓 알림·거짓 캐시를 막는다 — 대신 커밋 뒤의 리스너 실패에는 롤백이 없으므로, 수용(유계 불일치)→재시도→보상→아웃박스의 스펙트럼에서 요구사항에 맞는 방어선을 고르는 것까지가 설계다.</p></div>
+    </section>
+
+    <nav class="pager">
+<a class="prev" href="../02-spring/spring-cache-cacheable.html"><span class="dir">← 이전</span><span class="ttl">Spring Cache 추상화(@Cacheable)의 동작 원리와 함정 — &quot;TTL 속성을 애너테이션에서 찾다가 못 찾는&quot; 이유까지</span></a>
+<a class="next" href="../02-spring/spring-mvc-request-flow.html"><span class="dir">다음 →</span><span class="ttl">Spring MVC 요청 처리 흐름 — DispatcherServlet이 지휘하는 프론트 컨트롤러 파이프라인</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/02-spring/spring-event-transactional-event-listener.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>

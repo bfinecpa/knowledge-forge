@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="02-spring/async-annotation" style="--hue:132">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>@Async의 동작 원리와 주의점 — &quot;동시 처리가 8개에서 안 늘어나는&quot; 스레드풀 함정과 조용히 묻히는 예외 | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(132%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#02-spring">2. Spring / Spring Boot</a>
+    <span class="sep">/</span>
+    <span class="cur">@Async의 동작 원리와 주의점</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">동작 원리 — 프록시가 호출을 가로채 스레드풀에 던진다</span></a></li>
+<li><a href="#sec-3"><span class="n">2</span><span class="t">스레드풀 함정 — &quot;동시 처리가 8개에서 안 늘어난다&quot; (실무 핵심)</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-3-1"><span class="t">증설 순서 — 스레드보다 큐가 먼저다</span></a></li><li><a href="#sec-3-2"><span class="t">스프링 부트 기본값이 함정을 완성한다</span></a></li><li><a href="#sec-3-3"><span class="t">고친 설정 (after) — 세 값 + 거절 정책을 세트로 설계</span></a></li></ul></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">예외 처리 — 리턴 타입에 따라 예외의 운명이 갈린다</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-4-1"><span class="t">void — 호출자에게 절대 전달되지 않는다</span></a></li><li><a href="#sec-4-2"><span class="t">Future / CompletableFuture — 예외가 결과에 담긴다</span></a></li></ul></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">컨텍스트 미전파 — 새 스레드는 빈손으로 시작한다</span></a></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">@Async vs 메시지 큐 — 언제 갈아타야 하나</span></a></li>
+<li><a href="#sec-7"><span class="n">6</span><span class="t">꼬리질문 대비 포인트</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">2. Spring / Spring Boot</span>
+      <h1>@Async의 동작 원리와 주의점 — &quot;동시 처리가 8개에서 안 늘어나는&quot; 스레드풀 함정과 조용히 묻히는 예외</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>14분</b></span>
+        <span>🧩 <b>7</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/7 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>@Async도 @Transactional과 같은 프록시 기반이다 — 프록시가 메서드 호출을 가로채 TaskExecutor(스레드풀)에 작업으로 넘기고 호출자는 즉시 리턴한다. 그래서 자기 호출(this.method())은 조용히 동기 실행된다. 실무 함정은 세 가지: ① ThreadPoolTaskExecutor는 &quot;큐가 가득 차야&quot; max까지 스레드를 늘리는데 스프링 부트 기본 큐가 무제한이라 동시 처리가 core 개수(8)에 고정된다, ② void 리턴이면 예외가 호출자에게 절대 전달되지 않고 조용히 묻힌다, ③ 새 스레드에는 트랜잭션·SecurityContext· MDC가 전파되지 않아 로그 추적이 끊긴다. 그리고 인메모리 큐라 서버가 재시작되면 대기 중인 작업이 통째로 유실된다 — 내구성이 필요하면 @Async가 아니라 메시지 큐로 가야 한다.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;<code>@Async</code>의 동작 원리와 주의점(스레드풀 설정, 예외 처리, 프록시)은?&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>기본 스레드풀 방치(무제한 큐), 조용히 사라지는 예외, 프록시 제약 — 셋 다 운영에서만 터지는 유형이다. 비동기를 &quot;빠르게 하는 마법&quot;이 아니라 &quot;관리해야 할 자원&quot;으로 보는지 확인한다.</div>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>동작 원리 — 프록시가 호출을 가로채 스레드풀에 던진다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p><code>@EnableAsync</code>를 켜면 스프링은 <code>@Async</code>가 붙은 빈을 감싸는 <strong>프록시 객체</strong>(대리인)를 만들어 컨테이너에 등록한다. 다른 빈이 주입받는 것은 원본이 아니라 이 프록시다 — <code>@Transactional</code>과 완전히 같은 메커니즘이고, 하는 일만 다르다.</p>
+<p>프록시가 하는 일을 의사코드로 풀면 이렇다:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 프록시가 하는 일 (개념적으로)</span>
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">sendWelcomeMail</span>(<span class="tk-type">Long</span> memberId) {
+    executor.<span class="tk-fn">submit</span>(() -&gt; target.<span class="tk-fn">sendWelcomeMail</span>(memberId));  <span class="tk-com">// ① 작업을 스레드풀에 제출</span>
+    <span class="tk-kw">return</span>;                                                    <span class="tk-com">// ② 실행을 기다리지 않고 즉시 리턴</span>
+}</code></pre>
+</div>
+<ul>
+<li>진짜 메서드는 <strong>다른 스레드</strong>에서, 나중에(스레드가 비면) 실행된다.</li>
+<li>호출자는 제출만 하고 바로 다음 줄로 넘어간다 — 응답 지연에서 부가 작업(메일 발송, 알림, 이력 적재)을 떼어내는 것이 @Async의 용도다.</li>
+</ul>
+<h3 id="">프록시 기반의 함정 — 자기 호출은 조용히 동기 실행</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Service</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">OrderService</span> {
+
+    <span class="tk-kw">public</span> <span class="tk-type">Order</span> <span class="tk-fn">order</span>(<span class="tk-type">OrderRequest</span> request) {
+        <span class="tk-type">Order</span> order = <span class="tk-fn">save</span>(request);
+        <span class="tk-kw">this</span>.<span class="tk-fn">sendWelcomeMail</span>(order.<span class="tk-fn">memberId</span>());  <span class="tk-com">// ❌ this = 원본, 프록시를 안 거침</span>
+        <span class="tk-kw">return</span> order;                            <span class="tk-com">//    → 그냥 같은 스레드에서 동기 실행</span>
+    }
+
+    <span class="tk-anno">@Async</span>
+    <span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">sendWelcomeMail</span>(<span class="tk-type">Long</span> memberId) { ... }
+}</code></pre>
+</div>
+<p>비동기 전환 코드는 프록시에 있는데 <code>this.sendWelcomeMail()</code>은 프록시를 거치지 않고 원본을 직접 부르기 때문이다. 에러도 경고도 없이 <strong>조용히 동기로 실행</strong>되어 &quot;비동기로 뺐는데 왜 응답이 여전히 느리지?&quot;가 된다. 해결은 @Transactional 때와 동일 — 메서드를 다른 빈으로 분리해 프록시를 통해 호출되게 하는 것이 정석이다.</p>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>스레드풀 함정 — &quot;동시 처리가 8개에서 안 늘어난다&quot; (실무 핵심)</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>실제 면접에서 <strong>&quot;max-size를 늘렸는데 동시 처리가 8개에서 안 늘어난다, 왜냐&quot;</strong> 시나리오로 출제되는 파트다. ThreadPoolTaskExecutor(내부는 자바 ThreadPoolExecutor)의 증설 순서를 알아야 답할 수 있다.</p>
+<h3 id="sec-3-1">증설 순서 — 스레드보다 큐가 먼저다</h3>
+<p>작업이 들어왔을 때 스레드풀이 판단하는 순서:</p>
+<ol>
+<li>core 스레드에 빈 자리가 있으면 → 스레드로 즉시 실행</li>
+<li>core가 다 바쁘면 → <strong>큐에 넣는다</strong> (스레드를 늘리지 않는다!)</li>
+<li><strong>큐까지 가득 차야</strong> → 그제서야 max까지 스레드를 추가로 만든다</li>
+<li>max도 다 찼고 큐도 가득이면 → 거절(RejectedExecutionHandler)</li>
+</ol>
+<p>직관과 반대다. &quot;바쁘면 일꾼을 늘리겠지&quot;가 아니라 &quot;바쁘면 일단 줄을 세우고, 줄이 넘칠 때만 일꾼을 늘린다&quot;는 설계다.</p>
+<h3 id="sec-3-2">스프링 부트 기본값이 함정을 완성한다</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">yaml</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com"># spring.task.execution.pool 의 기본값</span>
+<span class="tk-key">core-size</span>: <span class="tk-num">8</span>
+<span class="tk-key">max-size</span>: <span class="tk-num">2147483647</span>        <span class="tk-com"># Integer.MAX_VALUE</span>
+<span class="tk-key">queue-capacity</span>: <span class="tk-num">2147483647</span>  <span class="tk-com"># Integer.MAX_VALUE — 사실상 무제한 큐</span></code></pre>
+</div>
+<p>큐가 무제한이면 3단계(큐가 가득 참)에 <strong>영원히 도달하지 않는다.</strong> max-size가 아무리 커도 의미가 없고, 결과는:</p>
+<ul>
+<li>동시 처리는 <strong>core 개수인 8개에 고정</strong> — 트래픽이 늘어도 안 늘어난다</li>
+<li>넘치는 작업은 전부 큐에 쌓임 → 작업 지연이 무한히 길어지고, 큐에 쌓인 작업 객체가 힙을 잠식해 <strong>OOM</strong>까지 갈 수 있다</li>
+</ul>
+<h3 id="sec-3-3">고친 설정 (after) — 세 값 + 거절 정책을 세트로 설계</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Configuration</span>
+<span class="tk-anno">@EnableAsync</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">AsyncConfig</span> {
+
+    <span class="tk-anno">@Bean</span>
+    <span class="tk-kw">public</span> <span class="tk-type">ThreadPoolTaskExecutor</span> <span class="tk-fn">mailExecutor</span>() {
+        <span class="tk-type">ThreadPoolTaskExecutor</span> executor = <span class="tk-kw">new</span> <span class="tk-type">ThreadPoolTaskExecutor</span>();
+        executor.<span class="tk-fn">setCorePoolSize</span>(<span class="tk-num">8</span>);        <span class="tk-com">// 평시 처리량</span>
+        executor.<span class="tk-fn">setMaxPoolSize</span>(<span class="tk-num">32</span>);        <span class="tk-com">// 피크 처리량</span>
+        executor.<span class="tk-fn">setQueueCapacity</span>(<span class="tk-num">100</span>);     <span class="tk-com">// ★ 유한하게 — 이래야 max가 의미 있음</span>
+        executor.<span class="tk-fn">setThreadNamePrefix</span>(<span class="tk-str">&quot;mail-&quot;</span>);  <span class="tk-com">// 스레드 덤프/로그에서 식별</span>
+        executor.<span class="tk-fn">setRejectedExecutionHandler</span>(
+                <span class="tk-kw">new</span> <span class="tk-type">ThreadPoolExecutor</span>.<span class="tk-type">CallerRunsPolicy</span>());  <span class="tk-com">// 거절 정책까지 세트</span>
+        <span class="tk-kw">return</span> executor;
+    }
+}</code></pre>
+</div>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Async</span>(<span class="tk-str">&quot;mailExecutor&quot;</span>)   <span class="tk-com">// 이름으로 풀 지정 — 용도별 풀 분리</span>
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">sendWelcomeMail</span>(<span class="tk-type">Long</span> memberId) { ... }</code></pre>
+</div>
+<p>핵심 문장: <strong>core / max / queue-capacity / 거절 정책은 넷이 한 세트다.</strong> 큐를 유한하게 만드는 순간 &quot;큐가 넘치면 어떻게 할 것인가&quot;라는 질문이 따라오므로, 거절 정책을 정하지 않은 큐 제한은 설계가 끝난 게 아니다.</p>
+<p>거절 정책(RejectedExecutionHandler) 4종:</p>
+<div class="tw"><table><thead><tr><th>정책</th><th>동작</th></tr></thead><tbody>
+<tr><td><code>AbortPolicy</code> (기본)</td><td><code>RejectedExecutionException</code>을 던짐 — 호출자가 실패를 인지</td></tr>
+<tr><td><code>CallerRunsPolicy</code></td><td><strong>호출자 스레드가 직접 실행</strong> — 호출자가 느려지며 유입 속도가 자연히 줄어드는 역압(backpressure) 효과</td></tr>
+<tr><td><code>DiscardPolicy</code></td><td>조용히 버림 — 유실을 아무도 모름, 거의 쓰면 안 됨</td></tr>
+<tr><td><code>DiscardOldestPolicy</code></td><td>큐에서 가장 오래된 작업을 버리고 새 작업을 넣음</td></tr>
+</tbody></table></div>
+<p><code>CallerRunsPolicy</code>가 실무에서 자주 선택되는 이유: 작업을 버리지 않으면서, 풀이 포화되면 호출자(예: 톰캣 요청 스레드)가 직접 일하느라 느려져 <strong>유입 자체가 감속</strong>된다 — 시스템이 스스로 속도를 조절하는 역압 밸브다. 단, 그 순간만큼은 &quot;비동기&quot;가 아니게 된다는 트레이드오프는 알고 써야 한다.</p>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>예외 처리 — 리턴 타입에 따라 예외의 운명이 갈린다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>@Async 메서드에서 던진 예외는 <strong>다른 스레드</strong>에서 터진다. 호출자는 이미 리턴받고 떠난 뒤라, 예외가 호출자의 try-catch에 잡힐 방법이 원천적으로 없다. 그다음 예외가 어디로 가는지는 리턴 타입이 결정한다.</p>
+<h3 id="sec-4-1">void — 호출자에게 절대 전달되지 않는다</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 사고 나는 코드 (before)</span>
+<span class="tk-kw">public</span> <span class="tk-type">Order</span> <span class="tk-fn">order</span>(<span class="tk-type">OrderRequest</span> request) {
+    <span class="tk-type">Order</span> order = <span class="tk-fn">save</span>(request);
+    <span class="tk-kw">try</span> {
+        mailService.<span class="tk-fn">sendWelcomeMail</span>(order.<span class="tk-fn">memberId</span>());  <span class="tk-com">// @Async void</span>
+    } <span class="tk-kw">catch</span> (<span class="tk-type">Exception</span> e) {
+        log.<span class="tk-fn">error</span>(<span class="tk-str">&quot;메일 발송 실패&quot;</span>, e);   <span class="tk-com">// ❌ 여기에 절대 안 잡힌다</span>
+    }                                     <span class="tk-com">//    제출만 하고 즉시 리턴했으므로</span>
+    <span class="tk-kw">return</span> order;
+}</code></pre>
+</div>
+<p>void 리턴이면 예외를 담아 돌려줄 그릇 자체가 없다. 예외는 <code>AsyncUncaughtExceptionHandler</code>로만 관측할 수 있고, <strong>기본 구현은 로그 한 줄 남기고 끝</strong>이다 — 알림 발송 실패 같은 장애가 조용히 묻힌다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 고친 코드 (after) — 전역 핸들러로 최소한 관측 가능하게</span>
+<span class="tk-anno">@Configuration</span>
+<span class="tk-anno">@EnableAsync</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">AsyncConfig</span> <span class="tk-kw">implements</span> <span class="tk-type">AsyncConfigurer</span> {
+
+    <span class="tk-anno">@Override</span>
+    <span class="tk-kw">public</span> <span class="tk-type">AsyncUncaughtExceptionHandler</span> <span class="tk-fn">getAsyncUncaughtExceptionHandler</span>() {
+        <span class="tk-kw">return</span> (ex, method, params) -&gt; {
+            log.<span class="tk-fn">error</span>(<span class="tk-str">&quot;[async-fail] {} params={}&quot;</span>, method.<span class="tk-fn">getName</span>(), params, ex);
+            <span class="tk-com">// 여기서 메트릭 증가, 알림, 실패 이력 적재 등</span>
+        };
+    }
+}</code></pre>
+</div>
+<h3 id="sec-4-2">Future / CompletableFuture — 예외가 결과에 담긴다</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Async</span>
+<span class="tk-kw">public</span> <span class="tk-type">CompletableFuture</span>&lt;<span class="tk-type">MailResult</span>&gt; <span class="tk-fn">sendWelcomeMail</span>(<span class="tk-type">Long</span> memberId) {
+    <span class="tk-com">// 예외가 나면 CompletableFuture 안에 예외가 담긴다</span>
+    <span class="tk-kw">return</span> <span class="tk-type">CompletableFuture</span>.<span class="tk-fn">completedFuture</span>(<span class="tk-fn">doSend</span>(memberId));
+}
+
+<span class="tk-com">// 호출자</span>
+<span class="tk-type">CompletableFuture</span>&lt;<span class="tk-type">MailResult</span>&gt; future = mailService.<span class="tk-fn">sendWelcomeMail</span>(id);
+future.<span class="tk-fn">join</span>();   <span class="tk-com">// ← 이 시점에 예외를 수령 (CompletionException으로 감싸져 나옴)</span>
+<span class="tk-com">// 또는 논블로킹으로:</span>
+future.<span class="tk-fn">exceptionally</span>(ex -&gt; { log.<span class="tk-fn">error</span>(<span class="tk-str">&quot;발송 실패&quot;</span>, ex); <span class="tk-kw">return</span> <span class="tk-type">MailResult</span>.<span class="tk-fn">failed</span>(); });</code></pre>
+</div>
+<p>예외가 결과 객체에 담겨 있다가 <code>get()</code>/<code>join()</code> 호출 시점에 던져진다. <strong>단, 호출자가 결과를 확인하지 않으면(fire-and-forget으로 리턴값을 버리면) void와 똑같이 조용히 묻힌다.</strong> &quot;CompletableFuture를 리턴하니 안전하다&quot;가 아니라 &quot;결과를 소비하는 코드까지 있어야 안전하다&quot;가 정확한 답이다.</p>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>컨텍스트 미전파 — 새 스레드는 빈손으로 시작한다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>작업이 실행되는 곳은 <strong>새 스레드</strong>다. 호출자 스레드가 ThreadLocal에 들고 있던 것들이 전파되지 않는다:</p>
+<ul>
+<li><strong>트랜잭션</strong>: 트랜잭션은 커넥션을 ThreadLocal에 바인딩하는 구조라 스레드가 바뀌면 남남이다. @Async 메서드에 @Transactional을 같이 붙이면 동작은 하지만 <strong>호출자 트랜잭션과 완전히 별개의 새 트랜잭션</strong>이다 — 호출자가 롤백돼도 @Async 쪽은 커밋될 수 있다(그 역도 성립). 심지어 호출자 트랜잭션이 커밋되기 전에 @Async 쪽이 먼저 실행되어 &quot;아직 커밋 안 된 데이터를 조회 못 하는&quot; 타이밍 문제도 생긴다.</li>
+<li><strong>SecurityContext</strong>: 기본 전략(ThreadLocal)에서는 새 스레드에 인증 정보가 없어 <code>SecurityContextHolder.getContext().getAuthentication()</code>이 null — 권한 체크가 있는 코드를 호출하면 실패한다.</li>
+<li><strong>MDC (trace id 등)</strong>: 로그에 찍히던 요청 추적 id가 새 스레드에서는 비어 있다 — <strong>비동기 구간부터 로그 추적이 뚝 끊긴다.</strong> 장애 분석 때 &quot;메일 발송 로그가 어느 요청 건인지 못 찾는&quot; 형태로 대가를 치른다.</li>
+</ul>
+<h3 id="">TaskDecorator로 컨텍스트 복사 (after)</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">ContextCopyingDecorator</span> <span class="tk-kw">implements</span> <span class="tk-type">TaskDecorator</span> {
+
+    <span class="tk-anno">@Override</span>
+    <span class="tk-kw">public</span> <span class="tk-type">Runnable</span> <span class="tk-fn">decorate</span>(<span class="tk-type">Runnable</span> task) {
+        <span class="tk-com">// ① 제출 시점(호출자 스레드)에 컨텍스트를 캡처</span>
+        <span class="tk-type">Map</span>&lt;<span class="tk-type">String</span>, <span class="tk-type">String</span>&gt; mdc = <span class="tk-type">MDC</span>.<span class="tk-fn">getCopyOfContextMap</span>();
+        <span class="tk-type">SecurityContext</span> security = <span class="tk-type">SecurityContextHolder</span>.<span class="tk-fn">getContext</span>();
+
+        <span class="tk-kw">return</span> () -&gt; {
+            <span class="tk-kw">try</span> {
+                <span class="tk-com">// ② 실행 시점(워커 스레드)에 복원</span>
+                <span class="tk-kw">if</span> (mdc != <span class="tk-kw">null</span>) <span class="tk-type">MDC</span>.<span class="tk-fn">setContextMap</span>(mdc);
+                <span class="tk-type">SecurityContextHolder</span>.<span class="tk-fn">setContext</span>(security);
+                task.<span class="tk-fn">run</span>();
+            } <span class="tk-kw">finally</span> {
+                <span class="tk-type">MDC</span>.<span class="tk-fn">clear</span>();                    <span class="tk-com">// ③ 풀 스레드는 재사용되므로</span>
+                <span class="tk-type">SecurityContextHolder</span>.<span class="tk-fn">clearContext</span>();  <span class="tk-com">//    반드시 청소 — 다음 작업에 오염 방지</span>
+            }
+        };
+    }
+}</code></pre>
+</div>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>executor.<span class="tk-fn">setTaskDecorator</span>(<span class="tk-kw">new</span> <span class="tk-type">ContextCopyingDecorator</span>());</code></pre>
+</div>
+<p>③의 청소가 중요하다. 풀 스레드는 재사용되므로, 안 지우면 <strong>다른 사용자의 인증 정보/trace id가 다음 작업에 묻어 들어가는</strong> 보안 사고급 오염이 된다.</p>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>@Async vs 메시지 큐 — 언제 갈아타야 하나</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>@Async의 큐는 <strong>JVM 힙 위의 인메모리 큐</strong>다. 이 한 문장에서 판단 기준이 전부 나온다:</p>
+<ul>
+<li><strong>서버가 재시작(배포, 크래시)되면 큐에 쌓여 있던 작업이 통째로 유실된다.</strong> 실행 중이던 작업도 중간에 끊긴다. 재시도도, 유실 감지도 없다.</li>
+<li>큐가 서버 안에 있으므로 <strong>다른 서버로 부하를 분산할 수 없다</strong> — 처리량의 상한이 그 서버의 스레드풀이다.</li>
+</ul>
+<p>그래서 기준은 &quot;이 작업이 유실돼도 되는가&quot;:</p>
+<div class="tw"><table><thead><tr><th>판단 기준</th><th>@Async로 충분</th><th>메시지 큐(Kafka, RabbitMQ 등)로</th></tr></thead><tbody>
+<tr><td>유실 허용</td><td>유실돼도 재시도/무시 가능 (캐시 워밍, 조회수 집계)</td><td>유실 불가 (결제 후처리, 포인트 적립, 정산)</td></tr>
+<tr><td>재시도/실패 추적</td><td>불필요</td><td>필요 (DLQ, 재처리)</td></tr>
+<tr><td>처리 주체</td><td>같은 서버, 같은 프로세스면 충분</td><td>별도 컨슈머로 확장/분리 필요</td></tr>
+</tbody></table></div>
+<p>한 단계 더: &quot;DB 커밋과 이벤트 발행이 원자적이어야 한다&quot;(주문은 저장됐는데 발행만 실패하는 사고 방지)까지 요구되면 <strong>아웃박스 패턴</strong>(같은 트랜잭션으로 DB에 이벤트를 쓰고, 별도 프로세스가 읽어 발행)으로 답하면 가산점이다. @Async는 &quot;빨라 보이게 하는 도구&quot;지 &quot;반드시 실행됨을 보장하는 도구&quot;가 아니다 — 이 구분이 시니어 답변의 핵심이다.</p>
+</div>
+</section>
+<section class="sec" id="sec-7">
+<div class="sec-head">
+  <span class="sec-n">6</span>
+  <h2>꼬리질문 대비 포인트</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p class="qa-hint">질문을 눌러 답을 펼쳐보세요 — 먼저 스스로 답해본 뒤 확인하면 훨씬 오래 남습니다.</p><div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q1</span><span>void @Async 메서드에서 예외가 나면 어디로 가나? 어떻게 관측하나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>호출자에게는 절대 전달되지 않는다. 호출자는 작업을 제출하고 이미 리턴받아 떠났고, void라 예외를 담아 줄 그릇도 없기 때문이다. 예외는 <code>AsyncUncaughtExceptionHandler</code>가 받는데 <strong>기본 구현은 로그 한 줄</strong>이라 사실상 조용히 묻힌다. 관측하려면 <code>AsyncConfigurer</code>로 커스텀 핸들러를 등록해 에러 로그 + 메트릭/알림을 태우거나, 애초에 <code>CompletableFuture</code>를 리턴하고 호출자가 <code>exceptionally</code> 등으로 결과를 소비하게 설계한다 — 단 후자도 리턴값을 버리면 똑같이 묻힌다는 점까지 말해야 완결이다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q2</span><span>max-size를 늘렸는데 동시 처리가 core 개수에서 안 늘어난다 — 왜?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>ThreadPoolExecutor의 증설 순서 때문이다. core가 다 바쁘면 스레드를 늘리는 게 아니라 <strong>큐에 먼저 넣고</strong>, <strong>큐가 가득 차야</strong> max까지 스레드를 추가한다. 스프링 부트 기본 queue-capacity가 <code>Integer.MAX_VALUE</code>(사실상 무제한)라 큐가 영원히 안 차고, 따라서 max-size는 값이 얼마든 도달 불가능한 설정이 된다 — 동시 처리는 core=8에 고정되고 나머지는 큐에서 무한 대기한다. 해결은 queue-capacity를 유한하게 제한하는 것이고, 그 순간 거절 상황이 생기므로 거절 정책까지 한 세트로 설계해야 한다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q3</span><span>큐까지 가득 차면 어떻게 되나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p><code>RejectedExecutionHandler</code>가 호출된다. 기본인 <code>AbortPolicy</code>는 <code>RejectedExecutionException</code>을 던져 호출자가 실패를 인지하게 하고, <code>CallerRunsPolicy</code>는 호출자 스레드가 그 작업을 직접 실행한다 — 호출자가 느려지면서 유입 속도가 자연히 줄어드는 <strong>역압(backpressure)</strong> 효과가 있어 &quot;버리지 않으면서 시스템을 보호하는&quot; 선택지로 자주 쓰인다 (단 그 순간은 동기 실행이 된다). <code>DiscardPolicy</code>는 조용히 버리고 <code>DiscardOldestPolicy</code>는 가장 오래된 것을 버린다 — 유실을 아무도 모르게 되므로 명시적 근거 없이는 쓰지 않는다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q4</span><span>@Async와 @Transactional을 한 메서드에 같이 붙이면?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>동작은 하지만 <strong>호출자 트랜잭션과는 완전히 별개</strong>다. 트랜잭션은 커넥션을 ThreadLocal에 묶는 구조라 스레드가 바뀌는 순간 남남이 되고, @Async 쪽은 자기 스레드에서 새 트랜잭션을 연다. 그래서 호출자가 롤백돼도 @Async 쪽은 커밋될 수 있고(역도 성립), 호출자 커밋 전에 @Async가 먼저 돌아 &quot;아직 커밋 안 된 데이터가 안 보이는&quot; 타이밍 문제도 난다. 둘의 원자성이 필요하면 @Async가 아니라 트랜잭션 커밋 후 실행 (<code>@TransactionalEventListener(phase = AFTER_COMMIT)</code> + @Async)이나 아웃박스 패턴으로 설계를 바꿔야 한다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q5</span><span>@Async 작업이 큐에 쌓인 채 서버가 재시작되면?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>전부 유실된다. @Async의 큐는 JVM 힙 위 인메모리 큐라 프로세스가 내려가면 같이 사라지고, 실행 중이던 작업도 중간에 끊긴다. 재시도도 유실 감지도 없다. 그래서 &quot;유실돼도 되는 작업&quot;(캐시 워밍, 통계 집계)에만 @Async를 쓰고, 유실 불가한 작업(결제 후처리, 포인트 적립)은 브로커가 디스크에 보존해주는 메시지 큐로, DB 커밋과의 원자성까지 필요하면 아웃박스 패턴으로 간다 — 도구를 내구성 요구사항 기준으로 고르는 것이 답의 핵심이다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q6</span><span>같은 클래스 안에서 this.asyncMethod()를 부르면?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>비동기가 아니라 <strong>조용히 동기 실행</strong>된다. 비동기 전환 코드는 프록시에 있는데 <code>this</code> 호출은 프록시를 거치지 않고 원본을 직접 부르기 때문 — @Transactional의 자기 호출 미적용과 완전히 같은 원리다. 에러가 없어서 &quot;비동기로 뺐는데 응답이 안 빨라진다&quot;로만 드러난다. 해결은 해당 메서드를 별도 빈으로 분리하는 것이 정석이다.</p></div>
+</div>
+</div>
+</section>
+
+    <section class="summary maskable">
+      <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="mask-target"><p>@Async는 프록시가 호출을 가로채 인메모리 스레드풀 큐에 작업을 던지고 즉시 리턴하는 구조라서 — 자기 호출 미적용(프록시), 무제한 기본 큐로 인한 &quot;동시 처리 core 고정&quot;(큐가 차야 max 증설), void 예외의 조용한 증발(AsyncUncaughtExceptionHandler), 트랜잭션·SecurityContext·MDC 미전파(TaskDecorator), 재시작 시 작업 유실(내구성 필요하면 MQ/아웃박스) 까지 전부 &quot;다른 스레드의 인메모리 큐에서 나중에 실행된다&quot;는 한 문장에서 파생되고, 이 파생 관계를 아는 사람은 설정 네 개(core/max/queue/거절 정책)를 세트로 설계한다.</p></div>
+    </section>
+
+    <nav class="pager">
+<a class="prev" href="../02-spring/application-yml-profile.html"><span class="dir">← 이전</span><span class="ttl">application.yml Profile 활용 — 환경 분리는 &quot;운영이 로컬 DB에 붙는&quot; 사고를 막는 기본 방어선</span></a>
+<a class="next" href="../02-spring/custom-argument-resolver-auth-user.html"><span class="dir">다음 →</span><span class="ttl">반복되는 인증 사용자 조회 제거 — 인터셉터 + 커스텀 ArgumentResolver</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/02-spring/async-annotation.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>
