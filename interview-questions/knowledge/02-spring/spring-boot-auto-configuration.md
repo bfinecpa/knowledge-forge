@@ -230,54 +230,180 @@ spring:
 
 ### "@ConditionalOnClass는 클래스가 없어도 왜 자동 구성 클래스 로딩이 안 터지나?"
 
-이 질문이 어려운 이유는 **"애초에 왜 터질 수 있는데?"라는 전제**가
-생략되어 있어서다. 전제부터 채우면:
+이 질문이 어려운 이유는 **"애초에 뭐가 문제인데?"라는 전제**가 통째로
+생략되어 있어서다. 전제를 세 계단으로 나눠 채워야 질문이 보인다.
 
-**전제 — 원래는 터져야 정상인 상황이다.** JVM은 클래스를 로딩할 때
-그 클래스가 참조하는 다른 클래스가 클래스패스에 없으면
-`NoClassDefFoundError`를 던진다. 그런데 자동 구성 클래스는 이런 모양이다.
+#### 전제 ① — 자동 구성 클래스는 안 써도 **항상** 클래스패스에 있다
+
+`build.gradle`에 `spring-boot-starter-web` 하나만 넣어도, 실제로 받아지는
+jar 안은 이렇다.
+
+```
+spring-boot-autoconfigure-3.x.jar
+ └─ org/springframework/boot/autoconfigure/
+     ├─ web/     ServletWebServerFactoryAutoConfiguration.class
+     ├─ jdbc/    DataSourceAutoConfiguration.class
+     ├─ amqp/    RabbitAutoConfiguration.class      ← RabbitMQ 안 썼는데도 있음
+     ├─ kafka/   KafkaAutoConfiguration.class       ← 있음
+     └─ ... 150개 남짓
+```
+
+부트는 기술별로 jar를 쪼개지 않았다. **모든 기술의 자동 구성 클래스를
+하나의 거대한 jar에 전부 담아** 두고, 어떤 스타터를 쓰든 이 jar가
+통째로 딸려온다.
+
+> ❌ "RabbitMQ 스타터를 넣어야 `RabbitAutoConfiguration`이 생긴다"
+> ✅ "`RabbitAutoConfiguration`은 **처음부터 항상 있다.** 안 쓰면 조건에서 탈락할 뿐"
+
+#### 전제 ② — 그래서 "설명서는 있는데 부품이 없는" 비대칭이 생긴다
+
+| 클래스 | 어느 jar에? | web만 쓰는 내 프로젝트에 |
+|---|---|---|
+| `RabbitAutoConfiguration` (**설정하는** 쪽) | `spring-boot-autoconfigure.jar` | ✅ **있다** |
+| `RabbitTemplate` (**설정당하는** 쪽) | `spring-rabbit.jar` | ❌ **없다** |
+
+그리고 `RabbitAutoConfiguration`은 imports 후보 목록에 이름이 올라와
+있으므로, 부트는 **얘한테도 반드시 조건을 물어봐야 한다.** 건너뛸 수
+없다 — 건너뛰려면 먼저 "얘는 아니구나"를 알아야 하는데, 그걸 알려면
+물어봐야 하니까.
+
+#### 전제 ③ — 그런데 그 조건 자체가 모순으로 생겼다
 
 ```java
 @AutoConfiguration
-@ConditionalOnClass(RabbitTemplate.class)   // ← RabbitMQ 클래스를 참조!
+@ConditionalOnClass(RabbitTemplate.class)   // ← 없을지도 모르는 클래스를 실명으로 지목
 public class RabbitAutoConfiguration {
     @Bean
-    public RabbitTemplate rabbitTemplate() { ... }  // ← 여기도 참조!
+    public RabbitTemplate rabbitTemplate(ConnectionFactory cf) { ... }  // ← 여기도
 }
 ```
 
-이 `RabbitAutoConfiguration.class` 파일은 내가 RabbitMQ를 안 써도
-부트 jar 안에 **항상 들어 있다**. 부트는 기동 시 이 클래스를 후보로
-읽어 조건을 평가해야 하는데, 내 프로젝트에 RabbitMQ jar가 없으니
-상식적으로는 로딩하는 순간 `RabbitTemplate`을 못 찾아 터져야 한다.
-**"클래스가 있는지 확인하려고 클래스를 로딩하면, 그 로딩 자체가
-터진다"는 닭-달걀 문제**인 것이다.
+`RabbitTemplate.class`는 자바의 **클래스 리터럴**이다. "`RabbitTemplate`이
+있는지 확인하겠다"고 말하면서, 그 문장 안에서 `RabbitTemplate`을 직접
+데려오라고 요구하고 있다.
 
-**답 — 클래스를 JVM에 로딩하지 않고, .class 파일을 텍스트 읽듯 읽는다.**
-스프링은 ASM이라는 바이트코드 리더로 `.class` 파일의 바이트를 직접
-읽어서 "이 클래스에 `@ConditionalOnClass`가 붙어 있고, 조건 값이
-문자열로 `...RabbitTemplate`이구나"라는 **메타데이터만** 뽑아낸다.
-바이트코드 안에서 애너테이션 속성은 그냥 문자열이라서, 그 문자열이
-가리키는 클래스가 실존하는지와 무관하게 읽을 수 있다.
-
-비유하면 **택배 상자를 열지 않고 겉에 붙은 송장만 읽는 것**이다.
-상자를 열면(= 클래스 로딩) 내용물이 깨져 있어 사고가 나지만,
-송장(= 애너테이션 메타데이터)만 읽고 "이건 우리 집 물건 아니네" 하고
-반송하면 안전하다.
+**비유:** 김철수 씨가 집에 있는지 확인하려고 **김철수 씨한테 전화를 건다.**
+없으면 안 받을 텐데, 안 받는다는 걸 알려면 전화를 걸어야 한다.
 
 ```
-1. imports 파일에서 후보 이름(문자열)만 수집     ← 로딩 없음
-2. ASM으로 .class 파일 읽어 조건 애너테이션 추출  ← 로딩 없음
-3. "RabbitTemplate이 클래스패스에 있나?" 확인    ← 없음 → 탈락
-4. 탈락한 클래스는 끝까지 JVM에 로딩되지 않음     ← 그래서 안 터짐
-5. 조건 통과한 클래스만 진짜 로딩 → @Bean 실행
+조건을 평가하려면 → @ConditionalOnClass의 값을 읽어야 하고
+그 값을 읽으려면  → RabbitTemplate을 데려와야 하는데
+RabbitTemplate은  → 없다 (그걸 확인하려던 참이었다)
 ```
 
-즉 답의 핵심은 **조건 평가가 클래스 로딩보다 먼저, 로딩 없이
-일어난다는 순서**에 있다.
-(가산점 포인트: 그래서 자동 구성 클래스를 직접 만들 때도 조건부
-클래스 참조는 `@Bean` 메서드 안쪽에 두는 것이 안전하다 — 클래스
-로딩 단계가 아니라 메서드 실행 시점까지 참조 해석이 미뤄지기 때문.)
+**이 닭-달걀이 질문의 정체다.** 풀어 쓰면 "없는 클래스를 실명으로
+지목하는 애너테이션을, 부트는 어떻게 사고 없이 읽어내느냐?"
+
+#### 정확히 어디서 터지는가 — 로딩이 아니라 **리플렉션**이다
+
+여기서 흔한 오해 하나를 짚어야 한다. "클래스를 로딩하면 참조 클래스가
+없어서 터진다"는 설명은 **사실이 아니다.** JVM의 심볼 해석(resolution)은
+**게을러서(lazy)**, 로딩만으로는 상수 풀의 참조를 해석하지 않는다.
+
+```java
+Class<?> c = Class.forName("...RabbitAutoConfiguration");  // ① 안 터진다
+System.out.println(c.getName());                           //    잘 출력됨
+```
+
+터지는 건 **로딩한 클래스를 리플렉션으로 들여다볼 때**다. 그리고 조건을
+평가하려면 반드시 들여다봐야 한다.
+
+```java
+ConditionalOnClass ann = c.getAnnotation(ConditionalOnClass.class);  // ② OK
+Class<?>[] required = ann.value();                          // ③ 💥 여기서 터진다
+```
+
+**③이 왜 터지나:** `value()`의 반환 타입이 `Class[]`다. 즉 나에게 값을
+돌려주려면 `RabbitTemplate`의 **`Class` 객체를 실제로 만들어서** 배열에
+담아 줘야 한다. jar가 없으니 실패하고, JDK는 `TypeNotPresentException`을
+던진다. 같은 이유로 `c.getDeclaredMethods()`도 터진다 — `Method` 객체를
+만들려면 반환 타입 `RabbitTemplate`을 해석해야 하기 때문이다.
+
+#### 답 — 자바 코드로 읽지 않고, **파일**로 읽는다
+
+전화를 걸지 않고 **문패를 본다.** `RabbitAutoConfiguration.class`는 결국
+디스크의 파일이고, 그 안에서 애너테이션은 이렇게 저장돼 있다.
+
+```
+RuntimeVisibleAnnotations:
+  ConditionalOnClass(
+    value = [ "Lorg/springframework/amqp/rabbit/core/RabbitTemplate;" ]
+                            ↑ 이건 그냥 글자다. 클래스가 아니다.
+  )
+```
+
+종이에 적힌 "김철수"라는 글씨를 읽는 데 김철수 씨가 실존할 필요는 없다.
+그래서 스프링은 **ASM**이라는 바이트코드 리더로 `.class` 파일의 바이트를
+직접 읽어 이름 문자열만 뽑아낸다.
+
+| | **리플렉션** (자바 코드로 읽기) | **ASM** (파일로 읽기) |
+|---|---|---|
+| 읽는 대상 | JVM에 올라간 `Class` 객체 | 디스크의 `.class` 파일 바이트 |
+| 조건 값의 타입 | `Class[]` → **실물 객체가 필요** | `String[]` → **이름이면 충분** |
+| 없는 클래스면 | 💥 실물을 못 만들어 터짐 | 😌 글자만 읽고 끝 |
+
+```java
+// ❌ 리플렉션 — 터진다
+Class<?>[] v = clazz.getAnnotation(ConditionalOnClass.class).value();
+//   → Class 객체를 돌려주려면 RabbitTemplate을 실제로 로딩해야 함 → 💥
+
+// ✅ ASM (MetadataReader) — 안 터진다
+String[] v = (String[]) asmMetadata
+        .getAnnotationAttributes(ConditionalOnClass.class.getName()).get("value");
+//   → ["org.springframework.amqp.rabbit.core.RabbitTemplate"]  그냥 문자열
+```
+
+**`Class[]` → `String[]`. 이 반환 타입 하나 바뀐 게 해결의 핵심이다.**
+
+이제 문자열을 손에 쥐었으니, **내가 통제하는 방식으로** 존재를 확인한다.
+
+```java
+// Spring의 ClassUtils.isPresent()
+try {
+    Class.forName(className, false, classLoader);  // false = 초기화하지 마라
+    return true;
+} catch (Throwable ex) {
+    return false;   // ← 없는 게 정상 시나리오다. 예외를 예상하고 삼킨다.
+}
+```
+
+여기서도 결국 로딩을 시도하지만, **내가 원하는 시점에 try-catch로 감싼 채**
+부른다. 애너테이션 리플렉션에는 이 통제권이 없다.
+
+#### 전체 흐름
+
+```
+1. imports 파일에서 후보 이름 150개 수집          ← 전부 문자열. 로딩 없음
+2. ASM으로 .class 파일 파싱 → 조건 값을 문자열로 추출  ← 로딩 없음
+3. ClassUtils.isPresent("...RabbitTemplate") → false  ← try-catch로 통제된 로딩
+4. RabbitAutoConfiguration 탈락. JVM에 흔적조차 안 남음
+5. 조건 통과한 20~30개만 진짜 로딩 → 리플렉션 → @Bean 실행
+```
+
+즉 답의 핵심은 **조건 평가가 클래스 로딩보다 먼저, 로딩 없이 일어난다는
+순서**에 있다. 부수 효과도 크다 — 후보 150개 중 탈락할 120여 개가 JVM에
+아예 안 올라가므로 기동 속도와 메타스페이스를 아낀다.
+
+#### 곁가지 — "그럼 스프링은 그 소스를 어떻게 컴파일했나?"
+
+`@ConditionalOnClass(RabbitTemplate.class)`라는 **소스**를 컴파일하려면
+컴파일 시점에는 `RabbitTemplate`이 반드시 있어야 한다. 스프링 팀은
+`spring-boot-autoconfigure`를 빌드할 때 RabbitMQ·Kafka·Redis를 전부
+`optional` 의존성으로 걸어 놓고 컴파일한다. `optional`은 **"컴파일엔
+필요하지만 이 jar를 쓰는 사람에게 전파하지는 마라"**는 뜻이다.
+
+- **스프링 팀의 빌드 시점**: `RabbitTemplate` 있음 → 컴파일 성공
+- **내 프로젝트의 실행 시점**: `RabbitTemplate` 없음 → 그래서 ASM이 필요
+
+이 두 시점의 간극이 문제의 근원이고, ASM이 그 간극을 메운다.
+
+(가산점 포인트: 그래서 자동 구성 모듈을 직접 만들 때, 없을 수 있는
+타입이 `@Bean` 메서드의 **시그니처**(반환 타입·파라미터)에 등장하면
+위험하다 — 바깥 클래스가 조건을 통과하는 순간 리플렉션 대상이 되어
+`NoClassDefFoundError`가 난다. 부트가 실제로 쓰는 관례는 그런 `@Bean`을
+**자체 `@ConditionalOnClass`를 단 중첩 static 설정 클래스로 격리**하는
+것이다. 중첩 클래스의 조건도 ASM으로 먼저 평가되므로 안전하게 통째로
+건너뛴다.)
 
 ### "자동 구성 클래스끼리 순서는 어떻게 정해지나?"
 
