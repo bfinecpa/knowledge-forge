@@ -38,8 +38,8 @@
 <li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
 <li><a href="#sec-2"><span class="n">1</span><span class="t">문제 정의 — 두 가지 실패 모드를 구분하라</span></a></li>
 <li><a href="#sec-3"><span class="n">2</span><span class="t">앱 쪽: server.shutdown=graceful</span></a></li>
-<li><a href="#sec-4"><span class="n">3</span><span class="t">핵심 원리 — LB 제외는 비동기로 전파된다</span></a></li>
-<li><a href="#sec-5"><span class="n">4</span><span class="t">Kubernetes — preStop sleep이 필요한 이유</span></a></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">핵심 원리 — LB 제외는 비동기로 전파된다</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-4-1"><span class="t">3-1. 애초에 &quot;전파&quot;가 왜 필요한가 — 라우팅 판단은 한 곳에서 안 한다</span></a></li><li><a href="#sec-4-2"><span class="t">3-2. 전파 지연의 세 가지 원인</span></a></li><li><a href="#sec-4-3"><span class="t">3-3. &quot;트래픽 차단 신호&quot; 세 가지는 같은 목적, 다른 주체</span></a></li></ul></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">Kubernetes — preStop sleep이 필요한 이유</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-5-1"><span class="t">4-1. 등장인물 — 누가 무엇을 하는가</span></a></li><li><a href="#sec-5-2"><span class="t">4-2. 파드 하나가 죽을 때 실제로 벌어지는 일</span></a></li><li><a href="#sec-5-3"><span class="t">4-3. 설정</span></a></li></ul></li>
 <li><a href="#sec-6"><span class="n">5</span><span class="t">VM + LB — 배포 스크립트가 순서를 책임진다</span></a></li>
 <li><a href="#sec-7"><span class="n">6</span><span class="t">놓치기 쉬운 것</span></a></li>
 <li><a href="#sec-8"><span class="n">7</span><span class="t">꼬리질문 대비 포인트</span></a></li>
@@ -56,7 +56,7 @@
       <span class="cat-chip">2. Spring / Spring Boot</span>
       <h1>Graceful Shutdown과 무중단 배포 — 배포할 때마다 에러가 소량 나는 이유</h1>
       <div class="doc-meta">
-        <span>📖 약 <b>6분</b></span>
+        <span>📖 약 <b>11분</b></span>
         <span>🧩 <b>8</b>개 섹션</span>
         <span class="ring" id="progRing"><i></i><span id="progLabel">0/8 섹션 이해</span></span>
       </div>
@@ -146,6 +146,31 @@
 ③ SIGTERM (이제 graceful shutdown이 in-flight만 처리하면 됨)</code></pre>
 </div>
 <p>②를 생략하면 ①과 ③ 사이에 도착한 요청이 전부 에러가 된다 — &quot;graceful 켰는데도 배포 에러&quot;의 정체.</p>
+<h3 id="sec-4-1">3-1. 애초에 &quot;전파&quot;가 왜 필요한가 — 라우팅 판단은 한 곳에서 안 한다</h3>
+<p>&quot;목록에서 뺐다&quot;는 건 <strong>원본 하나를 고친 것</strong>이고, 실제로 트래픽을 흘리는 건 그 목록의 <strong>사본을 들고 있는 여러 대의 프록시</strong>다. 노드가 50대면 각 노드의 kube-proxy 50개가 각자 사본을 들고 각자 판단한다. 인그레스 파드도, 클라우드 LB 노드도 마찬가지다.</p>
+<div class="callout"><span class="ic">💡</span><div><p>중앙 스위치 한 번 내리면 끝나는 구조가 아니라, <strong>복제된 데이터가 모든 사본에 퍼져야 끝나는 구조</strong>다. 그래서 &quot;제거&quot;가 &quot;전파&quot;를 필요로 한다.</p></div></div>
+<h3 id="sec-4-2">3-2. 전파 지연의 세 가지 원인</h3>
+<p>앞 문단의 &quot;헬스체크 주기, 엔드포인트 목록 전파, 프록시 갱신&quot;은 <strong>전파가 왜 느린지의 세 원인</strong>을 나열한 것이다.</p>
+<div class="tw"><table><thead><tr><th>원인</th><th>무엇에 걸리는 시간인가</th><th>실제 크기</th></tr></thead><tbody>
+<tr><td>① <strong>헬스체크 주기</strong></td><td>상대가 &quot;쟤 죽었네&quot;를 <strong>알아채는</strong> 시간. LB는 통보받는 게 아니라 주기적으로 찔러보고 판단한다</td><td>ALB 기본 30초 주기 × 2회 연속 실패 = 최악 60초+</td></tr>
+<tr><td>② <strong>엔드포인트 목록 전파</strong></td><td>알아낸 사실이 <strong>모든 사본에 도달</strong>하는 시간. watch 이벤트가 노드 수만큼 각각 날아가고 도착 시각도 제각각</td><td>수백 ms ~ 수 초</td></tr>
+<tr><td>③ <strong>프록시 갱신</strong></td><td>사본을 받은 뒤 <strong>실제 규칙을 다시 쓰는</strong> 시간. kube-proxy는 iptables 규칙 전체 재작성, nginx는 upstream 리로드, 클라우드 LB는 반영까지 별도 지연</td><td>서비스가 많은 클러스터에서 수 초</td></tr>
+</tbody></table></div>
+<p><strong>합치면 인지(①) + 배포(②) + 적용(③) = 수 초 ~ 수십 초.</strong> readiness DOWN 방식이 특히 느린 이유는 ①이 통째로 붙기 때문이다 — 내가 DOWN을 응답해도 상대가 물어보러 오는 건 최대 한 주기 뒤다.</p>
+<h3 id="sec-4-3">3-3. &quot;트래픽 차단 신호&quot; 세 가지는 같은 목적, 다른 주체</h3>
+<p>①에 병기된 세 가지는 선택지다. 환경에 따라 쓸 수 있는 게 달라서 나란히 적었을 뿐 목적은 같다.</p>
+<div class="tw"><table><thead><tr><th>방법</th><th>실행 주체</th><th>방식</th><th>쓰는 환경</th></tr></thead><tbody>
+<tr><td><strong>LB 디레지스터</strong></td><td><strong>배포 스크립트(내가 능동적으로)</strong></td><td>LB API를 직접 호출해 &quot;이 인스턴스 빼&quot;</td><td>VM + 클라우드 LB, LB API 권한이 있을 때</td></tr>
+<tr><td><strong>readiness DOWN</strong></td><td><strong>앱(수동적으로 당함)</strong></td><td>헬스체크에 실패로 응답 → 상대가 알아서 뺌</td><td>LB API 권한이 없을 때. 대신 위 ① 주기만큼 느림</td></tr>
+<tr><td><strong>엔드포인트 제거</strong></td><td><strong>k8s 컨트롤러(자동으로 일어남)</strong></td><td>파드의 삭제 표시를 보고 컨트롤러가 목록에서 뺌</td><td>쿠버네티스. 내가 시키는 게 아니라 저절로 일어난다</td></tr>
+</tbody></table></div>
+<p><strong>셋의 공통점이 이 장의 핵심</strong>: 전부 <strong>&quot;신호&quot;일 뿐 &quot;완료&quot;가 아니다.</strong></p>
+<ul>
+<li>디레지스터 API가 200을 반환해도 → LB 노드들에 반영은 아직.</li>
+<li>readiness가 DOWN을 응답해도 → 상대가 아직 안 물어봤을 수 있음.</li>
+<li>엔드포인트 목록에서 빠져도 → 노드 50대의 iptables는 아직 옛날 것.</li>
+</ul>
+<p>그래서 ①에서 ③으로 바로 넘어가면 안 되고, 가운데 ②가 반드시 들어가야 한다.</p>
 </div>
 </section>
 <section class="sec" id="sec-5">
@@ -159,6 +184,44 @@
 </div>
 <div class="sec-body">
 <p>함정: 파드 종료 시 <strong>&quot;엔드포인트 목록에서 제거&quot;와 &quot;컨테이너에 SIGTERM 전송&quot;이 동시에, 서로 비동기로</strong> 진행된다. kube-proxy/인그레스가 엔드포인트 갱신을 반영하기 전에 SIGTERM이 먼저 도착할 수 있다.</p>
+<h3 id="sec-5-1">4-1. 등장인물 — 누가 무엇을 하는가</h3>
+<div class="tw"><table><thead><tr><th>주체</th><th>어디서 도나</th><th>하는 일</th></tr></thead><tbody>
+<tr><td><strong>API 서버(etcd)</strong></td><td>마스터</td><td>모든 상태의 원본. &quot;이 파드 죽는 중&quot;이라는 사실이 여기 기록된다</td></tr>
+<tr><td><strong>kubelet</strong></td><td><strong>노드마다 1개</strong></td><td>자기 노드의 컨테이너 관리. <strong>preStop 훅 실행 → SIGTERM 전송</strong>이 이쪽 담당</td></tr>
+<tr><td><strong>EndpointSlice 컨트롤러</strong></td><td>마스터(kube-controller-manager)</td><td>&quot;이 서비스의 살아있는 파드 IP 목록&quot; 관리. <strong>목록에서 제거</strong>가 이쪽 담당</td></tr>
+<tr><td><strong>kube-proxy</strong></td><td><strong>노드마다 1개</strong></td><td>위 목록을 보고 <strong>자기 노드의 iptables/IPVS 규칙</strong>을 다시 쓴다</td></tr>
+<tr><td><strong>인그레스 컨트롤러(nginx 등)</strong></td><td>파드로 여러 개</td><td>위 목록을 보고 <strong>자기 upstream 설정</strong>을 다시 쓴다</td></tr>
+<tr><td><strong>클라우드 LB(ALB 등)</strong></td><td>클라우드 쪽</td><td>자체 타겟 목록 보유. 컨트롤러가 API로 디레지스터해줘야 빠진다</td></tr>
+</tbody></table></div>
+<p><strong>핵심: SIGTERM을 보내는 주체(kubelet)와 목록에서 빼는 주체(EndpointSlice 컨트롤러)는 서로 다른 프로세스이고, 서로에게 보고하지 않는다.</strong></p>
+<h3 id="sec-5-2">4-2. 파드 하나가 죽을 때 실제로 벌어지는 일</h3>
+<p><code>kubectl delete pod</code>나 롤링 업데이트가 하는 일은 딱 하나 — API 서버에 있는 파드 객체에 <strong>삭제 표시(<code>deletionTimestamp</code>)를 찍는 것</strong>뿐이다. 그 순간 이걸 지켜보던 두 부류가 <strong>동시에, 각자</strong> 움직인다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>            [API 서버] 파드에 &quot;삭제중&quot; 표시
+                  │
+        ┌─────────┴───────────────────────────────┐
+   (경로 A: 죽이는 쪽)                    (경로 B: 트래픽 끊는 쪽)
+        ▼                                         ▼
+   그 노드의 kubelet                     EndpointSlice 컨트롤러
+        │                                         │
+    preStop 훅 실행                        목록에서 파드 IP 제거
+        │                                         │
+    SIGTERM 전송                      ┌───────────┼────────────┐
+        │                             ▼           ▼            ▼
+   앱: 새 요청 거부 시작        노드1 kube-proxy  노드2...  nginx 인그레스
+                                iptables 재작성           upstream 리로드
+                                                                │
+                                                                ▼
+                                                     클라우드 LB 디레지스터</code></pre>
+</div>
+<ul>
+<li><strong>경로 A는 짧다</strong> — 마스터 → 그 노드의 kubelet → 컨테이너. 한두 홉이면 끝.</li>
+<li><strong>경로 B는 길다</strong> — 마스터 → 목록 갱신 → <strong>클러스터의 모든 노드</strong>가 각자 감지 → <strong>각자</strong> iptables 재작성 → 인그레스도 각자 리로드 → 클라우드 LB는 API 호출까지.</li>
+</ul>
+<p>그래서 <strong>A가 먼저 끝난다.</strong> 앱은 이미 &quot;새 요청 안 받음&quot; 모드인데 아직 규칙을 못 고친 노드의 kube-proxy는 그 파드로 요청을 계속 보낸다 → <strong>connection refused / 502.</strong> 누가 버그를 낸 게 아니라 <strong>둘의 순서를 맞춰줄 조정자가 애초에 없는 설계</strong>다.</p>
+<p><strong>preStop sleep은 여기에 개입한다</strong> — 짧은 쪽(A)에 일부러 브레이크를 걸어 긴 쪽(B)이 따라잡을 시간을 준다.</p>
+<h3 id="sec-5-3">4-3. 설정</h3>
 <div class="code">
 <div class="code-bar"><span class="code-lang">yaml</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
 <pre><code><span class="tk-key">spec</span>:
