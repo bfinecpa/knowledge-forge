@@ -151,7 +151,7 @@ ready = true;                     print(data); // data는 0일 수 있다!
 
 ## 5. 실전 연결: ConcurrentHashMap의 무락 읽기
 
-[[concurrenthashmap-internals]] 에서 본 "get이 락 없이 안전한 이유"가
+`concurrenthashmap-internals.md` 에서 본 "get이 락 없이 안전한 이유"가
 정확히 happens-before 다:
 
 - `Node.val`, `Node.next`, `table`이 **volatile** → put 스레드의 쓰기 HB
