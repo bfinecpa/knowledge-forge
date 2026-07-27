@@ -874,6 +874,7 @@ ${head(txt(d.doc.title) + ' | knowledge-web', d.hue, root)}
 
 <header class="topbar">
   <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <button class="icon-btn" id="backBtn" type="button" title="뒤로">←<span class="lbl">뒤로</span></button>
   <nav class="crumbs">
     <a href="${root}index.html">📚 전체</a>
     <span class="sep">/</span>
@@ -901,7 +902,8 @@ ${tocHTML}
     <div class="side-foot">
       <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
       <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
-      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈<br>
+      <kbd>⌫</kbd> 뒤로 (보던 문서·위치로)
     </div>
   </aside>
 
@@ -1128,8 +1130,10 @@ function main() {
   fs.writeFileSync(path.join(OUT, 'assets', 'data.js'),
     '/* 자동 생성 — build.mjs */\nwindow.KW_DOCS = ' + JSON.stringify(data, null, 0) + ';\n', 'utf8');
 
-  /* index.html */
-  const home = entries.filter((e) => e.cat);
+  /* index.html — 카드가 쓰는 필드(title·secCount 등)는 entries 에서 doc 아래에
+     있으므로 entries 를 그대로 넘기면 undefined 가 된다. 위에서 만든 평평한
+     data 를 그대로 재사용해 클라이언트(data.js)와 카드가 같은 모양을 보게 한다. */
+  const home = data.filter((e) => e.cat);
   fs.writeFileSync(path.join(OUT, 'index.html'), indexPage(cats, home), 'utf8');
 
   const rootDocs = entries.filter((e) => !e.cat).map((e) => e.path);

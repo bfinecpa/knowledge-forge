@@ -463,6 +463,127 @@
   }
 
   /* =========================================================
+     뒤로 가기 — "문서 단위"로 되돌아간다
+     목차 링크가 #sec-... 앵커라 클릭할 때마다 브라우저 히스토리가
+     쌓인다. 그래서 history.back() 은 직전 문서가 아니라 방금 한
+     목차 점프를 되돌린다. 원하는 건 "본문 링크 타고 넘어오기 전
+     문서"이므로, 문서 경로만 따로 세션에 쌓아 그 기준으로 이동한다.
+     ========================================================= */
+  var TRAIL_KEY = 'kw:trail';   /* 발자취: [{ p: 경로, y: 스크롤 위치 }, ...] */
+  var BACK_KEY = 'kw:back';     /* "뒤로 이동 중" 쪽지 — 도착한 쪽이 위치를 복원한다 */
+
+  function readTrail() {
+    var raw;
+    try { raw = JSON.parse(sessionStorage.getItem(TRAIL_KEY) || '[]'); }
+    catch (e) { return []; }
+    if (!Array.isArray(raw)) return [];
+    /* 위치를 안 담던 예전 형식(문자열 배열)도 받아준다 */
+    return raw
+      .map(function (x) { return typeof x === 'string' ? { p: x, y: 0 } : x; })
+      .filter(function (x) { return x && x.p; });
+  }
+  function writeTrail(t) {
+    try { sessionStorage.setItem(TRAIL_KEY, JSON.stringify(t.slice(-50))); }
+    catch (e) {}
+  }
+  function trailIndex(t, p) {
+    for (var i = t.length - 1; i >= 0; i--) if (t[i].p === p) return i;
+    return -1;
+  }
+
+  /* 현재 문서를 발자취에 반영한다.
+     이미 발자취에 있는 문서면(= 되돌아온 것) 그 뒤를 잘라내고,
+     처음 보는 문서면 뒤에 붙인다. 우리 버튼으로 왔든 브라우저
+     뒤로가기로 왔든 같은 결과가 되고, 발자취가 무한히 자라지 않는다. */
+  function syncTrail() {
+    var here = location.pathname;
+    var trail = readTrail();
+    var seen = trailIndex(trail, here);
+    if (seen >= 0) trail = trail.slice(0, seen + 1);
+    else trail.push({ p: here, y: 0 });
+    writeTrail(trail);
+    return trail;
+  }
+
+  /* 지금 보고 있는 위치를 발자취의 현재 항목에 계속 적어 둔다.
+     떠날 때(pagehide) 한 번 더 적어 마지막 위치를 놓치지 않는다. */
+  function trackScroll() {
+    var timer = null;
+    function save() {
+      var t = readTrail();
+      if (!t.length) return;
+      var cur = t[t.length - 1];
+      /* 이미 다음 목적지로 발자취가 넘어간 뒤라면 덮어쓰지 않는다 */
+      if (cur.p !== location.pathname) return;
+      cur.y = Math.round(pageYOffset);
+      writeTrail(t);
+    }
+    addEventListener('scroll', function () {
+      if (timer) return;
+      timer = setTimeout(function () { timer = null; save(); }, 250);
+    }, { passive: true });
+    addEventListener('pagehide', save);
+  }
+
+  /* 뒤로 눌러 도착한 경우에만 위치를 되돌린다 (새로 따라온 링크는 맨 위에서 시작) */
+  function restoreScroll() {
+    var note = null;
+    try {
+      note = JSON.parse(sessionStorage.getItem(BACK_KEY) || 'null');
+      sessionStorage.removeItem(BACK_KEY);
+    } catch (e) {}
+    if (!note || note.p !== location.pathname || !note.y) return;
+
+    scrollTo(0, note.y);
+
+    /* 폰트·이미지가 늦게 자리잡으며 높이가 밀리는 경우가 있어 한 번 더 맞춘다.
+       단 사용자가 이미 스크롤을 건드렸으면 끌어당기지 않는다. */
+    var touched = false;
+    function mark() { touched = true; }
+    addEventListener('wheel', mark, { once: true, passive: true });
+    addEventListener('touchstart', mark, { once: true, passive: true });
+    addEventListener('keydown', mark, { once: true });
+    addEventListener('load', function () {
+      if (!touched && Math.abs(pageYOffset - note.y) > 4) scrollTo(0, note.y);
+    }, { once: true });
+  }
+
+  function initBackNav() {
+    var trail = syncTrail();
+    restoreScroll();
+    trackScroll();
+
+    var btn = document.getElementById('backBtn');
+    if (!btn) return;
+
+    label(trail);
+    btn.addEventListener('click', goBack);
+    document.__kwBack = goBack;
+
+    /* bfcache 로 복원되면 스크립트가 다시 안 돌아 발자취가 어긋난다 */
+    addEventListener('pageshow', function (e) { if (e.persisted) label(syncTrail()); });
+
+    function label(t) {
+      var prev = t.length >= 2 ? t[t.length - 2] : null;
+      btn.title = prev
+        ? '뒤로 (⌫) — ' + decodeURIComponent(prev.p.split('/').pop()).replace(/\.html$/, '')
+        : '뒤로 (⌫) — 전체 목록';
+    }
+
+    function goBack() {
+      var t = readTrail();
+      if (t.length < 2) { location.href = ROOT + 'index.html'; return; }
+      t.pop();
+      writeTrail(t);
+      var target = t[t.length - 1];
+      try {
+        sessionStorage.setItem(BACK_KEY, JSON.stringify({ p: target.p, y: target.y || 0 }));
+      } catch (e) {}
+      location.href = target.p;
+    }
+  }
+
+  /* =========================================================
      키보드 단축키
      ========================================================= */
   addEventListener('keydown', function (e) {
@@ -489,6 +610,9 @@
       case 'j': if (D) { e.preventDefault(); D.jump(1); } break;
       case 'k': if (D) { e.preventDefault(); D.jump(-1); } break;
       case 'h': location.href = ROOT + 'index.html'; break;
+      case 'Backspace':
+        if (document.__kwBack) { e.preventDefault(); document.__kwBack(); }
+        break;
     }
   });
 
@@ -500,4 +624,5 @@
   if (document.body.classList.contains('page-home')) initHome();
   initFinder();
   initPathCopy();
+  initBackNav();
 })();
