@@ -132,7 +132,7 @@ function highlight(code, lang) {
    ========================================================= */
 const RE_LI = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 const RE_H = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
-const RE_FENCE = /^\s*```(\S*)\s*$/;
+const RE_FENCE = /^\s*```(\S*)([^\n]*)$/;
 const RE_HR = /^\s*([-*_])(?:\s*\1){2,}\s*$/;
 const RE_TSEP = /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/;
 
@@ -169,11 +169,12 @@ function parseBlocks(src) {
     let m = RE_FENCE.exec(line);
     if (m) {
       const lang = (m[1] || 'text').toLowerCase();
+      const meta = (m[2] || '').trim().toLowerCase();
       const buf = [];
       i++;
       while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
       i++;
-      out.push({ t: 'code', lang, code: buf.join('\n').replace(/\s+$/, '') });
+      out.push({ t: 'code', lang, meta, code: buf.join('\n').replace(/\s+$/, '') });
       continue;
     }
 
@@ -345,6 +346,7 @@ function baPanel(kind, code, lang, note) {
 }
 
 function renderCode(node) {
+  if (node.lang === 'flow') return flowHTML(node.code, node.meta || '');
   const ba = splitBA(node.code);
   if (!ba) return codeBlockHTML(node.code, node.lang);
   if (ba.single) {
@@ -354,6 +356,226 @@ function renderCode(node) {
 ${baPanel('before', ba.before, node.lang, ba.beforeNote)}
 ${baPanel('after', ba.after, node.lang, ba.afterNote)}
 </div>`;
+}
+
+/* =========================================================
+   4-b. flow 다이어그램 — 빌드 타임 인라인 SVG
+   ---------------------------------------------------------
+   ```flow 펜스를 파이프라인 그림으로 바꾼다.
+   외부 라이브러리·런타임 JS 0. 색은 전부 CSS 변수를 참조하므로
+   라이트/다크 테마와 카테고리별 --hue 를 자동으로 따라간다.
+   SVG <text> 라 글자는 선택·검색·확대가 되고, 소스가 텍스트라
+   git diff 에 변경이 그대로 남는다.
+
+   문법:
+     # 캡션                     그림 아래 설명
+     == 존 이름                 점선으로 묶이는 영역 (생략 가능)
+     ① 단계 제목 | 보조 설명     단계 (①~⑳ 로 시작하면 뱃지로 분리)
+       - 하위 단계 | 보조 설명   직전 단계의 내부 절차
+       ! 증상 → 원인            이 단계에서 죽었을 때의 신호 (빨강)
+     ? ⑤ 조건부 단계            ? 로 시작하면 점선 테두리
+   ========================================================= */
+const F = {
+  W: 720, NX: 27, ZX: 13, PAD: 13,
+  GAP: 27, ZTOP: 27, ZBOT: 15,
+  S_TITLE: 15, S_NOTE: 12.5, S_SUB: 12.5, S_FAIL: 12.5,
+  H_TITLE: 22, H_NOTE: 17, H_SUB: 21, H_FAIL: 17
+};
+F.NW = F.W - 2 * F.NX;          /* 카드 너비 */
+F.TX = F.NX + F.PAD;            /* 카드 안쪽 텍스트 시작 x */
+
+/* 글자 폭 추정 — 한글·CJK 는 1em, 라틴은 약 0.52em */
+const charW = (ch) => {
+  const c = ch.codePointAt(0);
+  return (c >= 0x1100 && c <= 0x115f) || (c >= 0x2e80 && c <= 0xa4cf) ||
+         (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff) ||
+         (c >= 0xfe30 && c <= 0xfe6f) || (c >= 0xff00 && c <= 0xff60) ? 1 : 0.52;
+};
+const textW = (s, size) => [...s].reduce((a, ch) => a + charW(ch), 0) * size;
+
+/* 폭에 맞춰 줄바꿈 — 공백·구분자에서 끊고, 없으면 글자 단위로 */
+function wrapText(s, size, maxW) {
+  const out = [];
+  let line = '', w = 0;
+  for (const ch of [...s]) {
+    const cw = charW(ch) * size;
+    if (w + cw > maxW && line) {
+      const m = /^(.*[\s·,—/→])([^\s·,—/→]*)$/.exec(line);
+      if (m && m[2] && textW(m[2], size) < maxW * 0.45) {
+        out.push(m[1].replace(/\s+$/, ''));
+        line = m[2]; w = textW(m[2], size);
+      } else { out.push(line); line = ''; w = 0; }
+    }
+    line += ch; w += cw;
+  }
+  if (line.trim()) out.push(line);
+  return out.length ? out : [''];
+}
+
+/* 원문자(①)는 뱃지 안에서 너무 작아 읽히지 않는다 — 원은 뱃지 모양이 대신하고
+   숫자만 남긴다. 본문 산문은 ①②③ 를 그대로 써도 1:1로 대응된다. */
+const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+const deCircle = (s) => s.replace(/[①-⑳]/g, (c) => String(CIRCLED.indexOf(c) + 1));
+
+const cut2 = (s) => {
+  const i = s.indexOf('|');
+  return i < 0 ? [s.trim(), ''] : [s.slice(0, i).trim(), s.slice(i + 1).trim()];
+};
+
+function parseFlow(src) {
+  const spec = { caption: '', zones: [] };
+  let zone = null, node = null;
+  const zoneOf = () => (zone || (spec.zones.push(zone = { label: '', nodes: [] }), zone));
+
+  for (const raw of String(src).split('\n')) {
+    if (!raw.trim()) continue;
+    let m;
+    if ((m = /^\s*#\s+(.*)$/.exec(raw))) { spec.caption = m[1].trim(); continue; }
+    if ((m = /^\s*==\s*(.*)$/.exec(raw))) {
+      spec.zones.push(zone = { label: m[1].trim(), nodes: [] }); node = null; continue;
+    }
+    if (node && (m = /^\s+-\s+(.*)$/.exec(raw))) {
+      const [text, note] = cut2(m[1]);
+      node.subs.push({ text, note }); continue;
+    }
+    if (node && (m = /^\s+!\s+(.*)$/.exec(raw))) { node.fail = m[1].trim(); continue; }
+
+    let s = raw.trim(), cond = false;
+    if (s.startsWith('?')) { cond = true; s = s.slice(1).trim(); }
+    let badge = '';
+    if ((m = /^([①-⑳](?:-[a-z])?)\s*(.*)$/.exec(s))) { badge = deCircle(m[1]); s = m[2]; }
+    const [title, note] = cut2(s);
+    node = { badge, title, note, cond, subs: [], fail: '' };
+    zoneOf().nodes.push(node);
+  }
+  return spec;
+}
+
+/* 각 카드의 높이를 확정하고 y 좌표를 배치 */
+function layoutFlow(spec, compact) {
+  const innerW = F.NW - 2 * F.PAD;
+
+  for (const z of spec.zones) {
+    for (const n of z.nodes) {
+      n.bw = n.badge ? Math.max(22, Math.round(textW(n.badge, 12.5)) + 11) : 0;
+      n.tLines = wrapText(n.title, F.S_TITLE, innerW - (n.bw ? n.bw + 8 : 0));
+      n.nLines = n.note ? wrapText(n.note, F.S_NOTE, innerW) : [];
+      n.fLines = n.fail ? wrapText(n.fail, F.S_FAIL, innerW - 34) : [];
+      n.subs.forEach((s) => {
+        s.line = s.note ? `${s.text} — ${s.note}` : s.text;
+        s.lines = wrapText(s.line, F.S_SUB, innerW - 22);
+      });
+      if (compact) { n.subs = []; }
+
+      n.h = F.PAD
+        + n.tLines.length * F.H_TITLE
+        + n.nLines.length * F.H_NOTE
+        + (n.subs.length ? 7 + n.subs.reduce((a, s) => a + s.lines.length * F.H_SUB, 0) : 0)
+        + (n.fLines.length ? 9 + n.fLines.length * F.H_FAIL + 12 : 0)
+        + F.PAD;
+    }
+  }
+
+  let y = 0;
+  spec.zones.forEach((z, zi) => {
+    const boxed = !!z.label;
+    z.top = y;
+    if (boxed) y += F.ZTOP;
+    z.nodes.forEach((n, ni) => {
+      n.y = y; y += n.h;
+      if (ni < z.nodes.length - 1) y += F.GAP;
+    });
+    if (boxed) y += F.ZBOT;
+    z.h = y - z.top;
+    if (zi < spec.zones.length - 1) y += F.GAP;
+  });
+  spec.h = y;
+  return spec;
+}
+
+const arrow = (y1, y2) => {
+  const x = F.W / 2;
+  return `<path class="fl-arw" d="M${x} ${y1 + 4}V${y2 - 9}"/>` +
+         `<path class="fl-arh" d="M${x} ${y2 - 2}l-4.5 -8h9z"/>`;
+};
+
+function flowSVG(spec) {
+  const p = [];
+
+  /* 존 배경 */
+  for (const z of spec.zones) {
+    if (!z.label) continue;
+    p.push(`<rect class="fl-zone" x="${F.ZX}" y="${z.top}" width="${F.W - 2 * F.ZX}" height="${z.h}" rx="14"/>`);
+    const w = textW(z.label, 11) + 20;
+    p.push(`<rect class="fl-zlbl-bg" x="${F.ZX + 15}" y="${z.top - 9}" width="${w}" height="19" rx="9.5"/>`);
+    p.push(`<text class="fl-zlbl" x="${F.ZX + 15 + w / 2}" y="${z.top + 4}" text-anchor="middle">${esc(z.label)}</text>`);
+  }
+
+  /* 카드 + 화살표 */
+  const flat = spec.zones.flatMap((z) => z.nodes);
+  flat.forEach((n, i) => {
+    if (i < flat.length - 1) p.push(arrow(n.y + n.h, flat[i + 1].y));
+
+    p.push(`<rect class="fl-card${n.cond ? ' cond' : ''}" x="${F.NX}" y="${n.y}" width="${F.NW}" height="${n.h}" rx="11"/>`);
+    let ty = n.y + F.PAD + 16;
+
+    if (n.badge) {
+      p.push(`<rect class="fl-badge-bg" x="${F.TX}" y="${ty - 15}" width="${n.bw}" height="22" rx="11"/>`);
+      p.push(`<text class="fl-badge" x="${F.TX + n.bw / 2}" y="${ty + 1}" text-anchor="middle">${esc(n.badge)}</text>`);
+    }
+    const tx = n.badge ? F.TX + n.bw + 8 : F.TX;
+    n.tLines.forEach((l, k) => {
+      p.push(`<text class="fl-title" x="${tx}" y="${ty + k * F.H_TITLE}">${esc(l)}</text>`);
+    });
+    ty += n.tLines.length * F.H_TITLE;
+
+    n.nLines.forEach((l, k) => {
+      p.push(`<text class="fl-note" x="${F.TX}" y="${ty + k * F.H_NOTE - 3}">${esc(l)}</text>`);
+    });
+    ty += n.nLines.length * F.H_NOTE;
+
+    if (n.subs.length) {
+      const railX = F.TX + 4;
+      const marks = [];
+      let sy = ty + 8;
+      n.subs.forEach((s) => {
+        marks.push(`<circle class="fl-dot" cx="${railX}" cy="${sy - 4}" r="2.8"/>`);
+        s.lines.forEach((l, k) => {
+          marks.push(`<text class="fl-sub" x="${railX + 12}" y="${sy + k * F.H_SUB}">${esc(l)}</text>`);
+        });
+        sy += s.lines.length * F.H_SUB;
+      });
+      /* 레일을 먼저 깔고 점을 위에 얹는다 — 선이 점을 가로지르지 않도록 */
+      p.push(`<path class="fl-rail" d="M${railX} ${ty}V${sy - F.H_SUB + 2}"/>`, ...marks);
+      ty = sy;
+    }
+
+    if (n.fLines.length) {
+      const bh = n.fLines.length * F.H_FAIL + 12;
+      p.push(`<rect class="fl-fail-bg" x="${F.TX - 4}" y="${ty}" width="${F.NW - 2 * F.PAD + 8}" height="${bh}" rx="7"/>`);
+      p.push(`<text class="fl-fail-ic" x="${F.TX + 6}" y="${ty + 16}">⚠</text>`);
+      n.fLines.forEach((l, k) => {
+        p.push(`<text class="fl-fail" x="${F.TX + 24}" y="${ty + 16 + k * F.H_FAIL}">${esc(l)}</text>`);
+      });
+    }
+  });
+
+  return p.join('\n');
+}
+
+function flowHTML(src, meta) {
+  const compact = /\bcompact\b/.test(meta);
+  const spec = layoutFlow(parseFlow(src), compact);
+  const alt = spec.zones.flatMap((z) => z.nodes)
+    .map((n) => [n.badge, n.title].filter(Boolean).join(' ')).join(' → ');
+
+  return `<figure class="figure">
+<svg class="flow" viewBox="0 -10 ${F.W} ${spec.h + 20}" width="100%" role="img" aria-label="${esc(alt)}" preserveAspectRatio="xMidYMin meet">
+<title>${esc(spec.caption || alt)}</title>
+${flowSVG(spec)}
+</svg>
+${spec.caption ? `<figcaption>${inline(spec.caption)}</figcaption>` : ''}
+</figure>`;
 }
 
 /* =========================================================

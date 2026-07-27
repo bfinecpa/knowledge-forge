@@ -62,21 +62,22 @@ public class OrderController {
 
 ## 2. 단계별 흐름 — 요청이 지나가는 순서 그대로
 
-```text
-클라이언트
-  → ① Filter 체인            (서블릿 컨테이너 영역 — Spring MVC 바깥)
-  → ② DispatcherServlet      (여기서부터 스프링 영역)
-  → ③ HandlerMapping         "이 URL/메서드는 누가 처리하지?" 탐색
-  → ④ HandlerAdapter          핸들러 실행을 대행
-       ├ ④-a Interceptor.preHandle
-       ├ ④-b ArgumentResolver  (파라미터 바인딩, @RequestBody 역직렬화, 검증)
-       ├ ④-c 컨트롤러 메서드 실행
-       ├ ④-d ReturnValueHandler (반환값 → ModelAndView 또는 응답 본문)
-       └ ④-e Interceptor.postHandle
-  → ⑤ (예외 발생 시) HandlerExceptionResolver
-  → ⑥ ViewResolver → View 렌더링   (또는 @ResponseBody면 메시지 컨버터로 직렬화)
-  → ⑦ Interceptor.afterCompletion
-  → 응답
+```flow
+# 요청 하나가 지나가는 7단계. 점선으로 나뉜 두 영역이 이 그림의 핵심이다 — **①은 스프링 바깥**이라 `@ControllerAdvice`가 닿지 않는다.
+== 서블릿 컨테이너 · Spring MVC 바깥
+① Filter 체인 | 인코딩 · CORS · Spring Security 인증(FilterChainProxy)
+== Spring MVC · DispatcherServlet 관할
+② DispatcherServlet | 지휘자 — 직접 일하지 않고 전략 객체에 위임한다
+③ HandlerMapping | "이 URL·메서드는 누가 처리하지?" — 핸들러와 적용될 인터셉터 목록을 함께 반환
+④ HandlerAdapter | "어떻게 실행하지?" — 핸들러 종류별 실행법을 아는 어댑터가 대행
+  - Interceptor.preHandle | false를 반환하면 컨트롤러는 실행되지 않는다
+  - ArgumentResolver | @RequestParam·@PathVariable 바인딩, @RequestBody JSON 역직렬화(Jackson), @Valid 검증
+  - 컨트롤러 메서드 실행 | 내가 쓴 코드가 처음 실행되는 지점
+  - ReturnValueHandler | @ResponseBody면 메시지 컨버터로 직렬화, 뷰 이름이면 ModelAndView
+  - Interceptor.postHandle | 예외가 나면 건너뛴다
+? ⑤ HandlerExceptionResolver | 예외 발생 시에만 — @ControllerAdvice + @ExceptionHandler가 여기서 실행된다
+⑥ ViewResolver → View 렌더링 | @RestController면 ④-d에서 본문이 이미 완성돼 생략된다
+⑦ Interceptor.afterCompletion | 예외가 나도 항상 실행 — 자원 정리·MDC 해제 자리
 ```
 
 ### ① Filter — 스프링 진입 전, 서블릿 컨테이너의 영역
@@ -163,13 +164,19 @@ HandlerMapping, HandlerAdapter, ExceptionResolver, ViewResolver라는
 
 단계별 증상 → 원인 매핑 (면접에서 하나만 예로 들어도 좋다):
 
-- **응답은 왔는데 access 로그에 컨트롤러 흔적이 없다** → Filter에서 차단
-  (Security 인증 실패, CORS preflight 등)
-- **404인데 코드가 멀쩡하다** → HandlerMapping 실패 (매핑/스캔 문제)
-- **400 + `MethodArgument...Exception`** → ArgumentResolver 바인딩/검증 실패
-- **500 + 우리 패키지 스택트레이스** → 컨트롤러 이후 비즈니스 로직
-- **에러 응답 포맷이 공통 포맷과 다르다** → `@ControllerAdvice` 바깥
-  (필터 단계)에서 만들어진 응답
+```flow compact
+# 같은 파이프라인을 **"어디서 죽었나"** 관점으로 다시 본 것. 증상만 보고 단계를 특정할 수 있으면 뒤져야 할 코드가 1/7로 줄어든다.
+① Filter 체인
+  ! 응답은 왔는데 access 로그에 컨트롤러 흔적이 없다 → Security 인증 실패·CORS preflight 차단
+③ HandlerMapping
+  ! 404인데 코드는 멀쩡하다 → URL 오타·컴포넌트 스캔 누락·@RestController 미부착
+④-b ArgumentResolver
+  ! 400 + MethodArgumentNotValidException / HttpMessageNotReadableException → 컨트롤러 본문은 실행조차 안 됐다
+④-c 컨트롤러 메서드
+  ! 500 + 우리 패키지 스택트레이스 → 여기서부터가 비즈니스 로직
+? ⑤ ExceptionResolver 바깥
+  ! 에러 응답 포맷만 공통 포맷과 다르다 → 필터 단계에서 만들어진 응답이라 @ControllerAdvice가 못 잡는다
+```
 
 또 하나의 흔한 함정 — **공통 관심사를 어느 단계에 두는가**:
 
