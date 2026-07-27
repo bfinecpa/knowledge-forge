@@ -54,6 +54,27 @@
     applyTheme(theme);
   }
 
+  /* ---------- 클립보드 ----------
+     navigator.clipboard 은 https / localhost 에서만 동작한다.
+     file:// 로 직접 열었을 때는 execCommand('copy') 로 대체한다. */
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+      if (ok) resolve(); else reject();
+    });
+  }
+
   /* ---------- 토스트 ---------- */
   var toastEl, toastT;
   function toast(msg) {
@@ -193,20 +214,11 @@
       var b = e.target.closest('.copy');
       if (!b) return;
       var pre = b.closest('.code').querySelector('pre');
-      var txt = pre ? pre.innerText : '';
-      var done = function () {
+      copyText(pre ? pre.innerText : '').then(function () {
         b.textContent = '복사됨';
         b.classList.add('ok');
         setTimeout(function () { b.textContent = '복사'; b.classList.remove('ok'); }, 1400);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(txt).then(done, function () {});
-      } else {
-        var ta = document.createElement('textarea');
-        ta.value = txt; document.body.appendChild(ta); ta.select();
-        try { document.execCommand('copy'); done(); } catch (err) {}
-        document.body.removeChild(ta);
-      }
+      }, function () {});
     });
 
     /* --- 목차 스크롤 스파이 + 진행 막대 --- */
@@ -429,6 +441,28 @@
   }
 
   /* =========================================================
+     파일 경로 복사 (모든 페이지)
+     <html data-src="..."> 의 저장소 루트 기준 경로를 클립보드에 넣는다.
+     ========================================================= */
+  function initPathCopy() {
+    var btn = document.getElementById('pathBtn');
+    if (!btn) return;
+    var src = document.documentElement.getAttribute('data-src') || '';
+    if (!src) { btn.style.display = 'none'; return; }
+
+    btn.title = '파일 경로 복사 — ' + src;
+    btn.addEventListener('click', function () {
+      copyText(src).then(function () {
+        btn.classList.add('on');
+        setTimeout(function () { btn.classList.remove('on'); }, 1200);
+        toast('📋 ' + src);
+      }, function () {
+        toast('복사에 실패했습니다 — ' + src);
+      });
+    });
+  }
+
+  /* =========================================================
      키보드 단축키
      ========================================================= */
   addEventListener('keydown', function (e) {
@@ -465,4 +499,5 @@
   if (document.body.classList.contains('page-doc')) initDoc();
   if (document.body.classList.contains('page-home')) initHome();
   initFinder();
+  initPathCopy();
 })();

@@ -14,6 +14,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(HERE, '..', 'knowledge');
 const OUT = HERE;
 
+/* 상단바 "경로 복사" 버튼이 클립보드에 넣는 값은 저장소 루트 기준 경로다.
+   (예: interview-questions/knowledge/02-spring/xxx.md → 에디터·CLI 에 바로 붙여 쓸 수 있다) */
+const REPO = path.resolve(HERE, '..', '..');
+const posixRel = (p) => path.relative(REPO, p).split(path.sep).join('/');
+const SRC_REL = posixRel(SRC);
+const OUT_REL = posixRel(OUT);
+
 /* 카테고리별 색상(hue) — 카테고리마다 색이 달라 시각적으로 기억에 남는다 */
 const HUES = {
   '01-java-kotlin': 25, '02-spring': 132, '03-jpa-orm': 200, '04-rdb-sql': 218,
@@ -856,7 +863,7 @@ function docPage(d) {
   ].join('\n');
 
   return `<!doctype html>
-<html lang="ko" data-root="${root}" data-doc="${esc(d.id)}" style="--hue:${d.hue}">
+<html lang="ko" data-root="${root}" data-doc="${esc(d.id)}" data-src="${esc(SRC_REL + '/' + d.rel)}" style="--hue:${d.hue}">
 <head>
 ${head(txt(d.doc.title) + ' | knowledge-web', d.hue, root)}
 </head>
@@ -878,6 +885,7 @@ ${head(txt(d.doc.title) + ' | knowledge-web', d.hue, root)}
     <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
     <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
     <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+    <button class="icon-btn" id="pathBtn" type="button" title="파일 경로 복사">📋<span class="lbl">경로 복사</span></button>
   </div>
 </header>
 <div class="progress"><i></i></div>
@@ -957,7 +965,7 @@ ${cards || '      <p class="empty-msg" style="grid-column:1/-1;padding:20px">아
   }).join('\n');
 
   return `<!doctype html>
-<html lang="ko" data-root="" style="--hue:212">
+<html lang="ko" data-root="" data-src="${esc(OUT_REL + '/index.html')}" style="--hue:212">
 <head>
 ${head('knowledge-web — 백엔드 지식 학습 문서', 212, '')}
 </head>
@@ -969,6 +977,7 @@ ${head('knowledge-web — 백엔드 지식 학습 문서', 212, '')}
     <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍<span class="lbl">검색</span></button>
     <button class="icon-btn" id="resetBtn" type="button" title="진도 초기화">↺<span class="lbl">진도 초기화</span></button>
     <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+    <button class="icon-btn" id="pathBtn" type="button" title="파일 경로 복사">📋<span class="lbl">경로 복사</span></button>
   </div>
 </header>
 
