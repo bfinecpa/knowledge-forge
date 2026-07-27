@@ -594,7 +594,9 @@ function renderBlocks(nodes, opt = {}) {
     switch (n.t) {
       case 'h': {
         const lv = Math.min(6, Math.max(3, n.level));
-        const id = opt.ids ? ` id="${opt.ids(n)}"` : '';
+        /* 목차 링크 대상은 h3뿐이라 h4 이하는 id가 없다 — 빈 id="" 를 남기지 않는다 */
+        const anchor = opt.ids ? opt.ids(n) : '';
+        const id = anchor ? ` id="${anchor}"` : '';
         out.push(`<h${lv}${id}>${inline(n.text)}</h${lv}>`);
         break;
       }
