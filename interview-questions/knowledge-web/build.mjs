@@ -825,7 +825,9 @@ ${body}
   return {
     title: title || '(제목 없음)',
     hero,
-    heroText: hero ? plain(md.split('\n').filter((l) => l.startsWith('>')).join(' ')) : '',
+    /* 줄바꿈으로 이어붙여야 plain() 의 줄 단위 인용부호(>) 제거가 매 줄에 걸린다.
+       공백으로 합치면 한 줄이 되어 맨 앞 > 하나만 벗겨진다. */
+    heroText: hero ? plain(md.split('\n').filter((l) => l.startsWith('>')).join('\n')) : '',
     prelude: prelude.length ? `<div class="sec-body prelude">${renderBlocks(prelude)}</div>` : '',
     sections: secHTML,
     summary,
@@ -1040,9 +1042,6 @@ function walk(dir, base = '') {
 
 /* knowledge/README.md 의 표에서 카테고리 이름을 읽어온다 */
 function readCats() {
-  const dirs = fs.readdirSync(SRC, { withFileTypes: true })
-    .filter((e) => e.isDirectory()).map((e) => e.name).sort();
-
   const titles = new Map();
   const readme = path.join(SRC, 'README.md');
   if (fs.existsSync(readme)) {
@@ -1051,6 +1050,14 @@ function readCats() {
       if (m) titles.set(m[1].trim(), m[2].trim());
     }
   }
+
+  /* 카테고리 목록의 기준은 README 의 표다. git 은 빈 디렉토리를 추적하지 않아서
+     디스크만 훑으면 아직 문서가 없는 카테고리가 클론에서 통째로 사라진다.
+     표에 없는 디렉토리는 뒤에 합쳐 새로 만든 카테고리도 놓치지 않는다. */
+  const onDisk = fs.readdirSync(SRC, { withFileTypes: true })
+    .filter((e) => e.isDirectory()).map((e) => e.name);
+  const dirs = [...new Set([...titles.keys(), ...onDisk])].sort();
+
   return dirs.map((dir) => ({
     dir,
     title: titles.get(dir) || dir.replace(/^\d+-/, '').replace(/-/g, ' '),
