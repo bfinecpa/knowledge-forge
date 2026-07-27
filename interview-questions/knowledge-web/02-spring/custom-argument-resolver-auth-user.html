@@ -40,7 +40,7 @@
 <li><a href="#sec-3"><span class="n">2</span><span class="t">구조 — 역할을 둘로 나눈다</span></a></li>
 <li><a href="#sec-4"><span class="n">3</span><span class="t">구현</span></a></li>
 <li><a href="#sec-5"><span class="n">4</span><span class="t">전달 통로 — request attribute vs ThreadLocal</span></a></li>
-<li><a href="#sec-6"><span class="n">5</span><span class="t">확장 지점 구분 — 무엇이 누구 소관인가</span></a></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">확장 지점 구분 — 무엇이 누구 소관인가</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-6-1"><span class="t">5-1. 인증은 Security가 없어도 필터로 할 수 있다</span></a></li><li><a href="#sec-6-2"><span class="t">5-2. 판단 기준 — 질문 네 개로 갈린다</span></a></li><li><a href="#sec-6-3"><span class="t">5-3. &quot;핸들러 정보 접근&quot;이 결정적인 상황 — 애너테이션으로 정책을 선언한다</span></a></li><li><a href="#sec-6-4"><span class="t">5-4. &quot;addPathPatterns&quot;가 결정적인 상황 — 공개 엔드포인트 예외</span></a></li><li><a href="#sec-6-5"><span class="t">5-5. 정리 — 그래서 인증은 어디에 두나</span></a></li></ul></li>
 <li><a href="#sec-7"><span class="n">6</span><span class="t">꼬리질문 대비 포인트</span></a></li>
     </ul>
     <div class="side-foot">
@@ -55,7 +55,7 @@
       <span class="cat-chip">2. Spring / Spring Boot</span>
       <h1>반복되는 인증 사용자 조회 제거 — 인터셉터 + 커스텀 ArgumentResolver</h1>
       <div class="doc-meta">
-        <span>📖 약 <b>6분</b></span>
+        <span>📖 약 <b>14분</b></span>
         <span>🧩 <b>7</b>개 섹션</span>
         <span class="ring" id="progRing"><i></i><span id="progLabel">0/7 섹션 이해</span></span>
       </div>
@@ -63,7 +63,7 @@
 
     <section class="hero maskable">
       <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
-      <div class="hero-body"><p>컨트롤러마다 반복되는 &quot;토큰 추출→사용자 조회→검증&quot; 코드는 <strong>역할을 둘로 쪼개</strong> 제거한다. <strong>검증·차단은 인터셉터</strong>(또는 Security 필터)가 요청 앞단에서 한 번, <strong>컨트롤러에 사용자 객체를 넘겨주는 건 커스텀 <code>HandlerMethodArgumentResolver</code></strong>가 담당해 <code>@AuthUser LoginUser user</code> 파라미터로 주입한다. 둘 사이의 전달 통로는 기본적으로 <code>request.setAttribute</code>(요청 생명주기와 함께 소멸), ThreadLocal을 쓴다면 <strong><code>afterCompletion</code>에서 반드시 <code>remove()</code></strong> — 톰캣 스레드는 재사용되므로 안 지우면 다음 요청에 다른 사용자 정보가 남는 오염 사고가 난다.</p></div>
+      <div class="hero-body"><p>컨트롤러마다 반복되는 &quot;토큰 추출→사용자 조회→검증&quot; 코드는 <strong>역할을 둘로 쪼개</strong> 제거한다. <strong>검증·차단은 요청 앞단</strong>(인터셉터 또는 필터 — 선택 기준은 5장), <strong>컨트롤러에 사용자 객체를 넘겨주는 건 커스텀 <code>HandlerMethodArgumentResolver</code></strong>가 담당해 <code>@AuthUser LoginUser user</code> 파라미터로 주입한다. 둘 사이의 전달 통로는 기본적으로 <code>request.setAttribute</code>(요청 생명주기와 함께 소멸), ThreadLocal을 쓴다면 <strong><code>afterCompletion</code>에서 반드시 <code>remove()</code></strong> — 톰캣 스레드는 재사용되므로 안 지우면 다음 요청에 다른 사용자 정보가 남는 오염 사고가 난다.</p></div>
     </section>
 
 
@@ -92,10 +92,9 @@
   </span>
 </div>
 <div class="sec-body">
-<div class="code">
-<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
-<pre><code><span class="tk-com">// ❌ before: 모든 컨트롤러 메서드마다 반복</span>
-<span class="tk-anno">@GetMapping</span>(<span class="tk-str">&quot;/orders&quot;</span>)
+<div class="ba"><div class="code ba-before">
+<div class="code-bar"><span class="ba-tag">✕ BEFORE</span><span class="ba-note">모든 컨트롤러 메서드마다 반복</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@GetMapping</span>(<span class="tk-str">&quot;/orders&quot;</span>)
 <span class="tk-kw">public</span> <span class="tk-type">List</span>&lt;<span class="tk-type">Order</span>&gt; <span class="tk-fn">myOrders</span>(<span class="tk-anno">@RequestHeader</span>(<span class="tk-str">&quot;Authorization&quot;</span>) <span class="tk-type">String</span> token) {
     <span class="tk-type">String</span> userId = tokenParser.<span class="tk-fn">parse</span>(token);          <span class="tk-com">// 추출</span>
     <span class="tk-type">LoginUser</span> user = userService.<span class="tk-fn">findById</span>(userId);     <span class="tk-com">// 조회</span>
@@ -104,7 +103,7 @@
     }
     <span class="tk-kw">return</span> orderService.<span class="tk-fn">findByUser</span>(user);              <span class="tk-com">// 여기부터가 진짜 로직</span>
 }</code></pre>
-</div>
+</div></div>
 <p>반복 자체도 문제지만, 검증 규칙이 바뀌면 수십 곳을 고쳐야 하고 한 곳이라도 빠뜨리면 인증 구멍이 된다.</p>
 </div>
 </section>
@@ -118,16 +117,15 @@
   </span>
 </div>
 <div class="sec-body">
-<div class="code">
-<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
-<pre><code><span class="tk-com">// ✅ after: 컨트롤러는 비즈니스 로직만</span>
-<span class="tk-anno">@GetMapping</span>(<span class="tk-str">&quot;/orders&quot;</span>)
+<div class="ba"><div class="code ba-after">
+<div class="code-bar"><span class="ba-tag">✓ AFTER</span><span class="ba-note">컨트롤러는 비즈니스 로직만</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@GetMapping</span>(<span class="tk-str">&quot;/orders&quot;</span>)
 <span class="tk-kw">public</span> <span class="tk-type">List</span>&lt;<span class="tk-type">Order</span>&gt; <span class="tk-fn">myOrders</span>(<span class="tk-anno">@AuthUser</span> <span class="tk-type">LoginUser</span> user) {
     <span class="tk-kw">return</span> orderService.<span class="tk-fn">findByUser</span>(user);
 }</code></pre>
-</div>
+</div></div>
 <div class="tw"><table><thead><tr><th>역할</th><th>담당</th><th>이유</th></tr></thead><tbody>
-<tr><td>토큰 검증·차단 (401)</td><td>인터셉터 <code>preHandle</code> (또는 Security 필터)</td><td>컨트롤러 진입 전에 한 번만, URL 패턴으로 적용 범위 제어</td></tr>
+<tr><td>토큰 검증·차단 (401)</td><td>인터셉터 <code>preHandle</code> 또는 필터</td><td>컨트롤러 진입 전에 한 번만, 경로 패턴으로 적용 범위 제어 (둘 중 무엇을 고르는지는 5장)</td></tr>
 <tr><td>사용자 객체를 파라미터로 주입</td><td><code>HandlerMethodArgumentResolver</code></td><td>인터셉터는 컨트롤러 메서드에 값을 직접 넘길 수 없다 — 파라미터 바인딩은 리졸버의 소관</td></tr>
 </tbody></table></div>
 </div>
@@ -201,10 +199,10 @@
 <div class="tw"><table><thead><tr><th></th><th><code>request.setAttribute</code></th><th>ThreadLocal</th></tr></thead><tbody>
 <tr><td>수명</td><td>요청 생명주기와 함께 소멸 — 뒤처리 불요</td><td><strong>직접 정리해야 함</strong></td></tr>
 <tr><td>꺼내는 곳</td><td>리졸버의 <code>NativeWebRequest</code>에서 바로</td><td>어디서든 static 접근</td></tr>
-<tr><td>대표 사례</td><td>위 구현</td><td>Spring Security의 <code>SecurityContextHolder</code>가 이 방식 ([[spring-security-filter-chain-authentication]] 참조)</td></tr>
+<tr><td>대표 사례</td><td>위 구현</td><td>Spring Security의 <code>SecurityContextHolder</code>가 이 방식 (<a href="../02-spring/spring-security-filter-chain-authentication.html" class="xref"><code>spring-security-filter-chain-authentication.md</code></a> 참조)</td></tr>
 <tr><td>권장</td><td><strong>기본값으로 권장</strong></td><td>컨트롤러 밖(서비스 깊은 곳)에서도 사용자 정보가 필요할 때</td></tr>
 </tbody></table></div>
-<p><strong>ThreadLocal의 함정</strong>: 톰캣 스레드는 풀에서 <strong>재사용</strong>된다. <code>afterCompletion</code>에서 <code>remove()</code>를 빠뜨리면 다음 요청 — <strong>다른 사용자</strong> — 에 이전 사용자 정보가 남는다. 인증 도메인(IAM)에서는 데이터 유출로 직결되는 치명적 사고 유형. <code>@Async</code>로 스레드가 바뀌면 ThreadLocal이 전파되지 않는 것도 동일 계열 함정([[transaction-synchronization-connection-binding]] 참조).</p>
+<p><strong>ThreadLocal의 함정</strong>: 톰캣 스레드는 풀에서 <strong>재사용</strong>된다. <code>afterCompletion</code>에서 <code>remove()</code>를 빠뜨리면 다음 요청 — <strong>다른 사용자</strong> — 에 이전 사용자 정보가 남는다. 인증 도메인(IAM)에서는 데이터 유출로 직결되는 치명적 사고 유형. <code>@Async</code>로 스레드가 바뀌면 ThreadLocal이 전파되지 않는 것도 동일 계열 함정(<a href="../02-spring/transaction-synchronization-connection-binding.html" class="xref"><code>transaction-synchronization-connection-binding.md</code></a> 참조).</p>
 </div>
 </section>
 <section class="sec" id="sec-6">
@@ -218,12 +216,179 @@
 </div>
 <div class="sec-body">
 <div class="tw"><table><thead><tr><th>확장 지점</th><th>위치</th><th>소관</th></tr></thead><tbody>
-<tr><td>Filter</td><td>서블릿 컨테이너 (DispatcherServlet 앞)</td><td>인증·로깅 등 스프링 MVC 무관 관심사, Security 필터 체인</td></tr>
-<tr><td>Interceptor</td><td>DispatcherServlet 안, 핸들러 앞뒤</td><td>핸들러 정보 접근 가능한 공통 검증·차단</td></tr>
+<tr><td>Filter</td><td>서블릿 컨테이너 (DispatcherServlet 앞)</td><td>요청/응답 객체 래핑, 스프링 MVC 무관 관심사, Security 필터 체인</td></tr>
+<tr><td>Interceptor</td><td>DispatcherServlet 안, 핸들러 앞뒤</td><td>핸들러 정보 접근이 필요한 공통 검증·차단</td></tr>
 <tr><td>ArgumentResolver</td><td>핸들러 호출 직전 파라미터 바인딩</td><td>컨트롤러 시그니처로 값 주입</td></tr>
 <tr><td>@ControllerAdvice</td><td>핸들러 실행 후</td><td>예외 → 에러 응답 변환 (전역)</td></tr>
 </tbody></table></div>
-<p><strong>선택 근거 교정</strong>: &quot;인터셉터는 스프링 빈을 쓸 수 있어서&quot;는 약한 근거다 — <strong>필터도 빈으로 등록하면 주입받을 수 있다</strong>. 인터셉터의 진짜 강점은 DispatcherServlet 안쪽이라 <strong>핸들러(컨트롤러 메서드) 정보에 접근</strong>할 수 있고 <code>addPathPatterns</code>로 적용 범위를 유연하게 제어한다는 것.</p>
+<figure class="figure">
+<svg class="flow" viewBox="0 -10 720 592" width="100%" role="img" aria-label="1 Filter → 2 HandlerMapping → 3 Interceptor.preHandle → 4 ArgumentResolver → 5 컨트롤러 메서드" preserveAspectRatio="xMidYMin meet">
+<title>같은 요청이 지나는 지점들. **위로 갈수록 커버리지가 넓고, 아래로 갈수록 아는 정보가 많다** — 이 맞바꿈이 필터/인터셉터 선택의 전부다.</title>
+<rect class="fl-zone" x="13" y="0" width="694" height="145" rx="14"/>
+<rect class="fl-zlbl-bg" x="28" y="-9" width="203.47999999999996" height="19" rx="9.5"/>
+<text class="fl-zlbl" x="129.73999999999998" y="4" text-anchor="middle">서블릿 컨테이너 — 스프링 MVC 바깥</text>
+<rect class="fl-zone" x="13" y="172" width="694" height="400" rx="14"/>
+<rect class="fl-zlbl-bg" x="28" y="163" width="144.95999999999995" height="19" rx="9.5"/>
+<text class="fl-zlbl" x="100.47999999999998" y="176" text-anchor="middle">DispatcherServlet 관할</text>
+<path class="fl-arw" d="M360 134V190"/><path class="fl-arh" d="M360 197l-4.5 -8h9z"/>
+<rect class="fl-card" x="27" y="27" width="666" height="103" rx="11"/>
+<rect class="fl-badge-bg" x="40" y="41" width="22" height="22" rx="11"/>
+<text class="fl-badge" x="51" y="57" text-anchor="middle">1</text>
+<text class="fl-title" x="70" y="56">Filter</text>
+<text class="fl-note" x="40" y="75">요청/응답 객체를 감싸 교체할 수 있는 유일한 지점. 정적 리소스·404·다른 서블릿까지 전부 지나간다</text>
+<rect class="fl-fail-bg" x="36" y="95" width="648" height="29" rx="7"/>
+<text class="fl-fail-ic" x="46" y="111">⚠</text>
+<text class="fl-fail" x="64" y="111">여기서 던진 예외는 @ControllerAdvice 가 못 잡는다 → 부트 기본 /error 응답으로 나간다</text>
+<path class="fl-arw" d="M360 268V282"/><path class="fl-arh" d="M360 289l-4.5 -8h9z"/>
+<rect class="fl-card" x="27" y="199" width="666" height="65" rx="11"/>
+<rect class="fl-badge-bg" x="40" y="213" width="22" height="22" rx="11"/>
+<text class="fl-badge" x="51" y="229" text-anchor="middle">2</text>
+<text class="fl-title" x="70" y="228">HandlerMapping</text>
+<text class="fl-note" x="40" y="247">요청을 처리할 컨트롤러 메서드를 찾는다. 못 찾으면 404 — 아래 단계는 아예 실행되지 않는다</text>
+<path class="fl-arw" d="M360 377V391"/><path class="fl-arh" d="M360 398l-4.5 -8h9z"/>
+<rect class="fl-card" x="27" y="291" width="666" height="82" rx="11"/>
+<rect class="fl-badge-bg" x="40" y="305" width="22" height="22" rx="11"/>
+<text class="fl-badge" x="51" y="321" text-anchor="middle">3</text>
+<text class="fl-title" x="70" y="320">Interceptor.preHandle</text>
+<text class="fl-note" x="40" y="339">핸들러가 누구인지 안다 → 메서드 애너테이션 기반 정책. addPathPatterns / excludePathPatterns 로 범위 </text>
+<text class="fl-note" x="40" y="356">제어</text>
+<path class="fl-arw" d="M360 469V483"/><path class="fl-arh" d="M360 490l-4.5 -8h9z"/>
+<rect class="fl-card" x="27" y="400" width="666" height="65" rx="11"/>
+<rect class="fl-badge-bg" x="40" y="414" width="22" height="22" rx="11"/>
+<text class="fl-badge" x="51" y="430" text-anchor="middle">4</text>
+<text class="fl-title" x="70" y="429">ArgumentResolver</text>
+<text class="fl-note" x="40" y="448">@AuthUser LoginUser 로 주입 — 값을 컨트롤러 시그니처에 넣는 유일한 지점</text>
+<rect class="fl-card" x="27" y="492" width="666" height="65" rx="11"/>
+<rect class="fl-badge-bg" x="40" y="506" width="22" height="22" rx="11"/>
+<text class="fl-badge" x="51" y="522" text-anchor="middle">5</text>
+<text class="fl-title" x="70" y="521">컨트롤러 메서드</text>
+<text class="fl-note" x="40" y="540">비즈니스 로직만 남는다</text>
+</svg>
+<figcaption>같은 요청이 지나는 지점들. <strong>위로 갈수록 커버리지가 넓고, 아래로 갈수록 아는 정보가 많다</strong> — 이 맞바꿈이 필터/인터셉터 선택의 전부다.</figcaption>
+</figure>
+<h3 id="sec-6-1">5-1. 인증은 Security가 없어도 필터로 할 수 있다</h3>
+<p>&quot;인터셉터 또는 Security 필터&quot;라는 병렬 표현은 <strong>필터 = Security 전용</strong>이라는 오해를 부르기 쉽다. 순수 서블릿 필터로 JWT를 검증하는 구현은 흔하고 정당하다. 셋 다 가능하고, 실제로 갈리는 지점은 세 가지뿐이다.</p>
+<div class="tw"><table><thead><tr><th></th><th>필터</th><th>인터셉터</th></tr></thead><tbody>
+<tr><td>예외 → 에러 응답</td><td><code>@ControllerAdvice</code>가 <strong>못 잡는다</strong> (DispatcherServlet 바깥)</td><td>잡힌다 — 기존 예외 처리 체계 그대로</td></tr>
+<tr><td>커버리지</td><td>정적 리소스·404·다른 서블릿까지 <strong>전부</strong> 지나감</td><td>DispatcherServlet이 <strong>핸들러를 찾은 요청만</strong></td></tr>
+<tr><td>경로 매칭</td><td>서블릿 스펙(<code>/api/*</code>, <code>*.json</code>) — <strong>제외 불가</strong></td><td><code>addPathPatterns</code> / <code>excludePathPatterns</code></td></tr>
+</tbody></table></div>
+<p><strong>필터 인증의 최대 불편은 첫 줄이다.</strong> 필터에서 <code>throw new UnauthorizedException()</code>을 해도 <code>@RestControllerAdvice</code>의 핸들러를 타지 않는다. 부트 기본 <code>/error</code> 응답이 나가버려 팀이 정한 <code>{&quot;code&quot;:&quot;AUTH_001&quot;, ...}</code> 포맷을 못 맞춘다. 그래서 응답을 손으로 조립하게 되는데, 더 나은 우회법은 <strong><code>HandlerExceptionResolver</code>를 주입해 직접 호출</strong>하는 것이다 — 필터에서 던진 예외를 기존 <code>@ExceptionHandler</code> 체계에 그대로 얹을 수 있다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">JwtAuthFilter</span> <span class="tk-kw">extends</span> <span class="tk-type">OncePerRequestFilter</span> {
+
+    <span class="tk-kw">private</span> <span class="tk-kw">final</span> <span class="tk-type">HandlerExceptionResolver</span> resolver;   <span class="tk-com">// 부트가 등록한 것을 빌려 쓴다</span>
+
+    <span class="tk-kw">public</span> <span class="tk-type">JwtAuthFilter</span>(<span class="tk-anno">@Qualifier</span>(<span class="tk-str">&quot;handlerExceptionResolver&quot;</span>) <span class="tk-type">HandlerExceptionResolver</span> resolver) {
+        <span class="tk-kw">this</span>.resolver = resolver;   <span class="tk-com">// ★ 이름을 지정해야 정확히 그 빈이 주입된다</span>
+    }
+
+    <span class="tk-anno">@Override</span>
+    <span class="tk-kw">protected</span> <span class="tk-kw">void</span> <span class="tk-fn">doFilterInternal</span>(<span class="tk-type">HttpServletRequest</span> req, <span class="tk-type">HttpServletResponse</span> res, <span class="tk-type">FilterChain</span> chain)
+            <span class="tk-kw">throws</span> <span class="tk-type">ServletException</span>, <span class="tk-type">IOException</span> {
+        <span class="tk-kw">try</span> {
+            req.<span class="tk-fn">setAttribute</span>(<span class="tk-str">&quot;loginUser&quot;</span>, authService.<span class="tk-fn">verify</span>(req.<span class="tk-fn">getHeader</span>(<span class="tk-str">&quot;Authorization&quot;</span>)));
+            chain.<span class="tk-fn">doFilter</span>(req, res);
+        } <span class="tk-kw">catch</span> (<span class="tk-type">AuthException</span> e) {
+            resolver.<span class="tk-fn">resolveException</span>(req, res, <span class="tk-kw">null</span>, e);   <span class="tk-com">// @ExceptionHandler 를 태운다</span>
+        }
+    }
+}</code></pre>
+</div>
+<p><strong>반대로 필터가 유리한 지점은 두 번째 줄이다.</strong> 인터셉터는 핸들러 매핑이 <strong>성공한</strong> 요청만 탄다. 존재하지 않는 URL은 <code>preHandle</code>이 불리지 않고 곧장 404가 나간다 — 즉 <strong>토큰 없이도 &quot;이 경로가 존재하는지&quot;를 알아낼 수 있다</strong>(엔드포인트 열거). 필터로 막으면 존재 여부와 무관하게 401이다. 노출도까지 통제해야 하는 API라면 이 차이가 실제 의미를 갖는다.</p>
+<h3 id="sec-6-2">5-2. 판단 기준 — 질문 네 개로 갈린다</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>① 요청/응답 객체 자체를 바꿔치기해야 하나?  ── YES ─▶ 필터 (인터셉터는 구조적으로 불가능)
+② 스프링 MVC 밖의 요청까지 적용돼야 하나?    ── YES ─▶ 필터
+③ &quot;어느 컨트롤러 메서드인지&quot; 알아야 하나?    ── YES ─▶ 인터셉터
+④ 기존 예외 처리 체계에 태우고 싶은가?       ── YES ─▶ 인터셉터</code></pre>
+</div>
+<p>①이 가장 결정적인데 자주 잊힌다. 필터는 <code>chain.doFilter(감싼요청, 감싼응답)</code>으로 <strong>다음 단계에 다른 객체를 넘길 수 있고</strong>, 인터셉터는 그게 불가능하다(이미 만들어진 요청을 받아 boolean만 리턴). 그래서 이건 필터밖에 못 한다:</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// 요청 본문을 두 번 읽으려면 (로깅 + 컨트롤러의 @RequestBody) — 필터만 가능</span>
+<span class="tk-kw">var</span> wrapped = <span class="tk-kw">new</span> <span class="tk-type">ContentCachingRequestWrapper</span>(req);
+chain.<span class="tk-fn">doFilter</span>(wrapped, res);
+log.<span class="tk-fn">info</span>(<span class="tk-str">&quot;body={}&quot;</span>, <span class="tk-kw">new</span> <span class="tk-type">String</span>(wrapped.<span class="tk-fn">getContentAsByteArray</span>()));</code></pre>
+</div>
+<p><code>InputStream</code>은 한 번만 읽히므로, 감싸서 교체하지 않으면 로깅한 순간 컨트롤러의 <code>@RequestBody</code>가 빈 본문을 받는다.</p>
+<div class="tw"><table><thead><tr><th>필터가 맞는 기능</th><th>인터셉터가 맞는 기능</th></tr></thead><tbody>
+<tr><td>문자 인코딩, CORS, gzip</td><td>애너테이션 기반 인가 (<code>@RequiresRole</code>)</td></tr>
+<tr><td>요청/응답 본문 로깅 (래핑 필요)</td><td>핸들러 단위 처리 시간·메트릭</td></tr>
+<tr><td>XSS 파라미터 치환 (래핑 필요)</td><td><code>@Idempotent</code> 중복 요청 차단</td></tr>
+<tr><td>trace id(MDC) 생성 — 정적 리소스 로그까지 커버</td><td><code>postHandle</code>에서 공통 모델 값 추가</td></tr>
+<tr><td>Security 인증·인가</td><td>세션 로그인 체크, 화면 단위 접근 제어</td></tr>
+</tbody></table></div>
+<h3 id="sec-6-3">5-3. &quot;핸들러 정보 접근&quot;이 결정적인 상황 — 애너테이션으로 정책을 선언한다</h3>
+<p>필터는 URL 문자열밖에 못 본다. 그래서 &quot;이 URL은 ADMIN만&quot; 같은 규칙을 <strong>URL→권한 매핑 테이블로 필터 안에 따로</strong> 들고 있어야 한다.</p>
+<div class="ba two">
+<div class="code ba-before">
+<div class="code-bar"><span class="ba-tag">✕ BEFORE</span><span class="ba-note">필터 — 정책이 컨트롤러에서 멀리 떨어져 산다</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">private</span> <span class="tk-kw">static</span> <span class="tk-kw">final</span> <span class="tk-type">Map</span>&lt;<span class="tk-type">String</span>, <span class="tk-type">String</span>&gt; <span class="tk-type">URL_ROLES</span> = <span class="tk-type">Map</span>.<span class="tk-fn">of</span>(
+    <span class="tk-str">&quot;/api/admin/**&quot;</span>,        <span class="tk-str">&quot;ADMIN&quot;</span>,
+    <span class="tk-str">&quot;/api/orders/*/cancel&quot;</span>, <span class="tk-str">&quot;MANAGER&quot;</span>,
+    <span class="tk-str">&quot;/api/settlements/**&quot;</span>,  <span class="tk-str">&quot;FINANCE&quot;</span>
+);</code></pre>
+</div>
+<div class="code ba-after">
+<div class="code-bar"><span class="ba-tag">✓ AFTER</span><span class="ba-note">인터셉터 — 정책이 핸들러에 붙어 있어 경로를 바꿔도 따라온다</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@RequiresRole</span>(<span class="tk-str">&quot;MANAGER&quot;</span>)
+<span class="tk-anno">@PostMapping</span>(<span class="tk-str">&quot;/orders/{id}/cancel&quot;</span>)
+<span class="tk-kw">public</span> <span class="tk-kw">void</span> <span class="tk-fn">cancel</span>(<span class="tk-anno">@PathVariable</span> <span class="tk-type">Long</span> id) { ... }</code></pre>
+</div>
+</div>
+<p>Before의 진짜 문제는 중복이 아니라 <strong>컨트롤러의 <code>@PostMapping</code> 경로를 바꾸는 순간 이 표가 조용히 틀어진다</strong>는 것이다. 컴파일 에러도 안 나고 테스트가 없으면 아무도 모르는 채로 권한 검사가 통째로 빠진다 — <strong>URL 리네이밍이 곧 인가 구멍</strong>이 되는 구조다. 인터셉터는 핸들러에서 애너테이션을 직접 읽으므로 그 연결이 끊어질 수 없다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Override</span>
+<span class="tk-kw">public</span> <span class="tk-kw">boolean</span> <span class="tk-fn">preHandle</span>(<span class="tk-type">HttpServletRequest</span> req, <span class="tk-type">HttpServletResponse</span> res, <span class="tk-type">Object</span> handler) {
+    <span class="tk-kw">if</span> (!(handler <span class="tk-kw">instanceof</span> <span class="tk-type">HandlerMethod</span> hm)) <span class="tk-kw">return</span> <span class="tk-kw">true</span>;   <span class="tk-com">// 정적 리소스 등은 통과</span>
+
+    <span class="tk-type">RequiresRole</span> ann = hm.<span class="tk-fn">getMethodAnnotation</span>(<span class="tk-type">RequiresRole</span>.<span class="tk-kw">class</span>);
+    <span class="tk-kw">if</span> (ann == <span class="tk-kw">null</span>) ann = hm.<span class="tk-fn">getBeanType</span>().<span class="tk-fn">getAnnotation</span>(<span class="tk-type">RequiresRole</span>.<span class="tk-kw">class</span>);  <span class="tk-com">// 클래스 단위도 지원</span>
+    <span class="tk-kw">if</span> (ann != <span class="tk-kw">null</span> &amp;&amp; !<span class="tk-fn">currentUser</span>(req).<span class="tk-fn">hasRole</span>(ann.<span class="tk-fn">value</span>())) {
+        <span class="tk-kw">throw</span> <span class="tk-kw">new</span> <span class="tk-type">ForbiddenException</span>();   <span class="tk-com">// ← @ControllerAdvice 가 받아 준다</span>
+    }
+    <span class="tk-kw">return</span> <span class="tk-kw">true</span>;
+}</code></pre>
+</div>
+<p>같은 원리로 파생되는 것들:</p>
+<ul>
+<li><strong><code>@RateLimit(perMinute = 10)</code></strong> — 엔드포인트마다 다른 한도를 메서드 옆에 선언한다.</li>
+<li><strong><code>@Idempotent</code></strong> — 이 애너테이션이 붙은 핸들러에서만 <code>Idempotency-Key</code> 헤더를 검사한다.</li>
+<li><strong>메트릭 카디널리티</strong> — URL로 태깅하면 <code>/orders/1</code>, <code>/orders/2</code>가 전부 다른 시계열이 되어 폭발한다. <code>hm.getBeanType().getSimpleName() + &quot;#&quot; + hm.getMethod().getName()</code>으로 태깅하면 <code>OrderController#get</code> 하나로 수렴한다. 필터는 <code>{id}</code>가 무엇으로 치환됐는지 모르니 이걸 할 수 없다.</li>
+</ul>
+<h3 id="sec-6-4">5-4. &quot;addPathPatterns&quot;가 결정적인 상황 — 공개 엔드포인트 예외</h3>
+<p>서블릿 필터의 <code>url-pattern</code>은 세 형태만 지원한다: 완전 일치(<code>/api/login</code>), 경로 접두(<code>/api/*</code>), 확장자(<code>*.json</code>). <strong>제외(exclude)라는 개념 자체가 없다.</strong> 그런데 실무의 인증 설정은 거의 항상 이 모양이다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>registry.<span class="tk-fn">addInterceptor</span>(authInterceptor)
+        .<span class="tk-fn">addPathPatterns</span>(<span class="tk-str">&quot;/api/**&quot;</span>)                       <span class="tk-com">// 기본은 전부 차단</span>
+        .<span class="tk-fn">excludePathPatterns</span>(
+            <span class="tk-str">&quot;/api/auth/login&quot;</span>, <span class="tk-str">&quot;/api/auth/signup&quot;</span>,        <span class="tk-com">// 공개 엔드포인트만 예외</span>
+            <span class="tk-str">&quot;/api/health&quot;</span>, <span class="tk-str">&quot;/api/docs/**&quot;</span>)
+        .<span class="tk-fn">order</span>(<span class="tk-num">1</span>);</code></pre>
+</div>
+<p>필터로 하면 이 화이트리스트를 필터 코드 안에서 <code>AntPathMatcher</code>로 직접 굴려야 한다 — Spring Security의 <code>permitAll()</code>이 제공하는 게 정확히 이 기능이다. <strong>Security 없이 필터로 인증하겠다면 결국 이 경로 매칭 로직을 손으로 만들게 된다.</strong></p>
+<p>여기서 방향이 중요하다. <code>/api/**</code> 전부 차단 + 예외 허용은 <strong>새 API를 추가하면 자동으로 인증이 걸린다</strong> — 실수하면 401 장애로 즉시 드러난다. 반대로 &quot;이 URL들만 인증&quot;으로 짜면 새 API 추가 시 <strong>조용히 인증이 빠진다</strong> — 아무도 모르는 보안 구멍이다. 실패가 안전한 쪽으로 기울게 설계하는 것이 핵심이다.</p>
+<p>패턴 문법 자체도 훨씬 세다 — <code>/api/v1/orders/*</code>(한 세그먼트), <code>/api/**</code>(나머지 전부), <code>/api/{version}/users/**</code>(변수). 단 Boot 3부터 <code>PathPatternParser</code>가 기본이라 <code>**</code>는 패턴 맨 끝에만 올 수 있다. 여러 인터셉터가 각기 다른 범위와 순서를 갖는 것도 자연스럽다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>registry.<span class="tk-fn">addInterceptor</span>(localeInterceptor).<span class="tk-fn">addPathPatterns</span>(<span class="tk-str">&quot;/**&quot;</span>).<span class="tk-fn">order</span>(<span class="tk-num">0</span>);
+registry.<span class="tk-fn">addInterceptor</span>(authInterceptor).<span class="tk-fn">addPathPatterns</span>(<span class="tk-str">&quot;/api/**&quot;</span>).<span class="tk-fn">order</span>(<span class="tk-num">1</span>);
+registry.<span class="tk-fn">addInterceptor</span>(auditInterceptor).<span class="tk-fn">addPathPatterns</span>(<span class="tk-str">&quot;/api/admin/**&quot;</span>).<span class="tk-fn">order</span>(<span class="tk-num">2</span>);</code></pre>
+</div>
+<h3 id="sec-6-5">5-5. 정리 — 그래서 인증은 어디에 두나</h3>
+<div class="tw"><table><thead><tr><th>상황</th><th>선택</th></tr></thead><tbody>
+<tr><td>Spring Security 도입</td><td>필터 체인 + <code>@AuthenticationPrincipal</code> — 프레임워크가 이미 제공</td></tr>
+<tr><td>Security 미도입, 일반 REST API</td><td><strong>인터셉터</strong> — 에러 응답 포맷 일관성과 <code>excludePathPatterns</code>의 이득이 크다</td></tr>
+<tr><td>Security 미도입, 엔드포인트 존재 노출까지 막아야 함</td><td><strong>필터</strong> + <code>HandlerExceptionResolver</code> 주입</td></tr>
+<tr><td>인증은 앞단, 인가는 애너테이션</td><td><strong>필터(인증) + 인터셉터(인가)</strong> — 실무에서 흔한 조합</td></tr>
+</tbody></table></div>
+<p>마지막 줄이 핵심이다. 둘은 택일이 아니라 <strong>역할을 한 번 더 나눌 수 있다</strong> — &quot;이 사람이 누구인가&quot;(신원 확인, 모든 요청)는 필터, &quot;이 사람이 이걸 해도 되는가&quot;(핸들러별 권한)는 인터셉터. 2장의 &quot;차단은 앞단, 주입은 리졸버&quot; 분리를 3단으로 넓힌 형태다.</p>
+<p><strong>선택 근거 교정</strong>: &quot;인터셉터는 스프링 빈을 쓸 수 있어서&quot;는 약한 근거다 — <strong>필터도 빈으로 등록하면 주입받을 수 있다</strong>. 진짜 근거는 위의 세 축(예외 처리 일관성 · 커버리지 · 경로 매칭)이고, 인터셉터 쪽 강점은 <strong>핸들러 정보 접근</strong>(5-3)과 <strong><code>excludePathPatterns</code></strong>(5-4)로 구체화된다.</p>
 <p><strong>Spring Security를 이미 쓰고 있다면</strong>: 커스텀 인터셉터 대신 <strong>필터 체인 + <code>SecurityContextHolder</code> + <code>@AuthenticationPrincipal</code></strong>이 정석이다 — 위 구조를 프레임워크가 이미 제공한다(인증 필터가 검증·저장, <code>@AuthenticationPrincipal</code>이 주입용 리졸버). 커스텀 조합은 Security 미도입이거나 별도 토큰 체계일 때의 선택지.</p>
 </div>
 </section>
@@ -251,14 +416,22 @@
 </div>
 <div class="qa">
 <button class="qa-q" type="button"><span class="mk">Q4</span><span>@Async 서비스에서 그 사용자 정보가 필요하면?</span><span class="arw">▾</span></button>
-<div class="qa-a"><p>ThreadLocal은 새 스레드에 전파되지 않는다. 값을 파라미터로 명시 전달하거나 TaskDecorator로 복사(읽기용 컨텍스트만).</p></div>
+<div class="qa-a"><p>ThreadLocal은 새 스레드에 전파되지 않는다. 값을 파라미터로 명시 전달하거나 TaskDecorator로 복사(읽기용 컨텍스트만). @Async 풀은 톰캣 요청 스레드풀과 별개라서 생기는 현상이다(<a href="../02-spring/async-annotation.html" class="xref"><code>async-annotation.md</code></a> 참조).</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q5</span><span>인증을 필터에서 하면 안 되나? Security가 없어도?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>된다. 순수 서블릿 필터로 JWT를 검증하는 건 흔한 구현이고 &quot;필터 = Security 전용&quot;이 아니다. 갈리는 축은 셋 — ① 필터 예외는 <code>@ControllerAdvice</code>가 못 잡아 에러 포맷이 깨진다(<code>HandlerExceptionResolver</code> 주입으로 우회 가능), ② 인터셉터는 핸들러 매핑이 성공한 요청만 타므로 없는 URL은 401이 아니라 404가 나가 엔드포인트 존재가 노출된다, ③ 필터에는 <code>excludePathPatterns</code>가 없어 공개 엔드포인트 화이트리스트를 직접 구현해야 한다. 실무에서는 인증은 필터, 애너테이션 기반 인가는 인터셉터로 나누는 조합도 흔하다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q6</span><span>인터셉터로는 못 하고 필터로만 되는 게 있나?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>요청/응답 객체 자체의 교체다. 필터는 <code>chain.doFilter(감싼요청, 감싼응답)</code>으로 래퍼를 다음 단계에 넘길 수 있고, 인터셉터는 이미 만들어진 요청을 받아 boolean만 리턴하므로 불가능하다. 요청 본문 로깅(<code>ContentCachingRequestWrapper</code>), XSS 파라미터 치환, 응답 압축이 전부 이 범주다.</p></div>
 </div>
 </div>
 </section>
 
     <section class="summary maskable">
       <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
-      <div class="mask-target"><p>반복되는 인증 코드는 &quot;차단은 인터셉터(preHandle에서 검증 후 request attribute에 저장), 주입은 커스텀 HandlerMethodArgumentResolver(@AuthUser 파라미터)&quot;로 역할을 나눠 제거하고 — 전달 통로로 ThreadLocal을 쓴다면 스레드 풀 재사용 오염을 막기 위해 afterCompletion에서 반드시 remove(), Security가 이미 있다면 @AuthenticationPrincipal이 정석이다.</p></div>
+      <div class="mask-target"><p>반복되는 인증 코드는 &quot;차단은 요청 앞단(preHandle에서 검증 후 request attribute에 저장), 주입은 커스텀 HandlerMethodArgumentResolver(@AuthUser 파라미터)&quot;로 역할을 나눠 제거하고 — 앞단을 필터로 할지 인터셉터로 할지는 예외 처리 일관성·커버리지·경로 매칭 세 축으로 가르며(인증은 필터, 애너테이션 인가는 인터셉터로 또 나누는 조합도 흔하다), 전달 통로로 ThreadLocal을 쓴다면 스레드 풀 재사용 오염을 막기 위해 afterCompletion에서 반드시 remove(), Security가 이미 있다면 @AuthenticationPrincipal이 정석이다.</p></div>
     </section>
 
     <nav class="pager">
