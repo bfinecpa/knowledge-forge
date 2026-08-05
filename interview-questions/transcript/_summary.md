@@ -16,7 +16,17 @@
 
 - **1. Java/Kotlin**: 전체 완료 ✅✅ — 기본 ⭐ 9/9, 중급 ⭐⭐ 13/13, 고난이도 ⭐⭐⭐ 6/6, +α 4/4 (총 32문항).
 - **2. Spring**: 전체 완료 ✅✅ — 기본 ⭐ 9/9, 중급 ⭐⭐ 12/12, 고난이도 ⭐⭐⭐ 7/7, +α 7/7 (총 35문항).
-- 3~26: 미시작
+- **3. JPA/ORM**: 기본 ⭐ 7/7 완료 ✅ — 중급 ⭐⭐ 0/12, 고난이도 ⭐⭐⭐ 0/4, +α 0/4
+- 4~26: 미시작
+
+### 2026-08-05 세션 #5 (3장 JPA/ORM 기본⭐)
+- 3장 기본 ⭐ 7문항 전부 완료: JPA vs MyBatis, 영속성 컨텍스트/dirty checking, EAGER vs LAZY, N+1, merge vs dirty checking, 연관관계의 주인·mappedBy, LazyInitializationException.
+- 평가 분포: **상 1**(주인·mappedBy), **중 5**(JPA vs MyBatis, 영속성 컨텍스트, EAGER/LAZY, N+1, LazyInitializationException — 마지막은 상 경계), **하 1**(merge).
+- 강점: ① 개념 정의의 정확도가 높다 ② **조건을 되묻는 습관**("readOnly인가 default인가", "어떤 merge인가", "수정 요청인가") — 세션 #1~2의 역질문 능력과 같은 축 ③ **세션 후반으로 갈수록 자기 교정이 나온다**(EAGER 기본값 → 주인 논리 재구성 → 반론 없이 스스로 EAGER 처방 철회). 특히 마지막 문항에서 해결책마다 비용을 자발적으로 병기한 것은 1~2장에서 반복 지적된 "트레이드오프 한쪽만 서술" 패턴이 처음 깨진 지점.
+- 약점: ① **품질을 시스템으로 고정해본 경험이 없다** — 유령 UPDATE 진단(Q2)과 N+1 자동 탐지(Q4) 모두 "잘 모르겠다". 세션 #4의 "진단 방법론 레퍼토리 부재"와 **정확히 같은 공백**이며 3장 최우선 보완 대상 ② **자주 쓰는 API의 내부 분기를 모른다** — `save()`의 persist/merge(Q5), `@ManyToOne` 기본값(Q3). 관례로 정답 코드를 써왔으나 이유를 모르는 구조 ③ OSIV 완전 미인지(중급 단독 문항에서 재검증).
+- knowledge 문서 7건(03-jpa-orm 전체): jpa-vs-mybatis, persistence-context-dirty-checking, eager-vs-lazy-fetch-strategy, n-plus-one-detection-and-fixes, merge-vs-dirty-checking, association-owner-and-mappedby, lazy-initialization-exception. 앞 4건은 에이전트 위임, 뒤 3건은 API 529 반복 실패로 면접관이 직접 작성.
+- 에이전트 위임 부산물 — **통설 교정 5건**: BigDecimal scale 불일치는 dirty 원인이 아님(`BigDecimalJavaType.areEqual`이 `compareTo` 기준) / `jakarta.persistence.fetchgraph`로 EAGER 재정의 가능(Hibernate 5.5+) / `com.vladmihalcea:db-util` 2022년 종료 → `io.hypersistence:hypersistence-utils` / `MultipleBagFetchException`은 bag 전용·쿼리 실행 시점·JPA 경로에서 `IllegalArgumentException`으로 래핑 / N+1의 N은 결과 행 수가 아니라 미해결 연관 id 수(→ 건수만 늘린 픽스처로는 재현 안 됨).
+- 다음 세션: 3장 중급 ⭐⭐부터(fetch join+페이징). OSIV 문항과 벌크 연산 문항에서 위 약점 ①이 재검증된다.
 
 ### 2026-07-20 세션 #4 (2장 마무리)
 - 2장 잔여 완료: 고난이도 ⭐⭐⭐ 3~7번(트랜잭션 동기화, 풀 크기 산정, HikariCP 고갈 진단, WebFlux vs MVC, graceful shutdown) + +α 7문항 전부.
