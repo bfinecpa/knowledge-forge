@@ -749,6 +749,8 @@ UPDATE는 여전히 나가고, 나가는 컬럼 목록만 줄어든다. 증상�
 `em.clear()`(`@Modifying(clearAutomatically = true, flushAutomatically = true)`),
 그리고 애초에 벌크 연산은 **엔티티를 조회하기 전에** 배치하는 설계다. Auditing과
 `@Version`도 우회된다는 점을 덧붙이면 가산점 포인트다.
+전체 그림(옵션 두 개의 반대 방향, `clearAutomatically`의 부작용, 증상→원인 인덱스)은
+[벌크 연산과 영속성 컨텍스트](bulk-operation-persistence-context.md)에 별도로 정리돼 있다.
 
 ---
 

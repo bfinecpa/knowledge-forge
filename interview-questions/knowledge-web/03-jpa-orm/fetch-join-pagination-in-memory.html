@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="ko" data-root="../" data-doc="03-jpa-orm/fetch-join-pagination-in-memory" data-src="interview-questions/knowledge/03-jpa-orm/fetch-join-pagination-in-memory.md" style="--hue:200">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>컬렉션 fetch join + 페이징 — limit이 SQL에서 사라지고 힙에서 잘린다 | knowledge-web</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22hsl(200%2C70%25%2C45%25)%22%2F%3E%3Cpath%20d%3D%22M9%2022V10h4.6c3%200%204.7%201.4%204.7%203.6%200%201.6-.9%202.6-2.3%203l3.4%205.4h-3.3l-2.9-4.9h-1.2V22H9zm3-7.2h1.4c1.2%200%201.9-.5%201.9-1.5s-.7-1.4-1.9-1.4H12v2.9z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">
+<link rel="stylesheet" href="../assets/style.css">
+
+</head>
+<body class="page-doc">
+<div class="scrim"></div>
+
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" type="button" title="목차">☰</button>
+  <button class="icon-btn" id="backBtn" type="button" title="뒤로">←<span class="lbl">뒤로</span></button>
+  <nav class="crumbs">
+    <a href="../index.html">📚 전체</a>
+    <span class="sep">/</span>
+    <a href="../index.html#03-jpa-orm">3. JPA / ORM</a>
+    <span class="sep">/</span>
+    <span class="cur">컬렉션 fetch join + 페이징</span>
+  </nav>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="searchBtn" type="button" title="검색 (/)">🔍</button>
+    <button class="icon-btn" id="foldBtn" type="button" title="모든 섹션 접기/펼치기">⇕<span class="lbl">모두 접기</span></button>
+    <button class="icon-btn" id="testBtn" type="button" title="셀프테스트 모드 (s)">🎯<span class="lbl">셀프테스트</span></button>
+    <button class="icon-btn" id="bmBtn" type="button" title="복습 목록 (b)">🏷️</button>
+    <button class="icon-btn" id="themeBtn" type="button" title="테마 (t)">🌙</button>
+    <button class="icon-btn" id="pathBtn" type="button" title="파일 경로 복사">📋<span class="lbl">경로 복사</span></button>
+  </div>
+</header>
+<div class="progress"><i></i></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <p class="side-title">목차</p>
+    <ul class="toc">
+<li><a href="#sec-1"><span class="n">0</span><span class="t">질문 + 의도</span></a></li>
+<li><a href="#sec-2"><span class="n">1</span><span class="t">문제의 범위부터 정확히 못 박는다 — 컬렉션일 때만이다</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-2-1"><span class="t">1-1. 판별 축은 &quot;조인해도 행 수가 그대로인가&quot; 하나뿐</span></a></li><li><a href="#sec-2-2"><span class="t">1-2. limit을 붙이면 왜 결과가 &quot;틀리는가</span></a></li></ul></li>
+<li><a href="#sec-3"><span class="n">2</span><span class="t">Hibernate가 실제로 하는 일 — 전량 로딩 후 subList</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-3-1"><span class="t">2-1. 동작 순서</span></a></li><li><a href="#sec-3-2"><span class="t">2-2. 사전 신호는 경고 로그 한 줄뿐이다 (그리고 버전마다 코드가 다르다)</span></a></li><li><a href="#sec-3-3"><span class="t">2-3. 이 문항의 진짜 위험 — 세 가지가 동시에 성립한다</span></a></li></ul></li>
+<li><a href="#sec-4"><span class="n">3</span><span class="t">해법 3종과 선택 기준</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-4-1"><span class="t">3-1. ① ToOne 연관은 fetch join으로 함께 가져온다</span></a></li><li><a href="#sec-4-2"><span class="t">3-2. ② 컬렉션은 default_batch_fetch_size에 맡긴다 (표준 해법)</span></a></li><li><a href="#sec-4-3"><span class="t">3-3. ③ 조회 전용 화면이면 애초에 DTO 프로젝션</span></a></li><li><a href="#sec-4-4"><span class="t">3-4. &quot;id만 먼저 페이징하고 다시 조회&quot;는 언제 필요한가</span></a></li><li><a href="#sec-4-5"><span class="t">3-5. 선택 기준</span></a></li></ul></li>
+<li><a href="#sec-5"><span class="n">4</span><span class="t">배포 전에 잡는 장치 — 이 문항의 실제 관문</span></a></li><li class="sub"><ul class="toc"><li><a href="#sec-5-1"><span class="t">4-1. 1층 — 경고를 예외로 승격시킨다 (가장 먼저 할 일)</span></a></li><li><a href="#sec-5-2"><span class="t">4-2. 2층 — 경고 로그를 테스트에서 실패로 만든다</span></a></li><li><a href="#sec-5-3"><span class="t">4-3. 3층 — 쿼리 수를 단정한다</span></a></li><li><a href="#sec-5-4"><span class="t">4-4. 4층 — &quot;로컬에서 안 터진다&quot;를 안전 신호로 읽지 않는다</span></a></li><li><a href="#sec-5-5"><span class="t">4-5. 층별 정리와 도입 순서</span></a></li></ul></li>
+<li><a href="#sec-6"><span class="n">5</span><span class="t">꼬리질문 대비 포인트</span></a></li>
+    </ul>
+    <div class="side-foot">
+      <kbd>j</kbd><kbd>k</kbd> 섹션 이동<br>
+      <kbd>s</kbd> 셀프테스트 · <kbd>b</kbd> 복습표시<br>
+      <kbd>/</kbd> 검색 · <kbd>t</kbd> 테마 · <kbd>h</kbd> 홈<br>
+      <kbd>⌫</kbd> 뒤로 (보던 문서·위치로)
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="doc-head">
+      <span class="cat-chip">3. JPA / ORM</span>
+      <h1>컬렉션 fetch join + 페이징 — <code>limit</code>이 SQL에서 사라지고 힙에서 잘린다</h1>
+      <div class="doc-meta">
+        <span>📖 약 <b>25분</b></span>
+        <span>🧩 <b>6</b>개 섹션</span>
+        <span class="ring" id="progRing"><i></i><span id="progLabel">0/6 섹션 이해</span></span>
+      </div>
+    </div>
+
+    <section class="hero maskable">
+      <div class="hero-label"><span>🎯 핵심 관전 포인트</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="hero-body"><p>문제는 <strong><code>fetch join</code> 전체가 아니라 컬렉션(ToMany) fetch join + 페이징</strong>이라는 조합 하나다. 판별 축은 딱 하나 — <strong>조인 결과의 행 수가 루트 엔티티 수와 같은가.</strong> ToOne(<code>@ManyToOne</code>, <code>@OneToOne</code>)은 부모 1행 : 연관 1행이라 행이 안 늘고 <code>limit</code>이 SQL에 정상 부착되지만, 컬렉션은 부모 1행이 자식 수만큼 불어나 <code>limit 10</code>이 &quot;게시글 10건&quot;이 아니라 <strong>&quot;조인 결과 10행&quot;</strong> 을 자른다. 그러면 마지막 게시글의 댓글이 잘린 채 들어와 <strong>데이터가 틀린다.</strong> 그래서 Hibernate는 정합성을 지키는 쪽을 택한다 — <strong>SQL에서 <code>limit</code>/<code>offset</code>을 아예 빼고, 조건에 맞는 전체를 힙에 올린 뒤 자바에서 <code>subList</code>로 잘라낸다.</strong> 그 결과가 이 문항의 본질이다: <strong>예외도 안 나고 결과도 맞는데 데이터가 늘면 OOM으로 죽는다.</strong> 사전 신호는 경고 로그 한 줄뿐이고, 개발 DB에서는 증상이 0이다. 그래서 해법 3종(<strong>ToOne은 fetch join / 컬렉션은 <code>default_batch_fetch_size</code> / 조회 전용은 DTO 프로젝션</strong>)만큼 중요한 것이 <strong>배포 전에 잡는 장치</strong>다 — <code>hibernate.query.fail_on_pagination_over_collection_fetch: true</code> 한 줄로 경고를 예외로 승격시키는 것이 첫 방어선이다.</p></div>
+    </section>
+
+
+
+<section class="sec" id="sec-1">
+<div class="sec-head">
+  <span class="sec-n">0</span>
+  <h2>질문 + 의도</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<div class="ask"><span class="ask-l">면접 질문</span><p class="ask-q">&quot;fetch join과 페이징을 함께 쓸 때의 문제(메모리에서 페이징)와 해결책은?&quot;</p></div>
+<div class="intent"><span class="ask-l">출제 의도</span>rationale은 이 문항을 이렇게 설명한다 — &quot;limit이 쿼리에 안 붙고 전체를 메모리에 올리는 이 함정은 데이터가 적을 땐 멀쩡하다가 데이터 증가와 함께 OOM으로 터진다. <strong>'지금은 되는데 나중에 터지는' 코드를 미리 알아보는 눈</strong>을 검사한다.&quot; 즉 채점 지점은 &quot;fetch join과 페이징은 같이 못 쓴다&quot;는 암기가 아니라, <strong>실패가 어떤 모습으로 드러나는지</strong>(예외가 아니라 경고 한 줄)와 <strong>그것을 운영 전에 어떻게 붙잡는지</strong>다.</div>
+<p><strong>함정</strong>: 이 문항은 &quot;문제와 해결책&quot;을 묻는 형식이라 해결책 나열로 끝내기 쉽다. 그런데 해결책은 <a href="n-plus-one-detection-and-fixes.html">N+1 탐지와 해결</a>에서 이미 다루는 내용이고, 이 문항이 따로 존재하는 이유는 <strong>&quot;쿼리는 성공하는데 나중에 죽는다&quot;는 실패 양식</strong> 자체에 있다.</p>
+</div>
+</section>
+<section class="sec" id="sec-2">
+<div class="sec-head">
+  <span class="sec-n">1</span>
+  <h2>문제의 범위부터 정확히 못 박는다 — 컬렉션일 때만이다</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>&quot;fetch join과 페이징은 같이 못 쓴다&quot;는 흔한 요약은 <strong>틀렸다.</strong> 정확히는 <strong>컬렉션을 fetch join할 때만</strong> 문제다.</p>
+<h3 id="sec-2-1">1-1. 판별 축은 &quot;조인해도 행 수가 그대로인가&quot; 하나뿐</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// ✅ 안전 — ToOne 연관은 몇 개를 겹쳐 fetch join 해도 행이 안 늘어난다</span>
+<span class="tk-anno">@Query</span>(<span class="tk-str">&quot;&quot;</span>&quot;
+       select p from <span class="tk-type">Post</span> p
+       join fetch p.author        <span class="tk-com">// @ManyToOne  → Post 1행 : Author 1행</span>
+       join fetch p.category      <span class="tk-com">// @ManyToOne  → Post 1행 : Category 1행</span>
+       join fetch p.thumbnail     <span class="tk-com">// @OneToOne   → Post 1행 : Thumbnail 1행</span>
+       <span class="tk-str">&quot;&quot;</span>&quot;)
+<span class="tk-type">Page</span>&lt;<span class="tk-type">Post</span>&gt; <span class="tk-fn">findPageWithToOnes</span>(<span class="tk-type">Pageable</span> pageable);
+<span class="tk-com">// 조인 결과 = Post 20행. limit 20 이 SQL 에 그대로 붙고, 원하는 대로 Post 20건이 온다.</span>
+
+<span class="tk-com">// ❌ 위험 — 컬렉션 하나만 끼면 그 순간 성질이 바뀐다</span>
+<span class="tk-anno">@Query</span>(<span class="tk-str">&quot;select p from Post p join fetch p.comments&quot;</span>)   <span class="tk-com">// @OneToMany</span>
+<span class="tk-type">Page</span>&lt;<span class="tk-type">Post</span>&gt; <span class="tk-fn">findPage</span>(<span class="tk-type">Pageable</span> pageable);
+<span class="tk-com">// Post 1건에 댓글 10개면 조인 결과는 10행. limit 20 을 붙이면 Post 2건만 온다.</span></code></pre>
+</div>
+<p><strong><code>@OneToOne</code>이 안전한 이유는 &quot;1:1이라서&quot;가 아니라 &quot;단일 값이라서&quot;</strong> 다. 같은 이유로 <code>@ManyToOne</code>도 안전하다 — 게시글 1,000개가 같은 작성자를 가리켜도, <strong>조인 결과는 여전히 게시글 1건당 1행</strong>이다. 그래서 정확한 표현은 &quot;1:1은 괜찮다&quot;가 아니라 <strong>&quot;ToOne(단일 값 연관)은 괜찮고 ToMany(컬렉션)만 문제다&quot;</strong> 이다. 면접에서 이 한 단어 차이가 &quot;겪어서 아는 사람&quot;과 &quot;외운 사람&quot;을 가른다.</p>
+<h3 id="sec-2-2">1-2. <code>limit</code>을 붙이면 왜 결과가 &quot;틀리는가&quot;</h3>
+<p>여기가 이 문항의 출발점이고, 대부분은 &quot;Post가 2건만 온다&quot;까지만 말한다. 한 걸음 더 가면 더 나쁜 사실이 있다 — <strong>마지막 Post의 댓글이 잘린다.</strong></p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>Post 1 (댓글 10개) → 조인 결과 1~10행
+Post 2 (댓글 10개) → 조인 결과 11~20행
+Post 3 (댓글 10개) → 조인 결과 21~30행
+
+여기에 limit 25 를 붙이면 25행까지만 읽는다.
+→ Post 1: 댓글 10개 (정상)
+→ Post 2: 댓글 10개 (정상)
+→ Post 3: 댓글 5개  ← 실제로는 10개인데 5개짜리 게시글로 조립된다</code></pre>
+</div>
+<p>즉 <code>limit</code>을 SQL에 붙이는 선택은 <strong>건수를 틀리게 하는 데서 끝나지 않고 엔티티의 상태를 거짓으로 만든다.</strong> 그리고 그 잘린 컬렉션을 가진 엔티티가 영속성 컨텍스트에 올라가면, 변경 감지가 &quot;댓글 5개가 삭제됐다&quot;고 판단할 위험까지 생긴다(<code>orphanRemoval</code>이 켜져 있으면 실제 DELETE로 이어진다).</p>
+<p><strong>Hibernate는 이 결과 오염을 허용하지 않는 쪽을 택했다.</strong> 그래서 <code>limit</code>을 SQL에서 빼버린다. 이 선택을 알고 나면 다음 절의 동작이 &quot;이상한 버그&quot;가 아니라 <strong>의도된 트레이드오프</strong>로 읽힌다 — 정확성을 지키기 위해 메모리를 지불한 것이다.</p>
+</div>
+</section>
+<section class="sec" id="sec-3">
+<div class="sec-head">
+  <span class="sec-n">2</span>
+  <h2>Hibernate가 실제로 하는 일 — 전량 로딩 후 <code>subList</code></h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<h3 id="sec-3-1">2-1. 동작 순서</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>① 쿼리에 컬렉션 fetch가 있고 + 페이징이 걸려 있다  →  감지
+② 경고 로그를 한 줄 남긴다 (예외 아님)
+③ 쿼리 옵션에서 limit/offset 을 제거한다  →  SQL 에 limit 이 안 나간다
+④ where 조건에 맞는 전체 행을 읽어 엔티티로 조립한다  →  전부 힙에 올라간다
+⑤ 부모 중복을 제거한다
+⑥ 자바 List 에서 subList(first, first + max) 로 잘라 반환한다</code></pre>
+</div>
+<p><strong>확인 범위</strong>: 위 흐름은 Hibernate 6.6.53 소스에서 직접 확인했다. <code>QuerySqmImpl.doList()</code>가 <code>hasLimit &amp;&amp; containsCollectionFetches</code>인 경우 <code>errorOrLogForPaginationWithCollectionFetch()</code>를 호출한 뒤 <code>omitSqlQueryOptions(...)</code>로 limit을 떼어내고, 마지막에 <code>handleDistinct()</code>가 <code>list.subList( first, Math.min( first + max, resultSize ) )</code>를 수행한다. 말 그대로 <strong>자바의 <code>subList</code></strong> 다.</p>
+<p>실제로 나가는 SQL을 대조하면 이렇다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">sql</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">-- 기대한 SQL</span>
+<span class="tk-kw">select</span> p.*, c.* <span class="tk-kw">from</span> post p <span class="tk-kw">left</span> <span class="tk-kw">join</span> comment c <span class="tk-kw">on</span> c.post_id = p.id
+<span class="tk-kw">where</span> p.status = <span class="tk-str">'PUBLISHED'</span>
+<span class="tk-kw">order</span> <span class="tk-kw">by</span> p.created_at <span class="tk-kw">desc</span>
+<span class="tk-kw">limit</span> <span class="tk-num">20</span> <span class="tk-kw">offset</span> <span class="tk-num">0</span>;          <span class="tk-com">-- ← 이 줄이</span>
+
+<span class="tk-com">-- 실제로 나가는 SQL</span>
+<span class="tk-kw">select</span> p.*, c.* <span class="tk-kw">from</span> post p <span class="tk-kw">left</span> <span class="tk-kw">join</span> comment c <span class="tk-kw">on</span> c.post_id = p.id
+<span class="tk-kw">where</span> p.status = <span class="tk-str">'PUBLISHED'</span>
+<span class="tk-kw">order</span> <span class="tk-kw">by</span> p.created_at <span class="tk-kw">desc</span>;  <span class="tk-com">-- ← 통째로 사라진다</span></code></pre>
+</div>
+<p><code>status = 'PUBLISHED'</code>인 게시글이 100만 건이고 평균 댓글이 10개면, <strong>1,000만 행을 읽어 게시글 100만 개 + 댓글 1,000만 개를 힙에 올린 뒤 앞의 20개만 남기고 버린다.</strong></p>
+<h3 id="sec-3-2">2-2. 사전 신호는 경고 로그 한 줄뿐이다 (그리고 버전마다 코드가 다르다)</h3>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>WARN org.hibernate.orm.query :
+HHH90003004: firstResult/maxResults specified with collection fetch; applying in memory</code></pre>
+</div>
+<p><strong>확인 범위 / 통설 교정</strong> — 인터넷에 널리 인용되는 코드는 <code>HHH000104</code>인데, 이건 <strong>Hibernate 5.x의 코드</strong>다. 6.6.53 소스에서 확인한 내용은 다음과 같다.</p>
+<ul>
+<li><strong>Hibernate 5.x</strong>: <code>HHH000104: firstResult/maxResults specified with collection fetch; applying in memory!</code> (끝에 느낌표가 있다)</li>
+<li><strong>Hibernate 6.x ~ 7.3</strong>: 메시지 문구는 거의 같지만 <strong>id가 <code>90003004</code></strong> 이라 <code>HHH90003004</code>로 찍히고, 로거는 <code>org.hibernate.orm.query</code>, 레벨은 <code>WARN</code>이다 (<code>org.hibernate.query.QueryLogging</code> 참고).</li>
+<li><strong>실무 귀결</strong>: <strong>로그를 <code>HHH000104</code> 문자열로 grep 하면 6.x 프로젝트에서는 하나도 안 걸린다.</strong> 검색·알람 룰은 코드가 아니라 <strong><code>firstResult/maxResults specified with collection fetch</code></strong> 라는 문구로 잡는 것이 버전에 안전하다. <strong>(가산점 포인트)</strong></li>
+<li><strong>Hibernate 7.4부터는 동작 자체가 바뀌었다</strong> — limit/offset을 부모에 대한 파생 테이블(서브쿼리)로 밀어넣어 <strong>DB에서 페이징한다.</strong> 옛 동작으로 되돌리는 쿼리 힌트가 <code>org.hibernate.limitInMemory</code>다. 다만 Spring Boot 3.x는 Hibernate 6.x이므로 <strong>현재 현업의 대다수 프로젝트는 여전히 메모리 페이징 구간</strong>이다. 버전별 대응표는 <a href="n-plus-one-detection-and-fixes.html">N+1 탐지와 해결</a> §2-1에 정리돼 있다.</li>
+</ul>
+<h3 id="sec-3-3">2-3. 이 문항의 진짜 위험 — 세 가지가 동시에 성립한다</h3>
+<p>이 버그가 유독 오래 살아남는 이유는 <strong>평범한 버그의 신호 세 가지가 전부 없기 때문</strong>이다.</p>
+<ol>
+<li><strong>예외가 안 난다.</strong> 컴파일도 되고 런타임 예외도 없다. 기본 설정에서는 경고 로그만 찍는다.</li>
+<li><strong>결과가 맞다.</strong> 반환된 게시글 20건은 정확하고 각 게시글의 댓글도 온전하다. QA가  화면을 봐도 이상한 곳이 없다. 페이지 번호, 총 건수(count 쿼리는 별도로 나가고 정상이다)  까지 다 맞는다.</li>
+<li><strong>개발 환경에서는 증상이 0이다.</strong> 로컬 DB의 게시글이 200건이면 200건을 힙에 올리는  건 아무 일도 아니다. <strong>부하 테스트를 해도 데이터가 적으면 안 잡힌다</strong> — 이건 요청  수의 문제가 아니라 <strong>데이터 양의 문제</strong>이기 때문이다.</li>
+</ol>
+<p>그래서 이 코드는 <strong>정상적으로 리뷰를 통과하고 정상적으로 배포된다.</strong> 그리고 데이터가 임계점을 넘는 어느 날, 갑자기 죽는다.</p>
+<p>죽는 방식도 고약하다. <strong><code>OutOfMemoryError</code>는 힙을 채운 그 요청이 아니라 옆 요청에서 날 수 있다.</strong> 힙은 프로세스 전체가 공유하는 자원이라, 목록 API가 힙을 90% 채워두면 아무 관계 없는 결제 API가 메모리 부족으로 실패한다. 그래서 스택 트레이스가 범인을 가리키지 않고, <strong>&quot;어제부터 서버가 가끔 죽는데 원인을 모르겠다&quot;</strong> 로 며칠이 흘러간다. Full GC가 반복되면서 응답 지연이 먼저 오고, OOM은 그다음에 온다.</p>
+<div class="callout"><span class="ic">💡</span><div><p>이 문항의 정답을 한 문장으로 말하면 이렇다 — <strong>&quot;결과가 맞다는 것이 안전하다는 뜻이 아니다. 이건 정확성 문제가 아니라 자원 문제고, 자원 문제는 데이터가 자라야만 드러난다.&quot;</strong></p></div></div>
+</div>
+</section>
+<section class="sec" id="sec-4">
+<div class="sec-head">
+  <span class="sec-n">3</span>
+  <h2>해법 3종과 선택 기준</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<h3 id="sec-4-1">3-1. ① ToOne 연관은 fetch join으로 함께 가져온다</h3>
+<p>§1에서 확인한 대로 행이 안 늘어나므로 <strong>페이징과 아무 갈등이 없다.</strong> 여러 개를 겹쳐도 된다. 목록 API에서 작성자 닉네임, 카테고리 이름처럼 <strong>건당 하나씩 붙는 값</strong>은 전부 여기서 처리한다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// ✅ ToOne 은 조인으로 끌고 온다 — 쿼리 1개, limit 정상 부착</span>
+<span class="tk-anno">@Query</span>(<span class="tk-str">&quot;select p from Post p join fetch p.author&quot;</span>)
+<span class="tk-type">Page</span>&lt;<span class="tk-type">Post</span>&gt; <span class="tk-fn">findPageWithAuthor</span>(<span class="tk-type">Pageable</span> pageable);</code></pre>
+</div>
+<p><code>join</code>과 <code>join fetch</code>의 차이는 반드시 짚어야 한다. 일반 <code>join</code>은 SQL 조인만 만들고 select 목록에는 부모만 올라가므로 <strong>연관은 여전히 프록시</strong>이고 N+1이 그대로다. <code>join fetch</code>여야 연관의 컬럼까지 함께 읽는다.</p>
+<h3 id="sec-4-2">3-2. ② 컬렉션은 <code>default_batch_fetch_size</code>에 맡긴다 (표준 해법)</h3>
+<p><strong>컬렉션은 쿼리에서 fetch하지 않는다.</strong> LAZY로 두고, 실제로 접근하는 순간 Hibernate가 묶어서 가져오게 한다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// ❌ BEFORE — 컬렉션을 fetch join 해서 페이징이 메모리로 넘어간다</span>
+<span class="tk-anno">@Query</span>(<span class="tk-str">&quot;select p from Post p join fetch p.comments&quot;</span>)
+<span class="tk-type">Page</span>&lt;<span class="tk-type">Post</span>&gt; <span class="tk-fn">findPage</span>(<span class="tk-type">Pageable</span> pageable);
+
+<span class="tk-com">// ✅ AFTER — 컬렉션 fetch 를 빼면 limit 이 SQL 에 정상 부착된다</span>
+<span class="tk-type">Page</span>&lt;<span class="tk-type">Post</span>&gt; <span class="tk-fn">findAll</span>(<span class="tk-type">Pageable</span> pageable);
+<span class="tk-com">// p.getComments() 에 접근하는 순간 batch fetch 가 발동한다</span></code></pre>
+</div>
+<p>설정은 한 줄이다. <strong>위치를 틀리는 사람이 아주 많다.</strong></p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">yaml</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-key">spring</span>:
+<span class="tk-key">  jpa</span>:
+<span class="tk-key">    properties</span>:            <span class="tk-com"># ← 이 단계가 반드시 있어야 한다</span>
+<span class="tk-key">      hibernate</span>:
+<span class="tk-key">        default_batch_fetch_size</span>: <span class="tk-num">100</span></code></pre>
+</div>
+<p><code>spring.jpa.hibernate.default_batch_fetch_size</code>로 적으면 <strong>에러도 경고도 없이 조용히 무시된다.</strong> Spring Boot에는 이 설정을 위한 전용 프로퍼티가 없어서 <code>spring.jpa.properties.</code> 아래로 넘겨야 Hibernate에 전달된다. &quot;설정했는데 안 먹는다&quot;의 단골 원인이다. <strong>(가산점 포인트)</strong></p>
+<p>특정 연관만 다르게 주려면 필드에 붙인다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Entity</span>
+<span class="tk-kw">public</span> <span class="tk-kw">class</span> <span class="tk-type">Post</span> {
+    <span class="tk-anno">@BatchSize</span>(size = <span class="tk-num">200</span>)                    <span class="tk-com">// 이 컬렉션만 200 으로</span>
+    <span class="tk-anno">@OneToMany</span>(mappedBy = <span class="tk-str">&quot;post&quot;</span>)
+    <span class="tk-kw">private</span> <span class="tk-type">List</span>&lt;<span class="tk-type">Comment</span>&gt; comments = <span class="tk-kw">new</span> <span class="tk-type">ArrayList</span>&lt;&gt;();
+}</code></pre>
+</div>
+<p><strong>켜면 실제로 나가는 쿼리는 이렇게 바뀐다.</strong></p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">sql</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">-- ① 부모 페이징 쿼리 — 조인이 없으니 limit 이 SQL 에 붙는다</span>
+<span class="tk-kw">select</span> p.* <span class="tk-kw">from</span> post p <span class="tk-kw">where</span> p.status = <span class="tk-str">'PUBLISHED'</span> <span class="tk-kw">order</span> <span class="tk-kw">by</span> p.created_at <span class="tk-kw">desc</span>
+<span class="tk-kw">limit</span> <span class="tk-num">20</span> <span class="tk-kw">offset</span> <span class="tk-num">0</span>;
+
+<span class="tk-com">-- ② 컬렉션 접근 시, 20개 프록시를 한 번에 묶어서</span>
+<span class="tk-kw">select</span> c.* <span class="tk-kw">from</span> comment c <span class="tk-kw">where</span> c.post_id <span class="tk-kw">in</span> (?, ?, ?, ... );   <span class="tk-com">-- ← 파라미터 20개</span></code></pre>
+</div>
+<p><strong>쿼리 수는 <code>1 + N</code>에서 <code>1 + ceil(N / size)</code>로 떨어진다.</strong> 페이지 크기 20에 size 100이면 <code>1 + ceil(20/100) = 2</code>, 즉 <strong>총 2쿼리</strong>다. 눈치챘겠지만 이건 <strong>&quot;ToOne 조인해 페이징 → post_id로 컬렉션 일괄 조회 → 애플리케이션에서 조합&quot;이라는 2쿼리 설계를 Hibernate가 대신 해주는 것</strong>이다. 손으로 짜던 패턴에 이름이 붙어 있는 것뿐이다.</p>
+<p><strong>size는 어떻게 정하나.</strong> 감각은 단순하다.</p>
+<ul>
+<li><strong>하한</strong>: 한 페이지에서 채워야 할 부모 수보다 커야 의미가 있다. 페이지 크기가 20인데 size가 5면 컬렉션 쿼리가 4번 나간다. <strong>페이지 크기 이상</strong>이 최소선이다.</li>
+<li><strong>상한</strong>: size만큼 <code>IN</code> 파라미터가 늘어 SQL이 길어지고, DB에 따라 <code>IN</code> 목록의 최대 항목 수 제한에 걸릴 수 있다.</li>
+<li><strong>실무 기본값</strong>: 전역에 <strong>100</strong> 정도를 깔아 안전망으로 쓰고, 유독 큰 페이지를 쓰는 화면의 연관만 <code>@BatchSize</code>로 올린다. 100~1000 범위를 벗어날 일은 드물다.</li>
+</ul>
+<p><strong>공존의 조건을 정확히 말해야 한다.</strong> batch fetch가 페이징과 공존하는 이유는 그 기능이 특별해서가 아니라 <strong>페이징 쿼리가 컬렉션을 fetch하지 않기 때문</strong>이다. 그래서 <code>default_batch_fetch_size</code>를 켜두고도 <code>@EntityGraph(attributePaths = &quot;comments&quot;)</code>를 붙이면 <strong>메모리 페이징이 그대로 재현된다</strong> — <code>@EntityGraph</code>는 fetch join과 같은 SQL로 번역되기 때문이다. 지켜야 할 규칙은 설정값이 아니라 <strong>&quot;페이징 쿼리에서 컬렉션을 fetch하지 않는다&quot;</strong> 이다.</p>
+<p>한계도 정직하게 말한다. <strong>쿼리가 1개가 되는 것은 아니고</strong>, N+1을 없애는 게 아니라 <code>1+N</code>을 <code>1+몇 개</code>로 낮추는 완화책이다. 그리고 가장 큰 부작용은 성능이 아니라 <strong>은폐</strong>다 — 증상이 옅어져서 문제의 존재 자체를 모르게 된다. 그래서 §4의 탐지 장치와 반드시 짝으로 깔아야 한다. 내부 동작(버전별 배치 크기 산정 방식, PostgreSQL의 배열 바인딩 등)은 <a href="n-plus-one-detection-and-fixes.html">N+1 탐지와 해결</a> §2-3에 정리돼 있다.</p>
+<h3 id="sec-4-3">3-3. ③ 조회 전용 화면이면 애초에 DTO 프로젝션</h3>
+<p>앞의 둘은 <strong>엔티티를 만든다</strong>는 전제를 공유한다. 목록 API처럼 읽기만 하는 화면이라면 그 전제를 버리는 게 가장 근본적이다. 엔티티를 안 만들면 프록시도 스냅샷도 없다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-kw">public</span> <span class="tk-type">Page</span>&lt;<span class="tk-type">PostView</span>&gt; <span class="tk-fn">page</span>(<span class="tk-type">Pageable</span> pageable) {
+    <span class="tk-com">// ① 부모를 필요한 컬럼만, 페이징으로 — limit 정상</span>
+    <span class="tk-type">Page</span>&lt;<span class="tk-type">PostRow</span>&gt; posts = postRepository.<span class="tk-fn">findRows</span>(pageable);                    <span class="tk-com">// 쿼리 1</span>
+
+    <span class="tk-type">List</span>&lt;<span class="tk-type">Long</span>&gt; postIds = posts.<span class="tk-fn">getContent</span>().<span class="tk-fn">stream</span>().<span class="tk-fn">map</span>(<span class="tk-type">PostRow</span>::id).<span class="tk-fn">toList</span>();
+
+    <span class="tk-com">// ② 자식을 id 목록으로 한 번에</span>
+    <span class="tk-type">Map</span>&lt;<span class="tk-type">Long</span>, <span class="tk-type">List</span>&lt;<span class="tk-type">CommentRow</span>&gt;&gt; byPost = commentRepository.<span class="tk-fn">findRowsByPostIdIn</span>(postIds)
+            .<span class="tk-fn">stream</span>().<span class="tk-fn">collect</span>(<span class="tk-fn">groupingBy</span>(<span class="tk-type">CommentRow</span>::postId));                  <span class="tk-com">// 쿼리 2</span>
+
+    <span class="tk-com">// ③ 애플리케이션에서 조합 — 총 2쿼리, 페이징 정상, 행 증폭 없음</span>
+    <span class="tk-kw">return</span> posts.<span class="tk-fn">map</span>(p -&gt; <span class="tk-kw">new</span> <span class="tk-type">PostView</span>(p, byPost.<span class="tk-fn">getOrDefault</span>(p.<span class="tk-fn">id</span>(), <span class="tk-type">List</span>.<span class="tk-fn">of</span>())));
+}</code></pre>
+</div>
+<p>주의할 구분이 하나 있다. <strong>&quot;DTO를 반환한다&quot;와 &quot;DTO 프로젝션&quot;은 다르다.</strong> 반환 타입이 DTO여도 엔티티를 조회해서 자바에서 변환하면 아무것도 달라지지 않는다. <strong>DTO가 쿼리의 결과여야</strong> 효과가 있다.</p>
+<h3 id="sec-4-4">3-4. &quot;id만 먼저 페이징하고 다시 조회&quot;는 언제 필요한가</h3>
+<p><code>select distinct p.id from Post p join p.comments c ... limit 20</code>으로 id를 먼저 뽑는 2단계 방식도 자주 언급된다. 방향은 맞지만 <strong>조건을 정확히 붙여야 한다.</strong></p>
+<ul>
+<li><strong>컬렉션에 검색 조건이 걸린 경우에만 그 조인이 필요하다.</strong> 예: &quot;댓글에 특정 키워드가 달린 게시글 목록&quot;. 이때는 조인이 불가피하고, 행이 불어나므로 <code>distinct</code>가 SQL에 반드시 있어야 한다.</li>
+<li><strong>컬렉션이 그냥 화면에 필요할 뿐이라면 그 조인 자체가 불필요하다.</strong> 조건이 게시글에만 걸려 있으면 <code>select p from Post p where ... limit 20</code>으로 끝이고, 컬렉션은 3-2/3-3의 방식으로 채우면 된다. <strong>조인을 걷어내는 게 id 서브쿼리보다 낫다.</strong></li>
+<li>참고로 <strong>엔티티 fetch join에 붙이는 <code>distinct</code>는 Hibernate 6부터 불필요하고 오히려 손해</strong>다(부모 중복 제거를 Hibernate가 항상 해주는데, <code>distinct</code>를 쓰면 SQL로도 나가서 DB가 중복 제거 비용을 낸다). 반면 <strong>위처럼 id만 프로젝션하는 쿼리의 <code>distinct</code>는 여전히 필수</strong>다. 둘을 같은 것으로 뭉뚱그리면 틀린다. <strong>(가산점 포인트)</strong></li>
+</ul>
+<h3 id="sec-4-5">3-5. 선택 기준</h3>
+<div class="tw"><table><thead><tr><th>상황</th><th>선택</th><th>근거</th></tr></thead><tbody>
+<tr><td>ToOne 연관 (페이징 유무 무관)</td><td><code>fetch join</code> / <code>@EntityGraph</code></td><td>조인해도 행이 안 늘어 <code>limit</code> 정상</td></tr>
+<tr><td>컬렉션 1개 + <strong>페이징 없음</strong></td><td><code>fetch join</code></td><td>쿼리 1개. 6+ 에서 <code>distinct</code>는 빼는 게 낫다</td></tr>
+<tr><td><strong>컬렉션 + 페이징</strong></td><td><strong>batch fetch size</strong></td><td>fetch join 금지 구간</td></tr>
+<tr><td>컬렉션 2개 이상</td><td>batch fetch size</td><td>fetch join은 카테시안 곱</td></tr>
+<tr><td>조회 전용 목록 API</td><td>DTO 프로젝션 (컬렉션은 2단 조회)</td><td>엔티티·프록시를 아예 안 만든다</td></tr>
+<tr><td>전 구간 안전망</td><td>전역 <code>default_batch_fetch_size</code></td><td>놓친 지점의 피해를 낮춘다</td></tr>
+</tbody></table></div>
+<p>면접에서 한 문장으로: <strong>&quot;ToOne은 fetch join으로 함께 끌고, 컬렉션은 fetch에서 빼고 batch fetch size에 맡깁니다. 조회 전용 화면이면 아예 DTO 프로젝션으로 갑니다.&quot;</strong></p>
+</div>
+</section>
+<section class="sec" id="sec-5">
+<div class="sec-head">
+  <span class="sec-n">4</span>
+  <h2>배포 전에 잡는 장치 — 이 문항의 실제 관문</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p>§2-3에서 확인한 대로 이 버그는 <strong>예외 없음 / 결과 정상 / 개발 환경 무증상</strong>이 동시에 성립한다. 사람의 주의력으로 잡을 수 있는 조건이 하나도 없다는 뜻이다. 그래서 &quot;코드 리뷰에서 잘 보겠다&quot;, &quot;쿼리 로그를 확인하겠다&quot;는 답은 <strong>여기서 미달로 기록된다.</strong> 필요한 것은 <strong>사람이 안 봐도 실패하는 장치</strong>다.</p>
+<h3 id="sec-5-1">4-1. 1층 — 경고를 예외로 승격시킨다 (가장 먼저 할 일)</h3>
+<p>Hibernate에는 이 상황을 <strong>경고 대신 예외로 만드는 설정</strong>이 있다. 아는 사람이 드물다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">yaml</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-key">spring</span>:
+<span class="tk-key">  jpa</span>:
+<span class="tk-key">    properties</span>:
+<span class="tk-key">      hibernate</span>:
+<span class="tk-key">        query</span>:
+<span class="tk-key">          fail_on_pagination_over_collection_fetch</span>: <span class="tk-kw">true</span>   <span class="tk-com"># 기본값 false</span></code></pre>
+</div>
+<p><strong>확인 범위</strong>: 6.6.53 소스에서 확인했다. 프로퍼티 이름은 <code>hibernate.query.fail_on_pagination_over_collection_fetch</code>이고 <strong>기본값은 <code>false</code></strong>, Hibernate <strong>5.2.13부터</strong> 존재한다. <code>true</code>면 <code>AbstractSqmSelectionQuery</code>가 로그 대신 <code>HibernateException</code>을 던지며, 메시지는 다음과 같다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">text</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code>org.hibernate.HibernateException:
+setFirstResult() or setMaxResults() specified with collection fetch join
+(in-memory pagination was about to be applied, but
+ 'hibernate.query.fail_on_pagination_over_collection_fetch' is enabled)</code></pre>
+</div>
+<p>기본값이 <code>false</code>라는 사실이 이 문항의 핵심을 그대로 말해준다 — <strong>아무 조치도 안 하면 조용히 메모리 페이징이 된다.</strong> 이 한 줄을 켜는 순간 문제의 성격이 바뀐다.</p>
+<ul>
+<li>배포 전에 <strong>테스트가 빨간불로 실패한다.</strong> 목록 API를 한 번이라도 호출하는 테스트가 있으면 그 자리에서 잡힌다.</li>
+<li>데이터가 적어도 잡힌다. <strong>이 검사는 데이터 양이 아니라 쿼리의 모양을 보기 때문</strong>이다. §2-3의 세 번째 조건(개발 환경 무증상)을 정면으로 무력화한다.</li>
+</ul>
+<p>주의점 둘. ① 예외는 부팅 시점이 아니라 <strong>그 쿼리를 실행하는 시점</strong>에 난다. 그러므로 &quot;켜두면 안전하다&quot;가 아니라 <strong>&quot;켜두고 그 쿼리를 타는 테스트가 있어야 안전하다&quot;</strong> 이다. ② Hibernate 7.4 이상에서는 파생 테이블로 밀어넣기가 가능한 경우 애초에 메모리 페이징이 아니므로 발동하지 않는다.</p>
+<h3 id="sec-5-2">4-2. 2층 — 경고 로그를 테스트에서 실패로 만든다</h3>
+<p><code>fail_on_pagination_over_collection_fetch</code>를 운영에 켜는 것이 부담스러운 팀도 있다 (§5의 마지막 꼬리질문 참고). 그런 경우에도 <strong>테스트에서는 경고 자체를 실패로 다룰 수 있다.</strong> 로그 어펜더를 붙여 WARN을 수집한 뒤 단정하면 된다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// ✅ Hibernate 쿼리 로거의 WARN 을 수집해 &quot;한 건도 없어야 한다&quot; 로 못 박는다</span>
+<span class="tk-kw">class</span> <span class="tk-type">NoInMemoryPaginationTest</span> {
+
+    <span class="tk-kw">private</span> <span class="tk-type">ListAppender</span>&lt;<span class="tk-type">ILoggingEvent</span>&gt; appender;
+    <span class="tk-kw">private</span> <span class="tk-type">Logger</span> queryLogger;
+
+    <span class="tk-anno">@BeforeEach</span>
+    <span class="tk-kw">void</span> <span class="tk-fn">attach</span>() {
+        <span class="tk-com">// 6.x 의 로거 이름. 5.x 는 org.hibernate 하위의 다른 이름이므로,</span>
+        <span class="tk-com">// 버전이 다르면 실제 로그 한 줄을 찍어보고 로거 이름을 확인해 맞춘다.</span>
+        queryLogger = (<span class="tk-type">Logger</span>) <span class="tk-type">LoggerFactory</span>.<span class="tk-fn">getLogger</span>(<span class="tk-str">&quot;org.hibernate.orm.query&quot;</span>);
+        appender = <span class="tk-kw">new</span> <span class="tk-type">ListAppender</span>&lt;&gt;();
+        appender.<span class="tk-fn">start</span>();
+        queryLogger.<span class="tk-fn">addAppender</span>(appender);
+    }
+
+    <span class="tk-anno">@AfterEach</span>
+    <span class="tk-kw">void</span> <span class="tk-fn">detach</span>() {
+        queryLogger.<span class="tk-fn">detachAppender</span>(appender);
+    }
+
+    <span class="tk-anno">@Test</span>
+    <span class="tk-kw">void</span> 게시글_목록은_메모리_페이징을_하지_않는다() {
+        postService.<span class="tk-fn">list</span>(<span class="tk-type">PageRequest</span>.<span class="tk-fn">of</span>(<span class="tk-num">0</span>, <span class="tk-num">20</span>));
+
+        <span class="tk-com">// 메시지 코드(HHH000104 / HHH90003004)는 버전마다 달라지므로 문구로 잡는다</span>
+        <span class="tk-fn">assertThat</span>(appender.list)
+                .<span class="tk-fn">noneMatch</span>(e -&gt; e.<span class="tk-fn">getFormattedMessage</span>()
+                        .<span class="tk-fn">contains</span>(<span class="tk-str">&quot;firstResult/maxResults specified with collection fetch&quot;</span>));
+    }
+}</code></pre>
+</div>
+<p><strong>메시지 코드가 아니라 문구로 매칭하는 것이 핵심이다.</strong> §2-2에서 본 대로 <code>HHH000104</code>는 5.x 코드라서 6.x에서는 절대 안 걸린다. 운영 로그 알람 룰도 같은 이유로 문구 기준이어야 한다. <strong>(가산점 포인트)</strong></p>
+<h3 id="sec-5-3">4-3. 3층 — 쿼리 수를 단정한다</h3>
+<p>배치 fetch로 고친 뒤에는 <strong>&quot;이 API는 쿼리 몇 개인가&quot;</strong> 를 테스트로 고정한다. 이게 있어야 다음 PR에서 누군가 <code>@EntityGraph(attributePaths = &quot;comments&quot;)</code>를 붙여 원상 복구시키는 것을 막을 수 있다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-anno">@Test</span>
+<span class="tk-kw">void</span> 목록_API_는_쿼리_2개로_끝난다() {
+    <span class="tk-type">Statistics</span> stats = entityManagerFactory.<span class="tk-fn">unwrap</span>(<span class="tk-type">SessionFactory</span>.<span class="tk-kw">class</span>).<span class="tk-fn">getStatistics</span>();
+    stats.<span class="tk-fn">clear</span>();
+    entityManager.<span class="tk-fn">clear</span>();          <span class="tk-com">// 1차 캐시가 남아 있으면 쿼리 수가 줄어 통과해버린다</span>
+
+    postService.<span class="tk-fn">list</span>(<span class="tk-type">PageRequest</span>.<span class="tk-fn">of</span>(<span class="tk-num">0</span>, <span class="tk-num">20</span>));   <span class="tk-com">// 부모 1 + 컬렉션 배치 1</span>
+
+    <span class="tk-fn">assertThat</span>(stats.<span class="tk-fn">getPrepareStatementCount</span>()).<span class="tk-fn">isEqualTo</span>(<span class="tk-num">2</span>);
+}</code></pre>
+</div>
+<p>메서드 이름은 <code>getPrepareStatementCount()</code>다(<code>Prepared</code>가 아니다). <code>Statistics</code>를 쓰려면 <code>spring.jpa.properties.hibernate.generate_statistics=true</code>가 필요하다. 이 계열 장치의 층별 구성(요청 단위 쿼리 카운터, <code>SQLStatementCountValidator</code>, ArchUnit 룰)은 <a href="n-plus-one-detection-and-fixes.html">N+1 탐지와 해결</a> §3에 정리돼 있다 — <strong>같은 장치가 이 문항의 회귀도 함께 막는다.</strong></p>
+<h3 id="sec-5-4">4-4. 4층 — &quot;로컬에서 안 터진다&quot;를 안전 신호로 읽지 않는다</h3>
+<p>가장 중요한데 코드가 아닌 항목이다. <strong>개발 DB에 데이터가 적다는 사실은 검증이 아니라 사각지대다.</strong> 이 인식을 픽스처 설계 규칙으로 바꿔야 한다.</p>
+<p>페이징 + 컬렉션을 다루는 테스트는 <strong>두 조건을 동시에</strong> 만족해야 문제가 재현된다.</p>
+<div class="code">
+<div class="code-bar"><span class="code-lang">java</span><span class="sp"></span><button class="copy" type="button">복사</button></div>
+<pre><code><span class="tk-com">// ❌ BEFORE — 게시글 1건에 댓글 100개. 데이터는 많지만 페이징이 발동을 안 해 통과한다</span>
+<span class="tk-type">Post</span> post = <span class="tk-fn">savePost</span>();
+<span class="tk-type">IntStream</span>.<span class="tk-fn">range</span>(<span class="tk-num">0</span>, <span class="tk-num">100</span>).<span class="tk-fn">forEach</span>(i -&gt; <span class="tk-fn">saveComment</span>(post));
+
+<span class="tk-com">// ✅ AFTER — 부모 수가 페이지 크기를 넘고(50 &gt; 20), 자식이 1개보다 많다(행 증폭 발생)</span>
+<span class="tk-type">IntStream</span>.<span class="tk-fn">range</span>(<span class="tk-num">0</span>, <span class="tk-num">50</span>).<span class="tk-fn">forEach</span>(i -&gt; {
+    <span class="tk-type">Post</span> p = <span class="tk-fn">savePost</span>();
+    <span class="tk-type">IntStream</span>.<span class="tk-fn">range</span>(<span class="tk-num">0</span>, <span class="tk-num">3</span>).<span class="tk-fn">forEach</span>(j -&gt; <span class="tk-fn">saveComment</span>(p));
+});</code></pre>
+</div>
+<p>즉 <strong>부모 수 &gt; 페이지 크기</strong>(페이징이 실제로 잘라야 함)이고 <strong>자식 수 &gt; 1</strong>(행이 실제로 불어나야 함)이어야 한다. 둘 중 하나만 만족하는 픽스처는 문제를 통과시킨다. 이건 N+1 재현 실패의 원인(&quot;픽스처는 건수가 아니라 카디널리티로 설계한다&quot;)과 정확히 같은 함정이다.</p>
+<p>여기에 운영 관점의 습관을 하나 더 붙이면 완성된다 — <strong>&quot;운영 데이터가 지금의 10배가 되면 이 코드는 어떻게 되나&quot;</strong> 를 목록·검색 API에 대해 배포 전에 한 번씩 묻는 것. 이 문항은 그 질문을 안 하면 절대 안 걸리는 유형이다.</p>
+<h3 id="sec-5-5">4-5. 층별 정리와 도입 순서</h3>
+<div class="tw"><table><thead><tr><th>층</th><th>장치</th><th>언제 잡히나</th><th>비용</th></tr></thead><tbody>
+<tr><td>1</td><td><code>fail_on_pagination_over_collection_fetch: true</code></td><td>그 쿼리를 실행하는 순간</td><td>설정 한 줄</td></tr>
+<tr><td>2</td><td>로그 어펜더로 WARN 단정</td><td>테스트 실행 시</td><td>테스트 유틸 1개</td></tr>
+<tr><td>3</td><td><code>Statistics</code> 쿼리 수 단정</td><td>PR 단계</td><td>테스트당 3줄</td></tr>
+<tr><td>4</td><td>카디널리티 픽스처</td><td>위 셋의 전제 조건</td><td>픽스처 규칙</td></tr>
+</tbody></table></div>
+<p><strong>도입 순서는 1 → 4 → 3 → 2다.</strong> 1번이 압도적으로 저렴하고 효과가 크므로 먼저 켜고, 그다음 4번으로 &quot;1번이 발동할 수 있는 테스트&quot;를 확보한다. 3번은 고친 뒤 회귀를 막는 자물쇠이고, 2번은 1번을 전 환경에 켜지 못하는 팀의 대체재다.</p>
+</div>
+</section>
+<section class="sec" id="sec-6">
+<div class="sec-head">
+  <span class="sec-n">5</span>
+  <h2>꼬리질문 대비 포인트</h2>
+  <span class="sec-tools">
+    <button class="chk" type="button" title="이해했으면 체크"></button>
+    <span class="caret">▾</span>
+  </span>
+</div>
+<div class="sec-body">
+<p class="qa-hint">질문을 눌러 답을 펼쳐보세요 — 먼저 스스로 답해본 뒤 확인하면 훨씬 오래 남습니다.</p><div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q1</span><span>결과는 정확하게 나온다면서요. 그럼 뭐가 문제인가요?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p><strong>정확성의 문제가 아니라 자원의 문제</strong>이기 때문이다. 반환되는 20건은 완벽하지만, 그 20건을 얻기 위해 조건에 맞는 <strong>전체</strong>를 읽어 엔티티로 조립한다. 비용은 세 군데서 난다 — DB에서 전체 행을 스캔·전송하는 I/O, 그것을 엔티티로 만드는 CPU, 그리고 힙 사용량이다. 그리고 이 비용은 <strong>데이터 양에 비례해 자란다.</strong> 오늘 200건이면 무해하고 내년 200만 건이면 치명적이다. 즉 이건 &quot;버그가 있다/없다&quot;의 문제가 아니라 <strong>시한폭탄이 있다/없다</strong>의 문제다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q2</span><span>페이지 정보(전체 건수, 마지막 페이지)는 왜 정상으로 보이나요?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p><code>Page</code>를 반환할 때 <strong>총 건수를 세는 count 쿼리는 별도로 나가고, 거기엔 조인 fetch가 없으므로 정상</strong>이기 때문이다. 그래서 화면의 페이지네이션 UI는 완벽하게 동작하고, 내용도 맞다. <strong>관측 가능한 모든 지표가 정상을 가리키는데 힙만 조용히 차오르는 상태</strong> — §2-3에서 말한 &quot;신호가 없다&quot;는 것의 구체적인 모습이다. 이 질문에 &quot;count는 정상이라 더 헷갈린다&quot;고 답하면 실제로 겪어본 사람으로 읽힌다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q3</span><span><code>default_batch_fetch_size</code>를 전역으로 1000처럼 크게 두면 부작용은 없나요?&quot; (트레이드오프 판단)</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>세 가지가 있다. ① <strong><code>IN</code> 파라미터가 그만큼 늘어난다</strong> — SQL 길이가 커지고, DB에 따라 <code>IN</code> 목록 항목 수 제한에 걸릴 수 있다. ② <strong>한 번에 올라오는 엔티티 수가 커진다</strong> — 배치 크기가 곧 한 쿼리로 힙에 올리는 자식 수의 상한이므로, 자식이 무거운 엔티티면 큰 값이 그 자체로 메모리 압력이 된다. ③ <strong>가장 큰 부작용은 은폐다</strong> — 값이 크면 N+1이 <code>1+2</code>쯤으로 줄어 로그가 조용해지고, <strong>문제가 있는지조차 모르게 된다.</strong> 그래서 전역 batch fetch size는 &quot;안전망&quot;이지 &quot;해결&quot;이 아니고, <strong>§4의 탐지 장치와 반드시 함께</strong> 깔아야 한다. 안전망만 깔면 &quot;조용한 1 + 수십 쿼리&quot; 상태로 굳는다.</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q4</span><span>컬렉션이 두 개고 페이징도 필요한 화면은 어떻게 푸나요?</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>fetch join은 아예 후보에서 빠진다 — 컬렉션 둘을 조인하면 <strong>카테시안 곱</strong>이 되기 때문이다(각각 100개면 10,000행). 그리고 <code>List</code> 둘이면 <code>MultipleBagFetchException</code>으로 크게 실패하지만 <strong><code>Set</code> 둘이면 예외도 경고도 없이 조용히 곱해진다.</strong> 그래서 정답은 <strong>ToOne만 fetch join하고 컬렉션 둘은 batch fetch size에 맡기는 것</strong>이다. 각 컬렉션이 독립적인 <code>IN</code> 쿼리로 나가므로 곱이 아니라 합이 되고(총 3쿼리), 페이징도 정상이다. 흔히 도는 요령인 &quot;<code>List</code>를 <code>Set</code>으로 바꾸면 된다&quot;는 <strong>예외를 없애는 것이지 카테시안 곱을 없애는 게 아니다</strong> — 큰 소리로 실패하던 것을 조용한 성능 문제로 바꾸는, 감지 장치를 끄는 행위에 가깝다. 자세한 근거는 <a href="n-plus-one-detection-and-fixes.html">N+1 탐지와 해결</a> §2-1에 있다. <strong>(가산점 포인트)</strong></p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q5</span><span><code>fail_on_pagination_over_collection_fetch</code>를 운영에도 켜는 게 맞나요?&quot; (시니어 변별 포인트)</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>기본 입장은 <strong>켜는 쪽</strong>이고, 근거는 &quot;예외가 OOM보다 싸다&quot;는 것이다. 이 설정이 없으면 장애는 <strong>OOM으로, 무관한 API에서, 원인 불명으로</strong> 온다. 켜두면 문제가 <strong>그 API 하나의 500 에러로, 스택 트레이스와 함께</strong> 온다. 피해 범위와 진단 시간이 비교가 안 된다.</p>
+<p>다만 조건 없이 &quot;무조건 켜세요&quot;는 정확한 답이 아니다. 켜는 순간 <strong>지금까지 조용히 잘 돌던 API가 즉시 실패하기</strong> 때문이다. 그래서 순서를 말하는 편이 낫다.</p>
+<ol>
+<li><strong>로컬·CI·테스트 프로파일에 먼저 켠다.</strong> 여기엔 반대 이유가 없다. 신규 코드가  이 함정에 빠지는 것을 그날로 막는다.</li>
+<li><strong>스테이징에서 켜고 전 화면을 돌려 기존 위반 지점을 전수로 뽑는다.</strong> 이 단계가  운영 적용 전의 조사에 해당한다.</li>
+<li><strong>위반 지점을 다 정리한 뒤 운영에 켠다.</strong> 이때부터는 회귀 방지 장치로 작동한다.</li>
+</ol>
+<p>즉 답변의 형태는 &quot;켠다/안 켠다&quot;가 아니라 <strong>&quot;어느 환경에 어떤 순서로 켜서, 켜는 행위 자체를 조사 도구로 쓴다&quot;</strong> 여야 한다. 이건 <code>spring.jpa.open-in-view: false</code>를 켜서 숨어 있던 <code>LazyInitializationException</code>을 드러내는 것과 완전히 같은 전략이다 (<a href="lazy-initialization-exception.html">LazyInitializationException</a> §4 참고).</p></div>
+</div>
+<div class="qa">
+<button class="qa-q" type="button"><span class="mk">Q6</span><span>Hibernate 7.4에서 고쳐졌다면 이 지식은 이제 필요 없는 것 아닌가요?&quot; (시니어 변별 포인트)</span><span class="arw">▾</span></button>
+<div class="qa-a"><p>세 가지 이유로 여전히 필요하다. ① <strong>버전이 안 따라온다</strong> — Spring Boot 3.x는 Hibernate 6.x이고, 현업 프로젝트의 다수가 여기 있다. 프레임워크 메이저 업그레이드는 몇 년 단위로 밀린다. ② <strong>7.4의 개선에도 조건이 있다</strong> — 파생 테이블 방식은 DB가 서브쿼리 안의 limit/offset을 지원해야 하고 루트 엔티티가 하나여야 한다. 조건을 못 맞추면 옛 동작으로 떨어지는데, 그때 필요한 지식이 정확히 이것이다. ③ <strong>더 중요한 건 원리 쪽이다</strong> — 이 문항이 가르치는 것은 <code>limit</code> 부착 여부가 아니라 <strong>&quot;조인은 행을 증폭시키고, 페이징의 단위와 조인 결과의 단위는 다르다&quot;</strong> 는 관계다. 이건 JPA 밖에서도 똑같이 나온다. MyBatis에서 1:N 조인 결과에 <code>limit</code>을 붙일 때, 리포트 쿼리에서 상세 조인 후 상위 N건을 자를 때 전부 같은 함정이다. <strong>도구가 막아주는 범위가 넓어졌을 뿐, 판단해야 하는 사람은 그대로다.</strong></p></div>
+</div>
+</div>
+</section>
+
+    <section class="summary maskable">
+      <div class="summary-l"><span>✅ 한 줄 요약</span><button class="mask-btn" type="button">🙈 가리기</button></div>
+      <div class="mask-target"><p>컬렉션 fetch join에 페이징을 걸면 Hibernate는 결과가 틀어지는 것을 막으려 <strong>SQL에서 <code>limit</code>을 빼고 전체를 힙에 올린 뒤 자바에서 잘라내며</strong>, 예외도 없고 결과도 맞고 개발 환경에선 증상도 없기 때문에 — 해법 3종(ToOne은 fetch join / 컬렉션은 batch fetch size / 조회 전용은 DTO)만큼이나 <strong><code>fail_on_pagination_over_collection_fetch</code>로 경고를 예외로 승격시켜 배포 전에 실패하게 만드는 것</strong>이 이 문항의 진짜 답이다.</p></div>
+    </section>
+
+    <nav class="pager">
+<a class="prev" href="../03-jpa-orm/entity-exposure-and-dto-boundary.html"><span class="dir">← 이전</span><span class="ttl">엔티티 직접 노출 금지 — &quot;이유를 대라&quot;에는 반드시 세 층으로 답한다</span></a>
+<a class="next" href="../03-jpa-orm/jpa-vs-mybatis.html"><span class="dir">다음 →</span><span class="ttl">JPA vs MyBatis — &quot;결합도가 줄어든다&quot;의 실체와, 그 대가</span></a>
+    </nav>
+
+    <p class="src-link">원본: <code>knowledge/03-jpa-orm/fetch-join-pagination-in-memory.md</code></p>
+  </main>
+</div>
+
+<script src="../assets/data.js"></script>
+<script src="../assets/app.js"></script>
+</body>
+</html>
