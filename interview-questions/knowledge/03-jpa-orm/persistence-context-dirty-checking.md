@@ -309,6 +309,8 @@ public void replaceTags(Long postId, List<String> names) {
 `flush()`를 끼우는 것이 유일한 답은 아니다(이미 있는 행을 지우지 않고 재사용하는
 설계, 컬렉션 `clear()` + `addAll()` 등). 중급 문항에서 더 깊이 다루므로 여기서는
 **"함정이 존재하고 그 원리가 고정 실행 순서다"** 까지 말하면 충분하다.
+전체 순서 규칙과 그 이유(FK 위반 회피 + JDBC 배치), 데드락 축, 배포 전에 잡는 방법은
+[flush 시점과 쓰기 지연 SQL 실행 순서](flush-timing-and-sql-ordering.md)에서 다룬다.
 
 ### 3-2. 기본 UPDATE는 전 컬럼 UPDATE다
 

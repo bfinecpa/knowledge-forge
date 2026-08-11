@@ -16,8 +16,18 @@
 
 - **1. Java/Kotlin**: 전체 완료 ✅✅ — 기본 ⭐ 9/9, 중급 ⭐⭐ 13/13, 고난이도 ⭐⭐⭐ 6/6, +α 4/4 (총 32문항).
 - **2. Spring**: 전체 완료 ✅✅ — 기본 ⭐ 9/9, 중급 ⭐⭐ 12/12, 고난이도 ⭐⭐⭐ 7/7, +α 7/7 (총 35문항).
-- **3. JPA/ORM**: 기본 ⭐ 7/7 완료 ✅ — 중급 ⭐⭐ 0/12, 고난이도 ⭐⭐⭐ 0/4, +α 0/4
+- **3. JPA/ORM**: 전체 완료 ✅✅ — 기본 ⭐ 7/7, 중급 ⭐⭐ 12/12, 고난이도 ⭐⭐⭐ 4/4, +α 4/4 (총 27문항).
 - 4~26: 미시작
+
+### 2026-08-10~11 세션 #6 (3장 JPA/ORM 중급·고난이도·+α 전부)
+- 3장 잔여 20문항 완료: 중급 ⭐⭐ Q9~Q12(`findById` vs `getReferenceById`, 상속 매핑, DTO 프로젝션, 루프 `findById` PR 리뷰) + 고난이도 ⭐⭐⭐ 4문항 전부 + +α 4문항 전부. **이로써 3장 27문항 종료.**
+- 평가 분포(이번 세션): **상 2**(중급 `findById`/`getReferenceById`, 고난이도 동시성 4가지 비교), **중 17**, **하 1**(+α cascade/orphanRemoval 미답).
+- **강점**: ① **추론으로 메커니즘에 도달** — "경험 없음"을 선언한 문항에서 반복적으로 정답(상속 매핑 JOINED 도출, IDENTITY가 배치를 무력화하는 이유, `JdbcTemplate`이 통하는 이유, Auditing 누락). 3장 통틀어 최소 5회 ② **유도성 반론 방어 4회 전승** + 전제가 바뀌면 즉시 재판단 ③ **+α Q3에서 면접관 답변의 허점을 되받음**(`deleted_at` 초 단위 정밀도) — 방어에서 검증으로 넘어간 첫 사례 ④ 모르는 것을 인정하고 전제를 되묻는다.
+- **약점**: ① **(최대) 도구 이름이 없다** — 3장 전체를 관통한 단일 패턴. `SEQUENCE`+`allocationSize`, `rewriteBatchedStatements`, `AbstractRoutingDataSource`/`LazyConnectionDataSourceProxy`, `@SQLRestriction`/`@SQLDelete`, 부분 유니크 인덱스, `hashCode` 상수 관례 등. **상황 판단은 되는데 손이 잡는 도구가 없다** → 4장부터는 "이 상황 → 이 도구" 목록화가 개념 학습보다 효율적 ② **안전망을 코드로 고정 — 7회 지적, 마지막 문항에서 자발적 답변 출현**(중급 Q12의 TODO 주석이 최저점 → +α Q4에서 유도 없이 "테스트로 막는다"). 개선 진행 중 ③ **열린 질문 초점 이탈 2회**(중급 Q11, 고난이도 Q3 — 익숙한 N+1·결합도 축으로 먼저 감) ④ **아는 개념을 새 상황으로 옮기는 트리거가 약함**(중급 Q11의 "1차 캐시 적재 비용"을 고난이도 Q2의 100만 건 배치에 못 옮김. 단서를 주면 즉시 연결).
+- **교정 확인**: 중급 구간 최우선 약점이던 **"트레이드오프를 한 호흡에 양면으로 서술"** 이 고난이도 구간에서 자발적으로 나옴(동시성 4가지 비교, 트랜잭션 분리의 대가). **지적이 같은 세션 안에서 반영되는 학습 속도가 이 후보자의 최대 자산.**
+- knowledge 문서 8건 신규(전부 에이전트 위임 + 웹 빌드 반영, 03-jpa-orm 누적 20건 / 전체 65건): inheritance-mapping-strategies, dto-projection-for-read-only, pr-review-loop-findbyid, concurrency-update-four-approaches, bulk-insert-jdbc-batch, transaction-boundary-and-domain-events, read-replica-routing-and-lag, cascade-remove-vs-orphan-removal, entity-equals-and-hashcode, soft-delete-unique-and-associations.
+- **기록 무결성 이슈**: 세션 중 후보자가 작성하지 않은 메시지 3건이 사용자 입력으로 도착(입력 채널 문제로 추정). 후보자 확인을 거쳐 해당 내용은 기록·평가에서 제외했다. 재발 시 동일하게 확인 후 진행할 것.
+- 다음 세션: **4장 RDB/SQL/데이터 모델링**. 진입 전 3장 약점 노트의 도구 상자 항목을 한 번에 훑을 것. 엔티티 vs 값 객체(VO) 구분은 도메인 설계 문항에서 재확인 대상.
 
 ### 2026-08-05 세션 #5 (3장 JPA/ORM 기본⭐)
 - 3장 기본 ⭐ 7문항 전부 완료: JPA vs MyBatis, 영속성 컨텍스트/dirty checking, EAGER vs LAZY, N+1, merge vs dirty checking, 연관관계의 주인·mappedBy, LazyInitializationException.
