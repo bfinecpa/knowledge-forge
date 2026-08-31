@@ -112,4 +112,4 @@ readinessProbe:
 
 ## 한 줄 요약
 
-liveness 실패는 **재시작**, readiness 실패는 **트래픽 차단**이므로, 판단 기준은 **"재기동하면 해결되나?"** 하나다. DB·캐시·외부 API는 재기동으로 못 고치므로 **readiness에만** 넣어 DB 순단 시 트래픽만 빼고(프로세스는 살려둠) 재시작 폭풍을 막는다. LB(K8s Service)는 클라이언트↔앱 사이에 있고, readiness는 그 Service의 트래픽 분배 목록을 켜고 끄는 스위치다. 상세 설정은 [actuator-endpoints-security.md](../02-spring/actuator-endpoints-security.md) 참고.
+liveness 실패는 **재시작**, readiness 실패는 **트래픽 차단**이므로, 판단 기준은 **"재기동하면 해결되나?"** 하나다. DB·캐시·외부 API는 재기동으로 못 고치므로 **readiness에만** 넣어 DB 순단 시 트래픽만 빼고(프로세스는 살려둠) 재시작 폭풍을 막는다. LB(K8s Service)는 클라이언트↔앱 사이에 있고, readiness는 그 Service의 트래픽 분배 목록을 켜고 끄는 스위치다. 상세 설정은 [30-actuator-endpoints-security.md](../02-spring/30-actuator-endpoints-security.md) 참고.

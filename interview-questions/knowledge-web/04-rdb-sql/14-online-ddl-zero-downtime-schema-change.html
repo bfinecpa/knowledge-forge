@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>무중단 스키마 변경(online DDL) — "컬럼 하나 추가"가 서비스를 세우는 사슬과 그 사슬을 끊는 방법</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --text:#1f2937; --muted:#6b7280; --line:#e5e7eb;
+    --accent:#2563eb; --accent-soft:#dbeafe; --danger:#dc2626; --danger-soft:#fee2e2;
+    --ok:#16a34a; --ok-soft:#dcfce7; --warn:#d97706; --warn-soft:#fef3c7;
+    --code-bg:#1e293b; --code-fg:#e2e8f0;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+  .wrap{max-width:960px;margin:0 auto;padding:24px 16px 96px}
+  a{color:var(--accent)}
+  h1{font-size:1.55rem;line-height:1.35;margin:0 0 8px}
+  h2{font-size:1.25rem;margin:56px 0 14px;padding-top:8px;border-top:3px solid var(--accent);display:flex;align-items:center;gap:10px;scroll-margin-top:16px}
+  h2 .num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-size:.85rem;font-weight:700;flex:none}
+  h3{font-size:1.05rem;margin:28px 0 10px;scroll-margin-top:16px}
+  p{margin:10px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;background:#eef1f5;padding:1px 5px;border-radius:4px}
+  pre{background:var(--code-bg);color:var(--code-fg);padding:14px 16px;border-radius:10px;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;line-height:1.6;margin:12px 0}
+  pre code{background:none;padding:0;font-size:inherit;color:inherit}
+  pre .ln{display:block;margin:0 -16px;padding:0 16px;border-left:4px solid transparent;white-space:pre}
+  pre .ln.bad{background:rgba(220,38,38,.22);border-left-color:var(--danger)}
+  pre .ln.good{background:rgba(22,163,74,.22);border-left-color:var(--ok)}
+  pre .ln.warn{background:rgba(217,119,6,.22);border-left-color:var(--warn)}
+  pre .cm{color:#94a3b8}
+  .kicker{color:var(--muted);font-size:.85rem;margin:0 0 6px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:16px 0;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .hero{border:none;background:linear-gradient(135deg,#1d4ed8,#2563eb 60%,#3b82f6);color:#fff;padding:24px 22px}
+  .hero .kicker{color:#bfdbfe}
+  .hero .point{font-size:1.02rem;line-height:1.75}
+  .hero .point b{color:#fde68a}
+  .hero ol{margin:8px 0 0;padding-left:22px}
+  .hero li{margin:6px 0}
+  .hero .trap{margin-top:14px;background:rgba(255,255,255,.14);border-radius:10px;padding:10px 14px;font-size:.95rem}
+  .hero .trap b{color:#fecaca}
+  .hero code{background:rgba(255,255,255,.18);color:#fff}
+  .toc{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 6px;padding:0;list-style:none}
+  .toc li a{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:.85rem;text-decoration:none;color:var(--text)}
+  .toc li a:hover{border-color:var(--accent);color:var(--accent)}
+  .fix4{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:14px 0}
+  .fix4 > div{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:.9rem}
+  .fix4 > div.weak{border-color:var(--danger)}
+  .fix4 .tag{display:inline-block;background:var(--muted);color:#fff;border-radius:6px;font-size:.72rem;font-weight:700;padding:1px 7px;margin-bottom:6px}
+  .fix4 .weak .tag{background:var(--danger)}
+  .fix4 b{display:block;font-size:.98rem;margin-bottom:4px}
+  .fix4 a{font-size:.82rem}
+  .figure{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:14px 0}
+  .figure .scroll{overflow-x:auto}
+  .figure svg{display:block;min-width:640px;width:100%;height:auto;font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+  .figure figcaption{font-size:.86rem;color:var(--muted);margin:8px 4px 0;line-height:1.6}
+  .memo{border-radius:14px;padding:16px 18px;margin:16px 0;border:2px solid var(--accent);background:var(--card);position:relative}
+  .memo::before{content:"암기";position:absolute;top:-11px;left:14px;background:var(--accent);color:#fff;font-size:.72rem;font-weight:700;padding:1px 9px;border-radius:999px;letter-spacing:.04em}
+  .memo.trap{border-color:var(--danger)}
+  .memo.trap::before{content:"함정";background:var(--danger)}
+  .memo.rule{border-color:var(--ok)}
+  .memo.rule::before{content:"규칙";background:var(--ok)}
+  .memo.num::before{content:"숫자"}
+  .memo.say{border-color:#7c3aed}
+  .memo.say::before{content:"말하기";background:#7c3aed}
+  .memo.analogy{border-color:var(--warn)}
+  .memo.analogy::before{content:"비유";background:var(--warn)}
+  .memo h4{margin:2px 0 8px;font-size:1rem}
+  .memo .big{font-size:1.15rem;font-weight:800;line-height:1.5;margin:4px 0 8px}
+  .memo ul,.memo ol{margin:6px 0 0;padding-left:22px}
+  .memo li{margin:3px 0}
+  .memo .sub{color:var(--muted);font-size:.88rem}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+  .chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:700;border:1px solid var(--line);background:#f9fafb}
+  .chip .n{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:.72rem;align-items:center;justify-content:center;flex:none}
+  .chip.red .n{background:var(--danger)} .chip.green .n{background:var(--ok)} .chip.warn .n{background:var(--warn)}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#f3f4f6;font-weight:700}
+  td.ok{color:var(--ok);font-weight:700} td.no{color:var(--danger);font-weight:700} td.half{color:var(--warn);font-weight:700}
+  td ul{margin:0;padding-left:16px} td li{margin:2px 0}
+  .tscroll{overflow-x:auto;margin:12px 0;border-radius:10px;border:1px solid var(--line)}
+  .tscroll table{border:none} .tscroll th:first-child,.tscroll td:first-child{border-left:none} .tscroll th:last-child,.tscroll td:last-child{border-right:none}
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+  .vs > div{border-radius:12px;padding:14px 16px;font-size:.93rem}
+  .vs .bad{background:var(--danger-soft);border:1px solid #fca5a5}
+  .vs .good{background:var(--ok-soft);border:1px solid #86efac}
+  .vs .lbl{display:inline-block;font-size:.75rem;font-weight:800;padding:1px 8px;border-radius:6px;color:#fff;margin-bottom:6px}
+  .vs .bad .lbl{background:var(--danger)} .vs .good .lbl{background:var(--ok)}
+  .layers{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}
+  .layers > div{background:var(--card);border:1px solid var(--line);border-top:5px solid var(--ok);border-radius:12px;padding:12px 14px;font-size:.9rem}
+  .layers .lv{display:inline-block;background:var(--ok);color:#fff;border-radius:6px;font-size:.72rem;font-weight:800;padding:1px 8px;margin-bottom:6px}
+  .layers b{display:block;font-size:.98rem;margin-bottom:4px}
+  .layers .cut{margin-top:8px;font-size:.82rem;color:var(--muted)}
+  .badge{display:inline-block;font-size:.72rem;font-weight:800;padding:1px 8px;border-radius:6px;color:#fff;vertical-align:middle;margin-left:6px}
+  .badge.senior{background:#7c3aed} .badge.bonus{background:var(--warn)} .badge.add{background:var(--muted)} .badge.weak{background:var(--danger)}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+  details summary{cursor:pointer;padding:12px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸";color:var(--accent);flex:none;transition:transform .15s}
+  details[open] summary::before{transform:rotate(90deg)}
+  details .ans{padding:0 16px 14px 34px;border-top:1px dashed var(--line);margin-top:0;font-size:.95rem}
+  details .ans p:first-child{margin-top:10px}
+  details.plain summary{font-weight:600;color:var(--muted)}
+  .toolbar{display:flex;gap:8px;margin:8px 0 12px}
+  .toolbar button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:.85rem;cursor:pointer;color:var(--text)}
+  .toolbar button:hover{border-color:var(--accent);color:var(--accent)}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-weight:700;font-size:.92rem;margin:8px 0}
+  .flow span{background:#f3f4f6;border:1px solid var(--line);border-radius:8px;padding:4px 10px}
+  .flow span.hot{background:var(--danger-soft);border-color:#fca5a5;color:var(--danger)}
+  .flow span.ok{background:var(--ok-soft);border-color:#86efac;color:var(--ok)}
+  .flow i{color:var(--muted);font-style:normal}
+  .steps{counter-reset:s;list-style:none;padding:0;margin:10px 0}
+  .steps li{position:relative;padding:8px 12px 8px 44px;margin:6px 0;background:#f9fafb;border:1px solid var(--line);border-radius:10px;font-size:.93rem}
+  .steps li::before{counter-increment:s;content:counter(s);position:absolute;left:12px;top:9px;width:22px;height:22px;border-radius:50%;background:var(--danger);color:#fff;font-size:.78rem;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .steps.blue li::before{background:var(--accent)}
+  .steps li b.role{color:var(--danger);font-size:.8rem;margin-right:6px}
+  .summary{margin-top:56px;background:var(--text);color:#fff;border-radius:16px;padding:24px 22px}
+  .summary .kicker{color:#9ca3af}
+  .summary p{font-size:1.08rem;line-height:1.75;margin:0}
+  .summary b{color:#fde68a}
+  .summary code{background:rgba(255,255,255,.15);color:#fff}
+  .foot{color:var(--muted);font-size:.8rem;margin-top:18px}
+  @media (max-width:640px){
+    .fix4,.layers,.vs{grid-template-columns:1fr}
+    h2{margin-top:44px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ===================== HERO ===================== -->
+<p class="kicker">04 · RDB / SQL &nbsp;·&nbsp; 중급⭐⭐ Q7 &nbsp;·&nbsp; 사전 학습용 &nbsp;·&nbsp; 관련: Q9 긴 트랜잭션의 해악, 02장 graceful shutdown(앱 교체의 무중단)</p>
+<h1>무중단 스키마 변경(online DDL) — "컬럼 하나 추가"가 서비스를 세우는 사슬과 그 사슬을 끊는 방법</h1>
+<p class="kicker">질문: "대용량 테이블에 컬럼 추가/인덱스 추가를 무중단으로 하려면? (online DDL, pt-osc 등)"</p>
+
+<section class="card hero" id="hero">
+  <p class="kicker">핵심 관전 포인트 — 면접 첫 답변으로 그대로 말한다</p>
+  <div class="point">
+    대용량 테이블의 ALTER가 위험한 이유는 <b>두 갈래</b>다.
+    <ol>
+      <li><b>알고리즘과 무관한 사슬</b> — 모든 ALTER는 테이블의 <b>배타 메타데이터 락(MDL)</b>을 잡아야 한다. 열려 있는 <b>긴 트랜잭션 하나</b>가 그것을 막으면: ALTER 대기 → 그 테이블의 <b>뒤따르는 모든 쿼리가 줄을 섬</b> → 앱 <b>커넥션 풀 고갈</b> → <b>무관한 API까지 전면 장애</b>.</li>
+      <li><b>알고리즘이 COPY/재구성일 때의 사슬</b> — 수 시간 동안 <b>쓰기 차단 · 디스크 2배 · 복제 지연</b>.</li>
+    </ol>
+    그래서 답은: <b>알고리즘 3종(INSTANT / INPLACE / COPY) 중 무엇이 걸리는지 먼저 판별</b> → 컬럼 추가는 INSTANT, 인덱스 추가는 INPLACE로 <b>단언</b>하되 <code>lock_wait_timeout</code>을 짧게 → 재구성이 불가피하면 <b>pt-osc / gh-ost로 청크 복사</b> → 이 절차를 사람 기억이 아니라 <b>마이그레이션 도구 · CI 린트 · 체크리스트에 고정</b>.
+  </div>
+  <div class="trap">
+    도구 셋은 각각 <b>복제 지연(네이티브) / 트리거 부하(pt-osc) / FK 미지원(gh-ost)</b>이라는 대가를 지불하며, <b>어느 것도 MDL 문제 자체를 없애주지는 않는다.</b> 그리고 <b>INSTANT여도 MDL은 잡는다</b> — "MySQL 8이니까 안전하다"가 이 문항의 함정이다.
+  </div>
+</section>
+
+<ul class="toc">
+  <li><a href="#weak4">겨냥하는 약점 4가지</a></li>
+  <li><a href="#s1">1. 세 개의 사슬</a></li>
+  <li><a href="#s2">2. 알고리즘 3종</a></li>
+  <li><a href="#s3">3. 도구 3종 트레이드오프</a></li>
+  <li><a href="#s4">4. 안전망 3층</a></li>
+  <li><a href="#s5">5. 사고 사례</a></li>
+  <li><a href="#s6">6. 꼬리질문</a></li>
+  <li><a href="#s7">7. 1분 인출 테스트</a></li>
+  <li><a href="#summary">한 줄 요약</a></li>
+</ul>
+
+<!-- ===================== WEAK 4 ===================== -->
+<section id="weak4">
+  <p class="kicker" style="margin-top:20px">이 문서가 겨냥하는 횡단 약점 4가지 — 빨간 테두리 둘이 이번 학습의 우선순위</p>
+  <div class="fix4">
+    <div class="weak"><span class="tag">핵심 약점 ①</span><b>인과를 "이름 붙은 사슬"로 말하기</b>"락 걸려서 느려진다"가 아니라 <b>MDL 큐 5단계</b>를 순서대로. 뭉뚱그린 한 문장을 사슬로 교체하는 훈련. <a href="#s1">→ 1절</a></div>
+    <div><span class="tag">약점 ②</span><b>대가를 양면으로 조립하기</b>도구마다 "얻는 것"만 말하면 이름 아는 사람, "지불하는 것"까지 말하면 써 본 사람. <a href="#s3">→ 3절</a></div>
+    <div class="weak"><span class="tag">핵심 약점 ③</span><b>안전망을 팀 규칙·코드로 고정하기</b>"조심한다"는 안전망이 아니다. 세션 설정 · CI 린트 · 게이트 마이그레이션, 세 층을 <b>코드</b>로. <a href="#s4">→ 4절</a></div>
+    <div><span class="tag">약점 ④</span><b>알고리즘 3종 ↔ 대표 작업 인출</b>"추가는 INSTANT, 인덱스는 INPLACE, 타입은 COPY"를 3초 안에. <a href="#s2">→ 2절</a></div>
+  </div>
+</section>
+
+<!-- ===================== S1 ===================== -->
+<h2 id="s1"><span class="num">1</span>왜 ALTER 한 줄이 전면 장애가 되는가 — 세 개의 사슬</h2>
+<p>"ALTER는 위험하다"를 아는 것과 <b>어떤 단계를 거쳐 장애가 되는지</b>를 말할 수 있는 것은 다른 평가를 받는다. 뭉뚱그린 "락 걸려서 느려진다"를 세 개의 사슬로 쪼갠다. 면접에서는 <b>사슬 A를 먼저</b>, 그 다음 B·C를 말한다.</p>
+
+<h3 id="s1-1">1-1. 사슬 A — 메타데이터 락(MDL) 큐 · 알고리즘과 무관, 가장 흔한 사고</h3>
+<p>등장인물의 이름부터 고정한다. 이름이 비슷한 락 두 개를 섞으면 사슬 전체가 무너진다.</p>
+
+<div class="memo trap">
+  <h4>메타데이터 락(MDL) ≠ 행 락 — 완전히 다른 락이다</h4>
+  <div class="tscroll"><table>
+    <tr><th></th><th>메타데이터 락 (MDL)</th><th>행 락 (InnoDB row lock)</th></tr>
+    <tr><td>무엇을 보호</td><td><b>테이블 정의(구조)</b></td><td>행(데이터)</td></tr>
+    <tr><td>누가 잡나</td><td>SELECT/INSERT/UPDATE = <b>공유</b>, ALTER/DROP = <b>배타</b></td><td>UPDATE/DELETE/FOR UPDATE</td></tr>
+    <tr><td>언제 풀리나</td><td class="no">문장 끝이 아니라 <b>트랜잭션 끝</b></td><td>트랜잭션 끝</td></tr>
+    <tr><td>대기 상한</td><td class="no"><code>lock_wait_timeout</code> 기본 <b>31,536,000초 = 1년</b></td><td><code>innodb_lock_wait_timeout</code> 기본 50초</td></tr>
+    <tr><td>막혔을 때 표시</td><td><code>Waiting for table metadata lock</code></td><td><code>Lock wait timeout exceeded</code>(행)</td></tr>
+  </table></div>
+  <p class="sub">함정: 트랜잭션 안에서 SELECT 한 번 하고 커밋을 안 한 세션은 그 테이블의 <b>공유 MDL을 계속 쥐고 있다.</b> 그리고 <code>innodb_lock_wait_timeout</code>을 5초로 줄여 놨어도 MDL 대기는 여전히 1년이다 — 다른 변수다.</p>
+</div>
+
+<div class="memo analogy">
+  <h4>엘리베이터 점검으로 외우기</h4>
+  <p>점검 기사(<b>ALTER</b>)는 엘리베이터가 <b>완전히 비어야</b>(배타 MDL) 점검을 시작할 수 있다. 그런데 안에 오래 타고 있는 사람(<b>긴 트랜잭션</b>, 공유 MDL)이 내리질 않는다. 기사는 문 앞에서 기다린다. 문제는 건물 규칙 — <b>"점검 기사가 대기 중이면 새로 타려는 사람은 태우지 않는다"</b>(기사가 영원히 굶지 않게). 그래서 뒤이어 온 사람들(<b>뒤따르는 SELECT/INSERT</b>)이 전부 로비에 쌓이고(<b>커넥션 풀 고갈</b>), 로비가 막히니 그 엘리베이터와 상관없는 층에 가려던 사람까지 건물에 못 들어온다(<b>무관한 API 장애</b>). <b>점검이 1분짜리(INSTANT)여도, 안에 있는 사람이 안 내리면 로비는 똑같이 마비된다.</b></p>
+</div>
+
+<figure class="figure">
+  <div class="scroll">
+  <svg viewBox="0 0 820 476" role="img" aria-label="MDL 큐 타임라인: 긴 트랜잭션이 공유 MDL을 쥔 채 커밋하지 않고, ALTER가 배타 MDL 대기, 뒤따르는 쿼리 전부 큐, 커넥션 풀 고갈, 무관한 API 전면 장애">
+    <defs>
+      <marker id="ar-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+      <marker id="ar-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+    <!-- 시간축 -->
+    <line x1="190" y1="40" x2="790" y2="40" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#ar-g)"/>
+    <text x="8" y="30" font-size="11" fill="#6b7280">시간 →</text>
+    <g font-size="11" fill="#1f2937" text-anchor="middle" font-weight="700">
+      <text x="190" y="28">12:00</text>
+      <text x="330" y="28">12:05</text>
+      <text x="395" y="28" fill="#dc2626">+30초</text>
+      <text x="700" y="28">12:17</text>
+    </g>
+    <g stroke="#9ca3af" stroke-dasharray="3 3">
+      <line x1="190" y1="44" x2="190" y2="340"/>
+      <line x1="330" y1="44" x2="330" y2="340"/>
+      <line x1="380" y1="44" x2="380" y2="340"/>
+      <line x1="700" y1="44" x2="700" y2="340"/>
+    </g>
+
+    <!-- 레인 1: 긴 트랜잭션 -->
+    <text x="8" y="72" font-size="12" font-weight="700" fill="#1f2937">① 세션 X</text>
+    <text x="8" y="87" font-size="11" fill="#6b7280">리포팅 트랜잭션</text>
+    <rect x="190" y="58" width="510" height="30" rx="6" fill="#dbeafe" stroke="#3b82f6"/>
+    <text x="200" y="77" font-size="11" fill="#1e3a8a">BEGIN … SELECT … FROM orders  (커밋 안 함, 17분)  → 공유 MDL 보유 중</text>
+    <text x="706" y="77" font-size="11" fill="#2563eb" font-weight="700">COMMIT</text>
+
+    <!-- 레인 2: ALTER -->
+    <text x="8" y="124" font-size="12" font-weight="700" fill="#1f2937">② ALTER 세션</text>
+    <text x="8" y="139" font-size="11" fill="#6b7280">ADD COLUMN · INSTANT</text>
+    <rect x="330" y="110" width="370" height="30" rx="6" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="340" y="123" font-size="11" fill="#7f1d1d" font-weight="700">배타 MDL 대기 — Waiting for table metadata lock</text>
+    <text x="340" y="135" font-size="10" fill="#7f1d1d">상한 lock_wait_timeout = 1년 → 스스로 포기하지 않음</text>
+    <rect x="700" y="110" width="5" height="30" fill="#16a34a"/>
+    <text x="710" y="129" font-size="11" fill="#16a34a" font-weight="800">실행 1ms ✓</text>
+
+    <!-- 레인 3: 뒤따르는 쿼리 -->
+    <text x="8" y="178" font-size="12" font-weight="700" fill="#1f2937">③ 뒤따르는 쿼리</text>
+    <text x="8" y="193" font-size="11" fill="#6b7280">orders SELECT/INSERT</text>
+    <g fill="#e5e7eb" stroke="#9ca3af">
+      <rect x="340" y="160" width="360" height="9" rx="2"/>
+      <rect x="352" y="172" width="348" height="9" rx="2"/>
+      <rect x="366" y="184" width="334" height="9" rx="2"/>
+      <rect x="382" y="196" width="318" height="9" rx="2"/>
+    </g>
+    <text x="395" y="192" font-size="11" fill="#1f2937" font-weight="700">배타 요청 추월 불가 → SELECT 한 줄까지 전부 큐</text>
+    <text x="706" y="182" font-size="11" fill="#16a34a" font-weight="700">해소</text>
+
+    <!-- 레인 4: 커넥션 풀 -->
+    <text x="8" y="252" font-size="12" font-weight="700" fill="#1f2937">④ HikariCP 풀</text>
+    <text x="8" y="267" font-size="11" fill="#6b7280">10개 · 앱 전체 공유</text>
+    <g fill="#dcfce7" stroke="#16a34a">
+      <rect x="190" y="244" width="11" height="14"/><rect x="204" y="244" width="11" height="14"/><rect x="218" y="244" width="11" height="14"/><rect x="232" y="244" width="11" height="14"/><rect x="246" y="244" width="11" height="14"/>
+      <rect x="260" y="244" width="11" height="14"/><rect x="274" y="244" width="11" height="14"/><rect x="288" y="244" width="11" height="14"/><rect x="302" y="244" width="11" height="14"/><rect x="316" y="244" width="11" height="14"/>
+    </g>
+    <text x="190" y="273" font-size="10" fill="#16a34a">여유 10/10</text>
+    <line x1="332" y1="251" x2="376" y2="251" stroke="#dc2626" stroke-width="1.5" marker-end="url(#ar-r)"/>
+    <g fill="#dc2626" stroke="#991b1b">
+      <rect x="380" y="244" width="11" height="14"/><rect x="394" y="244" width="11" height="14"/><rect x="408" y="244" width="11" height="14"/><rect x="422" y="244" width="11" height="14"/><rect x="436" y="244" width="11" height="14"/>
+      <rect x="450" y="244" width="11" height="14"/><rect x="464" y="244" width="11" height="14"/><rect x="478" y="244" width="11" height="14"/><rect x="492" y="244" width="11" height="14"/><rect x="506" y="244" width="11" height="14"/>
+    </g>
+    <text x="380" y="273" font-size="10" fill="#dc2626" font-weight="700">0/10 — 스레드가 커넥션을 쥔 채 DB 응답 대기</text>
+    <text x="526" y="255" font-size="11" fill="#dc2626">→ 새 요청은 connection-timeout(30초) 후 실패</text>
+
+    <!-- 레인 5: 무관한 API -->
+    <text x="8" y="316" font-size="12" font-weight="700" fill="#1f2937">⑤ 무관한 API</text>
+    <text x="8" y="331" font-size="11" fill="#6b7280">로그인 · 상품 조회</text>
+    <rect x="190" y="302" width="190" height="30" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="200" y="321" font-size="11" fill="#14532d">정상 (orders와 무관)</text>
+    <rect x="380" y="302" width="320" height="30" rx="6" fill="#fecaca" stroke="#dc2626"/>
+    <text x="390" y="321" font-size="11" fill="#7f1d1d" font-weight="700">전면 장애 — 헬스체크 실패 → 재시작 반복</text>
+    <rect x="705" y="302" width="85" height="30" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="715" y="321" font-size="11" fill="#14532d">복구</text>
+
+    <!-- 반전 포인트 -->
+    <rect x="190" y="356" width="600" height="78" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="206" y="378" font-size="12.5" font-weight="800" fill="#991b1b">반전 — ALTER 본체는 1ms(INSTANT)였다.</text>
+    <text x="206" y="396" font-size="12.5" font-weight="800" fill="#991b1b">그런데 12분을 기다렸고, 그 12분 동안 서비스는 죽어 있었다.</text>
+    <text x="206" y="416" font-size="12" fill="#7f1d1d">INSTANT = "실행이 빠르다" ≠ "MDL을 안 잡는다".  사슬 A는 알고리즘과 무관하다.</text>
+
+    <!-- 끊는 법 -->
+    <text x="190" y="460" font-size="11.5" fill="#15803d" font-weight="700">끊는 법: ① 세션 X를 KILL  또는  ② ALTER 세션을 KILL → 큐 즉시 해소 (ALTER는 죽여도 무손상)</text>
+  </svg>
+  </div>
+  <figcaption>사슬 A 타임라인. ②의 빨간 막대가 시작되는 순간부터 ③④⑤가 연쇄로 무너진다. 초록 "실행 1ms"가 12:17에 찍힌 것을 보라 — 위험은 ALTER의 <b>실행 시간</b>이 아니라 <b>대기 시간</b>에서 온다.</figcaption>
+</figure>
+
+<p>사슬을 문장으로 고정하면 이렇다. 각 칸에 <b>역할 이름</b>이 붙어 있는 것에 주목 — 인과를 서술하지 못하는 이유는 대개 <b>칸이 없어서</b>다.</p>
+<ol class="steps">
+  <li><b class="role">보유자</b>어떤 세션이 <code>orders</code>를 건드리는 <b>긴 트랜잭션</b>을 열어 두고 있다 — 대시보드 집계, 배치, 워크벤치에서 <code>BEGIN</code> 후 잊은 세션, 외부 API 호출을 트랜잭션 안에 넣은 앱 코드. 이 세션은 <b>공유 MDL</b>을 쥐고 있다.</li>
+  <li><b class="role">대기자</b>운영자가 <code>ALTER TABLE orders ADD COLUMN …</code>을 실행한다. ALTER는 <b>배타 MDL</b>을 요청하고 ①때문에 <b>대기</b>한다(<code>SHOW PROCESSLIST</code>에 <code>Waiting for table metadata lock</code>). 상한이 1년이므로 스스로 포기하지 않는다.</li>
+  <li><b class="role">줄</b>MDL은 <b>큐</b>다. 배타 요청이 대기 중이면, DDL이 영원히 굶는 것을 막기 위해 <b>그 뒤에 들어오는 공유 요청도 배타 요청을 추월하지 못하고 줄을 선다.</b> 이 순간부터 <code>orders</code>를 읽는 SELECT 한 줄까지 <b>전부 멈춘다.</b></li>
+  <li><b class="role">병목 자원</b>앱 요청 스레드가 DB 응답을 기다리며 <b>커넥션을 쥔 채</b> 멈춘다. HikariCP 풀(기본 10개)은 순식간에 바닥난다. 풀은 앱 전체가 공유하므로 <b><code>orders</code>와 무관한 API</b>(로그인, 상품 조회)까지 <code>connection-timeout</code>(기본 30초) 후 실패한다.</li>
+  <li><b class="role">증폭</b>톰캣 워커 스레드도 대기 요청으로 가득 차고, 헬스체크 타임아웃 → LB 제외 또는 재시작 → 재시작해도 DB 쪽 큐는 그대로라 다시 막힘. <b>테이블 하나의 락 대기가 서비스 전면 장애로 증폭</b>됐다.</li>
+</ol>
+
+<div class="memo say">
+  <h4>30초 스크립트 — 사슬 A를 입으로</h4>
+  <p>"ALTER는 배타 메타데이터 락을 잡아야 하는데, 누군가 그 테이블에 <b>긴 트랜잭션</b>을 열어 두면 공유 MDL이 안 풀려서 <b>ALTER가 대기</b>합니다. 문제는 MDL이 <b>큐</b>라서, 대기 중인 배타 요청 뒤로 들어오는 <b>SELECT까지 전부 줄을 선다</b>는 겁니다. 앱 스레드는 커넥션을 쥔 채 멈추니 <b>풀이 30초 안에 바닥</b>나고, 그 테이블과 <b>무관한 API까지</b> 커넥션을 못 얻어 실패합니다. 이건 <b>INSTANT여도 똑같습니다</b> — 그래서 <code>lock_wait_timeout</code>을 5초로 두고 실패하면 재시도합니다."</p>
+  <p class="sub">틀: 보유자 → 대기자 → 줄 → 병목 자원 → 증폭 범위. 다른 장애 사슬(커넥션 고갈, 스레드 고갈, 캐시 스탬피드)도 같은 다섯 칸으로 말할 수 있다.</p>
+</div>
+
+<div class="memo num">
+  <h4>사슬 A의 숫자 4개</h4>
+  <ul>
+    <li><code>lock_wait_timeout</code> 기본 <b>31,536,000초(1년)</b> — MDL 대기 상한. 사실상 무한.</li>
+    <li><code>innodb_lock_wait_timeout</code> 기본 <b>50초</b> — 행 락 상한. MDL과 무관.</li>
+    <li>HikariCP 풀 기본 <b>10개</b> — 앱 전체가 공유.</li>
+    <li>HikariCP <code>connection-timeout</code> 기본 <b>30초</b> — 풀이 비었을 때 요청이 실패하기까지.</li>
+  </ul>
+</div>
+
+<h3 id="s1-2">1-2. 사슬 B — 테이블 재구성의 자원 비용 (COPY / INPLACE-재구성)</h3>
+<p>알고리즘이 COPY거나 INPLACE 중에서도 <b>재구성(rebuild)</b>이 필요한 작업이면, MDL을 무사히 얻은 뒤에도 두 번째 사슬이 기다린다.</p>
+<ol class="steps">
+  <li>새 테이블 파일을 만들고 <b>전 행을 읽어 다시 쓴다</b> → 테이블 크기만큼 <b>디스크가 일시적으로 2배</b> 필요(모자라면 중간 실패, 실패 정리도 오래 걸림).</li>
+  <li>수 시간 동안 <b>CPU와 디스크 I/O를 점유</b> → 같은 인스턴스의 다른 쿼리도 느려진다(버퍼 풀을 복사 작업이 밀어내는 것 포함).</li>
+  <li><b>COPY</b>면 그 시간 내내 <b>쓰기 차단</b>(읽기만 허용) → 주문·결제 API 통째로 실패. <b>INPLACE-재구성</b>이면 쓰기는 허용되지만 그 사이 변경분을 <b>온라인 로그</b>(<code>innodb_online_alter_log_max_size</code>, 기본 128MB)에 쌓았다가 끝에 반영 → 쓰기가 많아 로그가 넘치면 <b>수 시간 작업이 마지막에 실패</b>.</li>
+  <li>마지막에 원본 ↔ 새 테이블 교체 시 <b>다시 배타 MDL</b> → 사슬 A가 여기서 한 번 더 발생할 수 있다.</li>
+</ol>
+
+<h3 id="s1-3">1-3. 사슬 C — 복제 지연 (프라이머리에서 "온라인"이어도)</h3>
+<p>프라이머리에서 아무 문제 없이 끝난 ALTER가 <b>읽기 복제본</b>을 무너뜨리는 경로다. 이걸 아는지가 <b>"네이티브 online DDL만으로 충분한가"</b>에 답하는 열쇠고, pt-osc·gh-ost가 존재하는 가장 큰 이유다.</p>
+
+<figure class="figure">
+  <div class="scroll">
+  <svg viewBox="0 0 820 250" role="img" aria-label="사슬 C: 프라이머리의 3시간 INPLACE ALTER가 binlog로 전파되어 복제본이 같은 ALTER를 3시간 재실행, 뒤 트랜잭션 전부 대기, 복제 지연 3시간">
+    <defs>
+      <marker id="ar-c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="ar-c2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+    </defs>
+    <text x="8" y="22" font-size="11" fill="#6b7280">시간 →</text>
+    <line x1="130" y1="18" x2="800" y2="18" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#ar-c2)"/>
+    <text x="440" y="14" font-size="11" fill="#6b7280" text-anchor="middle">3시간</text>
+    <text x="740" y="14" font-size="11" fill="#6b7280" text-anchor="middle">6시간</text>
+
+    <!-- 프라이머리 -->
+    <text x="8" y="58" font-size="12" font-weight="700" fill="#1f2937">프라이머리</text>
+    <text x="8" y="73" font-size="11" fill="#6b7280">쓰기 DB</text>
+    <rect x="130" y="42" width="310" height="34" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="140" y="57" font-size="11" fill="#14532d" font-weight="700">ADD INDEX … ALGORITHM=INPLACE  (3시간)</text>
+    <text x="140" y="71" font-size="10.5" fill="#14532d">DML 허용 — 프라이머리는 "온라인" ✓</text>
+    <rect x="440" y="42" width="4" height="34" fill="#16a34a"/>
+    <text x="450" y="57" font-size="11" fill="#1f2937">완료 → ALTER <tspan font-weight="700">문장 자체</tspan>가</text>
+    <text x="450" y="71" font-size="11" fill="#1f2937">바이너리 로그에 기록됨</text>
+
+    <!-- 전파 화살표 -->
+    <line x1="442" y1="80" x2="442" y2="116" stroke="#dc2626" stroke-width="2" marker-end="url(#ar-c)"/>
+    <text x="452" y="102" font-size="11" fill="#dc2626" font-weight="700">binlog 전파</text>
+
+    <!-- 복제본 -->
+    <text x="8" y="140" font-size="12" font-weight="700" fill="#1f2937">읽기 복제본</text>
+    <text x="8" y="155" font-size="11" fill="#6b7280">조회 API가 보는 곳</text>
+    <rect x="442" y="120" width="300" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="452" y="135" font-size="11" fill="#7f1d1d" font-weight="700">같은 ALTER를 처음부터 재실행  (또 3시간)</text>
+    <text x="452" y="149" font-size="10.5" fill="#7f1d1d">DDL = 병렬 적용의 장벽</text>
+    <g fill="#e5e7eb" stroke="#9ca3af">
+      <rect x="452" y="162" width="290" height="7" rx="2"/>
+      <rect x="464" y="172" width="278" height="7" rx="2"/>
+      <rect x="478" y="182" width="264" height="7" rx="2"/>
+    </g>
+    <text x="500" y="181" font-size="10.5" fill="#1f2937" font-weight="700">뒤따르는 트랜잭션 전부 큐에 쌓임</text>
+    <rect x="742" y="120" width="4" height="70" fill="#dc2626"/>
+    <text x="752" y="140" font-size="11" fill="#dc2626" font-weight="800">복제 지연</text>
+    <text x="752" y="155" font-size="11" fill="#dc2626" font-weight="800">= 3시간</text>
+
+    <!-- 결과 -->
+    <rect x="130" y="206" width="660" height="32" rx="8" fill="#fef3c7" stroke="#d97706"/>
+    <text x="142" y="227" font-size="11.5" fill="#78350f" font-weight="700">결과: 복제본 조회가 3시간 전 데이터를 돌려준다 — "주문했는데 목록에 없어요", 복제본 배치는 오래된 값으로 계산</text>
+  </svg>
+  </div>
+  <figcaption>사슬 C. 복제 지연의 크기가 <b>ALTER 소요 시간과 같다</b>는 점이 핵심이다. pt-osc·gh-ost는 큰 ALTER를 <b>작은 청크의 일반 DML</b>로 바꿔 복제본이 실시간으로 따라오게 하고, 지연이 임계치를 넘으면 스스로 속도를 늦춘다.</figcaption>
+</figure>
+
+<h3 id="s1-4">1-4. 말하기 훈련 — 뭉뚱그린 표현을 사슬로 교체</h3>
+<div class="tscroll"><table>
+  <tr><th style="width:24%">뭉뚱그린 표현</th><th style="width:16%">이름</th><th>사슬로 말하면</th></tr>
+  <tr><td>"ALTER 하면 락 걸려서 느려진다"</td><td><b>MDL 큐</b></td><td>긴 트랜잭션이 공유 MDL 점유 → ALTER가 배타 MDL 대기(상한 1년) → 뒤따르는 모든 쿼리가 큐 → 커넥션 풀 고갈 → 무관한 API까지 전면 장애</td></tr>
+  <tr><td>"테이블이 커서 오래 걸린다"</td><td><b>재구성(rebuild) 비용</b></td><td>전 행 재작성 → 디스크 2배 + CPU/I/O 점유 → (COPY) 쓰기 차단 / (INPLACE) 온라인 로그 초과 시 말미 실패 → 교체 시 MDL 재획득</td></tr>
+  <tr><td>"복제본이 밀린다"</td><td><b>DDL 재실행 장벽</b></td><td>ALTER 문장이 binlog로 전파 → 복제본이 같은 시간만큼 재실행 → 그동안 뒤 트랜잭션 전부 대기 → 지연 = ALTER 소요 시간</td></tr>
+</table></div>
+
+<!-- ===================== S2 ===================== -->
+<h2 id="s2"><span class="num">2</span>MySQL 8 ALTER 알고리즘 3종 — 갈리는 원리 하나, 그 위에 목록</h2>
+<p>목록을 인출하려면 먼저 <b>갈리는 원리</b> 하나를 잡아야 한다. 판별 기준은 <b>"이 작업이 클러스터드 인덱스 안의 행(row) 레이아웃을 건드리는가"</b>다.</p>
+
+<figure class="figure">
+  <div class="scroll">
+  <svg viewBox="0 0 820 320" role="img" aria-label="알고리즘 판별 사다리: 행 레이아웃을 건드리는가에 따라 INSTANT, INPLACE(재구성 없음), 재구성(INPLACE 재구성 또는 COPY)로 갈린다">
+    <defs>
+      <marker id="ar-d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+    </defs>
+    <!-- 질문 -->
+    <rect x="170" y="10" width="480" height="40" rx="10" fill="#1f2937"/>
+    <text x="410" y="35" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">이 작업이 클러스터드 인덱스 안의 행(row) 레이아웃을 건드리는가?</text>
+
+    <!-- 가지 -->
+    <g stroke="#6b7280" stroke-width="1.5" fill="none" marker-end="url(#ar-d)">
+      <path d="M300,50 L300,64 L130,64 L130,84"/>
+      <path d="M410,50 L410,84"/>
+      <path d="M520,50 L520,64 L650,64 L650,84"/>
+    </g>
+    <g font-size="11" fill="#1f2937" text-anchor="middle">
+      <text x="130" y="100" font-weight="700">아니오 — 딕셔너리(메타데이터)만</text>
+      <text x="130" y="114">고치면 된다</text>
+      <text x="410" y="100" font-weight="700">아니오 — 행은 그대로,</text>
+      <text x="410" y="114">별도 구조를 옆에 새로 짓는다</text>
+      <text x="650" y="100" font-weight="700">예 — 모든 행을</text>
+      <text x="650" y="114">다시 써야 한다</text>
+    </g>
+
+    <!-- 결과 박스 -->
+    <rect x="20" y="126" width="220" height="46" rx="10" fill="#2563eb"/>
+    <text x="130" y="147" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">INSTANT</text>
+    <text x="130" y="163" font-size="10.5" fill="#dbeafe" text-anchor="middle">동시 DML 허용 · 수 ms · 디스크 0</text>
+
+    <rect x="300" y="126" width="220" height="46" rx="10" fill="#16a34a"/>
+    <text x="410" y="147" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">INPLACE (재구성 없음)</text>
+    <text x="410" y="163" font-size="10.5" fill="#dcfce7" text-anchor="middle">동시 DML 허용 · 인덱스 크기만큼 디스크</text>
+
+    <rect x="540" y="126" width="220" height="46" rx="10" fill="#6b7280"/>
+    <text x="650" y="147" font-size="14" font-weight="800" fill="#fff" text-anchor="middle">재구성 (rebuild)</text>
+    <text x="650" y="163" font-size="10.5" fill="#f3f4f6" text-anchor="middle">전 행 재작성 · 디스크 2배</text>
+
+    <!-- 재구성 하위 분기 -->
+    <text x="594" y="187" font-size="10" fill="#1f2937" text-anchor="middle">엔진 내부, DML 허용 ↓</text>
+    <text x="706" y="187" font-size="10" fill="#1f2937" text-anchor="middle">서버가 임시 테이블 복사 ↓</text>
+    <rect x="540" y="194" width="108" height="44" rx="8" fill="#d97706"/>
+    <text x="594" y="212" font-size="11.5" font-weight="800" fill="#fff" text-anchor="middle">INPLACE</text>
+    <text x="594" y="228" font-size="9.5" fill="#fef3c7" text-anchor="middle">(재구성) · 온라인 로그</text>
+    <rect x="652" y="194" width="108" height="44" rx="8" fill="#dc2626"/>
+    <text x="706" y="212" font-size="11.5" font-weight="800" fill="#fff" text-anchor="middle">COPY</text>
+    <text x="706" y="228" font-size="9.5" fill="#fee2e2" text-anchor="middle">쓰기 차단(읽기만)</text>
+
+    <!-- 대표 예 -->
+    <g font-size="11" fill="#1f2937" text-anchor="middle">
+      <text x="130" y="196" font-weight="700" fill="#2563eb">예: 컬럼 추가</text>
+      <text x="130" y="212">기존 행은 물리적으로 그대로,</text>
+      <text x="130" y="227">딕셔너리에 "기본값 X"만 적고</text>
+      <text x="130" y="242">읽을 때 채워 넣는다</text>
+      <text x="410" y="196" font-weight="700" fill="#16a34a">예: 세컨더리 인덱스 추가</text>
+      <text x="410" y="212">테이블을 한 번 스캔해</text>
+      <text x="410" y="227">새 B+Tree를 따로 짓는다 —</text>
+      <text x="410" y="242">클러스터드 인덱스 행은 한 글자도 안 바뀜</text>
+      <text x="588" y="258" fill="#92400e">예: NULL↔NOT NULL</text>
+      <text x="706" y="258" fill="#991b1b" font-weight="700">예: INT→BIGINT</text>
+      <text x="650" y="276" fill="#6b7280">타입 변경 = 모든 행의 바이트 배치가 바뀜</text>
+    </g>
+    <text x="410" y="306" font-size="12" fill="#6b7280" text-anchor="middle">ALGORITHM을 명시하지 않으면 MySQL은 가장 가벼운 것을 고르되, 안 되면 조용히 오른쪽(무거운 쪽)으로 내려간다 → 2-1절</text>
+  </svg>
+  </div>
+  <figcaption>판별 사다리. "행을 건드리나?"에 아니오면 왼쪽 둘(가벼움), 예면 오른쪽(재구성). 재구성 중에서도 엔진이 DML을 허용하며 할 수 있으면 INPLACE-재구성, 서버 계층이 임시 테이블로 복사해야 하면 COPY.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>압축 암기구 — 질문의 두 작업이 이 안에 다 있다</h4>
+  <p class="big">"추가는 INSTANT, 인덱스는 INPLACE, 타입은 COPY."</p>
+  <div class="chips">
+    <span class="chip"><span class="n">I</span>컬럼 <b>추가</b> → INSTANT</span>
+    <span class="chip green"><span class="n">P</span><b>인덱스</b> 추가 → INPLACE(재구성 없음)</span>
+    <span class="chip red"><span class="n">C</span>컬럼 <b>타입</b> 변경 → COPY</span>
+  </div>
+  <p class="sub">질문의 두 작업 — 컬럼 추가 = INSTANT, 인덱스 추가 = INPLACE — 는 둘 다 네이티브로 DML을 막지 않는다. 그런데도 이 문항이 중급인 이유는 <b>사슬 A(MDL)와 사슬 C(복제 지연)가 알고리즘과 무관하게 남기</b> 때문이다.</p>
+</div>
+
+<div class="tscroll"><table>
+  <tr><th style="width:15%">알고리즘</th><th style="width:22%">무엇을 하나</th><th>대표 작업 (암기)</th><th style="width:11%">동시 DML</th><th style="width:11%">디스크</th></tr>
+  <tr><td><b style="color:var(--accent)">INSTANT</b></td><td>데이터 딕셔너리만 수정, 행은 안 건드림</td><td><b>컬럼 추가</b>(8.0.12+, NULL 허용 또는 DEFAULT 명시), 컬럼 삭제(8.0.29+), 컬럼 DEFAULT 설정/제거, 테이블 이름 변경, ENUM/SET 값 끝에 추가, 가상 컬럼 추가/삭제</td><td class="ok">허용 (수 ms)</td><td class="ok">없음</td></tr>
+  <tr><td><b style="color:var(--ok)">INPLACE<br>재구성 없음</b></td><td>행은 그대로, 별도 구조만 생성/변경</td><td><b>세컨더리 인덱스 추가/삭제</b>, 인덱스 이름 변경, 컬럼 이름 변경, AUTO_INCREMENT 값 변경, VARCHAR 길이 <b>확장</b>(길이 바이트 수가 유지되는 범위), FK 삭제</td><td class="ok">허용</td><td class="half">인덱스 크기만큼</td></tr>
+  <tr><td><b style="color:var(--warn)">INPLACE<br>재구성</b></td><td>엔진 내부에서 전 행 재작성, 그동안의 DML은 온라인 로그에 모아 끝에 반영</td><td>NULL ↔ NOT NULL 변경, 컬럼 순서 변경, PK 추가, ROW_FORMAT 변경, <code>OPTIMIZE TABLE</code>, (INSTANT 조건이 안 맞는) 컬럼 추가/삭제</td><td class="half">허용 (온라인 로그 한도 내)</td><td class="no">테이블 크기만큼 (2배)</td></tr>
+  <tr><td><b style="color:var(--danger)">COPY</b></td><td>서버가 임시 테이블 생성 → 전 행 복사 → 교체</td><td><b>컬럼 타입 변경</b>(INT→BIGINT, VARCHAR→TEXT), VARCHAR 길이 <b>축소</b>, 문자셋 변환, PK 삭제, FK 추가(<code>foreign_key_checks=1</code>일 때)</td><td class="no">차단 (읽기만)</td><td class="no">테이블 크기만큼 (2배)</td></tr>
+</table></div>
+
+<h3 id="s2-1">2-1. 알고리즘을 "요청"하지 말고 "단언"하라</h3>
+<p>MySQL은 <code>ALGORITHM</code>을 명시하지 않으면 <b>가능한 가장 가벼운 것을 골라 주지만, 안 되면 조용히 무거운 쪽으로 내려간다.</b> 컬럼 추가가 어떤 이유로 INSTANT가 불가능하면 INPLACE-재구성으로, 그것도 안 되면 COPY로 — 운영자는 실행이 끝날 때까지 모른다.</p>
+
+<pre><code><span class="ln cm">-- ❌ before: 알고리즘을 MySQL 재량에 맡김</span>
+<span class="ln bad">ALTER TABLE orders ADD COLUMN coupon_code VARCHAR(32) NULL;</span>
+<span class="ln cm">-- INSTANT일 거라 "믿고" 실행. 조건이 안 맞으면 재구성으로 조용히 강등</span>
+<span class="ln cm">-- → 수 시간 디스크 2배 + 복제 지연. 끝날 때까지 아무도 모름.</span>
+<span class="ln"> </span>
+<span class="ln cm">-- ✅ after: 알고리즘과 락 수준을 단언 — 안 되면 즉시 에러로 멈춘다</span>
+<span class="ln">ALTER TABLE orders</span>
+<span class="ln">    ADD COLUMN coupon_code VARCHAR(32) NULL,</span>
+<span class="ln good">    ALGORITHM = INSTANT, LOCK = NONE;</span>
+<span class="ln cm">-- 지원 안 되면: ERROR 1846 ALGORITHM=INSTANT is not supported. Reason: ...</span>
+<span class="ln cm">-- → 사람이 "그럼 gh-ost로 가자"를 결정할 기회가 생긴다.</span>
+<span class="ln"> </span>
+<span class="ln">ALTER TABLE orders</span>
+<span class="ln">    ADD INDEX idx_orders_user_created (user_id, created_at),</span>
+<span class="ln good">    ALGORITHM = INPLACE, LOCK = NONE;</span></code></pre>
+
+<p><code>LOCK</code> 절은 <code>NONE</code>(DML 허용) / <code>SHARED</code>(읽기만) / <code>EXCLUSIVE</code>이고, <code>LOCK=NONE</code>을 단언하면 "쓰기를 막아야만 가능한 작업"일 때 역시 에러로 멈춘다. <b>"실패하면 에러로 멈추게 한다"는 것 자체가 안전망</b>이다 — 4장에서 이걸 CI 린트로 고정한다.</p>
+
+<div class="memo trap">
+  <h4>INSTANT 컬럼 추가가 거부되는 대표 조건 (한두 개만 말해도 충분)</h4>
+  <ul>
+    <li><code>ROW_FORMAT=COMPRESSED</code> 테이블</li>
+    <li>FULLTEXT 인덱스가 있는 테이블</li>
+    <li><b>한 ALTER 문에 INSTANT 불가 작업을 섞은 경우</b> — ALTER 한 문장은 <b>가장 무거운 작업의 알고리즘으로 통일</b>된다. <code>ADD COLUMN</code>과 <code>MODIFY … BIGINT</code>를 한 줄에 쓰면 컬럼 추가까지 COPY가 된다.</li>
+    <li><span class="badge bonus">가산점</span> INSTANT 컬럼 추가는 행에 "버전"을 매겨 기존 행을 안 건드리는 방식이라 <b>테이블당 누적 횟수 상한</b>(8.0.29 기준 64회)이 있고, 넘기면 재구성이 필요하다. "INSTANT는 공짜"가 아니라 <b>"재구성을 미루는 빚"</b>.</li>
+  </ul>
+</div>
+
+<div class="memo rule">
+  <h4>규칙: 작업은 알고리즘별로 문장을 쪼갠다</h4>
+  <p>INSTANT 작업과 재구성 작업을 한 ALTER에 섞지 않는다. 섞는 순간 가벼운 쪽이 무거운 쪽에 끌려 내려간다.</p>
+</div>
+
+<!-- ===================== S3 ===================== -->
+<h2 id="s3"><span class="num">3</span>도구 3종의 트레이드오프 — 네이티브 / pt-osc / gh-ost</h2>
+<p>세 선택지 각각을 <b>"무엇을 얻고, 무엇을 지불하는가"를 한 호흡에</b> 말하는 연습이다. 편익만 말하고 멈추면 "도구 이름을 아는 사람", 대가까지 말하면 "써 본 사람"으로 갈린다. 먼저 두 도구가 <b>어떻게 다르게 움직이는지</b>부터 그림으로.</p>
+
+<figure class="figure">
+  <div class="scroll">
+  <svg viewBox="0 0 820 300" role="img" aria-label="pt-osc는 원본 테이블의 트리거로 동기 복사, gh-ost는 binlog를 읽어 비동기 복사">
+    <defs>
+      <marker id="ar-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1f2937"/></marker>
+      <marker id="ar-mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="ar-mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+      <marker id="ar-md" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+    </defs>
+    <line x1="410" y1="10" x2="410" y2="290" stroke="#e5e7eb" stroke-width="2"/>
+
+    <!-- ===== pt-osc ===== -->
+    <text x="20" y="26" font-size="13" font-weight="800" fill="#dc2626">pt-osc — 트리거 방식 (동기)</text>
+    <rect x="20" y="52" width="64" height="34" rx="8" fill="#f3f4f6" stroke="#9ca3af"/>
+    <text x="52" y="73" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">앱 쓰기</text>
+    <line x1="84" y1="69" x2="126" y2="69" stroke="#1f2937" stroke-width="1.5" marker-end="url(#ar-m)"/>
+    <rect x="128" y="52" width="110" height="34" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+    <text x="183" y="73" font-size="12" font-weight="700" fill="#1e3a8a" text-anchor="middle">orders (원본)</text>
+    <!-- 트리거 -->
+    <line x1="183" y1="86" x2="183" y2="118" stroke="#dc2626" stroke-width="2" marker-end="url(#ar-mr)"/>
+    <rect x="60" y="120" width="200" height="46" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="160" y="139" font-size="11" font-weight="800" fill="#991b1b" text-anchor="middle">AFTER INSERT/UPDATE/DELETE</text>
+    <text x="160" y="156" font-size="11" fill="#991b1b" text-anchor="middle">트리거 3개 — 같은 트랜잭션 안에서</text>
+    <line x1="260" y1="143" x2="298" y2="143" stroke="#dc2626" stroke-width="2" marker-end="url(#ar-mr)"/>
+    <rect x="300" y="120" width="100" height="46" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="350" y="139" font-size="12" font-weight="700" fill="#14532d" text-anchor="middle">_orders_new</text>
+    <text x="350" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">(ALTER 적용됨)</text>
+    <!-- 청크 복사 -->
+    <path d="M238,62 C280,40 320,60 350,118" stroke="#6b7280" stroke-width="1.5" fill="none" stroke-dasharray="5 4" marker-end="url(#ar-md)"/>
+    <text x="244" y="42" font-size="10.5" fill="#6b7280">청크 복사 (PK 범위)</text>
+    <!-- 설명 -->
+    <rect x="20" y="186" width="380" height="96" rx="10" fill="#fff" stroke="#fca5a5"/>
+    <text x="32" y="207" font-size="11.5" font-weight="700" fill="#991b1b">쓰기 한 건 = 원본 + 새 테이블에 두 번, 동기적으로</text>
+    <text x="32" y="226" font-size="11" fill="#1f2937">→ 쓰기 지연 증가, 트랜잭션 락 범위가 새 테이블까지 확대</text>
+    <text x="32" y="243" font-size="11" fill="#1f2937">→ 데드락 가능성, 쓰기 폭주 테이블에서는 이 부하가 곧 장애</text>
+    <text x="32" y="268" font-size="11" fill="#16a34a" font-weight="700">대신: 원본 쓰기와 즉시 동기화, FK도 (비용을 치르고) 처리 가능</text>
+
+    <!-- ===== gh-ost ===== -->
+    <text x="430" y="26" font-size="13" font-weight="800" fill="#16a34a">gh-ost — binlog 방식 (비동기)</text>
+    <rect x="430" y="52" width="64" height="34" rx="8" fill="#f3f4f6" stroke="#9ca3af"/>
+    <text x="462" y="73" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">앱 쓰기</text>
+    <line x1="494" y1="69" x2="536" y2="69" stroke="#1f2937" stroke-width="1.5" marker-end="url(#ar-m)"/>
+    <rect x="538" y="52" width="110" height="34" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+    <text x="593" y="73" font-size="12" font-weight="700" fill="#1e3a8a" text-anchor="middle">orders (원본)</text>
+    <text x="593" y="46" font-size="10.5" fill="#16a34a" font-weight="700" text-anchor="middle">쓰기 경로에 아무것도 없음 ✓</text>
+    <!-- binlog -->
+    <line x1="648" y1="69" x2="700" y2="69" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar-md)"/>
+    <rect x="702" y="52" width="100" height="34" rx="8" fill="#f3f4f6" stroke="#9ca3af"/>
+    <text x="752" y="73" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">binlog (ROW)</text>
+    <line x1="752" y1="86" x2="752" y2="118" stroke="#16a34a" stroke-width="2" marker-end="url(#ar-mg)"/>
+    <rect x="640" y="120" width="162" height="46" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="721" y="139" font-size="11" font-weight="800" fill="#14532d" text-anchor="middle">gh-ost 프로세스</text>
+    <text x="721" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">복제본인 척 접속해 읽음</text>
+    <line x1="640" y1="143" x2="586" y2="143" stroke="#16a34a" stroke-width="2" marker-end="url(#ar-mg)"/>
+    <rect x="484" y="120" width="100" height="46" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="534" y="139" font-size="12" font-weight="700" fill="#14532d" text-anchor="middle">_orders_gho</text>
+    <text x="534" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">비동기 적용</text>
+    <path d="M560,86 C560,100 545,105 538,118" stroke="#6b7280" stroke-width="1.5" fill="none" stroke-dasharray="5 4" marker-end="url(#ar-md)"/>
+    <text x="572" y="112" font-size="10.5" fill="#6b7280">청크 복사</text>
+    <!-- 설명 -->
+    <rect x="430" y="186" width="380" height="96" rx="10" fill="#fff" stroke="#86efac"/>
+    <text x="442" y="207" font-size="11.5" font-weight="700" fill="#14532d">원본 쓰기 경로에 끼어들지 않는다 → 쓰기 지연·락 확대 없음</text>
+    <text x="442" y="226" font-size="11" fill="#1f2937">→ 실행 중 일시정지/재개/교체 연기, 복제본에서 리허설 가능</text>
+    <text x="442" y="243" font-size="11" fill="#1f2937">→ binlog를 복제본에서 읽어 프라이머리 부하 최소화</text>
+    <text x="442" y="268" font-size="11" fill="#dc2626" font-weight="700">대신: FK 불가(하드 리밋) · ROW binlog 필수 · 쓰기 폭주 시 더 오래</text>
+  </svg>
+  </div>
+  <figcaption>두 도구 모두 "새 테이블을 옆에 만들고 청크로 옮긴 뒤 원자적으로 교체"한다. 차이는 <b>복사 중에 들어오는 변경을 어떻게 따라가느냐</b> — pt-osc는 <b>트리거(동기, 같은 트랜잭션)</b>, gh-ost는 <b>binlog(비동기, 복제본인 척)</b>. 이 한 가지 차이에서 각자의 대가가 전부 파생된다.</figcaption>
+</figure>
+
+<h3 id="s3-1">3-1. 얻는 것 / 지불하는 것 — 양면 조립표</h3>
+<div class="tscroll"><table>
+  <tr><th style="width:14%"></th><th style="width:22%">동작 한 줄</th><th>얻는 것</th><th>지불하는 것</th><th style="width:16%">적합</th></tr>
+  <tr>
+    <td><b>네이티브 online DDL</b><br><span style="font-size:.8rem;color:var(--muted)">ALGORITHM=INSTANT/INPLACE, LOCK=NONE</span></td>
+    <td>DB 엔진이 한 문장으로 처리</td>
+    <td><ul><li>도구·권한·추가 인프라 없음</li><li>INSTANT면 사실상 무료</li><li>INPLACE 인덱스 추가도 DML 안 막음</li><li>가장 단순 → 실수 여지 적음</li></ul></td>
+    <td><ul><li><b>한 문장</b>이라 중간 멈춤·속도 조절 불가(끝나거나 죽이거나)</li><li><b>복제 지연 = ALTER 시간</b>(사슬 C)</li><li>재구성이면 디스크 2배 + 온라인 로그 초과로 <b>말미 실패</b></li><li>MDL(사슬 A) 그대로</li></ul></td>
+    <td>INSTANT가 되는 모든 것. 복제본이 없거나 지연을 감내할 수 있는 INPLACE. "대용량" 문턱 아래</td>
+  </tr>
+  <tr>
+    <td><b>pt-online-schema-change</b><br><span style="font-size:.8rem;color:var(--muted)">Percona Toolkit</span></td>
+    <td>빈 복제 테이블에 ALTER → <b>트리거 3개</b>로 변경 동기 반영 → PK 청크 복사 → RENAME 교체</td>
+    <td><ul><li>큰 ALTER가 <b>작은 DML의 연속</b> → 복제본 실시간 추종(사슬 C 해소)</li><li><code>--max-lag</code>/<code>--max-load</code>로 <b>스스로 감속</b></li><li>도중에 죽여도 원본 무손상</li><li>오래된 MySQL에서도, 검증된 역사</li></ul></td>
+    <td><ul><li><b>트리거 부하</b>: 모든 쓰기가 같은 트랜잭션 안에서 새 테이블에도 동기 기록 → 쓰기 지연↑, 락 범위↑, 데드락 가능</li><li><b>FK 처리</b>: <code>rebuild_constraints</code>(자식 테이블 재구성 = 또 하나의 대공사) 또는 <code>drop_swap</code>(테이블 부재 창)</li><li>PK/UK 필수, 기존 트리거 제약</li><li>디스크 2배, 일시정지 없음(감속만)</li></ul></td>
+    <td>FK가 걸린 테이블(gh-ost 불가). 쓰기 부하가 감당 가능한 테이블</td>
+  </tr>
+  <tr>
+    <td><b>gh-ost</b><br><span style="font-size:.8rem;color:var(--muted)">GitHub Online Schema Transmogrifier</span></td>
+    <td><b>복제본인 척</b> ROW binlog를 읽어 고스트 테이블에 비동기 적용 → 청크 복사 → cut-over</td>
+    <td><ul><li><b>원본 쓰기 경로에 아무것도 안 끼어듦</b>(pt-osc의 최대 대가 해소)</li><li>binlog를 복제본에서 읽어 프라이머리 부하 최소화</li><li><b>일시정지/재개/속도 조절/교체 연기</b>를 실행 중에</li><li><code>--test-on-replica</code>로 리허설</li></ul></td>
+    <td><ul><li><b>FK 미지원</b> — 부모든 자식이든 아예 불가(하드 리밋)</li><li><code>binlog_format=ROW</code> 필수, 기존 트리거 있는 테이블 불가</li><li>binlog 적용이 <b>순차</b> → 쓰기 폭주 시 총 시간이 pt-osc보다 길 수 있음</li><li>디스크 2배, cut-over 순간 짧은 락 창</li></ul></td>
+    <td>FK 없고, 쓰기 부하가 민감한 테이블. 운영 통제력이 필요한 대공사</td>
+  </tr>
+</table></div>
+
+<div class="memo">
+  <h4>대가 한 단어씩 — 이걸 못 말하면 "이름만 아는 사람"</h4>
+  <div class="chips">
+    <span class="chip"><span class="n">N</span>네이티브 → <b>복제 지연</b></span>
+    <span class="chip red"><span class="n">P</span>pt-osc → <b>트리거 부하</b> (+FK 처리 비용)</span>
+    <span class="chip green"><span class="n">G</span>gh-ost → <b>FK 불가</b></span>
+  </div>
+  <p class="sub">셋의 공통 대가: <b>디스크 2배</b>(재구성 시)와 <b>MDL</b>. 이 둘은 도구가 해결해 주지 않는다.</p>
+</div>
+
+<details class="plain"><summary>pt-osc / gh-ost 명령 예시 펼치기 (옵션 이름이 곧 "지불하는 것"의 제어 장치)</summary><div class="ans">
+<pre><code><span class="ln cm"># pt-osc — 감속 임계치와 FK 처리 방식을 옵션으로 명시</span>
+<span class="ln">pt-online-schema-change \</span>
+<span class="ln">  --alter "ADD INDEX idx_orders_user_created (user_id, created_at)" \</span>
+<span class="ln">  D=shop,t=orders \</span>
+<span class="ln good">  --chunk-size=1000 --max-lag=1 --check-interval=1 \</span>
+<span class="ln good">  --max-load "Threads_running=25" --critical-load "Threads_running=50" \</span>
+<span class="ln warn">  --alter-foreign-keys-method=rebuild_constraints \</span>
+<span class="ln">  --execute          <span class="cm"># 없으면 dry-run</span></span></code></pre>
+<pre><code><span class="ln cm"># gh-ost — 복제본에서 binlog를 읽고, 플래그 파일로 실행 중 제어</span>
+<span class="ln">gh-ost \</span>
+<span class="ln good">  --host=replica-host --assume-master-host=primary-host \</span>
+<span class="ln">  --database=shop --table=orders \</span>
+<span class="ln">  --alter="MODIFY amount BIGINT NOT NULL" \</span>
+<span class="ln">  --chunk-size=1000 \</span>
+<span class="ln good">  --max-lag-millis=1500 \</span>
+<span class="ln good">  --max-load="Threads_running=25" --critical-load="Threads_running=100" \</span>
+<span class="ln good">  --throttle-flag-file=/tmp/gh-ost.throttle \</span>
+<span class="ln good">  --postpone-cut-over-flag-file=/tmp/gh-ost.postpone \</span>
+<span class="ln">  --execute</span>
+<span class="ln cm"># throttle 파일을 touch 하면 즉시 일시정지, 지우면 재개.</span>
+<span class="ln cm"># postpone 파일이 있는 동안은 복사가 끝나도 교체를 미룬다 → 사람이 확인 후 교체.</span></code></pre>
+</div></details>
+
+<h3 id="s3-2">3-2. 한눈에 비교 — 그리고 선택 순서</h3>
+<div class="tscroll"><table>
+  <tr><th></th><th>네이티브 online DDL</th><th>pt-osc</th><th>gh-ost</th></tr>
+  <tr><td>원본 쓰기 부하</td><td class="ok">없음 (INSTANT/INPLACE)</td><td class="no">트리거로 동기 증가</td><td class="ok">없음 (비동기 binlog)</td></tr>
+  <tr><td>복제 지연</td><td class="no">= ALTER 시간</td><td class="ok">감시·감속</td><td class="ok">감시·감속</td></tr>
+  <tr><td>실행 중 제어</td><td class="no">불가 (죽이기만)</td><td class="half">감속만</td><td class="ok">일시정지 / 재개 / 교체 연기</td></tr>
+  <tr><td>FK</td><td class="ok">그대로</td><td class="half">자식 재구성 or drop_swap</td><td class="no">불가</td></tr>
+  <tr><td>전제 조건</td><td class="ok">없음</td><td class="half">PK/UK</td><td class="half">ROW binlog, 트리거 없음</td></tr>
+  <tr><td>디스크</td><td class="half">재구성 시 2배</td><td class="no">2배</td><td class="no">2배</td></tr>
+  <tr><td>MDL (사슬 A)</td><td class="no">남는다</td><td class="no">남는다 (트리거 생성·RENAME)</td><td class="no">남는다 (cut-over)</td></tr>
+</table></div>
+
+<div class="memo rule">
+  <h4>선택 순서 — "가벼운 것부터 배제"</h4>
+  <div class="flow">
+    <span class="ok">① INSTANT 되면 → 네이티브</span><i>→</i>
+    <span class="ok">② INPLACE + 복제 지연 감당 가능 → 네이티브</span><i>→</i>
+    <span class="hot">③ 재구성이거나 지연 못 견딤 → 도구</span><i>→</i>
+    <span>④ FK 있으면 pt-osc / 없으면 쓰기 부하 민감할수록 gh-ost</span>
+  </div>
+</div>
+
+<div class="memo trap">
+  <h4>셋의 공통 한계 — MDL은 남는다</h4>
+  <p>pt-osc의 트리거 생성·RENAME, gh-ost의 cut-over, 네이티브의 시작·종료는 모두 <b>배타 MDL</b>을 잡는다. 그래서 두 도구는 그 순간의 락 대기 상한을 <b>짧게 두고 실패하면 재시도</b>하도록 내장돼 있다(pt-osc <code>--set-vars lock_wait_timeout=…</code> + <code>--tries</code>, gh-ost <code>--cut-over-lock-timeout-seconds</code> + 재시도). <b>직접 ALTER를 칠 때도 이 동작을 흉내 내야 한다</b> — 그게 4장의 1층이다.</p>
+</div>
+
+<!-- ===================== S4 ===================== -->
+<h2 id="s4"><span class="num">4</span>절차를 팀 규칙으로 고정하기 — 안전망 3층</h2>
+<p>1~3장의 지식은 <b>"그날 그 사람이 기억하고 있었는가"에 의존하면 무용지물</b>이다. 출제 의도의 후반부("스키마 변경 절차를 갖춘 팀에서 일해봤는지")는 정확히 이걸 묻는다. 규칙은 <b>사람의 주의력이 아니라 실행 경로에</b> 심는다 — 세션 설정, 저장소의 CI, 배포 파이프라인. 각 층이 <b>어느 사슬의 어느 고리를 끊는지</b>를 같이 외운다.</p>
+
+<div class="layers">
+  <div><span class="lv">1층 · 실행 세션</span><b><code>lock_wait_timeout</code> 짧게 + 재시도</b>ALTER가 MDL을 몇 초 안에 못 얻으면 스스로 실패. 실행 전 <code>INNODB_TRX</code> 확인.<div class="cut">끊는 고리: 사슬 A-② "1년 대기"</div></div>
+  <div><span class="lv">2층 · 저장소 / CI</span><b>ALGORITHM/LOCK 명시 린트</b>마이그레이션 SQL에 <code>ALTER</code>가 있는데 <code>ALGORITHM=</code>이 없으면 빌드 실패. 문장 분리 규칙.<div class="cut">끊는 고리: 사슬 B "조용한 강등"</div></div>
+  <div><span class="lv">3층 · 배포 파이프라인</span><b>게이트 마이그레이션 + 기동 분리</b>대형 테이블 재구성은 런북(gh-ost)으로 먼저, Flyway에는 적용 여부 <b>검증만</b>. 잊으면 배포 실패.<div class="cut">끊는 고리: "사람이 잊음"</div></div>
+</div>
+
+<h3 id="s4-1">4-1. 1층 — <code>lock_wait_timeout</code>을 짧게 두고, 실패하면 재시도</h3>
+<p>사슬 A의 ②("1년 대기")를 끊는 가장 값싼 안전망이다. <b>실패는 아무에게도 피해를 주지 않는다 — 대기가 피해를 준다.</b></p>
+
+<pre><code><span class="ln cm">-- ❌ before: 기본값(1년) 그대로 실행 → 긴 트랜잭션 하나에 서비스 전체가 인질</span>
+<span class="ln bad">ALTER TABLE orders ADD COLUMN coupon_code VARCHAR(32) NULL, ALGORITHM=INSTANT, LOCK=NONE;</span>
+<span class="ln"> </span>
+<span class="ln cm">-- ✅ after: 이 세션에서만 MDL 대기 상한을 5초로 → 못 얻으면 에러, 큐도 즉시 해소</span>
+<span class="ln good">SET SESSION lock_wait_timeout = 5;</span>
+<span class="ln">ALTER TABLE orders ADD COLUMN coupon_code VARCHAR(32) NULL, ALGORITHM=INSTANT, LOCK=NONE;</span>
+<span class="ln cm">-- ERROR 1205 Lock wait timeout exceeded 가 나면 → 원흉 트랜잭션을 찾거나 잠시 후 재시도</span></code></pre>
+
+<pre><code><span class="ln cm"># 재시도 루프 — 운영 런북 스크립트에 고정 (사람이 F5를 누르지 않게)</span>
+<span class="ln">for i in $(seq 1 30); do</span>
+<span class="ln good">  mysql shop -e "SET SESSION lock_wait_timeout=3;</span>
+<span class="ln">                 ALTER TABLE orders ADD COLUMN coupon_code VARCHAR(32) NULL,</span>
+<span class="ln">                 ALGORITHM=INSTANT, LOCK=NONE;" &amp;&amp; break</span>
+<span class="ln good">  sleep 5</span>
+<span class="ln">done</span></code></pre>
+
+<p>실행 <b>전에</b> 긴 트랜잭션을 확인하고, 실행 <b>중</b> 막히면 누가 막는지 보는 쿼리도 런북에 같이 둔다.</p>
+<pre><code><span class="ln cm">-- 실행 전: 60초 넘게 열려 있는 트랜잭션 (사슬 A의 ① 후보)</span>
+<span class="ln">SELECT trx_id, trx_started, trx_mysql_thread_id, trx_query</span>
+<span class="ln">  FROM information_schema.INNODB_TRX</span>
+<span class="ln"> WHERE trx_started &lt; NOW() - INTERVAL 60 SECOND;</span>
+<span class="ln"> </span>
+<span class="ln cm">-- 실행 중 막혔을 때: 누가 어떤 MDL을 쥐고 있고 누가 기다리는지</span>
+<span class="ln">SELECT * FROM sys.schema_table_lock_waits;</span>
+<span class="ln">SELECT object_name, lock_type, lock_status, owner_thread_id</span>
+<span class="ln">  FROM performance_schema.metadata_locks</span>
+<span class="ln"> WHERE object_schema = 'shop' AND object_name = 'orders';</span></code></pre>
+
+<h3 id="s4-2">4-2. 2층 — <code>ALGORITHM</code>/<code>LOCK</code> 명시를 강제 (리뷰 + 린트)</h3>
+<p>2-1절의 "단언"을 개인 습관이 아니라 <b>CI가 검사</b>하게 한다. 정규식 한 줄짜리 스크립트로 충분하고, 스키마 린터를 쓸 수 있으면 더 좋다.</p>
+
+<div class="vs">
+  <div class="bad"><span class="lbl">before</span><b>PR 템플릿의 체크박스</b><br>"<code>ALGORITHM</code> 명시했는지 리뷰어가 확인" — 리뷰어가 바쁘면, 새로 온 사람이면, 금요일 저녁이면 통과한다. 체크박스는 사람이 여전히 무시할 수 있다.</div>
+  <div class="good"><span class="lbl">after</span><b>CI 스크립트가 빌드를 깨뜨림</b><br>마이그레이션 디렉토리의 <code>ALTER TABLE</code> 중 <code>ALGORITHM=</code>이 없는 파일이 하나라도 있으면 <code>exit 1</code>. 사람의 상태와 무관하게 매번 같은 검사.</div>
+</div>
+
+<pre><code><span class="ln cm"># ci/lint-migrations.sh — ALTER에 ALGORITHM 절이 없으면 실패</span>
+<span class="ln good">if grep -rliE '^\s*ALTER\s+TABLE' src/main/resources/db/migration \</span>
+<span class="ln good">   | xargs grep -LiE 'ALGORITHM\s*=' | grep -q .; then</span>
+<span class="ln">  echo "ALTER TABLE without ALGORITHM= found. Declare INSTANT/INPLACE explicitly." &gt;&amp;2</span>
+<span class="ln good">  exit 1</span>
+<span class="ln">fi</span></code></pre>
+
+<p><span class="badge bonus">가산점</span> <code>skeema</code> 같은 선언형 스키마 도구는 린트 규칙에 더해, <b>일정 크기 이상 테이블의 ALTER를 자동으로 pt-osc/gh-ost로 감싸는 옵션</b>(<code>alter-wrapper</code>, <code>alter-wrapper-min-size</code>)이 있다. "큰 테이블이면 도구를 쓰자"는 규칙을 <b>도구가 대신 기억</b>하게 만드는 사례다.</p>
+
+<h3 id="s4-3">4-3. 3층 — 마이그레이션 도구(Flyway/Liquibase)와의 결합: 기동 분리 + 게이트</h3>
+<p>Spring 팀은 대개 Flyway/Liquibase로 스키마를 버전 관리하고, 기본 설정은 <b>앱 기동 시 마이그레이션 실행</b>이다. 여기에 대형 테이블 DDL이 섞이면 전용 함정이 생긴다.</p>
+<div class="flow">
+  <span>앱 기동</span><i>→</i><span class="hot">Flyway가 3시간짜리 ALTER 시작</span><i>→</i><span>readiness 실패</span><i>→</i><span>롤링 배포 정지 / 오케스트레이터가 타임아웃으로 컨테이너 kill</span><i>→</i><span class="hot">MySQL DDL은 스크립트 롤백 불가 → 어디까지 적용됐는지 불명</span><i>→</i><span>Flyway 히스토리 실패 표시 → 다음 기동도 실패 → <code>flyway repair</code> + 수동 복구</span>
+</div>
+<p class="kicker">8.0의 "원자적 DDL"은 "문장 하나가 반쯤 적용되지 않는다"는 뜻이지 "스크립트를 되돌린다"는 뜻이 아니다.</p>
+
+<p><b>⑴ 마이그레이션을 앱 기동에서 떼어 파이프라인 단계로.</b> 앱은 <b>"스키마가 기대와 다르면 기동 실패"</b>만 담당한다.</p>
+<pre><code><span class="ln cm"># ❌ before: application.yml — 앱이 뜨면서 마이그레이션까지 실행 (기본값)</span>
+<span class="ln bad">spring.flyway.enabled: true</span>
+<span class="ln bad">spring.jpa.hibernate.ddl-auto: update</span>
+<span class="ln"> </span>
+<span class="ln cm"># ✅ after: 앱은 검증만, 마이그레이션은 CI/CD의 별도 잡</span>
+<span class="ln good">spring.flyway.enabled: false</span>
+<span class="ln good">spring.jpa.hibernate.ddl-auto: validate      <span class="cm"># 선언과 실물이 다르면 기동 실패</span></span>
+<span class="ln"> </span>
+<span class="ln cm"># 파이프라인(배포 직전 잡)에서 실행하는 Flyway에는 1층의 타임아웃을 심는다</span>
+<span class="ln good">flyway -url=jdbc:mysql://... -initSql="SET SESSION lock_wait_timeout=5" migrate</span>
+<span class="ln cm"># 또는 각 SQL 파일 첫 줄에:  SET SESSION lock_wait_timeout = 5;</span></code></pre>
+
+<p><b>⑵ 대형 테이블 목록을 저장소에 두고, 그 테이블의 재구성 DDL은 Flyway SQL로 금지.</b> 대신 gh-ost/pt-osc 런북으로 <b>배포와 분리해</b> 먼저 실행한다. Flyway 쪽에는 SQL 대신 <b>"이미 적용됐는지 검증만 하는 게이트 마이그레이션"</b>을 둔다 — 사람이 gh-ost를 잊었으면 <b>배포가 실패</b>하게.</p>
+
+<pre><code><span class="ln cm">// ❌ before: V43__orders_amount_bigint.sql</span>
+<span class="ln bad">//    ALTER TABLE orders MODIFY amount BIGINT NOT NULL;</span>
+<span class="ln cm">//    → COPY 알고리즘, 앱 기동 중 수 시간 쓰기 차단, 실패 시 반쯤 적용</span>
+<span class="ln"> </span>
+<span class="ln cm">// ✅ after: V43__gate_orders_amount_bigint.java — 실물을 확인만 한다</span>
+<span class="ln">public class V43__gate_orders_amount_bigint extends BaseJavaMigration {</span>
+<span class="ln">    @Override</span>
+<span class="ln">    public void migrate(Context ctx) throws Exception {</span>
+<span class="ln">        try (var st = ctx.getConnection().createStatement();</span>
+<span class="ln good">             var rs = st.executeQuery("""</span>
+<span class="ln good">                 SELECT DATA_TYPE FROM information_schema.COLUMNS</span>
+<span class="ln good">                  WHERE TABLE_SCHEMA = DATABASE()</span>
+<span class="ln good">                    AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'amount'""")) {</span>
+<span class="ln">            rs.next();</span>
+<span class="ln good">            if (!"bigint".equalsIgnoreCase(rs.getString(1))) {</span>
+<span class="ln cm">                // gh-ost 런북(docs/runbook/orders-amount-bigint.md)을 먼저 실행해야 한다</span>
+<span class="ln good">                throw new IllegalStateException(</span>
+<span class="ln good">                    "orders.amount is not BIGINT yet — run gh-ost migration before deploying V43");</span>
+<span class="ln">            }</span>
+<span class="ln">        }</span>
+<span class="ln">    }</span>
+<span class="ln">}</span></code></pre>
+
+<p>Liquibase라면 같은 의도를 선언으로 쓴다 — 전제조건이 충족돼 있으면 통과, 아니면 <code>HALT</code>.</p>
+<pre><code><span class="ln">&lt;changeSet id="43-orders-amount-bigint-gate" author="team"&gt;</span>
+<span class="ln good">  &lt;preConditions onFail="HALT"&gt;</span>
+<span class="ln good">    &lt;sqlCheck expectedResult="bigint"&gt;</span>
+<span class="ln">      SELECT DATA_TYPE FROM information_schema.COLUMNS</span>
+<span class="ln">       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME='orders' AND COLUMN_NAME='amount'</span>
+<span class="ln good">    &lt;/sqlCheck&gt;</span>
+<span class="ln good">  &lt;/preConditions&gt;</span>
+<span class="ln">  &lt;comment&gt;out-of-band gh-ost 적용 여부 검증 — 미적용 시 배포 중단&lt;/comment&gt;</span>
+<span class="ln">&lt;/changeSet&gt;</span></code></pre>
+
+<p><b>⑶ 작은 DDL은 Flyway SQL로 두되 알고리즘 단언 + 문장 분리.</b> INSTANT 컬럼 추가처럼 안전한 것까지 런북으로 보내면 절차가 무거워져 지켜지지 않는다.</p>
+
+<div class="memo rule">
+  <h4>두 문장으로 외우는 4장의 철학</h4>
+  <ul>
+    <li><b>"실패는 피해를 주지 않는다 — 대기가 피해를 준다."</b> 타임아웃·린트·게이트는 전부 "빨리 실패하게 만드는 장치"다.</li>
+    <li><b>"규칙은 지킬 수 있을 만큼만 무겁게."</b> 코드·설정으로 고정할 수 있는 것은 체크리스트에 두지 않는다 — 체크박스는 사람이 무시할 수 있다.</li>
+  </ul>
+</div>
+
+<h3 id="s4-4">4-4. Expand / Contract — 앱 배포 무중단과 맞물리는 지점</h3>
+<p>스키마를 무중단으로 바꿔도, <b>롤링 배포 중에는 구버전과 신버전 앱이 같은 DB를 동시에 본다.</b> 컬럼을 지우거나 이름을 바꾸는 순간 구버전 앱이 죽고, <code>ddl-auto=validate</code>를 켜 뒀다면 구버전 인스턴스가 재기동조차 못 한다. 그래서 파괴적 변경은 <b>한 릴리스에서 금지</b>하고 두 단계로 나눈다.</p>
+<div class="flow">
+  <span class="ok">Expand: 새 컬럼 <b>추가만</b>(INSTANT)</span><i>→</i>
+  <span>신버전 앱 배포: 양쪽에 쓰고 새 쪽을 읽음</span><i>→</i>
+  <span>백필: 청크 UPDATE, 저트래픽 시간대</span><i>→</i>
+  <span>구버전 앱이 <b>한 대도 없음</b>을 확인</span><i>→</i>
+  <span class="ok">Contract: <b>다음 릴리스</b>에서 옛 컬럼 삭제</span>
+</div>
+<p>순서를 한 줄로: <b>호환되는 스키마 먼저 → 앱 배포(프로세스 교체의 무중단은 02장 graceful shutdown) → 정리 DDL은 다음 릴리스.</b> 컬럼 이름 변경도 "새 컬럼 추가 → 양쪽 쓰기 → 읽기 전환 → 옛 컬럼 삭제" 네 단계로 푼다. <code>SELECT *</code>와 위치 기반 매핑을 금지하는 코딩 규칙도 이 축의 일부다(컬럼 추가만으로 깨지지 않게).</p>
+
+<h3 id="s4-5">4-5. PR 템플릿 체크리스트 — 사람이 판단해야 하는 것만 남긴다</h3>
+<p>위 규칙들이 기계가 잡는 부분이고, 나머지는 리뷰어가 <b>같은 질문을 매번 같은 순서로</b> 던지게 템플릿에 박는다.</p>
+<details class="plain"><summary>체크리스트 펼치기 (DDL이 포함된 PR은 필수)</summary><div class="ans">
+<pre><code><span class="ln">## 스키마 변경 체크리스트</span>
+<span class="ln">- [ ] 대상 테이블 현재 행 수 / 크기:          (대형 테이블 목록 해당 여부: 예/아니오)</span>
+<span class="ln">- [ ] 알고리즘 판별: INSTANT / INPLACE(재구성 없음|재구성) / COPY — 근거:</span>
+<span class="ln">- [ ] 문장을 알고리즘별로 분리했는가 (INSTANT 작업과 재구성 작업을 한 ALTER에 섞지 않음)</span>
+<span class="ln">- [ ] 재구성이면: gh-ost / pt-osc 중 선택과 이유 (FK 유무, 쓰기 부하, 복제 구성)</span>
+<span class="ln">- [ ] 스테이징(운영 크기 스냅샷)에서 리허설 — 소요 시간:    임시 디스크:    (여유 ≥ 테이블 × 2)</span>
+<span class="ln">- [ ] 실행 창: 저트래픽 시간대       / 실행 전 INNODB_TRX 확인 / lock_wait_timeout 설정 확인</span>
+<span class="ln">- [ ] 복제 지연 감시 임계치와 중단 기준 (--max-lag / --max-load / --critical-load)</span>
+<span class="ln">- [ ] Expand/Contract: 구버전 앱과 호환되는가 — 파괴적 변경이면 어느 릴리스에서 Contract 하는가</span>
+<span class="ln">- [ ] 롤백 방법 (INSTANT 컬럼 → DROP / 도구 → 옛 테이블 보존 기간)</span>
+<span class="ln">- [ ] 실행자·감시자·연락 채널</span></code></pre>
+</div></details>
+
+<!-- ===================== S5 ===================== -->
+<h2 id="s5"><span class="num">5</span>사고 사례 — "INSTANT니까 괜찮다"며 점심시간에 친 ALTER</h2>
+<div class="card">
+  <p><b>상황</b>: <code>orders</code>(수억 건)에 <code>coupon_code</code> 컬럼을 추가하는 PR이 승인됐다. 리뷰어는 "MySQL 8이고 INSTANT라 1ms면 끝난다"고 했고, 담당자는 점심시간에 운영 DB에 <code>ALTER TABLE orders ADD COLUMN coupon_code VARCHAR(32) NULL;</code>을 실행했다. <b>12분 뒤 전 API가 타임아웃으로 죽었다.</b></p>
+  <p>1-1절의 타임라인이 그대로 재현된 것이다. 정산팀 대시보드가 <b>매 시 정각에 리포팅 트랜잭션</b>을 열어 <code>orders</code>를 15분간 읽고 있었다(①). ALTER는 배타 MDL을 못 얻고 대기, 상한은 1년(②). 그 뒤로 <code>orders</code>를 읽는 모든 API 요청이 큐(③), HikariCP 풀 10개가 30초 안에 바닥나 로그인·상품 조회까지 실패(④), 헬스체크 실패로 인스턴스 재시작 반복(⑤). 담당자는 <code>SHOW PROCESSLIST</code>에서 <code>Waiting for table metadata lock</code>을 보고 ALTER 세션을 <code>KILL</code>했고, 큐는 즉시 풀렸다. ALTER 자체는 나중에 리포팅 트랜잭션이 끝난 직후 재실행해 <b>정확히 수 ms</b>에 끝났다.</p>
+</div>
+<div class="tscroll"><table>
+  <tr><th style="width:40%">이 사고에서 배운 것</th><th>고정한 곳</th></tr>
+  <tr><td>INSTANT 판별은 맞았지만 <b>MDL은 알고리즘과 무관</b>하다</td><td>1-1절 · 사슬 A를 이름 붙여 말하기</td></tr>
+  <tr><td><code>lock_wait_timeout=5</code>가 있었으면 <b>5초짜리 에러</b>로 끝났을 것</td><td>4-1절 · 런북 스크립트 + Flyway <code>initSql</code></td></tr>
+  <tr><td>실행 전 <code>INNODB_TRX</code> 확인이 런북에 있었으면 대시보드 트랜잭션을 미리 봤을 것</td><td>4-1절 · 런북의 사전 쿼리</td></tr>
+  <tr><td>이 셋을 <b>담당자의 기억이 아니라 코드에</b> 두어야 다음 사람이 같은 사고를 안 낸다</td><td>4-3절 · "리뷰어가 INSTANT를 확인했다"는 사슬 A 앞에서 아무 보호가 되지 않았다</td></tr>
+</table></div>
+
+<!-- ===================== S6 ===================== -->
+<h2 id="s6"><span class="num">6</span>꼬리질문 셀프 테스트 — 먼저 소리 내어 답하고 펼친다</h2>
+<div class="toolbar"><button data-open="1">모두 펼치기</button><button data-open="0">모두 접기</button></div>
+<div class="qa-block">
+
+<details><summary>"MySQL 8이면 컬럼 추가는 INSTANT라 그냥 쳐도 되는 것 아닌가요?"</summary><div class="ans">
+  <p>두 가지로 나눠 답한다. <b>첫째, INSTANT여도 배타 MDL은 잡는다.</b> 긴 트랜잭션이 공유 MDL을 쥐고 있으면 1ms짜리 ALTER가 그 뒤에서 대기하고, 그 뒤로 들어오는 모든 쿼리가 큐에 서며, 커넥션 풀이 고갈돼 무관한 API까지 죽는다 — 알고리즘이 아니라 락 큐의 문제다. 그래서 INSTANT여도 <code>lock_wait_timeout</code>을 짧게 두고 재시도하는 절차를 밟는다. <b>둘째, INSTANT가 된다는 보장을 확인해야 한다.</b> <code>ALGORITHM=INSTANT, LOCK=NONE</code>을 단언해서 조건이 안 맞으면(COMPRESSED, FULLTEXT, 다른 재구성 작업과 혼합, 누적 횟수 초과) 조용히 재구성으로 강등되지 않고 에러로 멈추게 한다. "그냥 쳐도 된다"는 이 두 확인을 생략한 말이다.</p>
+</div></details>
+
+<details><summary>"인덱스 추가는 INPLACE라 DML도 허용되는데, 그런데도 도구를 쓰는 이유가 뭔가요?"</summary><div class="ans">
+  <p>프라이머리에서는 온라인이어도 <b>복제본에서는 아니기 때문</b>이다. ALTER 문장이 binlog로 전파되면 복제본은 같은 ALTER를 처음부터 재실행하고, DDL은 병렬 적용의 장벽이라 그 시간 동안 뒤의 트랜잭션이 전부 대기한다 → 복제 지연이 ALTER 소요 시간만큼 벌어진다. 읽기를 복제본으로 보내는 구조라면 그건 곧 "방금 쓴 데이터가 안 보이는" 장애다. 여기에 ⑵ 실행 중 속도 조절·중단이 불가능하다는 것, ⑶ 온라인 로그 초과로 말미에 실패할 수 있다는 것이 붙는다. pt-osc/gh-ost는 큰 ALTER를 청크 DML로 바꿔 복제본이 따라오게 하고 지연이 임계치를 넘으면 감속한다. 반대로 <b>복제본이 없거나 지연을 감내할 수 있는 환경이면 네이티브 INPLACE가 가장 단순하고 옳다</b> — 도구는 공짜가 아니다.</p>
+</div></details>
+
+<details><summary>"pt-osc와 gh-ost 중 무엇을 고르나요? 각각 무엇을 포기하나요?" <span class="badge senior">시니어 변별</span></summary><div class="ans">
+  <p>첫 분기는 <b>FK</b>다 — 대상 테이블이 FK의 부모든 자식이든 gh-ost는 불가하므로 pt-osc밖에 없고, 그때는 <code>rebuild_constraints</code>(자식 재구성 비용)와 <code>drop_swap</code>(테이블 부재 창) 중 하나를 감수한다. FK가 없다면 두 번째 분기는 <b>쓰기 부하 민감도</b>다 — pt-osc는 트리거가 원본의 모든 쓰기에 동기적으로 끼어들어 쓰기 지연과 락 범위를 늘리므로, 쓰기가 몰리는 테이블일수록 gh-ost가 낫다. gh-ost가 지불하는 것은 ROW binlog 전제, 기존 트리거 불가, binlog 순차 적용 탓에 쓰기 폭주 시 총 시간이 더 길 수 있다는 점이다. 대신 실행 중 일시정지·교체 연기·복제본 리허설이라는 <b>운영 통제력</b>을 얻는다. 어느 쪽이든 <b>디스크 2배와 cut-over 순간의 MDL</b>은 공통이므로 도구로 해결되지 않는다고 덧붙이면 완결된다. 결정을 "우리 팀은 항상 X"가 아니라 <b>이 두 분기</b>로 말하는 것이 핵심이다.</p>
+</div></details>
+
+<details><summary>"Flyway를 쓰는데, 대형 테이블 DDL은 실제로 어떻게 흘러가나요?"</summary><div class="ans">
+  <p>세 겹으로 답한다. ⑴ 마이그레이션 실행을 <b>앱 기동에서 떼어</b> 파이프라인 단계로 옮긴다 — 기동 중 긴 DDL은 readiness 실패·롤링 배포 정지·타임아웃 재시작을 부르고, MySQL DDL은 스크립트 단위 롤백이 안 되어 반쯤 적용된 상태를 남기기 때문이다. 앱은 <code>ddl-auto=validate</code>로 검증만 한다. ⑵ 대형 테이블의 재구성 DDL은 Flyway SQL로 쓰지 않고 gh-ost/pt-osc 런북으로 <b>배포 전에 별도 실행</b>하며, Flyway에는 <code>information_schema</code>로 <b>적용 여부를 확인만 하는 게이트 마이그레이션</b>(Java 마이그레이션 또는 Liquibase <code>preConditions</code>)을 둬서 잊으면 배포가 실패하게 한다. ⑶ 나머지 작은 DDL은 Flyway SQL로 두되 <code>ALGORITHM/LOCK</code> 단언, 알고리즘별 문장 분리, <code>initSql</code>로 <code>lock_wait_timeout</code>을 심는다. <b>"사람이 gh-ost를 잊으면 어떻게 되나요"에 "배포가 실패합니다"라고 답할 수 있어야</b> 절차가 있는 팀이다.</p>
+</div></details>
+
+<details><summary>"PostgreSQL이면 같은 문제인가요?" <span class="badge bonus">가산점</span></summary><div class="ans">
+  <p>락 큐의 원리는 같다 — ALTER는 <code>ACCESS EXCLUSIVE</code> 락을 잡고, 긴 트랜잭션 뒤에서 대기하면 뒤따르는 쿼리가 모두 막히므로 <b><code>lock_timeout</code>을 짧게 두고 재시도</b>하는 절차는 그대로 필요하다. 다른 점은 도구 지형이다. PostgreSQL은 DDL이 <b>트랜잭션 안에서 롤백</b>되므로 마이그레이션 실패 복구가 쉽고, <code>ADD COLUMN … DEFAULT</code>는 상수 기본값이면 카탈로그에만 기록해 즉시 끝나며(11+), 인덱스는 <code>CREATE INDEX CONCURRENTLY</code>로 쓰기를 막지 않고 만든다 — 단 이건 트랜잭션 안에서 못 쓰고 실패하면 <code>INVALID</code> 인덱스가 남아 지워야 한다. 제약 추가는 <code>NOT VALID</code>로 걸고 나중에 <code>VALIDATE CONSTRAINT</code>로 나눠 긴 락을 피한다. 즉 "MySQL의 pt-osc/gh-ost 자리"를 PostgreSQL에서는 <b>DB 내장 기능 + <code>lock_timeout</code> 재시도</b>가 상당 부분 대신한다. 엔진마다 답이 다르다는 걸 알고 "우리 DB는 무엇인가"부터 확인하는 것이 시니어의 순서다.</p>
+</div></details>
+
+<details><summary>"<code>innodb_lock_wait_timeout</code>을 5초로 줄여 뒀는데 왜 ALTER는 몇 분씩 기다리나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>그 변수는 <b>행 락</b>의 대기 상한이다. ALTER가 기다리는 것은 <b>메타데이터 락</b>이고, 그 상한은 별개 변수 <code>lock_wait_timeout</code>(기본 1년)이다. 이름이 비슷해서 "타임아웃은 이미 짧게 해 뒀다"고 착각하기 쉽다. <code>SHOW PROCESSLIST</code>의 상태가 <code>Waiting for table metadata lock</code>이면 MDL이고, 행 락이면 <code>Lock wait timeout exceeded</code>가 50초(기본) 뒤에 난다. 둘을 구분해서 말하면 사슬 A를 실제로 겪어 본 사람으로 보인다.</p>
+</div></details>
+
+<details><summary>"ALTER가 멈춰 있을 때 무엇을 KILL 하나요? 왜 ALTER를 죽이면 큐가 즉시 풀리나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>사슬의 ①(원흉 트랜잭션) 또는 ②(ALTER 세션) 중 하나를 끊는다. ALTER를 죽이면 <b>대기 중인 배타 요청이 큐에서 사라지므로</b>, 그 뒤에 줄 서 있던 공유 요청들이 더는 막힐 이유가 없어 즉시 진행된다 — 뒤따르는 쿼리들이 멈춘 이유는 "배타 요청을 추월하지 못한다"는 규칙 때문이지 자원이 부족해서가 아니었다. ALTER는 아직 시작도 못 했으니 죽여도 데이터 손상이 없고, 나중에 다시 실행하면 된다. 원흉 트랜잭션을 죽이는 것도 가능하지만 그것이 무엇인지(결제 배치일 수도) 모른 채 죽이는 것은 위험하므로, 즉각 복구는 ALTER 쪽을 죽이는 편이 안전하다. 누가 쥐고 있는지는 <code>sys.schema_table_lock_waits</code>로 본다.</p>
+</div></details>
+
+<details><summary>"공유 MDL은 왜 문장이 끝날 때가 아니라 트랜잭션이 끝날 때 풀리나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>트랜잭션 도중에 테이블 정의가 바뀌면 <b>같은 트랜잭션의 앞 문장과 뒤 문장이 다른 테이블 구조를 보게 되어</b> 트랜잭션의 일관성이 깨지고, 바이너리 로그에 기록되는 순서(트랜잭션 커밋 ↔ DDL)도 실제 실행과 어긋나 복제본이 다른 결과를 낼 수 있다. 그래서 MySQL은 트랜잭션이 끝날 때까지 공유 MDL을 유지해 DDL이 끼어들지 못하게 한다. 이 설계 때문에 "SELECT 한 번 하고 커밋 안 한 세션"이 ALTER를 막는 것이고, 그래서 <b>긴 트랜잭션 자체가 스키마 변경의 적</b>이다(Q9 긴 트랜잭션의 해악과 연결).</p>
+</div></details>
+
+<details><summary>"한 ALTER 문에 <code>ADD COLUMN</code>과 <code>MODIFY … BIGINT</code>를 같이 쓰면 어떻게 되나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>ALTER 한 문장은 <b>가장 무거운 작업의 알고리즘으로 통일</b>된다. 컬럼 추가 혼자면 INSTANT지만, 타입 변경(COPY)과 섞이는 순간 문장 전체가 COPY가 되어 컬럼 추가까지 전 행 복사 + 쓰기 차단을 치른다. 그래서 규칙은 "알고리즘별로 문장을 쪼개라"이고, <code>ALGORITHM=INSTANT</code>를 단언해 두면 이 혼합이 <code>ERROR 1846</code>으로 잡혀서 실수를 실행 전에 발견한다.</p>
+</div></details>
+
+<details><summary>"INPLACE-재구성 중에 온라인 로그가 넘치면 어떻게 되나요? 그럼 뭘 조정하나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>재구성 동안 들어온 DML은 <code>innodb_online_alter_log_max_size</code>(기본 128MB)의 온라인 로그에 쌓였다가 끝에 반영되는데, 쓰기가 많아 로그가 한도를 넘으면 <b>수 시간 걸린 작업이 마지막에 실패</b>하고 그때까지의 시간·I/O는 날아간다. 대응은 ⑴ 한도를 키우거나 ⑵ 저트래픽 시간대로 옮기거나 ⑶ 애초에 이런 규모의 재구성은 네이티브 대신 pt-osc/gh-ost로 청크 처리하는 것이다. "네이티브 online DDL의 대가" 목록에 이 항목이 들어가 있어야 한다.</p>
+</div></details>
+
+<details><summary>"게이트 마이그레이션이 실패하면 배포는 어떻게 되나요? 그게 좋은 건가요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>파이프라인의 <code>flyway migrate</code> 단계가 예외로 끝나므로 <b>배포가 중단</b>되고, 앱은 새 버전으로 교체되지 않는다. 이것이 <b>의도된 동작</b>이다 — 대안은 "gh-ost를 안 한 채로 새 앱이 떠서 BIGINT를 기대하는 코드가 INT 컬럼에 오버플로를 내는 것" 또는 "Flyway가 직접 COPY ALTER를 시작해 사슬 B를 여는 것"이다. 사람은 gh-ost 런북을 실행한 뒤 파이프라인을 재시도하면 되고, 게이트는 이미 적용된 상태를 보고 통과한다. "실패는 피해를 주지 않는다 — 대기(와 반쯤 적용)가 피해를 준다"의 배포판이다.</p>
+</div></details>
+
+<details><summary>"gh-ost 실행 중에 트래픽이 갑자기 튀면 무엇을 하나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p><code>--throttle-flag-file</code>로 지정한 파일을 <code>touch</code>하면 gh-ost가 <b>즉시 일시정지</b>하고, 지우면 재개한다. 복사가 끝나갈 때 교체(cut-over)를 사람이 확인한 뒤 하고 싶으면 <code>--postpone-cut-over-flag-file</code>을 미리 두어 파일이 있는 동안 교체를 미룬다. 이것이 pt-osc(감속만 가능, 일시정지 없음)와 갈리는 "운영 통제력"이고, 네이티브 ALTER(죽이기만 가능)와는 더 크게 갈린다.</p>
+</div></details>
+
+</div>
+
+<!-- ===================== S7 ===================== -->
+<h2 id="s7"><span class="num">7</span>1분 인출 테스트 — 면접 전날 이것만</h2>
+<div class="toolbar"><button data-open="1">모두 펼치기</button><button data-open="0">모두 접기</button></div>
+<div class="qa-block">
+
+<details><summary>사슬 A 5단계를 역할 이름을 붙여 순서대로 말해보라.</summary><div class="ans">
+  <p><b>보유자</b> 긴 트랜잭션이 공유 MDL 점유 → <b>대기자</b> ALTER가 배타 MDL 대기(상한 1년) → <b>줄</b> 뒤따르는 모든 쿼리가 큐(추월 불가) → <b>병목 자원</b> 커넥션 풀 고갈(10개, 30초) → <b>증폭</b> 무관한 API까지 전면 장애, 재시작해도 큐는 그대로. <a href="#s1-1">→ 1-1</a></p>
+</div></details>
+<details><summary>INSTANT여도 사슬 A가 발생하는 이유를 한 문장으로.</summary><div class="ans">
+  <p>INSTANT는 "실행이 수 ms"라는 뜻이지 "MDL을 안 잡는다"는 뜻이 아니다 — 1ms짜리 ALTER가 긴 트랜잭션 뒤에서 10분을 대기하면 그 10분 동안 서비스는 죽어 있다.</p>
+</div></details>
+<details><summary>알고리즘 3종 ↔ 대표 작업 압축 문장은? 갈리는 원리 하나는?</summary><div class="ans">
+  <p><b>"추가는 INSTANT, 인덱스는 INPLACE, 타입은 COPY."</b> 원리: 이 작업이 <b>클러스터드 인덱스 안의 행 레이아웃을 건드리는가</b> — 딕셔너리만이면 INSTANT, 별도 구조만 지으면 INPLACE, 전 행을 다시 쓰면 재구성(INPLACE-재구성 / COPY). <a href="#s2">→ 2절</a></p>
+</div></details>
+<details><summary>도구 셋이 지불하는 대가를 한 단어씩. 셋의 공통 한계 둘은?</summary><div class="ans">
+  <p>네이티브 <b>복제 지연</b> / pt-osc <b>트리거 부하</b>(+FK 처리 비용) / gh-ost <b>FK 불가</b>. 공통: <b>디스크 2배</b>와 <b>MDL</b>. <a href="#s3-1">→ 3-1</a></p>
+</div></details>
+<details><summary>선택 순서 4단계는?</summary><div class="ans">
+  <p>① INSTANT 되면 네이티브 → ② INPLACE + 복제 지연 감당되면 네이티브 → ③ 재구성이거나 지연 못 견디면 도구 → ④ FK 있으면 pt-osc, 없으면 쓰기 부하 민감할수록 gh-ost. <a href="#s3-2">→ 3-2</a></p>
+</div></details>
+<details><summary>안전망 3층과 각 층이 끊는 고리는?</summary><div class="ans">
+  <p><b>1층 실행 세션</b>: <code>lock_wait_timeout=5</code> + 재시도 + 실행 전 <code>INNODB_TRX</code> → 사슬 A-② "1년 대기". <b>2층 CI</b>: <code>ALGORITHM=</code> 없는 ALTER는 빌드 실패 → 사슬 B "조용한 강등". <b>3층 배포</b>: 마이그레이션 기동 분리(<code>flyway.enabled=false</code>, <code>ddl-auto=validate</code>) + 게이트 마이그레이션 → "사람이 잊음". <a href="#s4">→ 4절</a></p>
+</div></details>
+<details><summary>"사람이 gh-ost를 잊으면 어떻게 되나요?"에 한 마디로.</summary><div class="ans">
+  <p><b>"배포가 실패합니다."</b> — 게이트 마이그레이션이 <code>information_schema</code>로 실물을 확인하고 아니면 예외를 던진다.</p>
+</div></details>
+<details><summary>숫자 6개 — 값과 의미.</summary><div class="ans">
+  <p><code>lock_wait_timeout</code> <b>1년</b>(MDL 대기 상한) / <code>innodb_lock_wait_timeout</code> <b>50초</b>(행 락, 다른 변수) / HikariCP 풀 <b>10</b> / <code>connection-timeout</code> <b>30초</b> / 온라인 로그 <code>innodb_online_alter_log_max_size</code> <b>128MB</b>(넘치면 말미 실패) / INSTANT 컬럼 추가 누적 상한 <b>64회</b>(8.0.29 기준, "재구성을 미루는 빚").</p>
+</div></details>
+<details><summary>Expand/Contract를 한 줄로.</summary><div class="ans">
+  <p>호환되는 스키마 먼저(추가만, INSTANT) → 앱 배포(양쪽 쓰기, 새 쪽 읽기) → 구버전이 한 대도 없음을 확인한 뒤 <b>다음 릴리스</b>에서 정리 DDL. 파괴적 변경은 한 릴리스에서 금지. <a href="#s4-4">→ 4-4</a></p>
+</div></details>
+
+</div>
+
+<!-- ===================== SUMMARY ===================== -->
+<section class="summary" id="summary">
+  <p class="kicker">한 줄 요약</p>
+  <p><b>대용량 테이블의 ALTER는 알고리즘과 무관한 메타데이터 락 큐(긴 트랜잭션 → ALTER 대기 → 뒤따르는 모든 쿼리 대기 → 커넥션 풀 고갈 → 전면 장애)와, 재구성 알고리즘의 자원 비용(쓰기 차단·디스크 2배·복제 지연)이라는 두 사슬로 서비스를 세운다.</b> 그래서 MySQL 8 알고리즘 3종을 판별해 컬럼 추가는 INSTANT, 인덱스 추가는 INPLACE로 <b>단언</b>하고, 재구성이 불가피하면 복제 지연(네이티브) / 트리거 부하·FK 처리(pt-osc) / FK 미지원(gh-ost)이라는 대가를 비교해 고르며, <code>lock_wait_timeout</code> 단축 · 알고리즘 단언 린트 · 마이그레이션의 배포 분리와 게이트 · Expand/Contract를 <b>사람의 기억이 아니라 팀의 실행 경로에 고정</b>한다.</p>
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/04-rdb-sql/14-online-ddl-zero-downtime-schema-change.md</code> · 관련 문항: Q9 긴 트랜잭션의 해악 / 02장 graceful shutdown(앱 프로세스 교체의 무중단) / 03장 unique-constraint(<code>ddl-auto=validate</code>가 잡는 "선언은 있는데 실물이 없다")</p>
+
+</div>
+<script>
+  document.querySelectorAll('.toolbar button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var open = btn.getAttribute('data-open') === '1';
+      var block = btn.parentElement.nextElementSibling;
+      if (!block || !block.classList.contains('qa-block')) return;
+      block.querySelectorAll('details').forEach(function(d){ d.open = open; });
+    });
+  });
+</script>
+</body>
+</html>

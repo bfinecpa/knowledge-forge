@@ -34,7 +34,10 @@
 
 ## 문서 형식
 
-- 파일명: 주제 기반 kebab-case (예: `bigdecimal-equals-compareto.md`)
+- 파일명: `QQ-주제-kebab-case.md` — `QQ`는 해당 질문이 questions 섹션
+  파일에서 몇 번째 항목인지(2자리, 주석 처리된 항목 제외, 위→아래 순).
+  예: `32-bigdecimal-equals-compareto.md`. 질문지에 없는 질문(출처 없음)은
+  번호 없이 주제 슬러그만 쓴다 (예: `transaction-isolation-levels.md`).
 - 상단에 `> 핵심 관전 포인트:` 인용 블록 — 면접에서 첫 답변으로 말할 요약
 - 본문은 번호 섹션, before/after 코드 예시, 꼬리질문 대비 포인트 포함
 - 마지막에 "한 줄 요약" 섹션

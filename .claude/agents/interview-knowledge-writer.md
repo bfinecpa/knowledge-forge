@@ -49,8 +49,13 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 
 ## 3. 파일 생성 규칙
 
-- 경로: `interview-questions/knowledge/<NN-category>/<주제-kebab-case>.md`
-  (예: `02-spring/ioc-di-fundamentals.md`)
+- 경로: `interview-questions/knowledge/<NN-category>/<QQ-주제-kebab-case>.md`
+  (예: `02-spring/01-ioc-di-fundamentals.md`)
+- **`QQ` = 질문 순번 (2자리)**: 해당 질문이
+  `interview-questions/questions/<NN-category>.md`에서 몇 번째 항목인지
+  센다 — 난이도 섹션 구분 없이 파일 위 → 아래, 활성 항목(주석 처리 제외)만.
+  질문지에 없는 질문(꼬리질문에서 파생 등 출처 없음)이면 번호 없이
+  `<주제-kebab-case>.md`로 저장한다.
 - 저장 전 같은 디렉토리에 동일/유사 주제 파일이 있는지 Glob으로 확인한다.
   이미 있으면 새 파일을 만들지 말고 기존 파일을 읽고 보강한다.
 - 파일 생성/수정 후 **즉시 git add 한다** (이 프로젝트에서 interview-questions/ 는 git 추적 대상이다). **commit·push는 하지 않는다.**
