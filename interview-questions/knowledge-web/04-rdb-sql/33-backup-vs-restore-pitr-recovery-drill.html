@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>백업이 "있다"와 복구가 "된다"의 거리 — PITR의 메커니즘 사슬과 복구 훈련으로 마지막 방어선을 검증한다</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --text:#1f2937; --muted:#6b7280; --line:#e5e7eb;
+    --accent:#2563eb; --accent-soft:#dbeafe; --danger:#dc2626; --danger-soft:#fee2e2;
+    --ok:#16a34a; --ok-soft:#dcfce7; --warn:#d97706; --warn-soft:#fef3c7;
+    --code-bg:#1e293b; --code-fg:#e2e8f0;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+  .wrap{max-width:760px;margin:0 auto;padding:24px 16px 96px}
+  a{color:var(--accent)}
+  h1{font-size:1.55rem;line-height:1.35;margin:0 0 8px}
+  h2{font-size:1.25rem;margin:56px 0 14px;padding-top:8px;border-top:3px solid var(--accent);display:flex;align-items:center;gap:10px;scroll-margin-top:16px}
+  h2 .num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font-size:.85rem;font-weight:700;flex:none}
+  h3{font-size:1.05rem;margin:28px 0 10px;scroll-margin-top:16px}
+  p{margin:10px 0}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;background:#eef1f5;padding:1px 5px;border-radius:4px}
+  pre{background:var(--code-bg);color:var(--code-fg);padding:14px 16px;border-radius:10px;overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;line-height:1.6;margin:12px 0}
+  pre code{background:none;padding:0;font-size:inherit;color:inherit}
+  pre .ln{display:block;margin:0 -16px;padding:0 16px;border-left:4px solid transparent;white-space:pre}
+  pre .ln.bad{background:rgba(220,38,38,.22);border-left-color:var(--danger)}
+  pre .ln.good{background:rgba(22,163,74,.22);border-left-color:var(--ok)}
+  pre .ln.warn{background:rgba(217,119,6,.22);border-left-color:var(--warn)}
+  pre .cm{color:#94a3b8}
+  pre .tag{display:inline-block;font-size:.7rem;font-weight:800;padding:0 6px;border-radius:4px;color:#fff;margin-left:8px;vertical-align:middle}
+  pre .tag.bad{background:var(--danger)} pre .tag.good{background:var(--ok)} pre .tag.warn{background:var(--warn)}
+  .kicker{color:var(--muted);font-size:.85rem;margin:0 0 6px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:16px 0;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .hero{border:none;background:linear-gradient(135deg,#1d4ed8,#2563eb 60%,#3b82f6);color:#fff;padding:24px 22px}
+  .hero .kicker{color:#bfdbfe}
+  .hero .point{font-size:1.02rem;line-height:1.75}
+  .hero .point b{color:#fde68a}
+  .hero ol{margin:8px 0 0;padding-left:22px}
+  .hero li{margin:6px 0}
+  .hero .trap{margin-top:14px;background:rgba(255,255,255,.14);border-radius:10px;padding:10px 14px;font-size:.95rem}
+  .hero .trap b{color:#fecaca}
+  .hero code{background:rgba(255,255,255,.18);color:#fff}
+  .toc{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 6px;padding:0;list-style:none}
+  .toc li a{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:.85rem;text-decoration:none;color:var(--text)}
+  .toc li a:hover{border-color:var(--accent);color:var(--accent)}
+  .fix4{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:14px 0}
+  .fix4 > div{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:.9rem}
+  .fix4 > div.weak{border-color:var(--danger)}
+  .fix4 .tag{display:inline-block;background:var(--muted);color:#fff;border-radius:6px;font-size:.72rem;font-weight:700;padding:1px 7px;margin-bottom:6px}
+  .fix4 .weak .tag{background:var(--danger)}
+  .fix4 b{display:block;font-size:.98rem;margin-bottom:4px}
+  .fix4 a{font-size:.82rem}
+  .figure{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:14px 0}
+  .figure .scroll{overflow-x:auto}
+  .figure svg{display:block;min-width:640px;width:100%;height:auto;font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+  .figure svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .figure figcaption{font-size:.86rem;color:var(--muted);margin:8px 4px 0;line-height:1.6}
+  .memo{border-radius:14px;padding:16px 18px;margin:16px 0;border:2px solid var(--accent);background:var(--card);position:relative}
+  .memo::before{content:"암기";position:absolute;top:-11px;left:14px;background:var(--accent);color:#fff;font-size:.72rem;font-weight:700;padding:1px 9px;border-radius:999px;letter-spacing:.04em}
+  .memo.trap{border-color:var(--danger)}
+  .memo.trap::before{content:"함정";background:var(--danger)}
+  .memo.rule{border-color:var(--ok)}
+  .memo.rule::before{content:"규칙";background:var(--ok)}
+  .memo.num::before{content:"숫자"}
+  .memo.say{border-color:#7c3aed}
+  .memo.say::before{content:"말하기";background:#7c3aed}
+  .memo.analogy{border-color:var(--warn)}
+  .memo.analogy::before{content:"비유";background:var(--warn)}
+  .memo.check{border-color:var(--ok)}
+  .memo.check::before{content:"체크리스트";background:var(--ok)}
+  .memo h4{margin:2px 0 8px;font-size:1rem}
+  .memo .big{font-size:1.15rem;font-weight:800;line-height:1.5;margin:4px 0 8px}
+  .memo ul,.memo ol{margin:6px 0 0;padding-left:22px}
+  .memo li{margin:3px 0}
+  .memo .sub{color:var(--muted);font-size:.88rem}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+  .chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:700;border:1px solid var(--line);background:#f9fafb}
+  .chip .n{display:inline-flex;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:.72rem;align-items:center;justify-content:center;flex:none}
+  .chip.red .n{background:var(--danger)} .chip.green .n{background:var(--ok)} .chip.warn .n{background:var(--warn)}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#f3f4f6;font-weight:700}
+  td.ok{color:var(--ok);font-weight:700} td.no{color:var(--danger);font-weight:700} td.half{color:var(--warn);font-weight:700}
+  td ul{margin:0;padding-left:16px} td li{margin:2px 0}
+  .tscroll{overflow-x:auto;margin:12px 0;border-radius:10px;border:1px solid var(--line)}
+  .tscroll table{border:none} .tscroll th:first-child,.tscroll td:first-child{border-left:none} .tscroll th:last-child,.tscroll td:last-child{border-right:none}
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+  .vs > div{border-radius:12px;padding:14px 16px;font-size:.93rem}
+  .vs .bad{background:var(--danger-soft);border:1px solid #fca5a5}
+  .vs .good{background:var(--ok-soft);border:1px solid #86efac}
+  .vs .lbl{display:inline-block;font-size:.75rem;font-weight:800;padding:1px 8px;border-radius:6px;color:#fff;margin-bottom:6px}
+  .vs .bad .lbl{background:var(--danger)} .vs .good .lbl{background:var(--ok)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+  .two > div{background:#f9fafb;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:.92rem}
+  .two h5{margin:0 0 6px;font-size:1rem}
+  .two h5 small{font-weight:400;color:var(--muted);font-size:.8rem;margin-left:4px}
+  .two ol{margin:6px 0 0;padding-left:20px} .two li{margin:3px 0}
+  .layers{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}
+  .layers > div{background:var(--card);border:1px solid var(--line);border-top:5px solid var(--ok);border-radius:12px;padding:12px 14px;font-size:.9rem}
+  .layers .lv{display:inline-block;background:var(--ok);color:#fff;border-radius:6px;font-size:.72rem;font-weight:800;padding:1px 8px;margin-bottom:6px}
+  .layers b{display:block;font-size:.98rem;margin-bottom:4px}
+  .layers .cut{margin-top:8px;font-size:.82rem;color:var(--muted)}
+  .layers > div.l1{border-top-color:var(--muted)} .layers > div.l1 .lv{background:var(--muted)}
+  .layers > div.l2{border-top-color:var(--warn)} .layers > div.l2 .lv{background:var(--warn)}
+  .layers > div.l3{border-top-color:var(--accent)} .layers > div.l3 .lv{background:var(--accent)}
+  .badge{display:inline-block;font-size:.72rem;font-weight:800;padding:1px 8px;border-radius:6px;color:#fff;vertical-align:middle;margin-left:6px}
+  .badge.senior{background:#7c3aed} .badge.bonus{background:var(--warn)} .badge.add{background:var(--muted)} .badge.weak{background:var(--danger)}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+  details summary{cursor:pointer;padding:12px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸";color:var(--accent);flex:none;transition:transform .15s}
+  details[open] summary::before{transform:rotate(90deg)}
+  details .ans{padding:0 16px 14px 34px;border-top:1px dashed var(--line);margin-top:0;font-size:.95rem}
+  details .ans p:first-child{margin-top:10px}
+  details.plain summary{font-weight:600;color:var(--muted)}
+  .toolbar{display:flex;gap:8px;margin:8px 0 12px}
+  .toolbar button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:.85rem;cursor:pointer;color:var(--text)}
+  .toolbar button:hover{border-color:var(--accent);color:var(--accent)}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-weight:700;font-size:.92rem;margin:8px 0}
+  .flow span{background:#f3f4f6;border:1px solid var(--line);border-radius:8px;padding:4px 10px}
+  .flow span.hot{background:var(--danger-soft);border-color:#fca5a5;color:var(--danger)}
+  .flow span.ok{background:var(--ok-soft);border-color:#86efac;color:var(--ok)}
+  .flow i{color:var(--muted);font-style:normal}
+  .steps{counter-reset:s;list-style:none;padding:0;margin:10px 0}
+  .steps li{position:relative;padding:8px 12px 8px 44px;margin:6px 0;background:#f9fafb;border:1px solid var(--line);border-radius:10px;font-size:.93rem}
+  .steps li::before{counter-increment:s;content:counter(s);position:absolute;left:12px;top:9px;width:22px;height:22px;border-radius:50%;background:var(--danger);color:#fff;font-size:.78rem;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .steps.blue li::before{background:var(--accent)}
+  .steps.green li::before{background:var(--ok)}
+  .steps li b.role{color:var(--danger);font-size:.8rem;margin-right:6px}
+  .grp{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:10px 0}
+  .grp > div{border-radius:12px;padding:12px 14px;font-size:.92rem;border:1px solid var(--line);background:#f9fafb}
+  .grp > div.thing{border-color:#fca5a5;background:#fff5f5}
+  .grp > div.proc{border-color:#fcd34d;background:#fffbeb}
+  .grp h5{margin:0 0 6px;font-size:.98rem}
+  .grp h5 .who{display:inline-block;font-weight:700;font-size:.75rem;color:#fff;padding:1px 8px;border-radius:6px;margin-left:6px;vertical-align:middle}
+  .grp .thing h5 .who{background:var(--danger)} .grp .proc h5 .who{background:var(--warn)}
+  .grp ol{margin:0;padding-left:20px} .grp li{margin:4px 0}
+  .grp li b{color:var(--text)}
+  .grp li .n{display:inline-block;width:20px;height:20px;border-radius:50%;color:#fff;font-size:.72rem;font-weight:800;text-align:center;line-height:20px;margin-right:6px}
+  .grp .thing li .n{background:var(--danger)} .grp .proc li .n{background:var(--warn)}
+  .grp ul{list-style:none;padding:0;margin:0}
+  .summary{margin-top:56px;background:var(--text);color:#fff;border-radius:16px;padding:24px 22px}
+  .summary .kicker{color:#9ca3af}
+  .summary p{font-size:1.08rem;line-height:1.75;margin:0}
+  .summary b{color:#fde68a}
+  .summary code{background:rgba(255,255,255,.15);color:#fff}
+  .foot{color:var(--muted);font-size:.8rem;margin-top:18px}
+  @media (max-width:640px){
+    .fix4,.layers,.vs,.two,.grp{grid-template-columns:1fr}
+    h2{margin-top:44px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ===================== HERO ===================== -->
+<p class="kicker">04 · RDB / SQL &nbsp;·&nbsp; 알면 좋은 +α Q5 &nbsp;·&nbsp; 사전 학습용 &nbsp;·&nbsp; 관련: 기본 Q5 트랜잭션 ACID(D=지속성의 redo), 중급 Q4 MVCC(일관 스냅샷), 고난이도 Q3 대량 삭제/아카이빙(삭제 전 복원 검증)</p>
+<h1>백업이 "있다"와 복구가 "된다"의 거리 — PITR의 메커니즘 사슬과 복구 훈련으로 마지막 방어선을 검증한다</h1>
+<p class="kicker">질문: "백업이 "있다"와 복구가 "된다"의 차이는? PITR(특정 시점 복구)과 복구 훈련은 어떻게 하나요?"</p>
+
+<section class="card hero" id="hero">
+  <p class="kicker">핵심 관전 포인트 — 면접 첫 답변으로 그대로 말한다</p>
+  <div class="point">
+    백업은 "파일이 존재한다"가 아니라 <b>"정해진 시간(RTO) 안에, 정해진 손실(RPO) 이내로, 앱이 붙어 동작하는 DB가 실제로 다시 만들어진다"</b>가 증명됐을 때만 백업이다. <b>복구를 한 번도 연습 안 한 백업은 없는 것과 같다.</b>
+    <ol>
+      <li><b>"있다"와 "된다" 사이에는 검증 단계가 있다</b> — 파일 손상, binlog 유실로 생긴 갭, 위치 기록 불일치, 절차 부재, RTO 초과, 계정·스키마·암호화 키 누락은 전부 <b>"복구하는 날" 처음 발견</b>된다.</li>
+      <li><b>PITR은 버튼이 아니라 사슬이다</b> — 전체 백업(물리 or 논리) 복원 → 그 백업이 찍힌 <b>binlog 위치(포지션/GTID)부터 순서대로 재생</b> → 원하는 시각(삭제 사고라면 사고 문장의 위치) <b>직전에서 정지</b>. 전제는 binlog 활성화(ROW)·보존 기간 ≥ 백업 주기·오프호스트 전송·<code>sync_binlog=1</code>·백업과 binlog 위치의 기록 일치·일관 스냅샷.</li>
+      <li><b>삭제 사고는 운영 DB를 통째로 되돌리지 않는다</b> — 별도 인스턴스에 사고 직전 시점을 재구성한 뒤 <b>지워진 행만 운영에 병합</b>한다 (사고 후 들어온 정상 주문을 지키기 위해).</li>
+      <li><b>이 전부를 사람 기억이 아니라 파이프라인·런북에 고정한다</b> — 주 1회 자동 복구 훈련(임시 인스턴스 복원 → 체크섬·행 수 검증 → 소요 시간 기록 → RTO 대비 알람).</li>
+    </ol>
+  </div>
+  <div class="trap">
+    이 문항의 함정 둘. <b>"복제본이 있으니 백업은 됐다"</b> — 잘못된 <code>DROP TABLE</code>은 밀리초 뒤 복제본에서도 실행된다(복제는 실수도 복제한다). <b>"binlog 켜두면 PITR 된다"</b> — 전제조건 사슬 6고리 중 1개만 말한 것이다.
+  </div>
+</section>
+
+<ul class="toc">
+  <li><a href="#weak4">겨냥하는 약점 4가지</a></li>
+  <li><a href="#s1">1. "있다" vs "된다"</a></li>
+  <li><a href="#s2">2. PITR 사슬</a></li>
+  <li><a href="#s3">3. 방식별 트레이드오프</a></li>
+  <li><a href="#s4">4. 훈련 파이프라인·런북</a></li>
+  <li><a href="#s5">5. 꼬리질문</a></li>
+  <li><a href="#s6">6. 1분 인출 테스트</a></li>
+  <li><a href="#summary">한 줄 요약</a></li>
+</ul>
+
+<!-- ===================== WEAK 4 ===================== -->
+<section id="weak4">
+  <p class="kicker" style="margin-top:20px">이 문서가 겨냥하는 횡단 약점 4가지 — 빨간 테두리 셋이 이번 학습의 우선순위</p>
+  <div class="fix4">
+    <div class="weak"><span class="tag">핵심 약점 ①</span><b>인과를 "이름 붙은 사슬"로 말하기</b>"백업 있으면 복구된다"가 아니라 <b>PITR 3단계</b>와 <b>전제조건 6고리</b>를 순서대로. "복구가 안 되는 경로"도 뭉뚱그리지 않고 열거. <a href="#s2">→ 2절</a></div>
+    <div class="weak"><span class="tag">핵심 약점 ②</span><b>대가를 양면으로 조립하기</b>물리·논리·스냅샷·지연 복제본마다 "얻는 것"만 말하면 이름 아는 사람, "지불하는 것"까지 말하면 써 본 사람. <a href="#s3">→ 3절</a></div>
+    <div class="weak"><span class="tag">핵심 약점 ③</span><b>안전망을 코드·절차로 고정하기</b>"분기마다 복구 테스트하자"는 안전망이 아니다. <b>자동 훈련 스크립트 + 런북 + 모니터링</b>으로 고정. <a href="#s4">→ 4절</a></div>
+    <div><span class="tag">약점 ④</span><b>목록을 3초 안에 인출하기</b>실패 원인 10종(물건 5 / 절차·체계 5), RPO·RTO 결정 요소, 훈련 체크리스트 10항목. <a href="#s1-3">→ 1-3</a> · <a href="#s4-3">→ 4-3</a></div>
+  </div>
+</section>
+
+<!-- ===================== S1 ===================== -->
+<h2 id="s1"><span class="num">1</span>"있다"와 "된다" 사이의 거리를 이름 붙여 잰다</h2>
+<p>두 문장은 서로 다른 것을 주장한다. 이 차이를 먼저 <b>입력/출력</b>의 언어로 고정하면, 뒤의 모든 내용(사슬·트레이드오프·훈련)이 "출력을 확인하는 방법"으로 정렬된다.</p>
+
+<h3 id="s1-1">1-1. 두 문장은 다른 것을 주장한다</h3>
+<div class="vs">
+  <div class="bad"><span class="lbl">"있다"</span><b>입력이 있었다</b>는 주장<br>어딘가에 파일이 존재하고, 백업 잡이 어젯밤 "성공" 로그를 남겼다. 파일을 열어본 적은 없다.</div>
+  <div class="good"><span class="lbl">"된다"</span><b>출력을 확인했다</b>는 주장<br>그 파일에서 <b>정해진 시간 안에(RTO)</b>, <b>정해진 손실 이내로(RPO)</b>, <b>앱이 붙어서 동작하는 DB</b>가 다시 만들어졌다.</div>
+</div>
+<p>두 주장 사이에는 <b>"복원해서 열어봤는가"</b>라는 검증 단계가 있다. 이 단계를 생략한 팀은 <b>사고 당일 처음으로</b> 그 단계를 밟는다.</p>
+
+<div class="memo analogy">
+  <h4>소화기로 외우기</h4>
+  <p>소화기가 벽에 걸려 있다(<b>있다</b>)와, 불이 났을 때 핀을 뽑으면 실제로 분말이 나온다(<b>된다</b>)는 다른 명제다. 후자는 <b>점검 스티커(정기 훈련)</b>로만 보증된다. 스티커가 오래됐으면 소화기를 믿지 말라는 신호다 — 4-2절 런북 맨 위에 "마지막 훈련 일자"를 적는 이유.</p>
+</div>
+
+<h3 id="s1-2">1-2. RPO / RTO — "된다"의 두 기준</h3>
+<p>"된다"는 감이 아니라 두 숫자로 판정한다. 정의를 한 줄로, 그 값을 무엇이 결정하는지 목록으로 고정한다.</p>
+
+<div class="memo">
+  <h4>RPO · RTO — 정의와 결정 요소</h4>
+  <div class="two">
+    <div>
+      <h5>RPO <small>Recovery <b>Point</b> Objective</small></h5>
+      <div class="big" style="font-size:1.02rem">"사고가 나면 <b>최대 얼마 분량의 데이터 손실</b>을 감수하는가"</div>
+      <p class="sub" style="margin:0 0 4px">단위: 시간 분량 (예: 5분, 24시간). <b>P = Point = 어느 시점까지 돌아가나</b> → 잃는 양.</p>
+      <ol>
+        <li><b>전체 백업 주기</b> — 로그 재생이 없으면 RPO = 백업 주기</li>
+        <li><b>binlog 보존·전송 주기</b> — PITR이 되면 "마지막으로 안전한 곳에 도착한 binlog까지"로 줄어든다. 원본 디스크에만 있으면 디스크 소실 시 다시 백업 주기로 튄다</li>
+        <li><b>커밋 시 로그 동기화</b> — <code>sync_binlog=1</code>·<code>innodb_flush_log_at_trx_commit=1</code>이 아니면 크래시 직전 트랜잭션이 binlog에 없을 수 있다</li>
+        <li><b>비즈니스 요구</b> — 결제 원장은 0에 가깝게, 조회 로그는 하루도 가능. 테이블 군마다 다르게</li>
+      </ol>
+    </div>
+    <div>
+      <h5>RTO <small>Recovery <b>Time</b> Objective</small></h5>
+      <div class="big" style="font-size:1.02rem">"사고 후 <b>서비스가 다시 살아나기까지 최대 얼마</b>를 허용하는가"</div>
+      <p class="sub" style="margin:0 0 4px">단위: 시간. <b>T = Time = 돌아가는 데 걸리는 시간</b>.</p>
+      <ol>
+        <li><b>백업 형식</b> — 물리(파일 복사)는 크기에 비례해 빠르고, 논리(SQL 재실행)는 인덱스 재구축 때문에 훨씬 느리다</li>
+        <li><b>데이터 크기 + 마지막 전체 백업 이후 경과 시간</b> — 재생할 binlog 양이 곧 시간</li>
+        <li><b>절차의 자동화 정도</b> — 문서 찾기·타이핑·담당자 도착 시간이 전부 RTO</li>
+        <li><b>복원할 자리</b> — 인스턴스·디스크·네트워크 권한을 여는 시간</li>
+        <li><b>전환 시간</b> — DNS/엔드포인트 변경, 앱 재기동, 트래픽이 붙기까지</li>
+      </ol>
+    </div>
+  </div>
+  <p class="sub" style="margin-top:8px"><b>누가 줄이나</b>: RPO는 <b>binlog 상시 전송</b>이, RTO는 <b>물리 백업 + 자동화</b>가 산다. 그리고 둘 다 <b>훈련으로만 실측</b>된다 — "RTO 1시간"이라고 적은 문서와 "지난주 훈련 47분" 기록은 다른 것이다. RPO↓·RTO↓는 공짜가 아니다(3-4절).</p>
+</div>
+
+<h3 id="s1-3">1-3. 백업이 있는데 복구가 실패하는 원인 10종</h3>
+<p>이 목록이 "있다"와 "된다"의 거리 그 자체다. 공통점 하나 — <b>전부 복구하는 날 처음 발견된다.</b> 면접에서는 두 부류로 묶어 말한다.</p>
+
+<div class="memo">
+  <h4>실패 원인 10종 — 물건 5 / 절차·체계 5</h4>
+  <div class="grp">
+    <div class="thing">
+      <h5>"물건"의 문제 (파일·로그·키) <span class="who">복원 테스트가 잡는다</span></h5>
+      <ul>
+        <li><span class="n">1</span><b>파일 자체가 손상·불완전</b> — 덤프 중 디스크 풀, 압축 깨짐, 전송 중 잘림. 로그는 "성공"인데 열리지 않는다</li>
+        <li><span class="n">2</span><b>binlog 유실로 갭</b> — 보존 기간 &lt; 백업 주기라 앞부분이 지워짐, 또는 데이터와 같은 디스크라 함께 소실. 고리 하나 없으면 그 뒤는 전부 재생 불가</li>
+        <li><span class="n">3</span><b>백업과 binlog 위치가 안 맞음</b> — 백업 순간의 파일명·포지션(GTID)을 기록 안 함. 너무 앞이면 중복 적용, 뒤면 유실</li>
+        <li><span class="n">4</span><b>백업이 일관되지 않음</b> — 덤프 중 DDL, 스냅샷 없이 테이블별로 떠서 테이블 간 시점이 다름. 복원은 되는데 데이터가 서로 안 맞는다</li>
+        <li><span class="n">8</span><b>암호화 키·자격증명 없음</b> — KMS 키 권한이 사고 난 계정에 묶임, 키 로테이션으로 옛 백업 못 품</li>
+      </ul>
+    </div>
+    <div class="proc">
+      <h5>"절차·체계"의 문제 <span class="who">훈련·런북·모니터링이 잡는다</span></h5>
+      <ul>
+        <li><span class="n">5</span><b>절차가 사람 머릿속에만</b> — 런북 부재·낡음, 그 사람은 휴가 중. 새벽 3시에 처음 읽는 문서엔 항상 빠진 단계가 있다</li>
+        <li><span class="n">6</span><b>복구 시간이 RTO 초과</b> — 수 TB 논리 복원이 이틀. 기술적으로 "된다"지만 비즈니스적으로 "안 된다"</li>
+        <li><span class="n">7</span><b>복구 대상 누락</b> — 데이터만 있고 스키마 이력·계정·권한·파라미터·트리거·프로시저·이벤트가 없다. 앱이 붙자마자 권한 에러</li>
+        <li><span class="n">9</span><b>복원할 자리 없음</b> — 저장소가 원본과 같은 리전·계정이라 함께 죽음, 또는 복원 인스턴스 디스크 부족</li>
+        <li><span class="n">10</span><b>백업이 몰래 멈춰 있었음</b> — 크론이 몇 달 전부터 실패, 실패 알림 없음, 크기 0 파일이 매일 생성</li>
+      </ul>
+    </div>
+  </div>
+  <p class="sub" style="margin-top:8px"><span class="badge bonus" style="margin-left:0">가산점</span> 물건은 <b>복원 테스트</b>가, 절차는 <b>훈련과 런북</b>이, 체계는 <b>모니터링</b>이 잡는다 — 4절이 그 셋을 한 파이프라인으로 묶는다. 마무리 문장은 항상 "이 전부가 복구하는 날 처음 발견되므로, 정기 복구 훈련만이 사전에 잡는다".</p>
+</div>
+
+<!-- ===================== S2 ===================== -->
+<h2 id="s2"><span class="num">2</span>메커니즘 — PITR은 "전체 백업 + 로그 순서 재생 + 직전 정지"라는 사슬이다</h2>
+<p><b>PITR(Point-In-Time Recovery)</b> = 어떤 시점 T0의 전체 백업을 복원한 뒤, T0 이후의 모든 변경 기록(MySQL은 <b>binlog</b>, PostgreSQL은 <b>WAL 아카이브</b>)을 순서대로 다시 적용하다가, 원하는 시각(또는 특정 문장의 위치) <b>직전에서 멈추는</b> 것. "버튼"이 아니라 세 단계다.</p>
+
+<div class="memo analogy">
+  <h4>사진 + CCTV로 외우기</h4>
+  <p><b>전체 백업</b>은 자정에 찍은 <b>사진</b>이고, <b>binlog</b>는 그 뒤로 계속 돌아가는 <b>CCTV 녹화</b>다. 사고 직전 상태를 되살리려면 ① 사진을 벽에 건다(복원) ② 사진이 찍힌 시각부터 녹화를 <b>빠른 재생</b>한다(roll-forward) ③ 사고 장면 <b>직전 프레임에서 일시정지</b>한다(stop-position). 녹화가 중간에 지워졌거나(보존 기간), 사진에 "몇 시 몇 분에 찍음"이 안 적혀 있거나(위치 기록), 녹화기가 사진과 같은 건물에서 같이 탔으면(오프호스트) 재생은 거기서 끝난다.</p>
+</div>
+
+<h3 id="s2-1">2-1. 세 단계 — 시간축으로 본다</h3>
+<figure class="figure">
+  <div class="scroll">
+  <svg viewBox="0 0 860 372" role="img" aria-label="PITR 시간축: 자정 전체 백업 복원, binlog 000410 위치 1573부터 000411, 000412를 순서대로 재생, 14:05 사고 DELETE 트랜잭션 위치 8834211 직전에서 STOP">
+    <defs>
+      <marker id="ar-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+      <marker id="ar-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+      <marker id="ar-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="#16a34a" stroke-width="1.5"/></pattern>
+    </defs>
+    <!-- 시간 라벨 -->
+    <g font-size="11" font-weight="700" text-anchor="middle">
+      <text x="120" y="22" fill="#2563eb">00:00 전체 백업 (T0)</text>
+      <text x="688" y="22" fill="#dc2626">14:05 사고 DELETE</text>
+      <text x="800" y="22" fill="#6b7280">14:20 발견</text>
+    </g>
+    <text x="12" y="56" font-size="10" fill="#6b7280">시간</text>
+    <line x1="40" y1="52" x2="846" y2="52" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#ar-g)"/>
+    <g stroke="#9ca3af" stroke-width="1.5">
+      <line x1="120" y1="45" x2="120" y2="59"/><line x1="688" y1="45" x2="688" y2="59" stroke="#dc2626"/><line x1="800" y1="45" x2="800" y2="59"/>
+    </g>
+    <!-- 백업 마커 -->
+    <rect x="92" y="63" width="56" height="22" rx="5" fill="#2563eb"/>
+    <text x="120" y="78" font-size="10.5" font-weight="700" fill="#fff" text-anchor="middle">전체 백업</text>
+    <!-- binlog 바 -->
+    <g>
+      <rect x="120" y="96" width="210" height="28" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="330" y="96" width="210" height="28" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="540" y="96" width="306" height="28" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+      <g stroke="#60a5fa" stroke-width="1.5">
+        <line x1="160" y1="101" x2="160" y2="119"/><line x1="205" y1="101" x2="205" y2="119"/><line x1="255" y1="101" x2="255" y2="119"/><line x1="295" y1="101" x2="295" y2="119"/>
+        <line x1="365" y1="101" x2="365" y2="119"/><line x1="410" y1="101" x2="410" y2="119"/><line x1="470" y1="101" x2="470" y2="119"/><line x1="510" y1="101" x2="510" y2="119"/>
+        <line x1="575" y1="101" x2="575" y2="119"/><line x1="612" y1="101" x2="612" y2="119"/><line x1="645" y1="101" x2="645" y2="119"/><line x1="668" y1="101" x2="668" y2="119"/>
+      </g>
+      <rect x="686" y="96" width="14" height="28" fill="#dc2626"/>
+      <rect x="700" y="96" width="100" height="28" fill="url(#hatch)" stroke="#16a34a" stroke-width="1" stroke-dasharray="3 2"/>
+      <rect x="800" y="96" width="46" height="28" fill="#f3f4f6" stroke="#d1d5db"/>
+      <g font-size="10.5" font-weight="700" fill="#1e40af" text-anchor="middle" class="mono">
+        <text x="225" y="114">binlog.000410</text>
+        <text x="435" y="114">binlog.000411</text>
+        <text x="612" y="90">binlog.000412</text>
+      </g>
+      <text x="750" y="114" font-size="9.5" font-weight="700" fill="#15803d" text-anchor="middle">정상 주문</text>
+    </g>
+    <!-- 위치 라벨 -->
+    <text x="120" y="140" font-size="10" fill="#1e40af" class="mono">▲ pos 1573 (백업 메타데이터에 기록된 시작점)</text>
+    <text x="688" y="140" font-size="10" font-weight="700" fill="#dc2626" text-anchor="middle" class="mono"># at 8834211</text>
+    <!-- 정지선 -->
+    <line x1="686" y1="124" x2="686" y2="196" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4"/>
+    <!-- ② 재생 브래킷 -->
+    <text x="402" y="162" font-size="11" font-weight="700" fill="#16a34a" text-anchor="middle">② 로그 재생 (roll-forward) — 기록된 위치부터 파일을 순서대로·빠짐없이 적용</text>
+    <line x1="120" y1="176" x2="682" y2="176" stroke="#16a34a" stroke-width="3" marker-end="url(#ar-ok)"/>
+    <line x1="120" y1="168" x2="120" y2="184" stroke="#16a34a" stroke-width="3"/>
+    <!-- ① 박스 -->
+    <rect x="30" y="200" width="230" height="52" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="42" y="221" font-size="11.5" font-weight="700" fill="#2563eb">① 기준점 복원</text>
+    <text x="42" y="240" font-size="10.5" fill="#1f2937">전체 백업 파일 → DB 상태 = T0 (자정)</text>
+    <line x1="120" y1="200" x2="120" y2="188" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ar-b)"/>
+    <!-- ③ STOP -->
+    <polygon points="710,232 696,246 676,246 662,232 662,212 676,198 696,198 710,212" fill="#dc2626" stroke="#fff" stroke-width="2"/>
+    <text x="686" y="226" font-size="11" font-weight="800" fill="#fff" text-anchor="middle">STOP</text>
+    <text x="686" y="268" font-size="11" font-weight="700" fill="#dc2626" text-anchor="middle">③ 사고 트랜잭션 직전에서 정지</text>
+    <text x="686" y="284" font-size="10" fill="#dc2626" text-anchor="middle" class="mono">--stop-position=8834211</text>
+    <text x="686" y="299" font-size="9.5" fill="#6b7280" text-anchor="middle">(--stop-datetime 은 초 단위 → 위치가 정확)</text>
+    <!-- 결과 상태 -->
+    <g font-size="10.5" font-weight="700" text-anchor="middle">
+      <rect x="30" y="318" width="150" height="34" rx="8" fill="#f3f4f6" stroke="#d1d5db"/>
+      <text x="105" y="340" fill="#1f2937">DB 상태 = T0</text>
+      <line x1="180" y1="335" x2="214" y2="335" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar-g)"/>
+      <rect x="216" y="318" width="236" height="34" rx="8" fill="#f3f4f6" stroke="#d1d5db"/>
+      <text x="334" y="340" fill="#1f2937">binlog 재생 (커밋 순서 그대로)</text>
+      <line x1="452" y1="335" x2="486" y2="335" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar-g)"/>
+      <rect x="488" y="318" width="200" height="34" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+      <text x="588" y="340" fill="#15803d">DB 상태 = 사고 직전</text>
+      <text x="712" y="340" font-size="10.5" fill="#dc2626" text-anchor="start">✗ 사고 이후는 적용 안 함</text>
+    </g>
+    <text x="30" y="368" font-size="9.5" fill="#6b7280">│ 커밋된 트랜잭션 &nbsp; ■ 사고 DELETE 트랜잭션 &nbsp; ▨ 사고 후 운영에만 있는 정상 주문 → 그래서 통째로 되돌리지 않고 행만 병합한다 (2-4절)</text>
+  </svg>
+  </div>
+  <figcaption>세 단계: ① 기준점 복원(물리면 파일 배치 + 준비(prepare), 논리면 SQL 실행) → ② 백업 메타데이터에 기록된 binlog 위치부터 <b>순서대로·빠짐없이</b> 재생 → ③ 시각 또는 위치 직전에서 정지. 삭제 사고에서는 시각보다 <b>사고 문장의 포지션</b>이 정확하다.</figcaption>
+</figure>
+
+<div class="memo trap">
+  <h4>redo log ≠ binlog — 원리는 같고 역할이 다르다</h4>
+  <p>재생의 원리는 <a href="05-transaction-acid.html">ACID 문서</a> §2-2의 redo와 같다 — 커밋된 변경을 로그로 다시 적용한다. 다만 <b>redo log</b>는 InnoDB가 <b>크래시 복구용</b>으로 짧게 순환시키는 물리 로그고, <b>binlog</b>는 MySQL 서버가 "무슨 변경이 있었는지"를 논리/행 단위로 남기는 <b>보존용</b> 로그다. 그래서 MySQL에서 PITR은 binlog의 몫이다. (PostgreSQL은 <b>WAL 하나</b>가 크래시 복구와 PITR을 겸한다 — 아카이브된 WAL을 <code>restore_command</code>로 가져와 <code>recovery_target_time</code>까지 재생. 개념은 동일.)</p>
+</div>
+
+<h3 id="s2-2">2-2. 전제조건 사슬 6고리 — 하나라도 끊기면 그 지점부터 복구 불가</h3>
+<p>PITR은 옵션 하나가 아니라 <b>전제조건들이 직렬로 연결된 사슬</b>이다. 면접에서 "binlog 켜두면 된다"로 끝내지 말고 사슬로 말한다.</p>
+
+<figure class="figure">
+  <div class="scroll">
+  <svg viewBox="0 0 860 322" role="img" aria-label="PITR 전제조건 사슬 6고리: binlog 켜짐+ROW, 보존 기간 이상, 서버 밖에도 보관, 커밋마다 fsync, 백업의 binlog 위치 기록, 일관 스냅샷. 아래 줄은 고리 2가 끊긴 경우 그 이후 전부 복구 불가">
+    <!-- 그룹 라벨 -->
+    <g font-size="11" font-weight="700" text-anchor="middle">
+      <text x="296" y="20" fill="#2563eb">binlog 쪽 4고리 — 켜짐 · 남음 · 밖 · 내림</text>
+      <text x="710" y="20" fill="#7c3aed">백업 쪽 2고리 — 적힘 · 일관</text>
+    </g>
+    <path d="M30,30 L30,36 L562,36 L562,30" fill="none" stroke="#2563eb" stroke-width="1.5"/>
+    <path d="M582,30 L582,36 L838,36 L838,30" fill="none" stroke="#7c3aed" stroke-width="1.5"/>
+    <!-- 정상 사슬 -->
+    <g stroke-width="5" fill="#fff">
+      <rect x="30" y="46" width="118" height="48" rx="24" stroke="#2563eb"/>
+      <rect x="168" y="46" width="118" height="48" rx="24" stroke="#2563eb"/>
+      <rect x="306" y="46" width="118" height="48" rx="24" stroke="#2563eb"/>
+      <rect x="444" y="46" width="118" height="48" rx="24" stroke="#2563eb"/>
+      <rect x="582" y="46" width="118" height="48" rx="24" stroke="#7c3aed"/>
+      <rect x="720" y="46" width="118" height="48" rx="24" stroke="#7c3aed"/>
+    </g>
+    <g stroke-width="4" fill="#fff">
+      <rect x="140" y="61" width="36" height="18" rx="9" stroke="#2563eb"/>
+      <rect x="278" y="61" width="36" height="18" rx="9" stroke="#2563eb"/>
+      <rect x="416" y="61" width="36" height="18" rx="9" stroke="#2563eb"/>
+      <rect x="554" y="61" width="36" height="18" rx="9" stroke="#7c3aed"/>
+      <rect x="692" y="61" width="36" height="18" rx="9" stroke="#7c3aed"/>
+    </g>
+    <g font-size="10.5" font-weight="700" fill="#1f2937" text-anchor="middle">
+      <text x="89" y="66">① binlog 켜짐</text>
+      <text x="227" y="66">② 보존 ≥ 주기</text>
+      <text x="365" y="66">③ 서버 밖에도</text>
+      <text x="503" y="66">④ 커밋마다 fsync</text>
+      <text x="641" y="66">⑤ 백업의 위치 기록</text>
+      <text x="779" y="66">⑥ 일관 스냅샷</text>
+    </g>
+    <g font-size="8.5" fill="#6b7280" text-anchor="middle" class="mono">
+      <text x="89" y="82">log_bin + ROW</text>
+      <text x="227" y="82">binlog_expire_logs_seconds</text>
+      <text x="365" y="82">복제본·S3·원격 수신</text>
+      <text x="503" y="82">sync_binlog=1</text>
+      <text x="641" y="82">--source-data=2 / GTID</text>
+      <text x="779" y="82">--single-transaction</text>
+    </g>
+    <g font-size="9.5" fill="#dc2626" text-anchor="middle">
+      <text x="89" y="112">끊기면: 재생 불가·비결정</text>
+      <text x="227" y="112">끊기면: 앞부분 갭</text>
+      <text x="365" y="112">끊기면: 디스크와 함께 소실</text>
+      <text x="503" y="112">끊기면: 마지막 커밋 누락</text>
+      <text x="641" y="112">끊기면: 시작점 모름</text>
+      <text x="779" y="112">끊기면: 테이블 간 시점 불일치</text>
+    </g>
+    <!-- 끊긴 사슬 -->
+    <text x="30" y="156" font-size="11" font-weight="700" fill="#dc2626">고리 ②가 끊기면 — 백업이 실패해 이틀 건너뛰었는데 보존은 1일</text>
+    <g stroke-width="5" fill="#fff">
+      <rect x="30" y="170" width="118" height="48" rx="24" stroke="#2563eb"/>
+      <rect x="168" y="170" width="118" height="48" rx="24" stroke="#dc2626" stroke-dasharray="9 7" fill="#fee2e2"/>
+      <rect x="306" y="170" width="118" height="48" rx="24" stroke="#9ca3af" fill="#f3f4f6"/>
+      <rect x="444" y="170" width="118" height="48" rx="24" stroke="#9ca3af" fill="#f3f4f6"/>
+      <rect x="582" y="170" width="118" height="48" rx="24" stroke="#9ca3af" fill="#f3f4f6"/>
+      <rect x="720" y="170" width="118" height="48" rx="24" stroke="#9ca3af" fill="#f3f4f6"/>
+    </g>
+    <g stroke-width="4" fill="#fff">
+      <rect x="140" y="185" width="36" height="18" rx="9" stroke="#2563eb"/>
+      <rect x="416" y="185" width="36" height="18" rx="9" stroke="#9ca3af"/>
+      <rect x="554" y="185" width="36" height="18" rx="9" stroke="#9ca3af"/>
+      <rect x="692" y="185" width="36" height="18" rx="9" stroke="#9ca3af"/>
+    </g>
+    <line x1="284" y1="182" x2="308" y2="206" stroke="#dc2626" stroke-width="3"/>
+    <line x1="308" y1="182" x2="284" y2="206" stroke="#dc2626" stroke-width="3"/>
+    <g font-size="10.5" font-weight="700" text-anchor="middle">
+      <text x="89" y="199" fill="#1f2937">① 켜짐 ✓</text>
+      <text x="227" y="199" fill="#dc2626">② 로그 지워짐</text>
+      <text x="365" y="199" fill="#9ca3af">③</text>
+      <text x="503" y="199" fill="#9ca3af">④</text>
+      <text x="641" y="199" fill="#9ca3af">⑤</text>
+      <text x="779" y="199" fill="#9ca3af">⑥</text>
+    </g>
+    <path d="M306,232 L306,240 L838,240 L838,232" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="572" y="258" font-size="10.5" font-weight="700" fill="#dc2626" text-anchor="middle">③~⑥이 멀쩡해도 소용없다 — 재생할 로그가 없으니 PITR 불가, RPO는 "백업 주기"로 후퇴</text>
+    <text x="30" y="292" font-size="10.5" fill="#6b7280">사슬 원칙: 각 고리는 앞 고리를 전제한다. ①이 없으면 ②~⑥은 논의 대상도 아니고, 어느 고리가 끊기든 그 지점 이후로는 돌아갈 수 없다.</text>
+    <text x="30" y="310" font-size="10.5" fill="#6b7280">"binlog 켜두면 된다"는 ①만 말한 것이다. 면접에서는 ①→⑥을 순서대로, 각 고리가 끊기면 무엇이 생기는지까지.</text>
+  </svg>
+  </div>
+  <figcaption>고리 ①~④는 binlog(로그)의 조건, ⑤~⑥은 전체 백업의 조건이다. 두 묶음이 만나는 지점이 "백업이 찍힌 binlog 위치" — 여기가 어긋나면 어디서부터 재생할지 알 수 없다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>6고리 — 각 고리가 왜 필요한가 (사슬로 말하기)</h4>
+  <ol>
+    <li><b>binlog 켜짐 + ROW 포맷</b> (<code>log_bin</code>, <code>binlog_format=ROW</code>) — 문장 기반은 <code>NOW()</code>나 정렬 없는 <code>LIMIT</code>처럼 재실행 결과가 달라지는 문장이 있어, ROW여야 재생 결과가 <b>결정적</b>이다.</li>
+    <li><b>보존 기간 ≥ 백업 주기 + 여유</b> (<code>binlog_expire_logs_seconds</code>, 구버전 <code>expire_logs_days</code>) — 마지막 전체 백업 시점의 binlog가 아직 남아 있어야 한다. 백업이 한 번 실패해도 끊기지 않을 여유(주기의 2~3배)를 둔다.</li>
+    <li><b>binlog가 원본 서버 밖에 있다</b> — 서버 디스크에만 있는 binlog는 디스크와 함께 죽는다. 복제본에도 binlog를 기록하게 하거나, 오브젝트 스토리지로 주기적으로 밀어 올리거나, <code>mysqlbinlog</code>의 원격 실시간 수신 모드로 별도 호스트에 계속 받아둔다.</li>
+    <li><b>커밋마다 binlog가 디스크에 내려간다</b> (<code>sync_binlog=1</code>, 짝으로 <code>innodb_flush_log_at_trx_commit=1</code>) — 아니면 크래시 직전 커밋 몇 개가 데이터에는 있고 binlog에는 없어, 재생 결과가 원본과 어긋난다. 대가는 커밋마다 fsync 한 번 더 — "성능을 위해" 끄는 순간 RPO는 "마지막 fsync까지"로 후퇴한다.</li>
+    <li><b>백업이 찍힌 binlog 위치가 기록돼 있다</b> — 논리 백업은 덤프 머리에 파일명·포지션을 주석으로 남기는 <code>--source-data=2</code>(구 <code>--master-data=2</code>), 물리 백업은 <code>xtrabackup_binlog_info</code> 파일. GTID를 쓰면 "어느 트랜잭션까지 포함됐는가"가 서버 간에 이식 가능한 식별자로 남는다.</li>
+    <li><b>백업 자체가 일관된 스냅샷이다</b> — 논리 백업은 <code>--single-transaction</code>으로 하나의 MVCC 스냅샷에서 뜬다(<a href="11-mvcc-innodb.html">MVCC 문서</a>의 REPEATABLE READ 일관 읽기 = "덤프 시작 순간의 세상"). 도중에 DDL이 끼면 깨지므로 배포 창과 백업 창을 분리한다. 물리 백업은 복사 중 바뀐 페이지를 redo로 맞추는 준비(prepare) 단계가 이 역할.</li>
+  </ol>
+</div>
+
+<p>before/after로 대비하면 — "백업은 매일 하고 있다"는 크론 한 줄이 사슬을 몇 개나 끊고 있는지 보인다.</p>
+<pre><code><span class="ln"><span class="cm"># ❌ before: "백업은 매일 하고 있다" — 그러나 PITR 사슬이 끊겨 있다</span></span>
+<span class="ln bad">0 3 * * * mysqldump -u backup shop | gzip &gt; /backup/shop-$(date +\%F).sql.gz</span>
+<span class="ln"><span class="cm"># - binlog 위치 기록 없음         → 어디서부터 재생할지 모름       (고리 ⑤ ✗)</span></span>
+<span class="ln"><span class="cm"># - --single-transaction 없음     → 테이블마다 시점이 다른 덤프    (고리 ⑥ ✗)</span></span>
+<span class="ln"><span class="cm"># - /backup 이 원본과 같은 디스크 → 디스크 장애 시 같이 소실      (고리 ③ ✗)</span></span>
+<span class="ln"><span class="cm"># - 실패해도 아무도 모름                                           (1-3절 ⑩)</span></span></code></pre>
+
+<pre><code><span class="ln"><span class="cm"># ✅ after: 사슬을 전부 잇는다 (요지 — 세부 옵션은 팀 표준에 맞춘다)</span></span>
+<span class="ln">set -euo pipefail</span>
+<span class="ln">DAY=$(date +%F)</span>
+<span class="ln">mysqldump -u backup \</span>
+<span class="ln good">  --single-transaction \            <span class="cm"># 하나의 MVCC 스냅샷</span><span class="tag good">고리 ⑥</span></span>
+<span class="ln good">  --source-data=2 \                 <span class="cm"># 덤프 머리에 binlog 파일명·포지션 주석</span><span class="tag good">고리 ⑤</span></span>
+<span class="ln good">  --routines --triggers --events \  <span class="cm"># 프로시저·트리거·이벤트도 포함</span><span class="tag good">1-3절 ⑦</span></span>
+<span class="ln">  shop | gzip &gt; /backup/shop-$DAY.sql.gz</span>
+<span class="ln good">gzip -t /backup/shop-$DAY.sql.gz                                     <span class="cm"># 압축 무결성</span><span class="tag good">1-3절 ①</span></span>
+<span class="ln good">aws s3 cp /backup/shop-$DAY.sql.gz s3://db-backup-other-region/shop/  <span class="cm"># 오프사이트</span><span class="tag good">고리 ③</span></span>
+<span class="ln"><span class="cm"># binlog도 주기적으로 오프사이트로 (또는 원격 실시간 수신 호스트 운영)</span></span>
+<span class="ln warn"><span class="cm"># 마지막 성공 시각·파일 크기를 메트릭으로 발행 → 24h 이상 갱신 없으면 알람</span><span class="tag warn">1-3절 ⑩</span></span></code></pre>
+<p class="kicker">서버 설정 쪽(고리 ①·②·④): <code>log_bin=ON</code>, <code>binlog_format=ROW</code>, <code>sync_binlog=1</code>, <code>innodb_flush_log_at_trx_commit=1</code>, 보존 기간은 백업 주기의 2~3배 이상.</p>
+
+<h3 id="s2-3">2-3. 표준 PITR 절차 — 명령 수준 의사코드</h3>
+<p>"자정 백업 + 오늘 14:07까지 복구"를 별도 인스턴스에 수행하는 골격이다. 세 단계가 그대로 세 블록이다.</p>
+<pre><code><span class="ln"><span class="cm"># 0) 사고 직후 가장 먼저: 현재 binlog를 보존한다 (만료로 지워지기 전에 사본 확보)</span></span>
+<span class="ln warn">mysql -e "FLUSH BINARY LOGS"                      <span class="cm"># 현재 파일을 닫고 새 파일로 넘김</span></span>
+<span class="ln warn">cp /var/lib/mysql/binlog.0004* /safe/binlogs/     <span class="cm"># 또는 오프사이트에 이미 있는지 확인</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 1) 기준점 복원 — 논리 백업이라면</span><span class="tag good">① 복원</span></span>
+<span class="ln good">zcat /backup/shop-2026-08-31.sql.gz | mysql -h recovery-host shop</span>
+<span class="ln"><span class="cm">#    덤프 머리의 주석에서 시작 위치를 읽는다 (예: binlog.000410 / 1573)</span></span>
+<span class="ln"><span class="cm">#    (물리 백업이면 xtrabackup_binlog_info 의 파일명·포지션)</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 2) 로그 재생 — 시작 위치부터 목표 시각 직전까지, 파일들을 "한 번의 호출"로</span><span class="tag good">② 재생</span></span>
+<span class="ln good">mysqlbinlog --start-position=1573 \</span>
+<span class="ln good">            --stop-datetime="2026-08-31 14:07:00" \</span>
+<span class="ln good">            /safe/binlogs/binlog.000410 /safe/binlogs/binlog.000411 /safe/binlogs/binlog.000412 \</span>
+<span class="ln good">  | mysql -h recovery-host</span>
+<span class="ln"><span class="cm">#    --start-position 은 첫 파일에, --stop-* 는 마지막 파일에 적용된다.</span></span>
+<span class="ln"><span class="cm">#    파일을 하나씩 따로 재생하지 않는 이유: 파일 경계에 걸친 세션 상태(임시 테이블 등)가 끊긴다.</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 3) 검증 후 전환 (또는 필요한 행만 병합 — 2-4절)</span><span class="tag good">③ 정지 후</span></span></code></pre>
+
+<div class="memo trap">
+  <h4><code>--stop-datetime</code>은 초 단위다</h4>
+  <p>그 <b>1초 안에 정상 커밋과 사고 커밋이 섞여 있으면</b> 정상 커밋도 함께 잘리거나 사고가 함께 들어간다. 그래서 삭제 사고에서는 시각이 아니라 <b>위치(<code>--stop-position</code>)</b>로 멈춘다. 시각은 "대략 언제"를 좁히는 용도(2-4절 ②), 위치는 실제 정지선.</p>
+</div>
+
+<h3 id="s2-4">2-4. "삭제 사고 직전 시점" 시나리오 — 운영을 되돌리지 않고 행만 되살린다</h3>
+<p>가장 자주 그려보게 되는 시나리오. 14:05경 배치가 <code>WHERE</code> 없는 <code>DELETE FROM orders</code>를 날렸고, 14:20에 알림으로 발견했다. <b>왜 운영 DB를 통째로 14:05로 되돌리면 안 되는가</b> — 14:05~14:20 사이에 들어온 <b>정상 주문·결제</b>가 있다. 통째로 되돌리면 그 15분이 사라진다(RPO가 사고→발견 시간만큼 커진다).</p>
+
+<figure class="figure">
+  <div class="scroll">
+  <svg viewBox="0 0 860 600" role="img" aria-label="삭제 사고 대응 흐름: 운영은 계속 서비스하고, 별도 recovery-host에 전체 백업 복원 후 사고 트랜잭션 직전까지 재생, 지워진 행만 INSERT IGNORE로 운영에 병합. 운영을 통째로 되돌리는 선택지는 정상 주문을 잃으므로 금지">
+    <defs>
+      <marker id="ar-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="ar-fg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+      <marker id="ar-fm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+    </defs>
+    <!-- 레인 -->
+    <rect x="20" y="40" width="400" height="460" rx="12" fill="#f9fafb" stroke="#e5e7eb"/>
+    <rect x="440" y="40" width="400" height="460" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="32" y="62" font-size="12" font-weight="700" fill="#1f2937">운영 prod-host — 서비스는 계속 (새 주문이 계속 들어온다)</text>
+    <text x="452" y="62" font-size="12" font-weight="700" fill="#1e40af">recovery-host — 별도 인스턴스 (여기서만 과거를 재구성)</text>
+    <!-- 사고 -->
+    <rect x="30" y="76" width="380" height="40" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="220" y="100" font-size="11" font-weight="700" fill="#dc2626" text-anchor="middle">14:20 알림 — orders 가 비었다 (14:05 WHERE 없는 DELETE)</text>
+    <line x1="220" y1="116" x2="220" y2="134" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar-fm)"/>
+    <!-- ⓪ -->
+    <rect x="30" y="136" width="380" height="52" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="42" y="156" font-size="11.5" font-weight="700" fill="#2563eb">⓪ 현재 binlog 보존 — 만료로 지워지기 전에</text>
+    <text x="42" y="176" font-size="10" fill="#1f2937" class="mono">FLUSH BINARY LOGS → 사본 /safe/binlogs/</text>
+    <line x1="220" y1="188" x2="220" y2="206" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar-fm)"/>
+    <!-- ① -->
+    <rect x="30" y="208" width="380" height="70" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="42" y="228" font-size="11.5" font-weight="700" fill="#2563eb">① 사고 트랜잭션의 시작 위치 특정</text>
+    <text x="42" y="246" font-size="10" fill="#1f2937" class="mono">mysqlbinlog -v --start/stop-datetime 14:03~14:08 | grep DELETE</text>
+    <text x="42" y="264" font-size="10" fill="#1f2937">→ DELETE 이벤트 위로 거슬러 BEGIN 앞의 <tspan class="mono" font-weight="700" fill="#dc2626"># at 8834211</tspan></text>
+    <!-- ② -->
+    <rect x="450" y="136" width="380" height="52" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="462" y="156" font-size="11.5" font-weight="700" fill="#2563eb">② 전체 백업 복원 → DB 상태 = T0 (자정)</text>
+    <text x="462" y="176" font-size="10" fill="#1f2937" class="mono">zcat shop-2026-08-31.sql.gz | mysql -h recovery-host</text>
+    <line x1="640" y1="188" x2="640" y2="206" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar-fm)"/>
+    <!-- ③ -->
+    <rect x="450" y="208" width="380" height="70" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="462" y="228" font-size="11.5" font-weight="700" fill="#2563eb">③ 백업 위치부터 사고 트랜잭션 "직전"까지만 재생</text>
+    <text x="462" y="246" font-size="10" fill="#1f2937" class="mono">mysqlbinlog --start-position=1573 --stop-position=8834211</text>
+    <text x="462" y="264" font-size="10" fill="#15803d" font-weight="700">→ recovery-host 의 orders = 지워지기 직전 상태</text>
+    <!-- 레인 간 화살표 -->
+    <line x1="410" y1="162" x2="448" y2="162" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar-f)"/>
+    <text x="429" y="154" font-size="8.5" fill="#2563eb" text-anchor="middle">binlog 사본</text>
+    <line x1="410" y1="243" x2="448" y2="243" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar-f)"/>
+    <text x="429" y="235" font-size="8.5" fill="#2563eb" text-anchor="middle">정지 위치</text>
+    <!-- ④ 병합 -->
+    <line x1="640" y1="278" x2="640" y2="306" stroke="#16a34a" stroke-width="2.5" marker-end="url(#ar-fg)"/>
+    <rect x="130" y="308" width="600" height="76" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="142" y="329" font-size="11.5" font-weight="700" fill="#15803d">④ 운영에 없는 행만 병합 — 통째로 되돌리지 않는다</text>
+    <text x="142" y="348" font-size="10" fill="#1f2937" class="mono">mysqldump -h recovery-host --no-create-info --insert-ignore shop orders | mysql -h prod-host shop</text>
+    <text x="142" y="367" font-size="10" fill="#1f2937">INSERT IGNORE → 사고 후 새로 생긴 PK(새 주문)는 건너뜀 · 자식 테이블(order_item)은 FK 순서대로</text>
+    <line x1="220" y1="384" x2="220" y2="412" stroke="#16a34a" stroke-width="2.5" marker-end="url(#ar-fg)"/>
+    <!-- ⑤ -->
+    <rect x="30" y="414" width="380" height="52" rx="8" fill="#fff" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="42" y="434" font-size="11.5" font-weight="700" fill="#15803d">⑤ 병합 전후 대조 → 종료</text>
+    <text x="42" y="454" font-size="10" fill="#1f2937">행 수 · 금액 합계를 운영 팀과 대조. 결과를 사고 기록에 남긴다</text>
+    <!-- 금지 선택지 -->
+    <rect x="450" y="414" width="380" height="70" rx="8" fill="#fff" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="462" y="434" font-size="11.5" font-weight="700" fill="#dc2626">✗ 운영 DB를 통째로 14:05로 되돌리기</text>
+    <text x="462" y="452" font-size="10" fill="#1f2937">14:05~14:20 사이 정상 주문·결제가 사라진다</text>
+    <text x="462" y="470" font-size="10" fill="#dc2626" font-weight="700">= RPO가 "사고→발견 시간"만큼 커진다</text>
+    <!-- 하단 노트 -->
+    <rect x="20" y="514" width="820" height="72" rx="10" fill="#fef3c7" stroke="#d97706"/>
+    <text x="32" y="536" font-size="10.5" font-weight="700" fill="#92400e">결정권: "통째로 되돌릴지 / 행만 병합할지"는 기술 결정이 아니라 비즈니스 결정 → 런북에 결정권자를 적어 둔다 (4-2절 ⑥)</text>
+    <text x="32" y="556" font-size="10" fill="#78350f">지름길 두 가지 (가산점): GTID면 사고 트랜잭션 1개만 건너뛰고 그 뒤 정상 트랜잭션까지 재생 · ROW binlog의 이전 이미지(binlog_row_image=FULL)로</text>
+    <text x="32" y="574" font-size="10" fill="#78350f">사고 이벤트만 역방향 INSERT로 뒤집는 "플래시백" 도구 — 단, 전체 백업 + PITR 경로는 그와 별개로 항상 준비돼 있어야 한다.</text>
+  </svg>
+  </div>
+  <figcaption>왼쪽 레인(운영)은 한 번도 과거로 가지 않는다. 오른쪽 레인(별도 인스턴스)에서 과거를 만들고, 그중 <b>지워진 행만</b> 왼쪽으로 가져온다. 사고 후 운영에 생긴 새 주문은 <code>INSERT IGNORE</code>가 PK 충돌로 건너뛰므로 보존된다.</figcaption>
+</figure>
+
+<pre><code><span class="ln"><span class="cm"># 1) 사고 시각 특정 — 앱 로그·알림·배치 실행 기록으로 "대략 14:04~14:06"</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 2) binlog에서 사고 문장의 위치 찾기 (ROW 포맷은 -v 로 의사 SQL을 풀어서 본다)</span></span>
+<span class="ln good">mysqlbinlog --base64-output=DECODE-ROWS -v \</span>
+<span class="ln good">  --start-datetime="2026-08-31 14:03:00" --stop-datetime="2026-08-31 14:08:00" \</span>
+<span class="ln good">  /safe/binlogs/binlog.000412 \</span>
+<span class="ln good">  | grep -n -B12 -m1 "### DELETE FROM \`shop\`.\`orders\`"</span>
+<span class="ln"><span class="cm">#   출력 위쪽으로 거슬러 올라가 사고 트랜잭션의 BEGIN 앞에 있는 "# at 8834211" 이 시작 위치</span></span>
+<span class="ln"><span class="cm">#   (수천 행이 지워졌다면 Delete_rows 이벤트가 길게 이어진다 — 트랜잭션 첫머리의 "# at" 을 잡는다)</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 3) 별도 인스턴스에 전체 백업 복원 (2-3절 1단계)</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 4) 백업 위치부터 사고 트랜잭션 "직전"까지 재생</span></span>
+<span class="ln good">mysqlbinlog --start-position=1573 --stop-position=8834211 \</span>
+<span class="ln good">  /safe/binlogs/binlog.000410 /safe/binlogs/binlog.000411 /safe/binlogs/binlog.000412 \</span>
+<span class="ln good">  | mysql -h recovery-host</span>
+<span class="ln"><span class="cm">#   → recovery-host 의 orders 는 "지워지기 직전" 상태</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 5) 운영에 없는 행만 골라 병합 (사고 후 운영에 새로 생긴 행과 PK 충돌하지 않게)</span></span>
+<span class="ln good">mysqldump -h recovery-host --no-create-info --insert-ignore shop orders &gt; /tmp/orders_restore.sql</span>
+<span class="ln good">mysql -h prod-host shop &lt; /tmp/orders_restore.sql</span>
+<span class="ln"><span class="cm">#   INSERT IGNORE: 운영에 이미 있는 PK(사고 후 새로 생긴 주문)는 건너뛴다.</span></span>
+<span class="ln"><span class="cm">#   자식 테이블(order_item 등)도 같은 방식으로 — FK 순서 주의.</span></span>
+<span class="ln warn"><span class="cm">#   병합 전후로 행 수·금액 합계를 운영 팀과 대조한다.</span></span></code></pre>
+
+<div class="memo say">
+  <h4>30초 답변 골격 — "DELETE를 30분 뒤에 발견했습니다"</h4>
+  <p>"운영을 30분 전으로 되돌리면 그 30분의 정상 주문까지 지워지므로 안 됩니다. 절차는 ⓪ 즉시 binlog 보존(<code>FLUSH BINARY LOGS</code> + 사본) → ① 앱 로그로 시각을 좁히고 <code>mysqlbinlog -v</code>로 사고 트랜잭션의 <code># at</code> 위치를 찾고 → ② <b>별도 인스턴스</b>에 전체 백업 복원 → ③ 백업 위치부터 그 <b>위치 직전</b>(<code>--stop-position</code>)까지 재생 → ④ 지워진 행만 <code>INSERT IGNORE</code>로 병합(자식 테이블은 FK 순서) → ⑤ 행 수·합계 대조. 통째로 되돌릴지 행만 병합할지는 비즈니스 결정이라 런북에 결정권자를 적어둡니다."</p>
+</div>
+
+<!-- ===================== S3 ===================== -->
+<h2 id="s3"><span class="num">3</span>트레이드오프 — 백업 방식은 "무엇을 지키려고 무엇을 지불하는가"로 고른다</h2>
+<p>네 선택지의 "얻는 것"만 나열하면 도구 이름을 아는 사람이고, "지불하는 것"까지 짝지어 말하면 써 본 사람이다. 표는 요약이고 판단은 아래 본문이다.</p>
+
+<h3 id="s3-1">3-1. 선택지 4종 — 얻는 것 / 지불하는 것</h3>
+<div class="tscroll"><table>
+  <tr><th style="width:15%">방식</th><th style="width:22%">대표 형태</th><th>얻는 것</th><th>지불하는 것</th></tr>
+  <tr><td><b>물리 백업</b></td><td>Percona XtraBackup류 (데이터 파일 복사)</td><td class="ok">크기에 비례해 빠른 백업·빠른 복원, 큰 DB에 현실적 (RTO를 산다)</td><td class="no">MySQL 버전·스토리지 엔진 종속, 파일이 커서 저장·전송 비용, 준비(prepare) 단계 필요</td></tr>
+  <tr><td><b>논리 백업</b></td><td>mysqldump / mydumper (SQL 또는 행 데이터)</td><td class="ok">이식성(버전·엔진·다른 DBMS로도), 테이블 단위 선택 복원, 사람이 읽을 수 있음</td><td class="no">느리다 — 복원 시 SQL 재실행 + 세컨더리 인덱스 재구축, 덤프 자체가 긴 트랜잭션</td></tr>
+  <tr><td><b>스토리지 스냅샷</b></td><td>클라우드 볼륨 / LVM 스냅샷</td><td class="ok">거의 즉시 찍히고, 복원도 볼륨 교체 수준으로 빠름</td><td class="no">크래시 일관성(정지 없이 찍으면 기동 시 크래시 복구 필요), 같은 리전·계정에 묶이면 같이 죽는 장애 도메인</td></tr>
+  <tr><td><b>지연 복제본</b></td><td><code>SOURCE_DELAY</code>(구 <code>MASTER_DELAY</code>)를 준 리플리카</td><td class="ok">논리 사고(잘못된 DELETE)를 지연 창 안에서 즉시 되돌릴 수 있는 따뜻한 예비</td><td class="no">인스턴스 1대 비용, 지연 창을 넘기면 무용, 승격 시 지연분 따라잡기, 백업 대체 불가</td></tr>
+</table></div>
+
+<h3 id="s3-2">3-2. 물리 vs 논리 — "빠르다"의 대가는 "묶인다"이다</h3>
+<p><b>물리 백업</b>은 InnoDB 데이터 파일을 그대로 복사하면서, 복사하는 동안 바뀐 부분을 redo 로그로 추적해 두었다가 준비 단계에서 맞춘다(크래시 복구와 같은 원리). 수백 GB~수 TB에서 유일하게 현실적인 RTO를 준다. 대가는 <b>같은 메이저 버전·같은 엔진에서만 열린다</b>는 것 — 업그레이드를 건너뛴 옛 백업을 새 서버에 얹는 시나리오가 막힌다. 그래서 물리 백업을 쓰는 팀도 <b>주기적 논리 백업 한 벌</b>을 별도로 남긴다(이식성 보험).</p>
+<p><b>논리 백업</b>은 SQL 문(또는 행 데이터)이라 어디서든 열리고, 특정 테이블만 골라 복원할 수 있고, 에디터로 열어 사고 문장을 찾을 수도 있다. 대가는 시간이다 — 복원은 INSERT를 다시 실행하는 것이고 <b>세컨더리 인덱스는 그 위에서 다시 만들어진다</b>(<a href="01-index-and-bplus-tree.html">B+Tree</a>가 통째로 재구성). 또 <code>--single-transaction</code> 덤프는 그 자체가 <b>긴 읽기 트랜잭션</b>이라 undo 누적·퍼지 지연 비용을 운영 서버에 지운다 — 그래서 논리 백업은 대개 <b>복제본에서</b> 뜬다. mydumper처럼 병렬로 뜨고 넣는 도구가 시간을 줄여주지만 "인덱스를 다시 만든다"는 본질은 같다.</p>
+
+<div class="memo rule">
+  <h4>"둘 다, 역할을 나눠서"</h4>
+  <p class="big">크기가 RTO를 결정한다 → 수백 GB 이상이면 <b>물리 백업이 기준점</b>, 여기에 <b>주기적 논리 백업 한 벌</b>(이식성 보험 + 테이블 단위 복원)을 복제본에서 뜬다. 어느 쪽이든 <b>RPO는 binlog 상시 전송</b>이 책임진다.</p>
+  <p class="sub">선택의 최종 기준은 "복원 훈련이 실측한 RTO가 목표 안에 들어오는가" — 훈련 없는 선택은 추정일 뿐이다.</p>
+</div>
+
+<h3 id="s3-3">3-3. 스냅샷 — "즉시"의 대가는 "일관성과 장애 도메인"이다</h3>
+<p>볼륨 스냅샷은 찍는 데 몇 초고 복원도 볼륨을 갈아 끼우는 수준이라 RTO가 매우 짧다. 그러나 ⑴ DB를 멈추지 않고 찍은 스냅샷은 <b>크래시 일관성</b>이다 — "전원을 뽑은 순간의 디스크"와 같아서, 그 위에서 기동한 InnoDB는 redo/undo로 크래시 복구를 수행한다(그래서 대개 복원은 된다). 다만 데이터 파일과 binlog가 서로 다른 볼륨에 있으면 두 스냅샷의 시점이 어긋나 PITR 시작점이 흔들린다. 잠깐 쓰기를 멈추거나(<code>FLUSH TABLES WITH READ LOCK</code> 같은 정지 창), 관리형 서비스의 일관 스냅샷을 쓴다. ⑵ 스냅샷이 원본과 <b>같은 리전·같은 계정</b>에 있으면 리전 장애·계정 탈취·실수로 인한 계정 정리에서 원본과 함께 사라진다 — <b>다른 리전/계정으로 복사하는 단계까지 있어야 "백업"</b>이다.</p>
+
+<h3 id="s3-4">3-4. 빈도 — RPO를 사면 부하와 비용을 낸다</h3>
+<p>전체 백업 빈도를 올리면 로그 재생분이 줄어 RTO도 줄고, PITR이 없는 환경이라면 RPO도 줄어든다. 대가는 ⑴ 백업 중 I/O·CPU 부하(운영 서버에서 뜨면 지연으로 직결), ⑵ 저장 비용(세대 수 × 크기), ⑶ 논리 백업이면 긴 트랜잭션의 빈도 증가.</p>
+<div class="memo rule">
+  <h4>흔한 절충 공식</h4>
+  <p class="big">주 1회 전체 + 매일 증분(물리 백업의 증분 모드) + binlog 상시 전송</p>
+  <p class="sub"><b>RPO는 binlog가</b> 책임지고, <b>전체 백업은 RTO를 위한 기준점 갱신</b> 역할만 한다. 두 지표를 각각 누가 사는지 분리해서 말하면 "빈도를 올리면 좋다"보다 한 단계 위의 답이다.</p>
+</div>
+
+<h3 id="s3-5">3-5. 복제본은 백업이 아니다 — "가용성"과 "복구"는 다른 축</h3>
+<div class="memo trap">
+  <h4>복제는 실수도 복제한다</h4>
+  <p class="big">잘못 날린 <code>DROP TABLE</code>은 복제 지연만큼의 <b>밀리초 뒤 복제본에서도 실행</b>된다.</p>
+  <p>복제본은 <b>하드웨어 장애</b>(원본 서버가 죽음)에 대한 답이지 <b>논리 사고</b>에 대한 답이 아니다. 복제본이 지키는 것은 "서비스가 계속 응답한다"(<b>가용성</b>), 백업이 지키는 것은 "과거의 올바른 상태로 돌아갈 수 있다"(<b>복구 가능성</b>). 축이 다르므로 어느 하나가 다른 하나를 대체하지 않는다.</p>
+</div>
+
+<figure class="figure">
+  <div class="scroll">
+  <svg viewBox="0 0 860 330" role="img" aria-label="원본에서 실행된 DROP TABLE이 밀리초 뒤 복제본에도 적용되어 둘 다 테이블이 없어진다. 지연 복제본은 1시간 뒤에 적용되므로 그 안에 발견하면 꺼낼 수 있고, 오프사이트 백업과 binlog는 보존 기간 내 어느 시점이든 돌아갈 수 있다">
+    <defs>
+      <marker id="ar-r2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="ar-w2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d97706"/></marker>
+      <marker id="ar-b2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+    <!-- 행 1: 원본 → 복제본 -->
+    <text x="140" y="26" font-size="11" font-weight="700" fill="#dc2626" text-anchor="middle">14:05 DROP TABLE orders</text>
+    <rect x="40" y="40" width="200" height="60" rx="10" fill="#fff" stroke="#1f2937" stroke-width="2"/>
+    <text x="140" y="65" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">원본 (primary)</text>
+    <text x="140" y="85" font-size="10" fill="#dc2626" font-weight="700" text-anchor="middle">✗ orders 없음</text>
+    <line x1="240" y1="70" x2="338" y2="70" stroke="#dc2626" stroke-width="2.5" marker-end="url(#ar-r2)"/>
+    <text x="290" y="62" font-size="10" fill="#dc2626" font-weight="700" text-anchor="middle">복제 (수 ms)</text>
+    <rect x="340" y="40" width="200" height="60" rx="10" fill="#fff" stroke="#1f2937" stroke-width="2"/>
+    <text x="440" y="65" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">복제본 (replica)</text>
+    <text x="440" y="85" font-size="10" fill="#dc2626" font-weight="700" text-anchor="middle">✗ orders 없음 (같이 실행됨)</text>
+    <text x="570" y="58" font-size="10.5" font-weight="700" fill="#1f2937">답하는 장애: 원본 하드웨어 사망 (가용성)</text>
+    <text x="570" y="76" font-size="10" fill="#dc2626">침묵하는 장애: 논리 사고 — 같은 문장을 그대로 실행</text>
+    <text x="570" y="92" font-size="10" fill="#dc2626">랜섬웨어·리전 장애도 함께 당한다</text>
+    <!-- 행 2: 지연 복제본 -->
+    <line x1="160" y1="100" x2="160" y2="180" stroke="#d97706" stroke-width="2"/>
+    <line x1="160" y1="180" x2="338" y2="180" stroke="#d97706" stroke-width="2" marker-end="url(#ar-w2)"/>
+    <text x="250" y="172" font-size="10" fill="#d97706" font-weight="700" text-anchor="middle">1시간 뒤에 실행</text>
+    <rect x="340" y="150" width="200" height="60" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+    <text x="440" y="173" font-size="12" font-weight="700" fill="#92400e" text-anchor="middle">지연 복제본</text>
+    <text x="440" y="192" font-size="9.5" fill="#92400e" text-anchor="middle" class="mono">SOURCE_DELAY=3600</text>
+    <text x="570" y="168" font-size="10.5" font-weight="700" fill="#1f2937">답하는 장애: 지연 창(1h) 안에 발견한 논리 사고</text>
+    <text x="570" y="186" font-size="10" fill="#dc2626">침묵: 1시간 넘겨 발견 → 무용 · 디스크 소실 · 리전 장애</text>
+    <text x="570" y="202" font-size="10" fill="#6b7280">비용: 인스턴스 1대 + 승격 시 지연분 따라잡기</text>
+    <!-- 행 3: 백업 -->
+    <line x1="100" y1="100" x2="100" y2="280" stroke="#2563eb" stroke-width="2"/>
+    <line x1="100" y1="280" x2="338" y2="280" stroke="#2563eb" stroke-width="2" marker-end="url(#ar-b2)"/>
+    <text x="220" y="272" font-size="10" fill="#2563eb" font-weight="700" text-anchor="middle">전체 백업 주기 + binlog 상시 전송</text>
+    <rect x="340" y="250" width="200" height="60" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="440" y="273" font-size="12" font-weight="700" fill="#1e40af" text-anchor="middle">오프사이트 백업 + binlog</text>
+    <text x="440" y="292" font-size="9.5" fill="#1e40af" text-anchor="middle">다른 리전/계정, 보존 기간 내</text>
+    <text x="570" y="268" font-size="10.5" font-weight="700" fill="#1f2937">답하는 장애: 보존 기간 내 어느 시점이든 (PITR)</text>
+    <text x="570" y="286" font-size="10" fill="#15803d" font-weight="700">최후의 복구선 — 어느 층도 이것을 대체하지 못한다</text>
+    <text x="570" y="302" font-size="10" fill="#6b7280">비용: 저장·전송 + RTO(재구성 시간) + 훈련</text>
+  </svg>
+  </div>
+  <figcaption>세 층은 <b>서로 다른 장애에 답한다</b>. 면접 변별점은 각 층이 "어떤 장애에 답하고 어떤 장애에 침묵하는지"를 짝지어 말하는 것.</figcaption>
+</figure>
+
+<div class="layers">
+  <div class="l1"><span class="lv">1층</span><b>복제본</b>가용성 — 원본 하드웨어가 죽어도 응답.<div class="cut">침묵: 논리 사고(밀리초 뒤 같이 실행), 랜섬웨어, 리전 장애</div></div>
+  <div class="l2"><span class="lv">2층 (선택)</span><b>지연 복제본</b>지연 창 안의 논리 사고에 즉시 대응 — 2-4절의 "별도 인스턴스"를 미리 데워두는 셈.<div class="cut">침묵: 창을 넘긴 발견, 디스크 소실, 리전 장애. 비용: 인스턴스 1대, 승격 시 지연분 따라잡으며 사고 직전에서 멈추는 제어</div></div>
+  <div class="l3"><span class="lv">3층</span><b>오프사이트 백업 + binlog</b>복구 가능성 — 보존 기간 내 어느 시점으로든. 최후의 복구선.<div class="cut">비용: 저장·전송, 재구성 시간(RTO), 그리고 훈련 없이는 "있다"일 뿐</div></div>
+</div>
+
+<h3 id="s3-6">3-6. 관리형 DB(RDS 등)의 PITR — 버튼 뒤의 사슬은 같다</h3>
+<p>클라우드 관리형 DB의 "특정 시점으로 복원"은 내부적으로 <b>자동 스냅샷 + 짧은 주기로 올려둔 트랜잭션 로그</b>를 재생하는, 2장과 같은 사슬이다. 알아둘 성질 세 가지 — ⑴ 복원 결과는 <b>기존 인스턴스를 덮어쓰지 않고 새 인스턴스로</b> 만들어진다(2-4절의 "별도 인스턴스에 복원 → 병합" 패턴이 기본 동작인 셈). ⑵ 복원 가능한 최신 시점은 "지금"이 아니라 마지막으로 로그가 올라간 시각이고, 보존 기간을 넘긴 과거로는 못 간다. ⑶ 파라미터 그룹·보안 그룹·계정 권한·엔드포인트는 자동으로 붙지 않으므로 1-3절 ⑦의 "복구 대상 누락"은 관리형에서도 그대로 발생한다. <b>버튼이 있어도 훈련은 필요하다</b> — 복원에 얼마나 걸리는지, 앱을 새 엔드포인트로 돌리는 절차가 무엇인지는 눌러봐야 안다.</p>
+
+<!-- ===================== S4 ===================== -->
+<h2 id="s4"><span class="num">4</span>안전망 고정 — 복구 훈련을 사람의 의지가 아니라 파이프라인·런북에 박는다</h2>
+<p>"분기마다 복구 테스트를 하자"는 다짐은 두 번째 분기에 사라진다. 고정하려면 <b>자동으로 돌고, 실패하면 알람이 오고, 결과가 기록으로 남는</b> 형태여야 한다. 1-3절의 세 부류(물건·절차·체계)를 하나의 파이프라인이 다 잡는다.</p>
+
+<div class="flow">
+  <span>주 1회 스케줄</span><i>→</i><span>오프사이트에서 백업+binlog 가져옴</span><i>→</i><span>임시 인스턴스 복원</span><i>→</i><span>기준 시각까지 재생</span><i>→</i><span class="ok">검증 5종 (열린다 ≠ 맞다)</span><i>→</i><span>소요 시간 메트릭</span><i>→</i><span class="hot">RTO 80% 초과 알람</span><i>→</i><span>정리 + 훈련 대장 기록</span>
+</div>
+
+<h3 id="s4-1">4-1. 자동 복구 훈련 파이프라인 — 셸 의사코드</h3>
+<pre><code><span class="ln">#!/usr/bin/env bash</span>
+<span class="ln"><span class="cm"># restore-drill.sh — 주 1회 스케줄러(cron / CI 스케줄 잡)에서 실행</span></span>
+<span class="ln">set -euo pipefail                             <span class="cm"># 어느 assert든 실패하면 즉시 종료 → 스케줄러가 실패 알람</span></span>
+<span class="ln">START=$(date +%s)</span>
+<span class="ln warn">RTO_SEC=3600                                  <span class="cm"># 팀이 합의한 RTO (예: 1시간)</span></span>
+<span class="ln">DRILL_HOST=drill-db-$(date +%Y%m%d)</span>
+<span class="ln">AS_OF=$(date -d '1 hour ago' '+%F %T')        <span class="cm"># 재생 기준 시각 (훈련 시작 1시간 전)</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 1) 최신 전체 백업 + 그 이후 binlog 를 "오프사이트 저장소에서" 가져온다</span></span>
+<span class="ln"><span class="cm">#    (원본 서버의 로컬 사본을 쓰면 고리 ③을 검증하지 못한다)</span></span>
+<span class="ln good">aws s3 cp s3://db-backup-other-region/shop/latest/ /drill/backup/  --recursive<span class="tag good">고리 ③</span></span>
+<span class="ln good">aws s3 cp s3://db-backup-other-region/shop/binlog/ /drill/binlogs/ --recursive</span>
+<span class="ln good">gzip -t /drill/backup/*.gz                    <span class="cm"># 파일 무결성</span><span class="tag good">원인 ①</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 2) 임시 인스턴스 기동 (컨테이너 / 임시 VM / 관리형 PITR 복원 — 환경에 맞게)</span></span>
+<span class="ln">provision_temp_instance "$DRILL_HOST"</span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 3) 기준점 복원 + binlog 를 기준 시각까지 재생 (2-3절 그대로 — 실제 복구와 같은 함수)</span></span>
+<span class="ln good">restore_full_backup "$DRILL_HOST" /drill/backup<span class="tag good">PITR ①</span></span>
+<span class="ln good">replay_binlog_until "$DRILL_HOST" /drill/binlogs "$AS_OF"<span class="tag good">PITR ②③ · 갭 검증</span></span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 4) 검증 — "열린다"가 아니라 "맞다"를 확인한다</span></span>
+<span class="ln"><span class="cm">#    4-a 스키마 객체 수: 테이블·뷰·프로시저·트리거 개수가 운영과 같은가</span><span class="tag good">원인 ⑦</span></span>
+<span class="ln good">assert_equal "$(count_objects prod-replica shop)" "$(count_objects "$DRILL_HOST" shop)"</span>
+<span class="ln"><span class="cm">#    4-b 핵심 테이블 행 수: append-only 테이블은 기준 시각 이전 행 수를 양쪽에서 세어 비교</span></span>
+<span class="ln good">for t in orders payments users; do</span>
+<span class="ln good">  Q="SELECT COUNT(*) FROM shop.$t WHERE created_at &lt; '$AS_OF'"</span>
+<span class="ln good">  assert_within_tolerance "$(mysql -h prod-replica  -N -e "$Q")" \</span>
+<span class="ln good">                          "$(mysql -h "$DRILL_HOST" -N -e "$Q")" 0.001</span>
+<span class="ln good">done</span>
+<span class="ln"><span class="cm">#    4-c 체크섬: 변경이 드문 기준 테이블(코드 테이블 등)은 CHECKSUM TABLE 로 일치 확인</span></span>
+<span class="ln good">assert_equal "$(mysql -h prod-replica  -N -e 'CHECKSUM TABLE shop.currency')" \</span>
+<span class="ln good">             "$(mysql -h "$DRILL_HOST" -N -e 'CHECKSUM TABLE shop.currency')"</span>
+<span class="ln"><span class="cm">#    4-d 도메인 불변식: "원장 합계 = 결제 합계" 같은 비즈니스 규칙이 복원본에서 성립하는가</span></span>
+<span class="ln good">assert_equal "$(mysql -h "$DRILL_HOST" -N -e 'SELECT SUM(amount) FROM shop.ledger')" \</span>
+<span class="ln good">             "$(mysql -h "$DRILL_HOST" -N -e 'SELECT SUM(paid)   FROM shop.payments')"</span>
+<span class="ln"><span class="cm">#    4-e 앱 스모크: 읽기 전용 앱 인스턴스를 붙여 헬스체크·대표 API 1~2개 호출</span></span>
+<span class="ln good">smoke_test_app_against "$DRILL_HOST"</span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 5) 소요 시간 기록 → 메트릭 → RTO 대비 알람</span></span>
+<span class="ln">ELAPSED=$(( $(date +%s) - START ))</span>
+<span class="ln warn">push_metric backup.restore_drill.seconds "$ELAPSED"      <span class="cm"># 추세 그래프 = "데이터가 커져 RTO가 밀리는 것"을 잡는다</span></span>
+<span class="ln">push_metric backup.restore_drill.success 1</span>
+<span class="ln warn">if (( ELAPSED &gt; RTO_SEC * 80 / 100 )); then<span class="tag warn">원인 ⑥ 사전 탐지</span></span>
+<span class="ln warn">  alert "복구 훈련 소요 ${ELAPSED}s — RTO(${RTO_SEC}s)의 80% 초과. 데이터 증가에 RTO가 밀리고 있다."</span>
+<span class="ln warn">fi</span>
+<span class="ln"></span>
+<span class="ln"><span class="cm"># 6) 정리 + 기록 (성공/실패·소요 시간·검증 결과를 훈련 대장에 append)</span></span>
+<span class="ln">teardown_temp_instance "$DRILL_HOST"</span>
+<span class="ln">append_drill_log "$DRILL_HOST" "$ELAPSED" ok<span class="tag good">체크리스트 ⑩</span></span></code></pre>
+<p>실패하면(어느 <code>assert</code>든) <code>set -e</code>로 즉시 종료되고 스케줄러가 실패 알람을 낸다 — 그 알람이 곧 <b>"백업은 있는데 복구는 안 된다"를 사고 전에 발견한 것</b>이다. 스케줄은 주 1회를 기본으로, 큰 스키마 변경·버전 업그레이드·백업 방식 변경 직후에는 수동으로 한 번 더 돌린다.</p>
+
+<div class="memo">
+  <h4>백업 파이프라인 자체의 모니터링 4메트릭 — 원인 ⑩은 이 중 하나만 있어도 잡힌다</h4>
+  <div class="chips">
+    <span class="chip"><span class="n">1</span>마지막 백업 성공 후 경과 시간</span>
+    <span class="chip"><span class="n">2</span>백업 크기의 전일 대비 변화 (급감 = 적신호)</span>
+    <span class="chip"><span class="n">3</span>오프사이트 전송 성공 여부</span>
+    <span class="chip"><span class="n">4</span>binlog 전송 지연 (원본 최신 위치 vs 저장소 도착 위치)</span>
+  </div>
+</div>
+
+<div class="memo rule">
+  <h4>훈련의 최종 형태 — "훈련 스크립트가 곧 복구 스크립트"</h4>
+  <p>훈련에서 쓰는 함수(<code>restore_full_backup</code>, <code>replay_binlog_until</code>)와 실제 사고에서 쓰는 함수가 <b>같은 코드</b>면, 매주 실행되는 훈련이 곧 실제 복구 절차의 <b>회귀 테스트</b>가 된다. 런북의 명령도 같은 함수를 부르게 만들면 런북과 실제가 어긋나지 않는다. 이 원칙은 <a href="25-mass-delete-archiving-and-partitioning.html">대량 삭제/아카이빙 문서</a>의 "아카이브한 데이터를 삭제 전에 복원해서 검증한다"와 같은 뿌리다 — <b>지워도 되는지의 증명은 '아카이브 파일이 있다'가 아니라 '아카이브에서 돌아온다'다.</b></p>
+</div>
+
+<h3 id="s4-2">4-2. 런북 — 새벽 3시에 처음 읽는 사람이 따라 할 수 있게</h3>
+<ol class="steps blue">
+  <li><b>어디에 무엇이 있는가</b> — 백업 저장소 경로, binlog 저장소 경로, 암호화 키 위치와 그 키에 접근 가능한 역할, 복원용 인스턴스를 만들 권한.</li>
+  <li><b>시나리오별 분기</b> — ⑴ 원본 서버 소실(전체 복원 후 전환) ⑵ 논리 사고(별도 인스턴스 PITR 후 행 병합, 2-4절) ⑶ 특정 테이블만 손상. 시나리오마다 "정지점을 어떻게 정하는가"가 다르다.</li>
+  <li><b>복사-붙여넣기 가능한 명령</b> — 2-3·2-4절 수준으로, 변수만 바꾸면 되게. 훈련 스크립트와 <b>같은 함수</b>를 쓰게 만든다.</li>
+  <li><b>검증 단계</b> — 4-1의 4-a~4-e를 사람이 수행하는 버전.</li>
+  <li><b>전환 절차</b> — 엔드포인트/DNS 변경, 앱 재기동 순서, 캐시 무효화, 복제 토폴로지 재구성.</li>
+  <li><b>의사결정자와 연락 체계</b> — "통째로 되돌릴 것인가, 행만 병합할 것인가"는 기술 결정이 아니라 비즈니스 결정(사고 후 정상 데이터를 얼마나 잃을 것인가)이므로, 누가 결정하는지 적어둔다.</li>
+  <li><b>마지막 훈련 일자와 실측 소요 시간 — 문서 맨 위에.</b> 이 줄이 오래됐으면 문서를 믿지 말라는 신호다(소화기 점검 스티커).</li>
+</ol>
+
+<h3 id="s4-3">4-3. 복구 훈련 체크리스트 10항목</h3>
+<div class="memo check">
+  <h4>훈련 1회가 "통과"하려면 전부 예여야 한다</h4>
+  <ol>
+    <li>백업 파일을 <b>오프사이트 저장소에서</b> 가져와 열었는가 (로컬 사본 말고). <span class="badge add">고리 ③ · 원인 ①⑨</span></li>
+    <li>백업 메타데이터의 binlog 위치부터 <b>빠짐없이</b> 로그를 이어 붙일 수 있었는가 (갭 없음). <span class="badge add">고리 ②⑤ · 원인 ②③</span></li>
+    <li>임의의 과거 시각(또는 특정 위치)까지 <b>재생을 멈출 수</b> 있었는가. <span class="badge add">PITR ③</span></li>
+    <li>스키마 객체 수·핵심 테이블 행 수·기준 테이블 체크섬·도메인 불변식이 <b>운영과 일치</b>했는가. <span class="badge add">원인 ④</span></li>
+    <li>계정·권한·파라미터·트리거·프로시저·이벤트가 <b>복원본에 존재</b>하는가. <span class="badge add">원인 ⑦</span></li>
+    <li>앱 인스턴스를 복원본에 붙여 <b>대표 요청이 성공</b>했는가.</li>
+    <li>처음부터 끝까지의 소요 시간이 <b>RTO 이내</b>였는가 — 그리고 지난 훈련 대비 추세는. <span class="badge add">원인 ⑥</span></li>
+    <li>절차를 <b>런북만 보고</b> 수행했는가 (머릿속 지식 없이). 막힌 지점은 런북에 반영했는가. <span class="badge add">원인 ⑤</span></li>
+    <li>암호화 키·자격증명에 <b>사고 시나리오의 계정으로</b> 접근 가능했는가. <span class="badge add">원인 ⑧</span></li>
+    <li>결과(성공/실패·소요·발견 사항)를 <b>기록으로 남겼는가</b>. <span class="badge add">원인 ⑩</span></li>
+  </ol>
+  <p class="sub">외우는 순서: <b>가져와(①) → 잇고(②) → 멈추고(③) → 맞는지(④⑤⑥) → 시간(⑦) → 런북만으로(⑧) → 키(⑨) → 기록(⑩)</b>. 실패 원인 10종과 1:1로 대응된다 — 체크리스트는 원인 목록을 "예/아니오"로 뒤집은 것이다.</p>
+</div>
+
+<!-- ===================== S5 ===================== -->
+<h2 id="s5"><span class="num">5</span>꼬리질문 셀프 테스트</h2>
+<p>질문만 먼저 보고 소리 내어 답한 뒤 펼쳐서 확인한다. 보라색 배지는 시니어 변별 포인트, 회색 배지는 md에 없는 추가 꼬리질문.</p>
+<div class="toolbar"><button data-open="1">모두 펼치기</button><button data-open="0">모두 접기</button></div>
+<div class="qa-block">
+
+<details><summary>"PITR을 하려면 뭐가 준비돼 있어야 하나요? binlog만 켜두면 되나요?"</summary><div class="ans">
+  <p>아니다 — <b>사슬</b>이다. ⑴ binlog 활성화 + ROW 포맷, ⑵ 보존 기간이 전체 백업 주기보다 길 것(백업이 한 번 실패해도 끊기지 않을 여유 포함), ⑶ binlog가 원본 서버 밖(복제본·오브젝트 스토리지·원격 수신 호스트)에도 존재할 것, ⑷ <code>sync_binlog=1</code>로 커밋마다 디스크에 내려갈 것(아니면 크래시 직전 커밋이 binlog에 없어 재생 결과가 어긋난다), ⑸ 전체 백업이 찍힌 binlog 파일명·포지션(또는 GTID)이 백업과 함께 기록될 것, ⑹ 전체 백업 자체가 일관된 스냅샷일 것. 어느 고리가 끊기든 그 지점 이후로는 돌아갈 수 없다. "binlog 켜두면 된다"는 ⑴만 말한 것이다. <a href="#s2-2">→ 2-2</a></p>
+</div></details>
+
+<details><summary>"백업 파일은 매일 잘 생기고 있는데, 복구가 안 될 수 있는 경우를 구체적으로 말해보세요."</summary><div class="ans">
+  <p>두 부류로 답한다. <b>물건의 문제</b>: 파일 손상·불완전(한 번도 열어보지 않음), binlog 유실로 갭, 백업과 binlog 위치 기록 불일치, 비일관 덤프, 암호화 키 접근 불가. <b>절차·체계의 문제</b>: 런북 부재, 복구 시간이 RTO 초과(수 TB 논리 복원), 계정·권한·파라미터·트리거 누락, 백업 저장소가 원본과 같은 장애 도메인, 백업 잡이 몰래 실패 중인데 알림 없음. 마무리는 "이 전부가 <b>복구하는 날 처음 발견된다</b>는 공통점이 있어서, 정기 복구 훈련만이 사전에 잡는다"로. <a href="#s1-3">→ 1-3</a></p>
+</div></details>
+
+<details><summary>"실수로 DELETE를 날려서 30분 뒤에 발견했습니다. 운영 DB를 30분 전으로 되돌리면 되나요?"</summary><div class="ans">
+  <p>안 된다 — 그 30분 동안 들어온 <b>정상 주문·결제까지 지워진다</b>(RPO가 사고→발견 시간만큼 커진다). 절차는 ⑴ 즉시 현재 binlog를 보존(<code>FLUSH BINARY LOGS</code> 후 사본), ⑵ 앱 로그·배치 기록으로 사고 시각을 좁히고 <code>mysqlbinlog -v</code>로 binlog에서 해당 <code>DELETE</code> 이벤트가 속한 트랜잭션의 시작 위치(<code># at N</code>)를 찾고, ⑶ <b>별도 인스턴스</b>에 전체 백업을 복원한 뒤 백업 위치부터 그 <b>위치 직전</b>(<code>--stop-position</code>)까지 재생 — 시각(<code>--stop-datetime</code>)은 초 단위라 같은 초의 정상 커밋이 섞일 수 있어 위치가 정확하다, ⑷ 복원본에서 지워진 행만 뽑아 운영에 <code>INSERT IGNORE</code>(사고 후 새로 생긴 PK와 충돌 방지)로 병합, 자식 테이블도 FK 순서대로, ⑸ 병합 전후 행 수·금액 합계 대조. "통째로 되돌릴지, 행만 병합할지"는 비즈니스 결정이라 런북에 결정권자를 적어둔다. <a href="#s2-4">→ 2-4</a></p>
+</div></details>
+
+<details><summary>"복제본이 있으니 백업은 없어도 되지 않나요?" <span class="badge senior">시니어 변별</span></summary><div class="ans">
+  <p>축이 다르다. 복제본은 <b>가용성</b>(원본 하드웨어가 죽어도 서비스가 계속 응답)의 장치고, 백업은 <b>복구 가능성</b>(과거의 올바른 상태로 돌아감)의 장치다. 잘못된 <code>DROP TABLE</code>은 밀리초 뒤 복제본에서도 실행되므로 복제본은 논리 사고를 막지 못한다. 지연 복제본을 두면 지연 창 안의 논리 사고에는 즉시 대응할 수 있지만 — 대가로 인스턴스 1대, 지연 창을 넘겨 발견하면 무용, 승격 시 지연분을 따라잡으며 사고 직전에서 멈추는 제어가 필요, 그리고 디스크 소실·리전 장애·복제본까지 번지는 랜섬웨어에는 여전히 무력하다. 결론은 "복제본(가용성) + 지연 복제본(빠른 논리 사고 대응, 선택) + 오프사이트 백업과 binlog(최후의 복구선)"의 <b>층</b>이고, 어느 하나가 다른 하나를 대체하지 않는다. 각 층이 어떤 장애에 답하고 어떤 장애에 침묵하는지를 짝지어 말하는 것이 변별점이다. <a href="#s3-5">→ 3-5</a></p>
+</div></details>
+
+<details><summary>"물리 백업과 논리 백업 중 무엇을 쓰시겠어요?" <span class="badge senior">시니어 변별</span></summary><div class="ans">
+  <p>"둘 다, 역할을 나눠서"가 답이고 이유가 핵심이다. <b>크기가 RTO를 결정</b>하므로 수백 GB 이상이면 물리 백업(XtraBackup류)이 기준점 — 파일 복사라 빠르고, 복원도 준비 단계 후 바로 기동한다. 대가는 버전·엔진 종속이라, 업그레이드 경계를 넘거나 다른 시스템으로 옮기는 시나리오를 위해 <b>주기적 논리 백업 한 벌</b>을 따로 남긴다(이식성 보험 + 테이블 단위 선택 복원). 논리 백업은 복제본에서 뜬다 — <code>--single-transaction</code> 덤프가 긴 읽기 트랜잭션이라 운영 서버의 undo·퍼지에 부담을 주기 때문. 어느 쪽이든 RPO는 백업이 아니라 <b>binlog 상시 전송</b>이 책임진다. 마지막으로 "어느 쪽을 골랐든 복원 훈련이 실측한 RTO가 목표 안에 들어오는가"가 선택의 최종 기준이다 — 훈련 없는 선택은 추정일 뿐이다. <a href="#s3-2">→ 3-2</a></p>
+</div></details>
+
+<details><summary>"<code>--stop-datetime</code>이 있는데 왜 굳이 <code>--stop-position</code>을 찾나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p><code>--stop-datetime</code>은 <b>초 단위</b>다. 사고 커밋과 같은 1초 안에 정상 커밋이 섞여 있으면, 그 초 전체를 자르면 정상 커밋이 함께 잘리고, 그 초를 포함하면 사고가 함께 들어간다. 위치(<code># at N</code>)는 트랜잭션 단위 경계라 <b>정확히 사고 트랜잭션 직전</b>에서 멈춘다. 그래서 시각은 "대략 언제인지 좁히는 검색 범위"(<code>mysqlbinlog -v --start/stop-datetime</code>)로 쓰고, 실제 정지선은 위치로 잡는다. <a href="#s2-3">→ 2-3</a></p>
+</div></details>
+
+<details><summary>"redo log가 있는데 왜 PITR은 binlog로 하나요? 둘 다 '로그 재생' 아닌가요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>원리는 같다 — 커밋된 변경을 로그로 다시 적용한다. 역할이 다르다. <b>redo log</b>는 InnoDB가 <b>크래시 복구용</b>으로 고정 크기 안에서 짧게 <b>순환</b>시키는 물리(페이지 단위) 로그라 오래 보존되지 않고, 서버 밖으로 나가지도 않는다. <b>binlog</b>는 MySQL 서버 층에서 "무슨 변경이 있었는지"를 논리/행 단위로 <b>보존</b>하는 로그라 복제와 PITR의 재료가 된다. 그래서 크래시 직후 마지막 몇 초는 redo가, 자정부터 14:05까지는 binlog가 책임진다. PostgreSQL은 WAL 하나가 두 역할을 겸하고, 아카이브된 WAL을 <code>restore_command</code>로 가져와 <code>recovery_target_time</code>까지 재생한다. <a href="#s2-1">→ 2-1</a></p>
+</div></details>
+
+<details><summary>"<code>sync_binlog=1</code>을 끄면 성능이 좋아진다던데, 왜 안 되나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>대가를 정확히 말해야 한다. 끄면 커밋마다 fsync 한 번이 줄어 쓰기 처리량은 오르지만, 크래시 순간 <b>데이터 파일(redo로 보호됨)에는 있는데 binlog에는 없는 커밋</b>이 생긴다. 그러면 ⑴ 그 binlog로 재생한 PITR 결과가 원본과 어긋나고, ⑵ 복제본도 그 커밋을 못 받는다. 즉 RPO가 "마지막 커밋"에서 "마지막 fsync"로 후퇴한다. <a href="05-transaction-acid.html">ACID 문서</a>의 "로그도 fsync까지 내려가야 D가 성립한다"가 binlog에도 그대로 적용된다. 결제 원장처럼 RPO≈0이 요구되는 도메인에서는 끌 수 없고, 끈다면 "우리 RPO는 그만큼이다"를 문서에 적고 합의해야 한다. <a href="#s2-2">→ 2-2 고리 ④</a></p>
+</div></details>
+
+<details><summary>"binlog 파일 3개를 하나씩 순서대로 <code>mysqlbinlog | mysql</code> 하면 안 되나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>파일 경계에 걸친 <b>세션 상태</b>가 끊긴다 — 예컨대 임시 테이블을 만든 세션이 다음 파일에서 그 임시 테이블을 쓰는데, 별도 호출이면 새 <code>mysql</code> 세션이라 임시 테이블이 없다. 그래서 파일들을 <b>한 번의 <code>mysqlbinlog</code> 호출에 순서대로</b> 넘긴다. 이때 <code>--start-position</code>은 첫 파일에, <code>--stop-*</code>는 마지막 파일에 적용된다. <a href="#s2-3">→ 2-3</a></p>
+</div></details>
+
+<details><summary>"지연 복제본을 1시간으로 걸어뒀는데 사고를 2시간 뒤에 발견했습니다. 어떻게 하나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>지연 창을 넘겼으므로 지연 복제본에도 이미 사고가 적용됐다 — <b>이 층은 무용</b>이다. 그래서 3층(오프사이트 백업 + binlog)으로 내려간다: 2-4절 절차 그대로, 별도 인스턴스에 전체 백업 복원 → 사고 트랜잭션 직전까지 재생 → 행만 병합. 이 질문의 요지는 "지연 복제본은 백업을 <b>대체하지 못하고</b>, 발견이 빠를 때의 <b>지름길</b>일 뿐"임을 아는지다. 덧붙이면: 지연 창 안에 발견했더라도 복제본을 그대로 승격하면 안 되고, 지연분을 <b>사고 직전까지만</b> 따라잡도록(<code>START REPLICA UNTIL</code> 계열) 제어한 뒤 행을 꺼내야 한다. <a href="#s3-5">→ 3-5</a></p>
+</div></details>
+
+<details><summary>"논리 백업은 왜 운영 서버가 아니라 복제본에서 뜨나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p><code>--single-transaction</code> 덤프는 덤프가 끝날 때까지 하나의 MVCC 스냅샷을 유지하는 <b>긴 읽기 트랜잭션</b>이다. 그동안 운영에서 갱신된 행의 옛 버전(undo)을 퍼지하지 못해 undo가 누적되고, 긴 버전 체인을 따라가느라 읽기가 느려진다(<a href="16-long-transaction-harm-and-shortening.html">긴 트랜잭션 문서</a>). 수 시간짜리 덤프를 운영 서버에서 뜨면 그 비용을 운영 트래픽이 진다. 복제본에서 뜨면 운영은 무관하다 — 단, 복제본이 지연되고 있으면 덤프의 binlog 위치도 그만큼 과거이므로, 위치 기록(고리 ⑤)은 복제본 기준으로 정확히 남겨야 한다. <a href="#s3-2">→ 3-2</a></p>
+</div></details>
+
+<details><summary>"RDS는 PITR 버튼이 있는데도 복구 훈련이 필요한가요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>필요하다. 버튼이 대신해 주는 것은 2장의 사슬(스냅샷 + 로그 재생)뿐이다. 눌러봐야만 아는 것 — ⑴ 우리 크기에서 복원에 <b>실제로 몇 분</b> 걸리는지(RTO), ⑵ 복원은 <b>새 인스턴스</b>로 만들어지므로 앱을 새 엔드포인트로 돌리는 절차와 그 시간, ⑶ 파라미터 그룹·보안 그룹·계정 권한이 자동으로 붙지 않아 생기는 "복구 대상 누락"(원인 ⑦), ⑷ 복원 가능한 최신 시점이 "지금"이 아니라 마지막 로그 업로드 시각이라는 점(RPO), ⑸ 보존 기간을 넘긴 과거로는 못 간다는 점. 관리형이라 사슬을 안 봐도 되는 게 아니라, 사슬 중 <b>어디까지를 공급자가 맡고 어디부터가 우리 몫인지</b>가 바뀌는 것이다. <a href="#s3-6">→ 3-6</a></p>
+</div></details>
+
+<details><summary>"복구 훈련에서 '열린다'와 '맞다'는 어떻게 다르게 검증하나요?" <span class="badge add">추가</span></summary><div class="ans">
+  <p>"열린다"는 복원본에 접속되고 테이블이 보인다는 것 — 원인 ①·⑤만 잡는다. "맞다"는 5종 검증이다: <b>4-a</b> 스키마 객체 수(테이블·뷰·프로시저·트리거)가 운영과 같은가(원인 ⑦), <b>4-b</b> append-only 핵심 테이블의 기준 시각 이전 행 수가 양쪽에서 같은가(갭·비일관 탐지), <b>4-c</b> 변경이 드문 기준 테이블의 <code>CHECKSUM TABLE</code> 일치, <b>4-d</b> 도메인 불변식("원장 합계 = 결제 합계")이 복원본에서 성립하는가, <b>4-e</b> 읽기 전용 앱을 붙여 대표 API 호출 성공. 여기에 소요 시간을 RTO와 비교하는 것까지가 한 세트다. <a href="#s4-1">→ 4-1</a></p>
+</div></details>
+
+</div>
+
+<!-- ===================== S6 ===================== -->
+<h2 id="s6"><span class="num">6</span>1분 인출 테스트</h2>
+<p>면접 직전 — 아래 항목을 펼치기 전에 답이 3초 안에 나오는지 확인한다.</p>
+<div class="toolbar"><button data-open="1">모두 펼치기</button><button data-open="0">모두 접기</button></div>
+<div class="qa-block">
+<details class="plain"><summary>"있다" vs "된다"를 한 문장으로.</summary><div class="ans">
+  <p>"있다"는 <b>입력이 있었다</b>(파일 존재, 성공 로그), "된다"는 <b>출력을 확인했다</b>(RTO 안에, RPO 이내로, 앱이 붙는 DB). 사이에 "복원해서 열어봤는가"가 있다. <a href="#s1-1">→ 1-1</a></p>
+</div></details>
+<details class="plain"><summary>RPO·RTO 정의와 각각 누가 줄이나.</summary><div class="ans">
+  <p>RPO = 최대 감수하는 <b>데이터 손실 분량</b>(Point, 어디까지 돌아가나) → <b>binlog 상시 전송</b>이 줄인다. RTO = 서비스 복귀까지 <b>최대 허용 시간</b>(Time) → <b>물리 백업 + 자동화</b>가 줄인다. 둘 다 훈련으로만 실측. <a href="#s1-2">→ 1-2</a></p>
+</div></details>
+<details class="plain"><summary>PITR 3단계.</summary><div class="ans">
+  <p>① 전체 백업 복원(DB = T0) → ② 기록된 binlog 위치부터 <b>순서대로·빠짐없이</b> 재생 → ③ 목표 시각(삭제 사고면 사고 문장의 위치) <b>직전에서 정지</b>. <a href="#s2-1">→ 2-1</a></p>
+</div></details>
+<details class="plain"><summary>전제조건 6고리 — 순서대로.</summary><div class="ans">
+  <p>binlog 넷: ① <b>켜짐</b>(ROW) ② <b>남음</b>(보존 ≥ 주기) ③ <b>밖</b>(오프호스트) ④ <b>내림</b>(<code>sync_binlog=1</code>) / 백업 둘: ⑤ <b>적힘</b>(binlog 위치 기록) ⑥ <b>일관</b>(<code>--single-transaction</code> / prepare). 하나 끊기면 그 지점 이후 복구 불가. <a href="#s2-2">→ 2-2</a></p>
+</div></details>
+<details class="plain"><summary>실패 원인 10종 — 두 부류로.</summary><div class="ans">
+  <p><b>물건</b>(①파일 손상 ②binlog 갭 ③위치 불일치 ④비일관 덤프 ⑧키 없음) → 복원 테스트가 잡음. <b>절차·체계</b>(⑤런북 부재 ⑥RTO 초과 ⑦대상 누락 ⑨자리 없음 ⑩몰래 멈춤) → 훈련·런북·모니터링이 잡음. 공통점: 복구하는 날 처음 발견. <a href="#s1-3">→ 1-3</a></p>
+</div></details>
+<details class="plain"><summary>삭제 사고 대응 — 왜 운영을 되돌리지 않나, 절차 5단계.</summary><div class="ans">
+  <p>사고→발견 사이의 정상 주문이 지워지므로(RPO 증가). ⓪ binlog 보존 → ① <code># at</code> 위치 특정 → ② 별도 인스턴스에 전체 백업 복원 → ③ <code>--stop-position</code> 직전까지 재생 → ④ <code>INSERT IGNORE</code>로 행만 병합(FK 순서) → ⑤ 행 수·합계 대조. <a href="#s2-4">→ 2-4</a></p>
+</div></details>
+<details class="plain"><summary>4종 백업 방식 — 각각 지불하는 것 한 마디.</summary><div class="ans">
+  <p>물리: <b>버전·엔진 종속</b>. 논리: <b>느림(인덱스 재구축) + 긴 트랜잭션</b>. 스냅샷: <b>크래시 일관성 + 같은 장애 도메인</b>. 지연 복제본: <b>창 넘기면 무용 + 백업 대체 불가</b>. <a href="#s3-1">→ 3-1</a></p>
+</div></details>
+<details class="plain"><summary>"복제본 ≠ 백업"을 한 문장으로.</summary><div class="ans">
+  <p>복제본은 <b>가용성</b>, 백업은 <b>복구 가능성</b> — 잘못된 DROP은 밀리초 뒤 복제본에서도 실행된다. <a href="#s3-5">→ 3-5</a></p>
+</div></details>
+<details class="plain"><summary>흔한 빈도 절충 공식.</summary><div class="ans">
+  <p><b>주 1회 전체 + 매일 증분 + binlog 상시 전송</b> — RPO는 binlog가, 전체 백업은 RTO 기준점 갱신만. <a href="#s3-4">→ 3-4</a></p>
+</div></details>
+<details class="plain"><summary>훈련 파이프라인 6단계와 검증 5종.</summary><div class="ans">
+  <p>오프사이트에서 가져옴 → 임시 인스턴스 → 복원+재생 → 검증(<b>객체 수 · 행 수 · 체크섬 · 불변식 · 앱 스모크</b>) → 소요 시간 메트릭 + RTO 80% 알람 → 정리·기록. 훈련 함수 = 복구 함수. <a href="#s4-1">→ 4-1</a></p>
+</div></details>
+<details class="plain"><summary>런북 맨 위에 적는 한 줄은?</summary><div class="ans">
+  <p><b>마지막 훈련 일자와 실측 소요 시간</b> — 오래됐으면 문서를 믿지 말라는 신호(소화기 점검 스티커). <a href="#s4-2">→ 4-2</a></p>
+</div></details>
+<details class="plain"><summary>체크리스트 10항목 — 순서 연상.</summary><div class="ans">
+  <p>가져와(오프사이트) → 잇고(갭 없음) → 멈추고(임의 시점) → 맞는지(객체·행·체크섬·불변식 / 계정·권한·트리거 / 앱 요청) → 시간(RTO 이내·추세) → 런북만으로 → 키(사고 계정으로) → 기록. <a href="#s4-3">→ 4-3</a></p>
+</div></details>
+</div>
+
+<!-- ===================== SUMMARY ===================== -->
+<section class="summary" id="summary">
+  <p class="kicker">한 줄 요약</p>
+  <p><b>백업이 "있다"는 파일의 존재고, 복구가 "된다"는 RTO 안에 RPO 이내로 앱이 붙는 DB가 다시 만들어진다는 검증된 사실이다</b> — 그 사이를 가르는 것은 파일 손상·binlog 갭·위치 불일치·절차 부재·RTO 초과·계정·키 누락이고, 전부 복구하는 날 처음 드러난다. PITR은 <b>전체 백업 복원 → 기록된 binlog 위치부터 순서대로 재생 → 목표 시각(삭제 사고라면 사고 문장의 위치) 직전 정지</b>라는 사슬이며, 보존 기간·오프사이트·<code>sync_binlog=1</code>·위치 기록이 그 고리다. 삭제 사고는 운영을 되돌리지 않고 별도 인스턴스에서 직전 시점을 만들어 행만 병합하고, 이 전부를 <b>주 1회 자동 복구 훈련(복원 → 체크섬·행 수·불변식 검증 → 소요 시간 기록 → RTO 대비 알람)과 런북으로 고정한 팀만이 "복구가 된다"고 말할 자격이 있다.</b></p>
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/04-rdb-sql/33-backup-vs-restore-pitr-recovery-drill.md</code> · 관련 문항: 기본 Q5 트랜잭션 ACID(D의 redo를 서버 밖으로 연장) / 중급 Q4 MVCC(<code>--single-transaction</code>의 일관 스냅샷) / 중급 Q9 긴 트랜잭션(논리 덤프를 복제본에서 뜨는 이유) / 고난이도 Q3 대량 삭제·아카이빙("아카이브에서 돌아온다"가 증명)</p>
+
+</div>
+<script>
+  document.querySelectorAll('.toolbar button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var open = btn.getAttribute('data-open') === '1';
+      var block = btn.parentElement.nextElementSibling;
+      if (!block || !block.classList.contains('qa-block')) return;
+      block.querySelectorAll('details').forEach(function(d){ d.open = open; });
+    });
+  });
+</script>
+</body>
+</html>
