@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JOIN 종류와 실행 방식 — 이미 아는 자바 코드에 DB 이름표를 붙인다</title>
+<title>JOIN 종류와 실행 방식 — 이미 아는 자바 코드에 PostgreSQL 이름표를 붙인다</title>
 <style>
 :root{
   --bg:#f6f7f9; --card:#ffffff; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb;
@@ -204,20 +204,21 @@ details.q .a p:first-child{margin-top:0}
 <header class="hero" id="top">
   <div class="cat">04 · RDB / SQL</div>
   <h1>JOIN 종류와 실행 방식</h1>
-  <p class="sub">이미 아는 자바 코드에 DB 이름표를 붙인다 — 그리고 "조용한 행 누락"을 리뷰에서 잡는다</p>
-  <div class="q"><b>질문</b> — "JOIN의 종류(INNER, LEFT, …)와 실행 방식(NL, Hash, Sort-merge)을 설명해주세요."</div>
+  <p class="sub">이미 아는 자바 코드에 PostgreSQL 이름표를 붙인다 — 그리고 "조용한 행 누락"을 리뷰에서 잡는다</p>
+  <div class="q"><b>질문</b> — "JOIN의 종류(INNER, LEFT, …)와 실행 방식(Nested Loop, Hash, Merge)을 설명해주세요."</div>
 
   <div class="key">
     <div class="eyebrow">핵심 관전 포인트 — 첫 답변으로 그대로 말한다</div>
     <p>조인 실행 방식 3종은 새로 배울 게 아니라 <b>이미 짜본 코드의 DB 이름</b>이다.</p>
     <div class="map">
       <span class="java">for { for { } }</span><span class="ar">→</span>
-      <span class="db">Nested Loop (NL)<small>단 안쪽은 통순회가 아니라 조인 키 인덱스 탐색 · MySQL 기본</small></span>
+      <span class="db">Nested Loop<small>단 안쪽은 통순회가 아니라 조인 키 인덱스 탐색 · 계획에 <code>Nested Loop</code>로 찍힌다</small></span>
       <span class="java">HashMap put → get</span><span class="ar">→</span>
-      <span class="db">Hash 조인<small>빌드는 항상 작은 쪽 — 프로브 비용은 방향 무관, 차이는 메모리뿐 · 등호 전용</small></span>
+      <span class="db">Hash Join<small>빌드는 항상 작은 쪽 — 프로브 비용은 방향 무관, 차이는 메모리뿐 · 등호 전용</small></span>
       <span class="java">sort · sort · merge</span><span class="ar">→</span>
-      <span class="db">Sort-merge 조인<small>양쪽 정렬 후 두 포인터 병합 · 이미 정렬된 입력이면 정렬이 공짜</small></span>
+      <span class="db">Merge Join<small>양쪽 정렬 후 두 포인터 병합 · 이미 정렬된 입력이면 정렬이 공짜</small></span>
     </div>
+    <p><b>PostgreSQL은 이 셋을 모두 갖추고 비용으로 고른다</b>(MySQL의 "NL이 기본" 세계와 다르다) — 그래서 튜닝의 축이 "방식을 강제한다"가 아니라 <b>통계(추정 행 수) · 안쪽 조인 키 인덱스 · <code>work_mem</code></b>을 갖춰 <b>플래너의 선택을 옳게 만드는 일</b>이 된다.</p>
     <p>종류 쪽의 핵심은 <b>LEFT JOIN의 매칭 실패 쪽이 NULL로 채워진다</b>는 것 — LEFT 자리에 INNER를 쓰면 에러가 아니라 <b>행이 조용히 사라지는 버그</b>가 되고, 이건 테스트가 아니라 <b>리뷰에서</b> 잡아야 한다.</p>
   </div>
 </header>
@@ -228,9 +229,10 @@ details.q .a p:first-child{margin-top:0}
   <a href="#s2">2. 실행 방식 3종</a>
   <a href="#s2-1">NL</a>
   <a href="#s2-2">Hash</a>
-  <a href="#s2-3">Sort-merge</a>
+  <a href="#s2-3">Merge Join</a>
   <a href="#s2-4">비교표</a>
-  <a href="#s2-5">EXPLAIN에서</a>
+  <a href="#s2-5">EXPLAIN 읽기</a>
+  <a href="#s2-6">PG vs MySQL</a>
   <a href="#s3">3. 조용한 행 누락</a>
   <a href="#s4">4. 30초 스크립트</a>
   <a href="#s5">5. 꼬리질문</a>
@@ -339,7 +341,7 @@ details.q .a p:first-child{margin-top:0}
         <text x="32" y="4" font-size="11" text-anchor="middle" fill="#374151">R</text>
         <text x="0" y="50" text-anchor="middle" font-size="13" font-weight="700" fill="#1f2937">FULL OUTER JOIN</text>
         <text x="0" y="67" text-anchor="middle" font-size="11" fill="#6b7280">양쪽 전부, 반대편 NULL</text>
-        <text x="0" y="83" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">MySQL 미지원 → LEFT ∪ RIGHT</text>
+        <text x="0" y="83" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">PG 지원 · MySQL은 LEFT ∪ RIGHT</text>
       </g>
     </svg>
     <div class="cap">CROSS JOIN은 조건 자체가 없어 벤 다이어그램이 아니다 — 왼쪽 × 오른쪽 모든 조합(카테시안 곱). 세 번째 그림은 3절의 예외 패턴(안티조인) 예고.</div>
@@ -352,7 +354,7 @@ details.q .a p:first-child{margin-top:0}
         <tr><td><b>INNER JOIN</b></td><td>양쪽 모두 <span class="c-bad" style="padding:1px 6px;border-radius:4px">버린다</span></td><td>양쪽에 다 있는 행만</td></tr>
         <tr><td><b>LEFT JOIN</b></td><td>왼쪽은 남기고, 오른쪽 컬럼을 <span class="c-ok" style="padding:1px 6px;border-radius:4px">NULL로 채운다</span></td><td>왼쪽 전부 + 매칭된 오른쪽</td></tr>
         <tr><td><b>RIGHT JOIN</b></td><td>오른쪽은 남기고, 왼쪽 컬럼을 NULL로 채운다</td><td>LEFT의 거울상</td></tr>
-        <tr><td><b>FULL OUTER JOIN</b></td><td>양쪽 다 남기고 반대편을 NULL로 채운다</td><td>양쪽 전부 — <b>MySQL 미지원</b>, LEFT와 RIGHT의 UNION으로 흉내</td></tr>
+        <tr><td><b>FULL OUTER JOIN</b></td><td>양쪽 다 남기고 반대편을 NULL로 채운다</td><td>양쪽 전부 — <b>PostgreSQL 기본 지원</b> (MySQL은 미지원이라 LEFT ∪ RIGHT UNION으로 흉내)</td></tr>
         <tr><td><b>CROSS JOIN</b></td><td>조건 없음 — 모든 조합</td><td>왼쪽 × 오른쪽 (카테시안 곱)</td></tr>
       </tbody>
     </table>
@@ -405,17 +407,22 @@ details.q .a p:first-child{margin-top:0}
 <!-- ============ 2 ============ -->
 <section class="sec" id="s2">
   <h2><span class="no">2</span>실행 방식 3종 — 자바 코드 ↔ DB 이름 1:1 매핑</h2>
-  <p><code>List&lt;Order&gt; orders</code>(10만 건) × <code>List&lt;User&gt; users</code>(1만 건)를 <code>order.userId = user.id</code>로 조인한다고 하자. <b>세 방식 모두 이미 짜본 코드다</b> — DB가 부르는 이름만 붙이면 된다.</p>
+  <p><code>List&lt;Order&gt; orders</code>(10만 건) × <code>List&lt;User&gt; users</code>(1만 건)를 <code>order.userId = user.id</code>로 조인한다고 하자. <b>세 방식 모두 이미 짜본 코드다</b> — PostgreSQL이 실행 계획에 찍는 이름만 붙이면 된다.</p>
 
   <div class="tbl">
     <table>
-      <thead><tr><th>내가 아는 자바 코드</th><th>DB 이름</th><th>한 줄 특징</th></tr></thead>
+      <thead><tr><th>내가 아는 자바 코드</th><th>EXPLAIN 노드 이름</th><th>한 줄 특징</th></tr></thead>
       <tbody>
-        <tr><td><code>for { for { } }</code> 이중 루프</td><td><b>Nested Loop (NL)</b></td><td>안쪽은 통순회가 아니라 <b>인덱스 탐색</b> — MySQL 기본</td></tr>
-        <tr><td><code>HashMap</code> 빌드 후 <code>get</code></td><td><b>Hash 조인</b></td><td><b>작은 쪽 build, 큰 쪽 probe.</b> 등호 조인 전용</td></tr>
-        <tr><td>양쪽 <code>sort</code> 후 두 포인터 병합</td><td><b>Sort-merge 조인</b></td><td>이미 정렬된 입력이면 정렬 비용이 공짜</td></tr>
+        <tr><td><code>for { for { } }</code> 이중 루프</td><td><b><code>Nested Loop</code></b></td><td>안쪽은 통순회가 아니라 <b>인덱스 탐색</b>(<code>Index Cond</code>)</td></tr>
+        <tr><td><code>HashMap</code> 빌드 후 <code>get</code></td><td><b><code>Hash Join</code></b> + <code>Hash</code> 노드</td><td><b>작은 쪽 build, 큰 쪽 probe.</b> 등호 조인 전용</td></tr>
+        <tr><td>양쪽 <code>sort</code> 후 두 포인터 병합</td><td><b><code>Merge Join</code></b></td><td>이미 정렬된 입력이면 정렬 비용이 공짜(<code>Sort</code> 노드 없음)</td></tr>
       </tbody>
     </table>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">용어 주의 — 교과서 이름 ↔ PostgreSQL 계획 이름</div>
+    <p style="margin:0">교과서의 <b>"Sort-merge 조인"</b>이 PostgreSQL 계획에서는 <code>Merge Join</code>으로 찍힌다. 정렬이 필요하면 그 아래에 별도 <code>Sort</code> 노드가 붙고, 인덱스 순서로 읽어 이미 정렬돼 있으면 <code>Sort</code> 없이 <code>Index Scan</code>이 바로 붙는다 — 즉 <b>"정렬이 공짜인가"를 계획 모양으로 눈으로 확인</b>할 수 있다.</p>
   </div>
 
   <!-- 2-1 NL -->
@@ -477,7 +484,7 @@ for (Order order : orders) {              <span class="cm">// 바깥 = 드라이
       <text x="396" y="90" font-size="12" fill="#374151">바깥 행 1개당 users 1만 행을 전부 비교</text>
       <text x="396" y="118" font-size="18" font-weight="800" fill="#dc2626">10만 × 1만 = 10억 번</text>
       <text x="396" y="141" font-size="11" fill="#6b7280">"조인 걸었더니 느려요"의 단골 원인</text>
-      <text x="396" y="158" font-size="11" fill="#6b7280">EXPLAIN 신호: 안쪽 type = ALL + Using join buffer</text>
+      <text x="396" y="158" font-size="11" fill="#6b7280">PG 신호: 안쪽이 Seq Scan — 또는 플래너가 Hash Join으로 갈아탄다</text>
 
       <!-- panel: index -->
       <rect x="250" y="186" width="450" height="130" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
@@ -492,24 +499,45 @@ for (Order order : orders) {              <span class="cm">// 바깥 = 드라이
       <text x="402" y="272" text-anchor="middle" font-size="11" font-weight="700" font-family="ui-monospace, Menlo, monospace" fill="#166534">id = 42 ✓</text>
       <text x="466" y="236" font-size="12" fill="#374151">바깥 행 1개당 트리 깊이만큼만 읽음</text>
       <text x="466" y="262" font-size="18" font-weight="800" fill="#16a34a">10만 × 탐색 1번</text>
-      <text x="466" y="286" font-size="11" fill="#6b7280">MySQL의 기본 조인 방식</text>
+      <text x="466" y="286" font-size="11" fill="#6b7280">PG 계획: Nested Loop + Index Cond</text>
       <text x="466" y="302" font-size="11" fill="#6b7280">튜닝: 드라이빙 작게 + 안쪽 인덱스</text>
     </svg>
     <div class="cap">비용 = <b>바깥 루프 횟수 × 안쪽 탐색 비용</b>. 바깥 횟수는 드라이빙 테이블 행 수가, 안쪽 비용은 조인 키 인덱스 유무가 정한다 — 튜닝의 두 손잡이가 그대로 보인다.</div>
   </div>
 
   <div class="memo">
-    <div class="memo-head"><span class="tag acc">암기 카드</span><span class="memo-title">NL 튜닝의 기본 문법 2 — MySQL 조인 튜닝은 곧 이것</span></div>
+    <div class="memo-head"><span class="tag acc">암기 카드</span><span class="memo-title">NL 튜닝의 기본 문법 2 — 계획의 두 항을 그대로 확인한다</span></div>
     <div class="big">"드라이빙(바깥) 테이블은 작게, 안쪽 테이블의 조인 키에는 인덱스."</div>
     <ol>
-      <li><span class="kw">드라이빙 작게</span> — 바깥 루프 횟수 = 드라이빙 행 수. WHERE 조건으로 먼저 크게 줄어드는 쪽이 바깥이어야 한다. 옵티마이저가 조인 순서를 정하는 기준.</li>
-      <li><span class="kw">안쪽 인덱스</span> — 없으면 바깥 행마다 안쪽을 통순회하는 ❌ 코드가 실제로 벌어진다.</li>
+      <li><span class="kw">드라이빙 작게</span> — 바깥 루프 횟수 = 드라이빙 행 수(계획의 안쪽 <code>loops=N</code>). WHERE 조건으로 먼저 크게 줄어드는 쪽이 바깥이어야 한다. 플래너가 조인 순서를 정하는 기준.</li>
+      <li><span class="kw">안쪽 인덱스</span> — 없으면 PostgreSQL은 대개 NL을 포기하고 <b>Hash Join으로 갈아탄다</b>. 그래서 PG에서 "인덱스 없는 조인"은 10억 번 루프 참사보다 <b>예상 못 한 대량 해시 조인 + 디스크 스필</b>로 나타난다.</li>
     </ol>
-    <div class="mn"><b>가산점</b>: "MySQL은 전통적으로 NL 계열이 기본이고 해시 조인은 8.0에서 뒤늦게 추가됐다. 그래서 MySQL 조인 튜닝은 곧 NL 튜닝"까지 말하면 실행 계획을 읽어본 사람의 언어가 된다.</div>
+    <div class="mn"><b>가산점(PG 특유) 2</b>: ① <b>힙 페치가 따라붙는다</b> — PG는 힙 기반이라 모든 인덱스가 "인덱스 → TID → 힙"이다. 반복 횟수가 커지면 랜덤 I/O가 비싸져 플래너가 순차 읽기 기반 Hash Join을 고르고, 커버링 인덱스로 <code>Index Only Scan</code>이 되면 힙 접근이 사라져 NL이 다시 유리해진다. ② <b><code>Memoize</code> 노드(PG 14+)</b> — 바깥 행에 같은 조인 키가 반복되면 안쪽 탐색 결과를 캐시한다(자바로 치면 <code>computeIfAbsent</code>). 계획에 <code>Memoize (Hits: 1832 Misses: 210 …)</code>로 찍히고 Hits가 크면 중복 키만큼 공짜로 빨라진 상태다.</div>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">PostgreSQL 계획으로 보는 NL — 읽는 법 3</div>
+<pre style="margin:6px 0 10px"><code><span class="cm">EXPLAIN (ANALYZE, BUFFERS)
+SELECT o.id, o.amount, u.name FROM orders o
+JOIN users u ON u.id = o.user_id WHERE o.created_at &gt;= '2026-08-01';</span>
+
+<span class="ln note">Nested Loop  (cost=0.71..1042.19 rows=210) (actual rows=203 loops=1)</span>
+  -&gt;  Index Scan using idx_orders_created_at on orders o     <span class="cm">← outer(드라이빙)</span>
+        Index Cond: (created_at &gt;= '2026-08-01')
+        (actual rows=203 loops=1)
+<span class="ln good">  -&gt;  Index Scan using users_pkey on users u                 <span class="cm">← inner</span></span>
+<span class="ln good">        Index Cond: (id = o.user_id)                        <span class="cm">← 인덱스 탐색 성립</span></span>
+<span class="ln good">        (actual rows=1 loops=203)                           <span class="cm">← 바깥 행 수만큼 반복</span></span></code></pre>
+    <ol style="margin:0">
+      <li>조인 노드의 <b>첫 번째(위) 자식이 outer = 드라이빙</b>, 두 번째가 inner다.</li>
+      <li>inner의 <code>loops=203</code> = <b>바깥 행 수만큼 반복</b> — NL 비용의 첫 번째 항이 여기 그대로 찍힌다.</li>
+      <li>inner에 <code>Index Cond</code>로 조인 키가 걸려 있으면 인덱스 탐색이 성립한 것 — 여기가 <code>Seq Scan</code>이면 위 ❌ 코드가 실제로 벌어지고 있다는 신호다.</li>
+    </ol>
+    <div class="ba-note" style="margin-top:10px">⚠️ 함정: inner의 <code>actual rows</code>는 <b>loops당 평균</b>이다. 실제 총 행 수 = <code>rows × loops</code>(위 예시 1 × 203 = 203). 이걸 모르면 "안쪽이 1행밖에 안 읽었는데 왜 느리지?"에서 멈춘다.</div>
   </div>
 
   <!-- 2-2 Hash -->
-  <h3 id="s2-2">2-2. Hash 조인 — 작은 쪽으로 build, 큰 쪽으로 probe</h3>
+  <h3 id="s2-2">2-2. Hash Join — 작은 쪽으로 build, 큰 쪽으로 probe</h3>
   <div class="pair">
 <pre><code><span class="cm">// 1단계 build — "작은 쪽"(users 1만)으로 해시 테이블을 만든다</span>
 <span class="ln good">Map&lt;Long, User&gt; built = new HashMap&lt;&gt;();</span>
@@ -586,7 +614,7 @@ for (Order order : orders) {              <span class="cm">// 바깥 = 드라이
     <ol>
       <li><span class="kw">프로브 비용은 방향과 무관</span> — 어느 쪽을 build하든 "한쪽 전부 put + 다른 쪽 전부 get". 10만을 넣고 1만으로 찾으나, 1만을 넣고 10만으로 찾으나 순회 총량은 <b>11만으로 같다.</b></li>
       <li><span class="kw">다른 것은 해시 테이블 크기뿐</span> — 10만 건짜리 Map과 1만 건짜리 Map. 결과는 같은데 메모리 점유만 10배. 큰 쪽 build는 <b>얻는 것 없이 메모리만 더 쓴다.</b></li>
-      <li><span class="kw">스필 위험</span> — 해시 테이블이 작업 메모리 한도를 넘치면 DB는 양쪽을 파티션으로 쪼개 디스크에 쓰고 파티션끼리 조인(스필)해야 해서 급격히 느려진다. 작은 쪽 build는 <b>스필 위험 자체를 줄인다.</b></li>
+      <li><span class="kw">스필 위험</span> — 해시 테이블이 작업 메모리 한도(<code>work_mem × hash_mem_multiplier</code>)를 넘치면 DB는 양쪽을 파티션으로 쪼개 디스크 임시 파일에 쓰고 파티션끼리 조인(<b>디스크 스필</b>)해야 해서 급격히 느려진다. 작은 쪽 build는 <b>스필 위험 자체를 줄인다.</b></li>
     </ol>
     <div class="mn"><b>한 문장</b>: "메모리 한계 내에서 큰 쪽"이 아니라 <b>"이득이 전무하니 무조건 작은 쪽"</b>. 자바에서도 같은 이유로 작은 리스트를 Map으로 만드는 게 정석이다. 이 오답의 뿌리는 "비용이 어디서 나는가"를 끝까지 추적하지 않는 습관 — 순회 총량을 실제로 더해 보면 답이 하나로 수렴한다.</div>
   </div>
@@ -606,8 +634,48 @@ for (Order order : orders) {              <span class="cm">// 바깥 = 드라이
     </svg>
   </div>
 
-  <!-- 2-3 Sort-merge -->
-  <h3 id="s2-3">2-3. Sort-merge 조인 — 양쪽 정렬 후 지퍼처럼 병합</h3>
+  <div class="memo">
+    <div class="memo-head"><span class="tag warn">용어</span><span class="memo-title">"디스크 스필(spill)"이란 — 메모리에서 하려던 작업이 넘쳐 디스크로 흐르는 것</span></div>
+    <ol>
+      <li>빌드 사이드로 해시 테이블을 메모리에 만들려 한다 — 한도는 <code>work_mem × hash_mem_multiplier</code>.</li>
+      <li>안 들어가면 포기하지 않고 <b>양쪽을 조인 키 해시값으로 N개 파티션(batch)으로 쪼개</b> 임시 파일에 쓴다.</li>
+      <li>그 뒤 <b>"batch 1의 빌드 쪽 + batch 1의 프로브 쪽"만 메모리에 올려 조인</b> → batch 2 → … 각 batch는 작아서 들어가므로 <b>결과는 정확히 같다.</b></li>
+      <li>대가는 <b>디스크 쓰기 + 읽기가 한 번씩 추가</b>된다는 것 — 메모리에서 끝났으면 없었을 I/O라 수 배~수십 배 느려진다.</li>
+    </ol>
+    <div class="mn"><b>자바로 치면</b>: <code>HashMap</code>이 힙에 안 들어가서 키 해시값으로 100개 파일로 나눠 쓰고, 파일 단위로 나눠 조인하는 것. <b>정렬도 같은 일</b>이 벌어지고 이름만 다르다(<code>Sort Method: external merge</code> = 외부 병합 정렬). <b>계획에서 보는 법</b>: <code>Batches: 1</code>이면 스필 없음, <code>Batches: 8</code>이면 8조각으로 쪼개 디스크를 썼다는 뜻. <code>BUFFERS</code>를 켜면 <code>temp read/written</code>으로도 보인다.</div>
+  </div>
+
+  <div class="memo">
+    <div class="memo-head"><span class="tag warn">용어</span><span class="memo-title"><code>work_mem</code>이란 — 임시 작업 <b>하나</b>가 디스크로 내려가기 전까지 쓸 수 있는 메모리 상한</span></div>
+    <p style="margin:.2em 0 .5em">PostgreSQL 설정값(기본 <b>4MB</b>). 여기서 "작업"은 실행 계획의 <b>노드</b>다 — <code>Sort</code>, 해시 조인의 <code>Hash</code>, <code>HashAggregate</code>, <code>Materialize</code>. 이 한도를 넘으면 위의 스필이 일어난다.</p>
+    <ol>
+      <li><span class="kw">쿼리당이 아니라 노드당</span> — 한 쿼리에 정렬 3개 + 해시 조인 2개면 최대 <code>5 × work_mem</code>, 병렬 워커 수만큼 또 곱해진다. 전역으로 크게 올리면 <code>max_connections × 노드 수 × work_mem</code>이 되어 OOM 위험 — <b>전역은 보수적으로(4~16MB), 무거운 배치·리포트만 세션에서 올린다.</b></li>
+      <li><span class="kw">shared_buffers와 다르다</span> — <code>shared_buffers</code>는 테이블·인덱스 페이지를 담는 <b>공유 캐시</b>, <code>work_mem</code>은 세션이 혼자 쓰는 <b>작업 공간</b>. (VACUUM·인덱스 생성용은 또 별도로 <code>maintenance_work_mem</code>.)</li>
+      <li><span class="kw">해시에는 배수가 붙는다</span> — <code>hash_mem_multiplier</code>(PG 15부터 기본 2.0)가 곱해져 <b>해시 테이블의 실효 한도는 <code>work_mem × 2</code></b>. 정렬에는 이 배수가 붙지 않는다.</li>
+    </ol>
+    <div class="mn"><b>설정 방법</b>: <code>SET work_mem = '64MB'</code>(현재 세션) / <code>SET LOCAL</code>(현재 트랜잭션만 — 진단할 때 안전) / <code>postgresql.conf</code>(전역) / <code>ALTER ROLE … SET</code>(배치 계정만 크게).</div>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">PostgreSQL 계획으로 보는 Hash Join — <code>Hash</code> 노드가 붙은 쪽이 빌드 사이드</div>
+<pre style="margin:6px 0 10px"><code><span class="ln note">Hash Join  (cost=… rows=99873) (actual rows=99873 loops=1)</span>
+  Hash Cond: (o.user_id = u.id)
+  -&gt;  Seq Scan on orders o    (actual rows=100000 loops=1)   <span class="cm">← probe (큰 쪽)</span>
+<span class="ln good">  -&gt;  Hash  (actual rows=10000 loops=1)                      <span class="cm">← build (작은 쪽)</span></span>
+<span class="ln good">        Buckets: 16384  Batches: 1  Memory Usage: 1088kB     <span class="cm">← 1이면 메모리 안에서 끝</span></span>
+        -&gt;  Seq Scan on users u  (actual rows=10000 loops=1)</code></pre>
+    <p style="margin:.2em 0"><b>반드시 볼 줄은 <code>Batches</code></b> — <code>Batches: 1</code>이면 해시 테이블이 메모리 안에서 끝났다는 뜻이고, <code>Batches: 8</code>처럼 1보다 크면 <b>디스크로 스필</b>했다는 뜻이다(양쪽을 파티션으로 쪼개 임시 파일에 쓰고 파티션끼리 조인 → 급격히 느려진다). 처방은 ① 빌드 사이드를 더 작게(선행 필터, 필요한 컬럼만), ② 해시용 작업 메모리를 늘리기.</p>
+    <ul style="margin:.3em 0 0">
+      <li>PG의 작업 메모리는 <code>work_mem</code>이며 <b>쿼리당이 아니라 노드당</b>이다 — 해시·정렬 노드가 여러 개면 그만큼 곱해져 쓰인다.</li>
+      <li>해시 계열은 여기에 <code>hash_mem_multiplier</code>가 곱해진다(PG 13 도입, <b>PG 15부터 기본 2.0</b> → 실효 한도 = <code>work_mem × 2</code>).</li>
+      <li>확인법: <code>SET LOCAL work_mem = '64MB'</code> 후 재실행 → <code>Batches</code>가 1로 떨어지는지 본다. 전역으로 크게 올리면 동시 세션 수 × 노드 수만큼 먹으니 조심.</li>
+      <li>병렬 계획에서는 <code>Parallel Hash</code> / <code>Parallel Hash Join</code>(PG 11+)으로 찍힌다 — 워커들이 <b>공유 해시 테이블 하나</b>를 함께 만든다.</li>
+    </ul>
+    <p style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);font-size:.9rem;margin-bottom:0">PG는 이 원칙을 outer join에서도 관철한다 — <code>a LEFT JOIN b</code>인데 a가 작으면 a를 해시로 만들고 b로 probe하는 <b><code>Hash Right Join</code></b>으로 뒤집어 실행한다(의미는 그대로, 빌드 사이드만 바꾼 것). 계획에서 <code>Right</code>를 보고 "내가 RIGHT JOIN을 안 썼는데?" 하고 당황하지 않으면 된다.</p>
+  </div>
+
+  <!-- 2-3 Merge Join -->
+  <h3 id="s2-3">2-3. Merge Join (교과서의 Sort-merge) — 양쪽 정렬 후 지퍼처럼 병합</h3>
   <div class="pair">
 <pre><code><span class="cm">// 1단계: 양쪽을 조인 키로 정렬 — 비용의 대부분이 여기</span>
 <span class="ln note">orders.sort(comparing(Order::getUserId));</span>
@@ -682,13 +750,36 @@ while (i &lt; orders.size() &amp;&amp; j &lt; users.size()) {
     <div class="cap">병합 단계는 양쪽을 한 번씩만 훑는다(합병 정렬의 merge와 같은 그림). 비용의 대부분은 <b>정렬</b>이므로 입력이 <b>이미 조인 키 순으로 정렬돼 있으면</b>(조인 키 인덱스 순으로 읽는 경우 등) 정렬이 공짜가 되어 강해진다. 해시와 달리 범위 조건 조인도 소화한다.</div>
   </div>
 
+  <div class="card">
+    <div class="eyebrow">PostgreSQL 계획으로 보는 Merge Join — <code>Sort</code> 노드의 유무가 곧 비용</div>
+    <div class="grid2" style="margin-top:8px">
+      <div>
+        <div class="eyebrow green" style="margin-bottom:4px">✅ 정렬이 공짜 — 인덱스 순서로 읽는다</div>
+<pre style="margin:0"><code>Merge Join
+  Merge Cond: (o.user_id = u.id)
+  -&gt;  Index Scan using idx_orders_user_id on orders o
+  -&gt;  Index Scan using users_pkey on users u</code></pre>
+      </div>
+      <div>
+        <div class="eyebrow red" style="margin-bottom:4px">❌ 정렬 비용을 낸다 — 게다가 디스크로</div>
+<pre style="margin:0"><code>Merge Join
+  Merge Cond: (o.user_id = u.id)
+<span class="ln bad">  -&gt;  Sort   Sort Key: o.user_id</span>
+<span class="ln bad">        Sort Method: external merge  Disk: 21544kB</span>
+        -&gt;  Seq Scan on orders o
+  -&gt;  Index Scan using users_pkey on users u</code></pre>
+      </div>
+    </div>
+    <p style="margin:.7em 0 0"><code>Sort Method: quicksort  Memory: 1234kB</code>면 메모리에서 끝난 정렬이고, <code>external merge  Disk: …</code>면 <code>work_mem</code>을 넘겨 디스크로 내려간 정렬이다 — Hash Join의 <code>Batches &gt; 1</code>과 <b>같은 종류의 경고등</b>이다. 해시와 달리 <b>범위 조건 조인</b>(부등호, FULL OUTER)도 소화하고, <code>ORDER BY</code>가 조인 키와 같으면 결과 정렬까지 덤으로 얻는다.</p>
+  </div>
+
   <!-- 2-4 comparison -->
   <h3 id="s2-4">2-4. 3방식 비교표 — 이대로 외운다</h3>
   <div class="memo">
-    <div class="memo-head"><span class="tag acc">암기 카드</span><span class="memo-title">NL · Hash · Sort-merge 한 장 비교</span></div>
+    <div class="memo-head"><span class="tag acc">암기 카드</span><span class="memo-title">Nested Loop · Hash · Merge 한 장 비교</span></div>
     <div class="tbl cmp" style="margin:6px 0 0">
       <table>
-        <thead><tr><th></th><th class="nl">Nested Loop</th><th class="hs">Hash</th><th class="sm">Sort-merge</th></tr></thead>
+        <thead><tr><th></th><th class="nl">Nested Loop</th><th class="hs">Hash</th><th class="sm">Merge Join</th></tr></thead>
         <tbody>
           <tr><td>자바 코드</td><td>이중 <code>for</code></td><td><code>HashMap</code> put → get</td><td>양쪽 <code>sort</code> → 두 포인터</td></tr>
           <tr><td>전제 조건</td><td>안쪽 조인 키 <b>인덱스</b> (없으면 최악)</td><td><b>등호(=)</b> 조인만</td><td>정렬 가능하면 됨 (범위 조건도 OK)</td></tr>
@@ -696,49 +787,84 @@ while (i &lt; orders.size() &amp;&amp; j &lt; users.size()) {
           <tr><td>메모리</td><td>거의 없음</td><td><b>작은 쪽 크기</b>만큼 — 넘치면 디스크 스필</td><td>정렬 버퍼 — 넘치면 디스크 정렬</td></tr>
           <tr><td>이기는 판</td><td>드라이빙 작고 안쪽 인덱스 있음 — <b>OLTP 소량 조회 + 조인</b>, 첫 행이 빨리 나옴</td><td><b>인덱스 없는 대량 등호 조인</b> — 배치·통계·임시 테이블</td><td><b>이미 정렬된 입력</b>, ORDER BY 병용, 범위 조건 조인</td></tr>
           <tr><td>지는 판</td><td>드라이빙이 크거나 안쪽 인덱스 없음 → 루프 폭발</td><td>등호 아님 / 메모리 초과(스필)</td><td>정렬 비용을 새로 내야 할 때</td></tr>
-          <tr><td>EXPLAIN 신호<br><small>(MySQL)</small></td><td>안쪽 행 <code>type=eq_ref/ref</code> + <code>key</code> 있음 ✅<br>안쪽 <code>type=ALL</code> + <code>Using join buffer</code> ❌</td><td>Extra <code>Using join buffer (hash join)</code><br>TREE 형식: <code>Inner hash join</code></td><td>MySQL은 쓰지 않음.<br>PostgreSQL·Oracle 계획의 <code>Merge Join</code> 노드</td></tr>
+          <tr><td>계획 신호<br><small>(PostgreSQL)</small></td><td><code>Nested Loop</code> + 안쪽 <code>Index Cond</code> ✅<br>안쪽 <code>Seq Scan</code>이면 ❌<br>반복 횟수 = 안쪽 <code>loops=N</code></td><td><code>Hash Join</code> + <code>Hash</code> 노드가 붙은 쪽이 build<br><code>Batches: 1</code> ✅ / <code>Batches: 8</code>이면 스필 ❌</td><td><code>Merge Join</code> + <code>Merge Cond</code><br>아래 <code>Sort</code>가 없으면 정렬 공짜 ✅<br><code>Sort Method: external merge Disk:</code>면 ❌</td></tr>
         </tbody>
       </table>
     </div>
-    <div class="mn"><b>연상</b>: NL = <b>"루프 × 탐색"</b>(인덱스가 생명) / Hash = <b>"작은 쪽 메모리, 등호만"</b> / Sort-merge = <b>"정렬돼 있으면 공짜"</b>.</div>
+    <div class="mn"><b>연상</b>: NL = <b>"루프 × 탐색"</b>(인덱스가 생명) / Hash = <b>"작은 쪽 메모리, 등호만"</b> / Merge = <b>"정렬돼 있으면 공짜"</b>. <b>PG는 셋 다 후보</b>이므로 계획에 찍힌 이름은 <b>플래너가 계산한 결론</b>이다 — 이상하면 방식을 탓하기 전에 추정 행 수를 본다.</div>
   </div>
 
   <div class="card accent">
-    <div class="eyebrow">옵티마이저는 무엇을 보고 고르나 — 입력 3</div>
+    <div class="eyebrow">플래너는 무엇을 보고 고르나 — 입력 4</div>
     <ol style="margin:0">
       <li><b>양쪽의 (조건 적용 후) 예상 행 수</b> — 드라이빙 후보와 build 후보를 정한다.</li>
-      <li><b>조인 키의 인덱스·정렬 여부</b> — 있으면 NL 또는 Sort-merge가 싸진다.</li>
-      <li><b>조인 조건이 등호인가</b> — 아니면 Hash는 탈락.</li>
+      <li><b>조인 키의 인덱스·정렬 여부</b> — 있으면 NL 또는 Merge Join이 싸진다.</li>
+      <li><b>조인 조건이 등호인가</b> — 아니면 Hash는 탈락(FULL OUTER는 Merge/Hash만 가능).</li>
+      <li><b><code>work_mem</code>(× <code>hash_mem_multiplier</code>)</b> — 해시·정렬이 메모리에 들어가는지가 비용에 반영된다.</li>
     </ol>
-    <p style="margin:.6em 0 0">이 입력 중 ①은 <b>통계</b>에서 온다 — 통계가 틀리면 방식 선택 자체가 틀어진다. 조인 방식이 이상할 때 통계 갱신을 의심하는 이유.</p>
+    <p style="margin:.6em 0 0">이 입력 중 ①은 <b>통계</b>에서 온다 — 통계가 틀리면 방식 선택 자체가 틀어진다. 그래서 "조인 방식이 이상하다"의 1차 처방은 방식 강제가 아니라 <b><code>ANALYZE</code> · 확장 통계(<code>CREATE STATISTICS</code>) · <code>default_statistics_target</code> 상향</b>이다.</p>
   </div>
 
   <!-- 2-5 EXPLAIN -->
-  <h3 id="s2-5">2-5. MySQL EXPLAIN에서 NL 두 항을 읽는다</h3>
-  <p>같은 쿼리 — <code>SELECT … FROM orders o JOIN users u ON u.id = o.user_id WHERE o.created_at &gt;= ?</code> — 를 두 상태로 본다. 위 행이 드라이빙, 아래 행이 안쪽이다.</p>
+  <h3 id="s2-5">2-5. PostgreSQL EXPLAIN에서 "느린 조인"을 잡는 3단계</h3>
+  <p>같은 쿼리 — <code>SELECT … FROM orders o JOIN users u ON u.id = o.user_id WHERE o.created_at &gt;= ?</code> — 를 두 상태로 본다. <b>방식 이름을 탓하기 전에 추정과 실제의 간격을 먼저 본다.</b></p>
   <div class="grid2">
     <div class="card ok">
-      <div class="eyebrow green">✅ 건강한 NL</div>
-      <div class="tbl explain-tbl" style="margin:0"><table>
-        <thead><tr><th>table</th><th>type</th><th>key</th><th>rows</th><th>Extra</th></tr></thead>
-        <tbody>
-          <tr><td>o</td><td>range</td><td>idx_created</td><td>1200</td><td>Using where</td></tr>
-          <tr><td>u</td><td class="c-ok">eq_ref</td><td>PRIMARY</td><td class="c-ok">1</td><td></td></tr>
-        </tbody>
-      </table></div>
-      <p class="mini" style="margin-bottom:0">드라이빙 o는 조건으로 1200건까지 줄었고, 안쪽 u는 <b>PK로 행당 1건 탐색</b>. 비용 ≈ 1200 × 1.</p>
+      <div class="eyebrow green">✅ 건강한 NL — 추정과 실제가 붙어 있다</div>
+<pre style="margin:0"><code><span class="ln good">Nested Loop  (rows=210) (actual rows=203 loops=1)</span>
+  -&gt;  Index Scan using idx_orders_created_at on orders o
+        (rows=210) (actual rows=203 loops=1)
+  -&gt;  Index Scan using users_pkey on users u
+        Index Cond: (id = o.user_id)
+        (actual rows=1 loops=203)</code></pre>
+      <p class="mini" style="margin-bottom:0">드라이빙 o가 조건으로 203건까지 줄었고, 안쪽 u는 <b>PK 인덱스로 행당 1건 탐색</b>. 비용 ≈ 203 × 1. 추정 210 vs 실제 203 — <b>통계가 맞다.</b></p>
     </div>
     <div class="card warn">
-      <div class="eyebrow red">❌ 안쪽 인덱스 없음</div>
-      <div class="tbl explain-tbl" style="margin:0"><table>
-        <thead><tr><th>table</th><th>type</th><th>key</th><th>rows</th><th>Extra</th></tr></thead>
-        <tbody>
-          <tr><td>o</td><td>range</td><td>idx_created</td><td>1200</td><td>Using where</td></tr>
-          <tr><td>u</td><td class="c-bad">ALL</td><td class="c-bad">NULL</td><td class="c-bad">10000</td><td class="c-bad">Using join buffer (hash join)</td></tr>
-        </tbody>
-      </table></div>
-      <p class="mini" style="margin-bottom:0">안쪽이 <b>풀스캔</b>. 인덱스가 없어 MySQL이 조인 버퍼로 대체 — 구버전은 Block Nested Loop, MySQL 8.0의 최근 버전은 이 자리에 해시 조인을 쓴다. 처방은 <code>u.id</code>(또는 조인 키) 인덱스.</p>
+      <div class="eyebrow red">❌ 추정이 틀려 NL이 폭주 — 진짜 원인은 통계</div>
+<pre style="margin:0"><code><span class="ln bad">Nested Loop  (rows=210) (actual rows=1982340 loops=1)</span>
+  -&gt;  Seq Scan on orders o
+<span class="ln bad">        (rows=210) (actual rows=980000 loops=1)</span>
+  -&gt;  Index Scan using users_pkey on users u
+<span class="ln bad">        (actual rows=2 loops=980000)</span>  <span class="cm">← 98만 번 반복</span></code></pre>
+      <p class="mini" style="margin-bottom:0">추정 210, 실제 98만 — <b>자릿수가 다르면 방식 선택 자체가 그 오류의 결과다.</b> 처방은 <code>enable_nestloop=off</code>가 아니라 <b><code>ANALYZE</code>·확장 통계</b>. 추정이 맞으면 플래너가 스스로 Hash Join으로 갈아탄다.</p>
     </div>
+  </div>
+
+  <div class="memo">
+    <div class="memo-head"><span class="tag acc">암기 카드</span><span class="memo-title">"조인이 느리다" — 계획에서 볼 3가지, 이 순서로</span></div>
+    <ol>
+      <li><span class="kw">어떤 방식인가</span> — <code>Nested Loop</code> / <code>Hash Join</code> / <code>Merge Join</code>. 이름은 확인만 하고 탓하지 않는다.</li>
+      <li><span class="kw">추정 vs 실제</span> — <code>rows=</code> vs <code>actual rows=</code>. 자릿수가 다르면 <b>원인은 통계</b>(→ <code>ANALYZE</code>, 상관 컬럼이면 <code>CREATE STATISTICS</code>).</li>
+      <li><span class="kw">메모리 경고등</span> — Hash의 <code>Batches &gt; 1</code>, Sort의 <code>Sort Method: external merge Disk:</code> → 스필. <code>work_mem</code> 또는 빌드 사이드 크기를 손댄다.</li>
+    </ol>
+    <div class="mn"><b>방식별 한 줄 더</b>: NL이면 inner의 <code>loops</code>와 <code>Index Cond</code> 유무 / Hash면 <code>Hash</code> 노드가 작은 쪽인지 / Merge면 <code>Sort</code>가 붙었는지. <code>EXPLAIN (ANALYZE, BUFFERS)</code>로 <code>shared read</code>가 큰 노드를 찾으면 실제 I/O 지점까지 잡힌다.</div>
+  </div>
+
+  <!-- 2-6 PG vs MySQL -->
+  <h3 id="s2-6">2-6. PostgreSQL은 셋을 "비용으로" 고른다 — MySQL과의 결정적 차이</h3>
+  <p>세 방식이 이기는 판을 한 줄씩 — <b>NL</b>: 드라이빙이 작고 안쪽 조인 키에 인덱스가 있을 때(OLTP 소량 조회, 첫 행이 빨리 나온다) / <b>Hash</b>: 인덱스 없는 대량 등호 조인 / <b>Merge</b>: 이미 정렬돼 있거나 정렬이 어차피 필요할 때(<code>ORDER BY</code> 병용, 범위·FULL 조인). 여기서 DB가 갈린다.</p>
+  <div class="tbl cmp">
+    <table>
+      <thead><tr><th></th><th>PostgreSQL</th><th>MySQL 8.0</th></tr></thead>
+      <tbody>
+        <tr><td>Nested Loop</td><td>있음 (+ <code>Memoize</code> 캐시, PG 14+)</td><td>있음 — <b>전통적 기본</b></td></tr>
+        <tr><td>Hash Join</td><td>있음 (병렬 해시 조인 포함)</td><td>8.0.18에서 뒤늦게 추가</td></tr>
+        <tr><td>Merge Join</td><td class="c-ok">있음</td><td class="c-bad">없음</td></tr>
+        <tr><td>FULL OUTER JOIN</td><td class="c-ok">지원</td><td class="c-bad">미지원 (LEFT ∪ RIGHT UNION)</td></tr>
+        <tr><td>안쪽 인덱스 접근 비용</td><td>힙 기반 — 인덱스 탐색 <b>+ 힙 페치</b> (커버링이면 <code>Index Only Scan</code>)</td><td>클러스터드 — PK 조인의 안쪽 접근이 곧 데이터 접근</td></tr>
+        <tr><td>튜닝의 축</td><td><b>통계 · <code>work_mem</code> · 인덱스</b> → 플래너의 선택을 옳게 만들기</td><td><b>인덱스 · 조인 순서</b> → NL 최적화</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card accent">
+    <div class="eyebrow">PG 조인 튜닝 = 플래너에게 사실을 알려주는 일 — 확인 3</div>
+    <ol style="margin:0">
+      <li><code>ANALYZE</code>(autovacuum의 analyze)로 <b>통계가 최신인가</b>.</li>
+      <li>안쪽 조인 키에 <b>인덱스가 있는가</b>(+ 커버링으로 힙 페치를 없앨 수 있는가).</li>
+      <li><code>work_mem</code>이 <b>스필을 안 낼 만큼인가</b>(<code>Batches</code>·<code>Sort Method</code>로 확인).</li>
+    </ol>
+    <p style="margin:.6em 0 0">조인 <b>순서</b> 쪽으로는 <code>join_collapse_limit</code>(기본 8)을 알아 두면 좋다 — 조인 테이블이 이 수를 넘으면 PG는 순서 탐색을 접거나(FROM 순서 사용) <code>geqo</code>(유전 알고리즘, 기본 임계값 12)로 근사한다. "테이블 12개 조인인데 계획이 이상하다"의 배경이 이것이다.</p>
+    <p style="margin:.6em 0 0"><b>진단용 스위치</b>: <code>SET LOCAL enable_nestloop = off;</code>처럼 특정 방식을 껐다 켜서 "다른 방식이면 얼마나 빠른가"를 재본다. <b>가설 검증 도구이지 운영 설정이 아니다</b> — 나쁜 계획의 진짜 원인(대개 추정 행 수 오류)을 찾는 데 쓰고, 코드나 서버 설정으로 굳히지 않는다.</p>
   </div>
 </section>
 
@@ -778,6 +904,7 @@ FROM orders o
       <li>존재가 <b>보장되지 않는(선택적인) 관계</b> — 쿠폰, 리뷰, 프로필 사진, 배송 추적 — 에 <span class="kw">INNER</span>가 보이면 <b>행 누락을 의심</b>한다.</li>
       <li>반대로 <b>반드시 존재하는 관계</b>(주문 → 주문자)면 <span class="kw">INNER</span>가 맞고, 습관적 LEFT는 의도를 흐린다.</li>
     </ul>
+    <div class="mn"><b>PG 한 줄</b>: 습관적 LEFT가 항상 공짜는 아니다 — PG 플래너는 "오른쪽 컬럼을 아무도 안 쓰고, 조인 키가 유니크해서 행이 늘지 않는" LEFT JOIN은 아예 제거하지만(<b>join removal</b> — 계획에서 그 테이블이 사라진다), 조건이 안 맞으면 그대로 비용이다.</div>
   </div>
 
   <h3>3-2. <span class="tag warn">가산점</span> LEFT JOIN 뒤 WHERE에 오른쪽 조건 — LEFT가 조용히 INNER로 변한다</h3>
@@ -804,6 +931,19 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
 <span class="cm">-- 의미: "8월 이후 사용된 쿠폰만 조인 대상으로 삼되, 주문은 전부 남긴다."
 -- 조건에 안 맞으면 매칭 실패로 처리 → NULL 채움 → 주문은 살아남는다.</span></code></pre>
     <div class="ba-note">8월 이전에 쓴 쿠폰의 주문도 <b>주문 자체는 남고</b> 쿠폰 칸만 NULL이 된다 — 요구사항("주문은 전부")이 지켜진다.</div>
+  </div>
+
+  <div class="card accent">
+    <div class="eyebrow">PostgreSQL이면 EXPLAIN으로 30초에 확진한다</div>
+    <p style="margin:.2em 0 .5em">플래너는 "오른쪽에 strict 조건이 붙었으니 이 outer join은 inner join과 같다"고 판단해 <b>조인을 실제로 축약한다</b>(outer join reduction). 그래서 계획에 <code>Hash Left Join</code>이 아니라 그냥 <code>Hash Join</code>이 찍힌다.</p>
+<pre style="margin:0"><code><span class="cm">-- ❌ before의 계획: 내가 쓴 건 LEFT인데 Left가 사라졌다</span>
+<span class="ln bad">Hash Join                        <span class="cm">← Left가 없다 = INNER로 축약됨</span></span>
+  Hash Cond: (c.order_id = o.id)
+
+<span class="cm">-- ✅ after의 계획</span>
+<span class="ln good">Hash Left Join                   <span class="cm">← LEFT가 살아 있다</span></span>
+  Hash Cond: (c.order_id = o.id)</code></pre>
+    <p style="margin:.6em 0 0">리뷰·디버깅 체크로 굳히면 — <b>"LEFT JOIN을 썼는데 계획에 <code>Left</code>가 없다 → 조건 배치가 잘못됐다."</b> 반대로 <b>의도적인 예외도 계획에 드러난다</b>: <code>WHERE c.order_id IS NULL</code>(안티조인)은 축약이 아니라 <code>Hash Anti Join</code>으로 찍히고, 같은 의도를 <code>NOT EXISTS</code>로 써도 동일한 계획이 나온다 — 우연히 되는 트릭이 아니라 <b>플래너가 알아보는 정식 패턴</b>이라는 뜻이다.</p>
   </div>
 
   <div class="memo green">
@@ -842,9 +982,9 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
 
   <div class="script">
     <div class="eyebrow">버전 A — 정석 30초 (이름이 떠오를 때)</div>
-    <div class="beat"><span class="t">0-8s</span><p><b>종류</b>는 "매칭 실패한 행을 어떻게 하느냐"로 갈립니다. INNER는 양쪽 다 있는 행만, LEFT는 왼쪽 전부를 남기고 <b>매칭 실패한 오른쪽 컬럼은 NULL로 채웁니다.</b> RIGHT는 거울상, FULL은 양쪽 전부인데 MySQL은 미지원이라 LEFT와 RIGHT의 UNION으로 흉내 냅니다.</p></div>
+    <div class="beat"><span class="t">0-8s</span><p><b>종류</b>는 "매칭 실패한 행을 어떻게 하느냐"로 갈립니다. INNER는 양쪽 다 있는 행만, LEFT는 왼쪽 전부를 남기고 <b>매칭 실패한 오른쪽 컬럼은 NULL로 채웁니다.</b> RIGHT는 거울상, FULL은 양쪽 전부인데 <b>PostgreSQL은 지원</b>하고 MySQL은 없어서 LEFT ∪ RIGHT UNION으로 흉내 냅니다.</p></div>
     <div class="beat"><span class="t">8-13s</span><p>실무에서 중요한 건, <b>LEFT 자리에 INNER를 쓰면 에러 없이 행이 조용히 사라진다</b>는 점이라 이건 리뷰에서 잡아야 합니다.</p></div>
-    <div class="beat"><span class="t">13-30s</span><p><b>실행 방식</b>은 자바 코드로 보면 셋입니다. 이중 for가 <b>Nested Loop</b>인데 DB는 안쪽을 인덱스로 탐색하고 MySQL 기본이라 튜닝은 "드라이빙 작게, 안쪽 인덱스"입니다. HashMap에 넣고 찾는 게 <b>Hash 조인</b>이고 <b>빌드는 항상 작은 쪽</b>, 등호 전용, 인덱스 없는 대량 조인용입니다. 정렬 후 두 포인터 병합이 <b>Sort-merge</b>로 이미 정렬된 입력이면 강합니다.</p></div>
+    <div class="beat"><span class="t">13-30s</span><p><b>실행 방식</b>은 자바 코드로 보면 셋입니다. 이중 for가 <b>Nested Loop</b>인데 DB는 안쪽을 인덱스로 탐색하니 "드라이빙 작게, 안쪽 인덱스"고요. HashMap에 넣고 찾는 게 <b>Hash Join</b>이고 <b>빌드는 항상 작은 쪽</b>, 등호 전용, 인덱스 없는 대량 조인용입니다. 정렬 후 두 포인터 병합이 <b>Merge Join</b>으로 이미 정렬된 입력이면 강합니다. <b>제가 쓰는 PostgreSQL은 셋을 다 갖고 비용으로 고르기 때문에</b>, 튜닝은 방식 강제가 아니라 <b>통계·인덱스·work_mem</b>이고 계획에서는 <code>loops</code>와 <code>Batches</code>를 먼저 봅니다.</p></div>
   </div>
 
   <div class="script">
@@ -852,7 +992,7 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
     <div class="beat"><span class="t">0-5s</span><p>"실행 방식 이름이 바로 떠오르진 않는데, <b>제가 자바로 조인을 짠다면 방법이 세 가지</b>라서 거기서 출발하겠습니다."</p></div>
     <div class="beat"><span class="t">5-15s</span><p>"첫째는 이중 for인데, DB는 안쪽을 통순회하지 않고 <b>조인 키 인덱스로 찾아갈</b> 겁니다 — 아마 <b>Nested Loop</b>이라고 부를 거고요. 그러면 바깥 루프가 작아야 하고 안쪽엔 인덱스가 있어야 합니다."</p></div>
     <div class="beat"><span class="t">15-25s</span><p>"둘째는 한쪽을 HashMap에 넣고 다른 쪽을 순회하는 것 — <b>메모리를 대가로</b> 빨라지는 <b>Hash 조인</b>이고, <b>메모리에 올릴 쪽이니 작은 쪽을 Map으로</b> 만듭니다. 등호 조건일 때만 가능하고요."</p></div>
-    <div class="beat"><span class="t">25-30s</span><p>"셋째는 양쪽을 정렬해서 병합하는 것 — <b>Sort-merge</b>고, 이미 정렬돼 있으면 유리합니다."</p></div>
+    <div class="beat"><span class="t">25-30s</span><p>"셋째는 양쪽을 정렬해서 병합하는 것 — <b>Sort-merge</b>, PostgreSQL 계획에서는 <b>Merge Join</b>으로 찍히고, 이미 정렬돼 있으면 유리합니다."</p></div>
   </div>
 
   <div class="fork">
@@ -892,14 +1032,15 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
   </details>
 
   <details class="q">
-    <summary>MySQL에서 조인 쿼리가 느립니다. 실행 방식 관점에서 가장 먼저 확인할 두 가지는?</summary>
+    <summary>PostgreSQL에서 조인 쿼리가 느립니다. 실행 계획에서 먼저 볼 세 가지는?</summary>
     <div class="a">
-      <p>MySQL의 기본 조인은 NL이므로 NL의 비용 공식 — <b>"바깥 루프 횟수 × 안쪽 탐색 비용"</b> — 의 두 항을 그대로 확인한다.</p>
       <ol>
-        <li><b>드라이빙 테이블이 작은 쪽인가</b> — WHERE 조건으로 크게 줄어드는 테이블이 바깥이어야 루프 횟수가 준다.</li>
-        <li><b>안쪽 테이블의 조인 키에 인덱스가 있는가</b> — 없으면 바깥 행마다 안쪽을 통순회하는 최악의 이중 루프가 실제로 벌어진다.</li>
+        <li><b>어떤 방식을 골랐나</b> — <code>Nested Loop</code> / <code>Hash Join</code> / <code>Merge Join</code>. 방식 자체를 탓하기 전에 확인만 한다.</li>
+        <li><b>추정과 실제가 얼마나 벌어졌나</b> — <code>rows=210</code> vs <code>actual rows=200000</code>처럼 자릿수가 다르면 <b>잘못된 선택의 원인은 통계</b>다(→ <code>ANALYZE</code>, 상관 컬럼이면 <code>CREATE STATISTICS</code>).</li>
+        <li><b>메모리 경고등</b> — Hash Join의 <code>Batches &gt; 1</code>, <code>Sort Method: external merge Disk:</code>. 스필이면 <code>work_mem</code>이나 빌드 사이드 크기를 손댄다.</li>
       </ol>
-      <p>EXPLAIN에서 <b>조인 순서(위가 드라이빙)</b>와 <b>안쪽 테이블의 <code>type</code>·<code>key</code></b>(<code>eq_ref/ref</code>면 건강, <code>ALL</code> + <code>Using join buffer</code>면 위험)를 읽는 것이 이 확인의 실체다.</p>
+      <p>방식별로 덧붙이면 — NL이면 inner의 <code>loops</code>와 <code>Index Cond</code> 유무(안쪽이 <code>Seq Scan</code>이면 인덱스부터), Hash면 <code>Hash</code> 노드가 작은 쪽인지, Merge면 <code>Sort</code>가 붙었는지(붙었으면 인덱스로 없앨 수 있는지). <code>EXPLAIN (ANALYZE, BUFFERS)</code>로 <code>shared read</code>가 큰 노드를 찾으면 실제 I/O 지점까지 잡힌다.</p>
+      <p class="muted" style="margin-bottom:0"><b>MySQL이면 답이 달라진다</b> — 기본이 NL이므로 "바깥 루프 횟수 × 안쪽 탐색 비용"의 두 항(드라이빙이 작은 쪽인가 · 안쪽 조인 키 인덱스가 있는가)을 <code>type</code>·<code>key</code>로 확인하는 것이 실체다.</p>
     </div>
   </details>
 
@@ -907,28 +1048,28 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
     <summary>LEFT JOIN을 걸었는데 결과가 INNER JOIN과 똑같습니다. 코드는 안 바꿨다는데 뭘 의심하나요?</summary>
     <div class="a">
       <p><b>WHERE 절에 오른쪽 테이블 조건이 있는지</b>부터 본다. LEFT JOIN이 살려둔 매칭 실패 행은 오른쪽 컬럼이 전부 NULL인데, WHERE의 <code>c.컬럼 = 값</code>이나 <code>c.컬럼 &gt;= 값</code> 비교에서 NULL은 참이 될 수 없어 전부 걸러진다 — LEFT가 조용히 INNER로 변하는 전형적 패턴이다.</p>
-      <p>처방은 오른쪽 테이블 조건을 <b>ON으로 올리는 것</b>. 단 <code>c.컬럼 IS NULL</code>만은 예외로, 매칭 실패 행만 골라내는 의도적 안티조인 패턴이다.</p>
+      <p>처방은 오른쪽 테이블 조건을 <b>ON으로 올리는 것</b>. <b>PostgreSQL이면 EXPLAIN으로 30초에 확진한다</b> — 계획에 <code>Hash Left Join</code>이 아니라 <code>Hash Join</code>이 찍혀 있으면 플래너가 이미 inner join으로 축약했다는 증거다. 단 <code>c.컬럼 IS NULL</code>만은 예외로, 매칭 실패 행만 골라내는 의도적 안티조인 패턴이고 계획에도 <code>Anti Join</code>으로 찍힌다.</p>
     </div>
   </details>
 
   <details class="q">
-    <summary>세 방식은 각각 언제 이기고, 옵티마이저는 무엇을 보고 고르나요?<span class="senior">시니어 변별</span></summary>
+    <summary>세 방식은 각각 언제 이기고, 플래너는 무엇을 보고 고르나요?<span class="senior">시니어 변별</span></summary>
     <div class="a">
-      <p>옵티마이저의 입력은 세 가지 — <b>양쪽의 (조건 적용 후) 예상 행 수, 조인 키 인덱스·정렬 여부, 조인 조건이 등호인가.</b></p>
+      <p>플래너의 입력은 네 가지 — <b>양쪽의 (조건 적용 후) 예상 행 수, 조인 키 인덱스·정렬 여부, 조인 조건이 등호인가, <code>work_mem</code>.</b></p>
       <ol>
-        <li>드라이빙이 작고 안쪽 조인 키에 인덱스가 있으면 <b>NL</b>: 소량 조회가 대부분인 OLTP의 기본값이고, 필요한 행만 인덱스로 집어가므로 첫 행이 빨리 나온다.</li>
-        <li>양쪽 다 크고 인덱스가 없는 등호 조인이면 <b>Hash</b>: 인덱스 없이 양쪽 한 번씩 순회로 끝내는 대신 메모리를 낸다. 등호가 아니면 탈락.</li>
-        <li>양쪽이 이미 조인 키로 정렬돼 있거나(인덱스 순 읽기) 어차피 정렬이 필요하면 <b>Sort-merge</b>: 정렬 비용이 공짜가 되는 판.</li>
+        <li>드라이빙이 작고 안쪽 조인 키에 인덱스가 있으면 <b>Nested Loop</b>: 소량 조회가 대부분인 OLTP의 기본값이고, 필요한 행만 인덱스로 집어가므로 첫 행이 빨리 나온다.</li>
+        <li>양쪽 다 크고 인덱스가 없는 등호 조인이면 <b>Hash Join</b>: 인덱스 없이 양쪽 한 번씩 순회로 끝내는 대신 메모리를 낸다. 등호가 아니면 탈락.</li>
+        <li>양쪽이 이미 조인 키로 정렬돼 있거나(인덱스 순 읽기) 어차피 정렬이 필요하면 <b>Merge Join</b>: 정렬 비용이 공짜가 되는 판. 범위 조건·FULL OUTER도 여기.</li>
       </ol>
-      <p>여기에 <b>"통계(예상 행 수)가 틀리면 이 선택 자체가 틀어진다 — 조인 방식이 이상할 때 통계 갱신을 의심한다"</b>까지 얹으면, 실행 계획을 결과가 아니라 <b>원인의 산물</b>로 읽는 시니어의 관점이 된다.</p>
+      <p>핵심은 <b>이 판단이 전부 "예상 행 수"에 얹혀 있다</b>는 것 — 통계가 낡거나 컬럼 간 상관을 못 잡으면(<code>WHERE city='서울' AND zipcode='06236'</code> 같은 경우) 추정이 무너지고 방식 선택도 같이 틀어진다. 그래서 "조인 방식이 이상하다"의 1차 처방은 방식 강제가 아니라 <b><code>ANALYZE</code> · 확장 통계(<code>CREATE STATISTICS</code>) · <code>default_statistics_target</code> 상향</b>이다. <code>enable_nestloop = off</code> 같은 스위치는 <b>가설 검증용</b>이라고 선을 그어 말하면 시니어의 언어가 된다.</p>
     </div>
   </details>
 
   <details class="q">
-    <summary>FULL OUTER JOIN이 필요한데 MySQL에는 없습니다. 어떻게 하나요?</summary>
+    <summary>PostgreSQL은 FULL OUTER JOIN을 지원하는데, 제약이나 주의점이 있나요?</summary>
     <div class="a">
-      <p><b>LEFT JOIN 결과와 RIGHT JOIN 결과를 UNION으로 합쳐</b> 흉내 낸다 — LEFT가 "왼쪽 전부 + 매칭", RIGHT가 "오른쪽 전부 + 매칭"이니 합집합이 곧 FULL이고, UNION(UNION ALL이 아니라)이 양쪽에 다 있는 매칭 행의 중복을 제거해 준다.</p>
-      <p>덧붙여 실무에서는 FULL OUTER가 필요한 상황 자체가 드물고(대개 두 집합의 대사/검증 작업), 자주 필요하다면 모델링을 의심해 볼 신호라는 언급까지 하면 좋다.</p>
+      <p><b>지원한다 — 단 조인 조건이 merge/hash 가능해야 한다.</b> FULL OUTER는 양쪽의 미매칭을 다 추적해야 해서 Nested Loop로는 구현할 수 없고 <code>Merge Full Join</code> 또는 <code>Hash Full Join</code>으로만 실행된다. 그래서 등호나 merge 가능한 조건이 아니면 실행 자체가 거부된다 — <code>FULL JOIN is only supported with merge-joinable or hash-joinable join conditions</code> 에러가 그것이다.</p>
+      <p>덧붙일 두 가지: ① <b>MySQL에는 FULL OUTER가 없어</b> LEFT ∪ RIGHT를 <b>UNION</b>(UNION ALL이 아니라 — 매칭 행 중복 제거가 필요하므로)으로 흉내 내야 하므로, MySQL 경험자와 대화할 때 이 차이를 알고 있으면 좋다. ② 실무에서 FULL OUTER가 필요한 상황 자체가 드물고(대개 두 집합의 대사/검증 작업), 자주 필요하다면 모델링을 의심해 볼 신호다.</p>
     </div>
   </details>
 
@@ -936,15 +1077,16 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
     <summary>해시 조인은 왜 등호(=) 조인만 가능한가요?<span class="plus">추가</span></summary>
     <div class="a">
       <p>해시 함수는 <b>"같은 값 → 같은 버킷"</b>만 보장하고, 값의 <b>순서 정보는 버린다.</b> <code>h(41)</code>과 <code>h(42)</code>는 아무 관계 없는 위치에 떨어지므로 "42보다 작은 것" 같은 범위 질문에 해시 테이블은 답할 수 없다 — 결국 전부 뒤져야 하고 그러면 해시를 쓸 이유가 없다.</p>
-      <p>범위 조건 조인(<code>a.x BETWEEN b.lo AND b.hi</code>, <code>a.ts &gt; b.ts</code> 등)은 순서를 아는 구조 — <b>정렬(Sort-merge)</b>이나 <b>B+Tree 인덱스의 range 탐색(NL)</b> — 이 맡는다. 자바로 치면 <code>HashMap</code>은 <code>get(key)</code>만 있고 <code>TreeMap</code>에만 <code>headMap/tailMap</code>이 있는 것과 같은 이유다.</p>
+      <p>범위 조건 조인(<code>a.x BETWEEN b.lo AND b.hi</code>, <code>a.ts &gt; b.ts</code> 등)은 순서를 아는 구조 — <b>정렬(Merge Join)</b>이나 <b>B+Tree 인덱스의 range 탐색(NL)</b> — 이 맡는다. 자바로 치면 <code>HashMap</code>은 <code>get(key)</code>만 있고 <code>TreeMap</code>에만 <code>headMap/tailMap</code>이 있는 것과 같은 이유다.</p>
     </div>
   </details>
 
   <details class="q">
-    <summary>NL에서 안쪽 테이블 조인 키에 인덱스가 없으면 MySQL은 어떻게 하나요? EXPLAIN에 뭐가 보이나요?<span class="plus">추가</span></summary>
+    <summary>안쪽 테이블 조인 키에 인덱스가 없으면 PostgreSQL은 어떻게 하나요? 계획에 뭐가 보이나요?<span class="plus">추가</span></summary>
     <div class="a">
-      <p>바깥 행 하나마다 안쪽을 풀스캔하면 너무 비싸므로, MySQL은 <b>조인 버퍼</b>에 바깥 행을 여러 개 모아 두고 안쪽을 한 번 훑으면서 버퍼의 행들과 한꺼번에 비교한다 — 구버전의 <b>Block Nested Loop</b>이다. MySQL 8.0의 최근 버전은 이 자리에 <b>해시 조인</b>을 쓴다(모아 둔 바깥 행으로 해시 테이블을 만들고 안쪽을 probe).</p>
-      <p>EXPLAIN 신호는 안쪽 행의 <code>type = ALL</code>, <code>key = NULL</code>, Extra <code>Using join buffer (hash join)</code>(구버전은 <code>(Block Nested Loop)</code>). 이게 보이면 "조인 키에 인덱스가 없다"는 뜻이고, 처방은 안쪽 조인 키 인덱스다. 버퍼가 풀스캔 횟수를 줄여 주긴 하지만 안쪽 풀스캔 자체는 남아 있으므로 인덱스 NL보다 느리다.</p>
+      <p><b>대개 NL을 아예 포기하고 Hash Join을 고른다.</b> 바깥 행마다 안쪽을 풀스캔하는 비용을 플래너가 계산해 보면 "양쪽 한 번씩 순회 + 해시 테이블"이 훨씬 싸기 때문이다. 그래서 계획에 <code>Nested Loop</code> 대신 <code>Hash Join</code>이 찍히고, 문제는 느린 루프가 아니라 <b>예상 못 한 대량 해시 + 디스크 스필</b>(<code>Batches &gt; 1</code>)로 나타난다.</p>
+      <p>그래도 <code>Nested Loop</code> 아래에 <code>Seq Scan</code>(또는 <code>Materialize</code> → <code>Seq Scan</code>)이 보이는 경우가 있는데, 이는 바깥이 아주 작다고 추정된 경우다 — 추정이 맞으면 문제없지만 틀리면(2-5절의 ❌ 계획) 폭주한다. 처방은 <b>안쪽 조인 키 인덱스</b>, 그리고 <code>ANALYZE</code>.</p>
+      <p class="muted" style="margin-bottom:0"><b>MySQL 대조</b>: MySQL은 이 자리에서 <b>조인 버퍼</b>에 바깥 행을 모아 안쪽을 한 번 훑으며 한꺼번에 비교한다 — 구버전의 <b>Block Nested Loop</b>, 8.0 최근 버전은 같은 자리에 해시 조인. EXPLAIN 신호는 <code>type = ALL</code> + Extra <code>Using join buffer (hash join)</code>.</p>
     </div>
   </details>
 
@@ -954,8 +1096,8 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
       <p>순서대로 세 층.</p>
       <ol>
         <li><b>조건과 인덱스로 "작은 쪽"을 실제로 작게 만든다</b> — 드라이빙 후보의 WHERE 조건 컬럼에 인덱스가 있어야 옵티마이저가 "이쪽이 먼저 줄어든다"를 알고 바깥에 둔다. 가장 정석.</li>
-        <li><b>통계를 맞춘다</b> — 예상 행 수가 틀리면 큰 쪽을 드라이빙으로 고르는 사고가 난다. <code>ANALYZE TABLE</code>로 재수집.</li>
-        <li><b>최후에 힌트</b> — <code>STRAIGHT_JOIN</code>(FROM 절 순서 그대로 조인)이나 옵티마이저 힌트로 순서를 고정. 단 데이터 분포가 바뀌면 힌트가 발목을 잡으므로 "만료일 있는 부채"로 취급한다.</li>
+        <li><b>통계를 맞춘다</b> — 예상 행 수가 틀리면 큰 쪽을 드라이빙으로 고르는 사고가 난다. PG는 <code>ANALYZE</code>(+ 상관 컬럼이면 <code>CREATE STATISTICS</code>, 부족하면 <code>default_statistics_target</code> 상향)로 재수집.</li>
+        <li><b>최후에 개입</b> — PG에는 MySQL의 <code>STRAIGHT_JOIN</code> 같은 조인 순서 힌트가 <b>기본 제공되지 않는다.</b> 남는 수단은 <code>join_collapse_limit = 1</code>로 FROM 순서를 강제하거나, <code>enable_nestloop</code> 등을 세션에서 끄거나, 확장(<code>pg_hint_plan</code>)을 쓰는 것 — 셋 다 데이터 분포가 바뀌면 발목을 잡으므로 <b>"만료일 있는 부채"</b>로 취급한다. 정상 경로는 ①②다.</li>
       </ol>
     </div>
   </details>
@@ -979,6 +1121,18 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
       <p>둘 다 에러가 없다는 점에서 3절 함정과 같은 부류 — 리뷰 질문은 <b>"이 조인은 왼쪽 한 행당 오른쪽 몇 행이 붙는가?"</b>다.</p>
     </div>
   </details>
+  <details class="q">
+    <summary>MySQL로 물어보면 답이 달라지는 부분은 어디인가요?<span class="plus">추가</span></summary>
+    <div class="a">
+      <p>세 지점이다.</p>
+      <ol>
+        <li><b>기본 방식</b> — MySQL은 전통적으로 NL 계열이 기본이고 해시 조인이 8.0.18에서 뒤늦게 추가됐으며 <b>Merge Join은 아예 없다.</b> 그래서 MySQL 조인 튜닝은 곧 NL 튜닝("드라이빙 작게 + 안쪽 인덱스")에 수렴하는데, PostgreSQL은 셋을 비용으로 고르므로 <b>"플래너가 옳게 고르도록 통계·메모리·인덱스를 갖추는 일"</b>이 된다.</li>
+        <li><b>인덱스 안쪽 비용</b> — InnoDB는 클러스터드 인덱스라 PK 조인의 안쪽 접근이 곧 데이터 접근이지만, PG는 힙 기반이라 인덱스 탐색 뒤에 <b>힙 페치</b>가 붙는다(커버링 인덱스로 <code>Index Only Scan</code>을 노리는 이유).</li>
+        <li><b>FULL OUTER JOIN</b> — PG는 지원, MySQL은 LEFT ∪ RIGHT UNION으로 우회.</li>
+      </ol>
+      <p>이 세 개를 짚어 말하면 "한쪽만 써봤다"가 아니라 <b>"차이를 원리로 이해했다"</b>로 들린다.</p>
+    </div>
+  </details>
 </section>
 
 <!-- ============ 6 ============ -->
@@ -990,7 +1144,7 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
     <button class="flip" type="button" aria-expanded="false">
       <div class="front"><b>실행 방식 ↔ 자바 코드</b><span class="cnt">3</span></div>
       <div class="hint">for·for / Map / sort·merge</div>
-      <div class="back"><ol><li>이중 for 루프 = <b>Nested Loop</b> (안쪽은 인덱스 탐색, MySQL 기본)</li><li>HashMap 빌드 후 get = <b>Hash 조인</b> (작은 쪽 build, 등호 전용)</li><li>양쪽 정렬 후 두 포인터 병합 = <b>Sort-merge</b> (정렬된 입력이면 공짜)</li></ol></div>
+      <div class="back"><ol><li>이중 for 루프 = <b><code>Nested Loop</code></b> (안쪽은 <code>Index Cond</code> 탐색)</li><li>HashMap 빌드 후 get = <b><code>Hash Join</code></b> (<code>Hash</code> 노드가 붙은 쪽이 build, 등호 전용)</li><li>양쪽 정렬 후 두 포인터 병합 = <b><code>Merge Join</code></b> (<code>Sort</code> 노드 없으면 공짜)</li></ol><div class="mn">PG는 셋을 비용으로 고른다</div></div>
     </button>
     <button class="flip" type="button" aria-expanded="false">
       <div class="front"><b>해시 빌드 = 작은 쪽, 논증</b><span class="cnt">3</span></div>
@@ -1000,12 +1154,12 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
     <button class="flip" type="button" aria-expanded="false">
       <div class="front"><b>NL 튜닝 기본 문법</b><span class="cnt">2</span></div>
       <div class="hint">바깥 횟수 × 안쪽 비용</div>
-      <div class="back"><ol><li>드라이빙(바깥) 테이블은 작게 — 조건으로 먼저 줄어드는 쪽</li><li>안쪽 테이블 조인 키에 인덱스 — 없으면 통순회 이중 루프</li></ol><div class="mn">MySQL 조인 튜닝 = NL 튜닝</div></div>
+      <div class="back"><ol><li>드라이빙(바깥) 테이블은 작게 — 조건으로 먼저 줄어드는 쪽</li><li>안쪽 테이블 조인 키에 인덱스 — 없으면 통순회 이중 루프</li></ol><div class="mn">PG: 방식 강제가 아니라 통계 · 인덱스 · <code>work_mem</code></div></div>
     </button>
     <button class="flip" type="button" aria-expanded="false">
       <div class="front"><b>JOIN 종류 — 매칭 실패 행 처리</b><span class="cnt">5</span></div>
       <div class="hint">버림 / 왼쪽 NULL / 오른쪽 NULL / 양쪽 / 조건 없음</div>
-      <div class="back"><ol><li>INNER — 양쪽 다 버림</li><li>LEFT — 왼쪽 남기고 오른쪽 컬럼 NULL</li><li>RIGHT — 거울상</li><li>FULL OUTER — 양쪽 다 남김 (MySQL 미지원 → LEFT ∪ RIGHT)</li><li>CROSS — 조건 없음, 모든 조합</li></ol></div>
+      <div class="back"><ol><li>INNER — 양쪽 다 버림</li><li>LEFT — 왼쪽 남기고 오른쪽 컬럼 NULL</li><li>RIGHT — 거울상</li><li>FULL OUTER — 양쪽 다 남김 (PG 지원 · MySQL은 LEFT ∪ RIGHT)</li><li>CROSS — 조건 없음, 모든 조합</li></ol></div>
     </button>
     <button class="flip" type="button" aria-expanded="false">
       <div class="front"><b>조용한 행 누락 함정</b><span class="cnt">2</span></div>
@@ -1018,14 +1172,24 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
       <div class="back"><p style="margin:0 0 6px">ON = 무엇을 매칭할지(실패해도 NULL로 살림) / WHERE = 완성 결과에서 무엇을 남길지(NULL은 죽음)</p><ol><li>오른쪽 필터 → ON</li><li>왼쪽 필터 → WHERE</li></ol><div class="mn">예외: <code>WHERE c.key IS NULL</code> 안티조인</div></div>
     </button>
     <button class="flip" type="button" aria-expanded="false">
-      <div class="front"><b>옵티마이저의 입력</b><span class="cnt">3</span></div>
-      <div class="hint">행 수 · 인덱스/정렬 · 등호</div>
-      <div class="back"><ol><li>양쪽의 (조건 적용 후) 예상 행 수 — 통계에서 옴</li><li>조인 키 인덱스·정렬 여부</li><li>조인 조건이 등호인가</li></ol><div class="mn">통계가 틀리면 선택이 틀어진다</div></div>
+      <div class="front"><b>플래너의 입력</b><span class="cnt">4</span></div>
+      <div class="hint">행 수 · 인덱스/정렬 · 등호 · work_mem</div>
+      <div class="back"><ol><li>양쪽의 (조건 적용 후) 예상 행 수 — 통계에서 옴</li><li>조인 키 인덱스·정렬 여부</li><li>조인 조건이 등호인가</li><li><code>work_mem</code> × <code>hash_mem_multiplier</code></li></ol><div class="mn">통계가 틀리면 선택이 틀어진다 → <code>ANALYZE</code></div></div>
     </button>
     <button class="flip" type="button" aria-expanded="false">
       <div class="front"><b>세 방식이 이기는 판</b><span class="cnt">3</span></div>
       <div class="hint">OLTP / 대량 등호 / 정렬된 입력</div>
-      <div class="back"><ol><li>NL — 드라이빙 작고 안쪽 인덱스 있음 (OLTP 소량 조회 + 조인)</li><li>Hash — 인덱스 없는 대량 등호 조인 (배치·통계·임시 테이블)</li><li>Sort-merge — 이미 정렬된 입력, ORDER BY 병용, 범위 조건</li></ol></div>
+      <div class="back"><ol><li>NL — 드라이빙 작고 안쪽 인덱스 있음 (OLTP 소량 조회 + 조인)</li><li>Hash — 인덱스 없는 대량 등호 조인 (배치·통계·임시 테이블)</li><li>Merge Join — 이미 정렬된 입력, ORDER BY 병용, 범위 조건·FULL OUTER</li></ol></div>
+    </button>
+    <button class="flip" type="button" aria-expanded="false">
+      <div class="front"><b>PG 계획의 경고등</b><span class="cnt">3</span></div>
+      <div class="hint">loops · Batches · Sort Method</div>
+      <div class="back"><ol><li>안쪽 <code>loops=N</code>이 크다 → NL 반복 폭주 (추정 행 수 확인)</li><li><code>Batches &gt; 1</code> → 해시 조인 디스크 스필</li><li><code>Sort Method: external merge Disk:</code> → 디스크 정렬</li></ol><div class="mn">그 전에 <code>rows=</code> vs <code>actual rows=</code>부터</div></div>
+    </button>
+    <button class="flip" type="button" aria-expanded="false">
+      <div class="front"><b>PG vs MySQL 차이</b><span class="cnt">3</span></div>
+      <div class="hint">기본 방식 · 안쪽 비용 · FULL OUTER</div>
+      <div class="back"><ol><li>PG는 셋을 비용으로 고름 / MySQL은 NL 기본 + Merge Join 없음</li><li>PG는 힙 페치 추가 / InnoDB는 클러스터드 = PK 접근이 곧 데이터</li><li>FULL OUTER: PG 지원 / MySQL은 LEFT ∪ RIGHT UNION</li></ol></div>
     </button>
   </div>
 </section>
@@ -1033,7 +1197,7 @@ LEFT JOIN coupon_use c ON c.order_id = o.id
 <!-- ============ SUMMARY ============ -->
 <section class="banner" id="summary">
   <div class="eyebrow">한 줄 요약</div>
-  <p style="margin:0"><b>조인 실행 방식은 이미 아는 코드의 DB 이름이다</b> — 이중 루프 = <b>NL</b>(안쪽은 인덱스 탐색, MySQL 기본, 튜닝은 "드라이빙 작게 + 안쪽 인덱스"), Map 빌드+탐색 = <b>Hash</b>(빌드는 <b>항상 작은 쪽</b> — 프로브 비용은 방향 무관, 차이는 메모리와 스필 위험뿐, 등호 전용), 정렬 후 병합 = <b>Sort-merge</b>(정렬된 입력이면 강함). 종류의 핵심은 <b>LEFT JOIN의 매칭 실패 쪽 NULL 채움</b>이며, LEFT 자리에 INNER를 쓰거나 LEFT 뒤 WHERE에 오른쪽 조건을 두면 <b>에러 없이 행이 조용히 사라진다</b> — 리뷰에서 잡아야 하는 버그다.</p>
+  <p style="margin:0"><b>조인 실행 방식은 이미 아는 코드의 DB 이름이다</b> — 이중 루프 = <code>Nested Loop</code>(안쪽은 인덱스 탐색, 안쪽 <code>loops</code>와 <code>Index Cond</code>를 본다), Map 빌드+탐색 = <code>Hash Join</code>(빌드는 <b>항상 작은 쪽</b> — <code>Hash</code> 노드가 붙은 쪽이고 <code>Batches &gt; 1</code>이면 디스크 스필, 등호 전용), 정렬 후 병합 = <code>Merge Join</code>(<code>Sort</code> 노드가 없으면 정렬이 공짜). <b>PostgreSQL은 셋을 모두 비용으로 고르므로</b> 튜닝은 방식 강제가 아니라 <b>통계 · 인덱스 · <code>work_mem</code></b>을 갖춰 플래너의 선택을 옳게 만드는 일이다. 종류의 핵심은 <b>LEFT JOIN의 매칭 실패 쪽 NULL 채움</b>이며, LEFT 자리에 INNER를 쓰거나 LEFT 뒤 WHERE에 오른쪽 조건을 두면 <b>에러 없이 행이 조용히 사라진다</b> — PG에서는 계획에 <code>Left</code>가 사라진 것으로 확진할 수 있다.</p>
 </section>
 
 <p class="foot">원본: interview-questions/knowledge/04-rdb-sql/06-join-types-and-execution.md · <a href="#top">맨 위로</a></p>
