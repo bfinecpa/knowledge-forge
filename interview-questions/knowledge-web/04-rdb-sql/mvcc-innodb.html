@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MVCC와 InnoDB 구현 — 숨은 컬럼 · undo 체인 · Read View</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:760px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+@media(max-width:560px){.toc ol{columns:1}}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:18px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips (chain) */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+
+/* figures */
+figure{margin:16px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;max-width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.5}
+.svgwrap{overflow-x:auto}
+.svgwrap svg{min-width:560px}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step .body .v{display:inline-block;font-weight:700;padding:1px 10px;border-radius:6px;font-size:.88rem}
+.v.see{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-line)}
+.v.no{background:var(--danger-soft);color:var(--danger);border:1px solid var(--danger-line)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+.tools{display:flex;gap:8px;margin:10px 0}
+.tools button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:.85rem;cursor:pointer;color:var(--text)}
+.tools button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">04 RDB · SQL &nbsp;|&nbsp; 기본⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>MVCC와 InnoDB 구현<br><span class="sub">"읽기는 왜 락을 안 잡는가"를 숨은 컬럼 · undo 체인 · Read View로 답한다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"MVCC란 무엇인가요? InnoDB에서 어떻게 구현되어 있나요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — MVCC(다중 버전 동시성 제어)는 <b>"읽는 쪽이 락을 잡는 대신, 자기 시점에 맞는 과거 버전을 본다"</b>는 격리(I)의 구현 방식이다. 그래서 읽기는 쓰기를 막지 않고 쓰기는 읽기를 막지 않지만, <b>쓰기끼리는 여전히 락</b>이다. InnoDB는 세 부품으로 구현한다 — ① 행마다 숨은 컬럼 <code>DB_TRX_ID</code>·<code>DB_ROLL_PTR</code>, ② 이전 값을 연결 리스트로 쌓는 <b>undo 로그 = 버전 체인</b>, ③ "어떤 트랜잭션까지 보이는가"를 찍어 두는 <b>Read View</b>. Read View를 문장마다 만들면 RC, 트랜잭션의 첫 읽기 때 한 번만 만들면 RR — 격리 수준 차이는 <b>생성 시점 하나</b>다. 비용은 트랜잭션 <b>길이</b>에 비례한다: 오래된 Read View 하나가 살아 있으면 purge가 그 뒤의 undo를 못 지우고 → 버전 체인이 길어져 → <b>무관한 트랜잭션의 조회까지</b> 행마다 체인을 순회하느라 느려진다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>정의</b> — 읽는 쪽이 락 대신 자기 시점의 과거 버전을 보는 격리(I) 구현. 읽기↔쓰기는 서로 안 막고, 쓰기끼리는 락.</div></li>
+    <li><span class="n">2</span><div><b>InnoDB 세 부품</b> — 숨은 컬럼(<code>DB_TRX_ID</code>·<code>DB_ROLL_PTR</code>) · undo 버전 체인 · Read View. RC는 문장마다, RR은 트랜잭션당 한 번 Read View를 만든다.</div></li>
+    <li><span class="n">3</span><div><b>비용</b> — 긴 트랜잭션 → purge 정지 → history list 증가 → 체인 길어짐 → 무관한 조회까지 행마다 체인 순회. 그래서 트랜잭션은 짧게.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">개념 — 락 대신 과거 버전</a></li>
+    <li><a href="#s1-3">ACID와 연결 (A·I 인출 카드)</a></li>
+    <li><a href="#s2">InnoDB 세 부품</a></li>
+    <li><a href="#s2-2">undo 버전 체인 (도식)</a></li>
+    <li><a href="#s2-3">Read View 4요소 · 판정 4단계</a></li>
+    <li><a href="#s2-4">행 하나 읽기 — 단계별 판정</a></li>
+    <li><a href="#s2-5">격리 수준별 Read View 시점</a></li>
+    <li><a href="#s3">비용 사슬 (타임라인)</a></li>
+    <li><a href="#s3-4">before / after 코드</a></li>
+    <li><a href="#s4">트레이드오프 · 안전망</a></li>
+    <li><a href="#s5">꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0. 질문 + 의도 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "MVCC란 무엇인가요? InnoDB에서 어떻게 구현되어 있나요?"</p>
+  <p><b>출제 의도</b>: "읽기는 왜 락을 안 잡는가"를 이해해야 격리 수준·락 경합·undo 폭증(긴 트랜잭션의 해악) 같은 운영 이슈가 <b>전부 연결</b>된다. RDB 내부 이해의 허리다. 정의 암기가 아니라 — 격리 수준 4단계가 내부적으로 무엇이 다른지, ACID의 I가 무슨 장치로 구현되는지, "트랜잭션은 짧게"의 근거가 무엇인지를 <b>하나의 메커니즘으로 꿰어 말할 수 있는지</b>를 본다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 두 가지</span>
+    ① ACID에서 <b>격리성(I)과 원자성(A)을 혼동</b>하는 문제 → 1-3절의 인출 카드로 A/I를 축으로 구분하고, undo가 둘을 <b>겸직</b>한다는 사실로 연결한다.<br>
+    ② 비용을 "조회가 느려진다"라는 <b>결과</b>로만 말하고 <b>메커니즘 사슬</b>로 서술하지 못하는 문제 → 3절에서 사슬 7단계를 이름 붙여 타임라인으로 그린다.
+  </div>
+</div>
+
+<!-- ===================== 1. 개념 ===================== -->
+<h2 id="s1">1. 개념 — MVCC는 "락 대신 과거 버전을 보여주는" 격리 구현 방식</h2>
+
+<h3>1-1. 락만으로 격리하면 무엇이 문제인가</h3>
+<p>격리성(I)의 요구는 "동시 트랜잭션이 서로의 중간 상태를 보지 않는다"다. 가장 단순한 구현은 <b>읽을 때도 락을 잡는 것</b> — 내가 읽는 행은 남이 못 고치고(공유 락), 남이 고치는 중인 행은 내가 못 읽는다(배타 락에 막힘). 정확하지만 비용이 치명적이다.</p>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 720 250" width="720" height="250" role="img" aria-label="락만 쓰는 격리와 MVCC의 대비">
+    <defs>
+      <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#6b7280"/></marker>
+      <marker id="arb" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker>
+      <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="arg" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+    <!-- left: lock only -->
+    <rect x="8" y="8" width="340" height="234" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="178" y="32" text-anchor="middle" font-size="14" font-weight="700" fill="#dc2626">락만으로 격리 (읽기도 락)</text>
+    <rect x="28" y="52" width="110" height="40" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="83" y="77" text-anchor="middle" font-size="13">읽기 트랜잭션</text>
+    <rect x="218" y="52" width="110" height="40" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="273" y="77" text-anchor="middle" font-size="13">쓰기 트랜잭션</text>
+    <rect x="118" y="150" width="120" height="44" rx="8" fill="#fff" stroke="#374151" stroke-width="1.5"/>
+    <text x="178" y="169" text-anchor="middle" font-size="12" class="mono">id=1 stock=7</text>
+    <text x="178" y="186" text-anchor="middle" font-size="11" fill="#6b7280">행 (한 부뿐)</text>
+    <line x1="83" y1="92" x2="150" y2="150" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="90" y="128" font-size="11" fill="#374151">공유 락(S)</text>
+    <line x1="273" y1="92" x2="206" y2="150" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+    <text x="222" y="128" font-size="11" fill="#dc2626" font-weight="700">대기 ✕</text>
+    <text x="178" y="222" text-anchor="middle" font-size="12" fill="#dc2626">읽기가 쓰기를 막고, 쓰기가 읽기를 막는다</text>
+    <!-- right: MVCC -->
+    <rect x="372" y="8" width="340" height="234" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="542" y="32" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a">MVCC (읽기는 과거 버전을 본다)</text>
+    <rect x="392" y="52" width="110" height="40" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="447" y="77" text-anchor="middle" font-size="13">읽기 트랜잭션</text>
+    <rect x="582" y="52" width="110" height="40" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="637" y="77" text-anchor="middle" font-size="13">쓰기 트랜잭션</text>
+    <rect x="556" y="150" width="140" height="44" rx="8" fill="#fff" stroke="#374151" stroke-width="1.5"/>
+    <text x="626" y="169" text-anchor="middle" font-size="12" class="mono">id=1 stock=6</text>
+    <text x="626" y="186" text-anchor="middle" font-size="11" fill="#6b7280">최신 행 (X 락, 갱신 중)</text>
+    <rect x="392" y="150" width="130" height="44" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="457" y="169" text-anchor="middle" font-size="12" class="mono">stock=7 (undo)</text>
+    <text x="457" y="186" text-anchor="middle" font-size="11" fill="#2563eb">이전 버전</text>
+    <line x1="637" y1="92" x2="630" y2="150" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="646" y="125" font-size="11" fill="#374151">배타 락(X)</text>
+    <line x1="447" y1="92" x2="452" y2="150" stroke="#16a34a" stroke-width="2" marker-end="url(#arg)"/>
+    <text x="360" y="125" font-size="11" fill="#16a34a" font-weight="700" transform="translate(96,0)">대기 없음 ✓</text>
+    <line x1="556" y1="172" x2="524" y2="172" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arb)"/>
+    <text x="540" y="210" text-anchor="middle" font-size="11" fill="#2563eb">복사해 둔 이전 값</text>
+    <text x="542" y="232" text-anchor="middle" font-size="12" fill="#16a34a">서로 기다리지 않는다 — 단, 쓰기끼리는 여전히 락</text>
+  </svg>
+  </div>
+  <figcaption>왼쪽: 행이 한 부뿐이라 읽기와 쓰기가 서로 대기한다. 오른쪽: 쓰기는 최신 행을 고치고, 읽기는 undo에 복사된 이전 버전을 보므로 대기가 사라진다.</figcaption>
+</figure>
+
+<div class="grid">
+  <div class="tile red"><div class="k">읽기가 쓰기를 막는다</div><div class="d">통계 쿼리 하나가 10만 행을 읽는 동안 그 10만 행에 대한 UPDATE가 전부 대기.</div></div>
+  <div class="tile red"><div class="k">쓰기가 읽기를 막는다</div><div class="d">주문 한 건을 갱신 중이면 그 주문을 보려는 조회가 전부 대기.</div></div>
+</div>
+<p>웹 서비스 트래픽은 읽기가 압도적이다. 읽기마다 락이면 동시성이 죽는다.</p>
+
+<h3>1-2. MVCC의 아이디어 — 행을 덮어쓰지 말고 버전을 남긴다</h3>
+<p><b>UPDATE가 행을 덮어쓰더라도 이전 값을 어딘가에 남겨 두면, 읽는 쪽은 락을 기다릴 필요 없이 "자기 시점에 맞는 버전"을 골라 읽으면 된다.</b></p>
+<div class="callout info"><span class="t">비유 — 팻말 vs 판본 서랍</span>
+  문서를 한 부만 두고 "편집 중이니 읽지 마세요" 팻말을 거는 것이 <b>락</b>. 편집할 때마다 이전 판을 서랍에 보관하고, 읽는 사람에게 "당신이 들어온 시각 기준 최신 판"을 건네는 것이 <b>MVCC</b>. 편집자와 독자가 서로를 기다리지 않는다. — 서랍이 <b>undo 로그</b>, "들어온 시각"이 <b>Read View</b>다.
+</div>
+
+<div class="memo green">
+  <h4>MVCC의 성질 — 한 문장, 마지막 절까지</h4>
+  <div class="rule ok">읽기는 쓰기를 막지 않고, 쓰기는 읽기를 막지 않는다.<br>단, <span style="color:var(--danger)">쓰기끼리는 여전히 락</span>이다.</div>
+  <p style="margin:6px 0 0;font-size:.95rem">같은 행을 두 트랜잭션이 동시에 UPDATE하는 충돌은 버전을 아무리 쌓아도 해결되지 않는다 — 누가 먼저 쓸지 정하는 건 락의 일이다. <b>MVCC는 격리성의 읽기 절반, 락은 쓰기 절반.</b></p>
+</div>
+
+<h3 id="s1-3">1-3. ACID와 연결 — I의 두 축, 그리고 undo의 겸직</h3>
+<p>먼저 ACID 네 글자를 <b>메커니즘과 함께</b> 인출할 수 있어야 한다. 특히 A와 I는 "묻는 축"이 다르다.</p>
+
+<div class="memo">
+  <h4>ACID 인출 카드 — 정의 + 담당 장치</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">A · 원자성</div><div class="s">Atomicity</div><div class="d">전부 반영되거나 전부 취소된다. 중간에 멈춘 상태를 남기지 않는다.<br><b>장치: undo 로그</b>(변경 전 값으로 되돌림)</div></div>
+    <div class="tile"><div class="k">C · 일관성</div><div class="s">Consistency</div><div class="d">트랜잭션 전후로 제약(PK·FK·CHECK, 업무 규칙)이 깨지지 않는다.<br><b>장치: 제약 조건 + 애플리케이션 로직</b></div></div>
+    <div class="tile"><div class="k">I · 격리성</div><div class="s">Isolation</div><div class="d">동시에 도는 트랜잭션이 서로의 <b>중간 상태를 보지 않는다.</b><br><b>장치: 락(쓰기-쓰기) + MVCC(읽기-쓰기)</b></div></div>
+    <div class="tile"><div class="k">D · 지속성</div><div class="s">Durability</div><div class="d">커밋된 결과는 장애 후에도 남는다.<br><b>장치: redo 로그</b>(커밋 전에 변경 내용을 먼저 디스크에 기록)</div></div>
+  </div>
+  <div class="callout trap" style="margin:12px 0 0"><span class="t">A와 I를 헷갈리지 않는 축 하나</span>
+    <b>A는 "끝"의 문제</b> — 트랜잭션이 <u>끝났을 때</u> 전부냐 전무냐 (시간축, 나 혼자여도 성립).<br>
+    <b>I는 "동시"의 문제</b> — <u>동시에 도는 남</u>이 내 중간 상태를 보느냐 (동시성축, 남이 있어야 성립).<br>
+    → "원자성 덕분에 다른 트랜잭션이 중간값을 못 본다"는 <b>틀린 문장</b>이다. 중간값을 못 보게 하는 건 격리성(락 + MVCC)이다.
+  </div>
+</div>
+
+<p>ACID 문서에서 I의 메커니즘을 "락 + MVCC"로 적었다. 이제 그 뜻이 정확해진다 — <b>I = 락(쓰기-쓰기 충돌 직렬화) + MVCC(읽기-쓰기 비차단)</b>. 그리고 MVCC가 "이전 버전"을 보관하는 장소가 바로 <b>undo 로그</b>다.</p>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 720 170" width="720" height="170" role="img" aria-label="undo 로그가 A와 I를 겸직">
+    <rect x="270" y="55" width="180" height="60" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="360" y="80" text-anchor="middle" font-size="14" font-weight="700" fill="#2563eb">undo 로그</text>
+    <text x="360" y="100" text-anchor="middle" font-size="12" fill="#374151">"변경 전 값" 장부 하나</text>
+    <line x1="270" y1="85" x2="182" y2="85" stroke="#dc2626" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="450" y1="85" x2="538" y2="85" stroke="#16a34a" stroke-width="2" marker-end="url(#arg)"/>
+    <rect x="20" y="45" width="160" height="80" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="100" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626">A · 롤백용</text>
+    <text x="100" y="90" text-anchor="middle" font-size="12">실패하면 변경 전 값을</text>
+    <text x="100" y="108" text-anchor="middle" font-size="12">역순으로 되돌린다</text>
+    <rect x="540" y="45" width="160" height="80" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="620" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">I · 과거 버전 제공용</text>
+    <text x="620" y="90" text-anchor="middle" font-size="12">다른 트랜잭션에게</text>
+    <text x="620" y="108" text-anchor="middle" font-size="12">"자기 시점의 버전"을 건넨다</text>
+    <text x="360" y="150" text-anchor="middle" font-size="12" fill="#6b7280">같은 장부가 겸직 → undo가 누적되면 A의 비용(롤백 지연)과 I의 비용(조회 지연)이 동시에 청구된다</text>
+  </svg>
+  </div>
+  <figcaption>undo 로그의 겸직. ACID 문서에서 undo는 A의 도구였는데, "변경 전 값"은 정확히 MVCC가 남에게 보여줘야 하는 "과거 버전"이기도 하다.</figcaption>
+</figure>
+
+<!-- ===================== 2. InnoDB 구현 ===================== -->
+<h2 id="s2">2. InnoDB 구현 — 세 부품: 숨은 컬럼 · undo 버전 체인 · Read View</h2>
+<div class="chain" style="justify-content:center;margin-bottom:6px">
+  <span class="chip b">① 숨은 컬럼 — "누가, 이전은 어디"</span><span class="arrow">+</span>
+  <span class="chip b">② undo 버전 체인 — 재료</span><span class="arrow">+</span>
+  <span class="chip b">③ Read View — 고르는 기준</span>
+</div>
+
+<h3 id="s2-1">2-1. 숨은 컬럼 3개</h3>
+<p>InnoDB는 사용자가 정의한 컬럼 외에 모든 <b>클러스터드 인덱스 레코드(= 실제 행)</b>에 시스템 컬럼을 붙인다.</p>
+<div class="memo">
+  <h4>숨은 컬럼 3개 — "누가 · 이전은 · 대용키" (6 · 7 · 6 바이트)</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">DB_TRX_ID</div><div class="s">6바이트 · <b>누가</b></div><div class="d">이 행을 <b>마지막으로 INSERT/UPDATE/DELETE-mark한 트랜잭션 ID</b>. "이 버전을 누가 만들었나"</div></div>
+    <div class="tile"><div class="k">DB_ROLL_PTR</div><div class="s">7바이트 · <b>이전은</b></div><div class="d">이 행의 <b>직전 버전이 기록된 undo 레코드를 가리키는 포인터</b>(롤백 포인터). "이 버전 이전엔 뭐였나"</div></div>
+    <div class="tile"><div class="k">DB_ROW_ID</div><div class="s">6바이트 · <b>대용키</b></div><div class="d">PK도 NOT NULL UNIQUE도 없는 테이블에서만 붙는 <b>자동 증가 행 ID</b>(클러스터드 인덱스 키 대용). MVCC와는 무관.</div></div>
+  </div>
+  <div class="callout info" style="margin:12px 0 0"><span class="t">왜 숫자 비교만으로 시간 순서가 되는가</span>
+    트랜잭션 ID는 <b>쓰기 트랜잭션이 시작될 때 단조 증가로 발급</b>된다. 그래서 ID의 크기 비교 = 시작 시각 비교이고, Read View 판정이 <b>숫자 비교만으로</b> 가능하다. (단, 시작 순서 ≠ 커밋 순서 — 이 틈이 Read View의 "활성 목록"이 필요한 이유다. 2-3절)
+  </div>
+</div>
+
+<h3 id="s2-2">2-2. undo 로그 = 버전 체인</h3>
+<p><code>UPDATE item SET stock = 7 WHERE id = 1</code>이 실행될 때 InnoDB가 하는 일을 순서대로 놓으면 버전 체인이 저절로 그려진다.</p>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 720 300" width="720" height="300" role="img" aria-label="UPDATE 한 번이 버전 체인을 만드는 3단계">
+    <!-- step 1 -->
+    <rect x="6" y="6" width="228" height="288" rx="12" fill="#fafbfc" stroke="#e5e7eb"/>
+    <circle cx="26" cy="28" r="12" fill="#2563eb"/><text x="26" y="33" text-anchor="middle" font-size="13" font-weight="800" fill="#fff">1</text>
+    <text x="46" y="33" font-size="13" font-weight="700">현재 값을 undo에 복사</text>
+    <rect x="22" y="56" width="196" height="64" rx="8" fill="#fff" stroke="#374151" stroke-width="1.5"/>
+    <text x="30" y="75" font-size="11" fill="#6b7280">클러스터드 인덱스의 현재 행</text>
+    <text x="30" y="93" font-size="12" class="mono">id=1  stock=8</text>
+    <text x="30" y="110" font-size="11" class="mono" fill="#374151">TRX_ID=115  ROLL_PTR→(101)</text>
+    <line x1="120" y1="120" x2="120" y2="176" stroke="#2563eb" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arb)"/>
+    <text x="128" y="152" font-size="11" fill="#2563eb">값 + TRX_ID + ROLL_PTR 통째로</text>
+    <rect x="22" y="180" width="196" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="30" y="199" font-size="11" fill="#2563eb">새 undo 레코드 (update undo)</text>
+    <text x="30" y="217" font-size="12" class="mono">stock=8</text>
+    <text x="30" y="234" font-size="11" class="mono" fill="#374151">TRX_ID=115  ROLL_PTR→(101)</text>
+    <text x="120" y="272" text-anchor="middle" font-size="11" fill="#6b7280">이전 버전의 "이전 포인터"도 함께 복사됨</text>
+
+    <!-- step 2 -->
+    <rect x="246" y="6" width="228" height="288" rx="12" fill="#fafbfc" stroke="#e5e7eb"/>
+    <circle cx="266" cy="28" r="12" fill="#2563eb"/><text x="266" y="33" text-anchor="middle" font-size="13" font-weight="800" fill="#fff">2</text>
+    <text x="286" y="33" font-size="13" font-weight="700">행을 제자리에서 덮어씀</text>
+    <rect x="262" y="56" width="196" height="64" rx="8" fill="#fff" stroke="#16a34a" stroke-width="2"/>
+    <text x="270" y="75" font-size="11" fill="#16a34a">현재 행 (in-place 갱신)</text>
+    <text x="270" y="93" font-size="12" class="mono">id=1  <tspan fill="#16a34a" font-weight="700">stock=7</tspan></text>
+    <text x="270" y="110" font-size="11" class="mono" fill="#374151"><tspan fill="#16a34a" font-weight="700">TRX_ID=120</tspan>  <tspan fill="#16a34a" font-weight="700">ROLL_PTR→(115)</tspan></text>
+    <line x1="360" y1="120" x2="360" y2="176" stroke="#16a34a" stroke-width="2" marker-end="url(#arg)"/>
+    <text x="368" y="152" font-size="11" fill="#16a34a">방금 만든 undo를 가리킴</text>
+    <rect x="262" y="180" width="196" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="270" y="199" font-size="11" fill="#2563eb">undo 레코드</text>
+    <text x="270" y="217" font-size="12" class="mono">stock=8</text>
+    <text x="270" y="234" font-size="11" class="mono" fill="#374151">TRX_ID=115  ROLL_PTR→(101)</text>
+    <text x="360" y="272" text-anchor="middle" font-size="11" fill="#6b7280">내 트랜잭션 ID(120)와 undo 위치를 적는다</text>
+
+    <!-- step 3 -->
+    <rect x="486" y="6" width="228" height="288" rx="12" fill="#fafbfc" stroke="#e5e7eb"/>
+    <circle cx="506" cy="28" r="12" fill="#2563eb"/><text x="506" y="33" text-anchor="middle" font-size="13" font-weight="800" fill="#fff">3</text>
+    <text x="526" y="33" font-size="13" font-weight="700">undo끼리 연결 리스트</text>
+    <rect x="530" y="52" width="140" height="40" rx="8" fill="#fff" stroke="#374151" stroke-width="1.5"/>
+    <text x="600" y="70" text-anchor="middle" font-size="11" class="mono">stock=7  TRX 120</text>
+    <text x="600" y="85" text-anchor="middle" font-size="10" fill="#6b7280">현재 행</text>
+    <line x1="600" y1="92" x2="600" y2="112" stroke="#2563eb" stroke-width="2" marker-end="url(#arb)"/>
+    <rect x="530" y="114" width="140" height="40" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="600" y="132" text-anchor="middle" font-size="11" class="mono">stock=8  TRX 115</text>
+    <text x="600" y="147" text-anchor="middle" font-size="10" fill="#2563eb">undo</text>
+    <line x1="600" y1="154" x2="600" y2="174" stroke="#2563eb" stroke-width="2" marker-end="url(#arb)"/>
+    <rect x="530" y="176" width="140" height="40" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="600" y="194" text-anchor="middle" font-size="11" class="mono">stock=9  TRX 101</text>
+    <text x="600" y="209" text-anchor="middle" font-size="10" fill="#2563eb">undo</text>
+    <line x1="600" y1="216" x2="600" y2="236" stroke="#2563eb" stroke-width="2" marker-end="url(#arb)"/>
+    <rect x="530" y="238" width="140" height="40" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="600" y="256" text-anchor="middle" font-size="11" class="mono">stock=10  TRX 90</text>
+    <text x="600" y="271" text-anchor="middle" font-size="10" fill="#2563eb">undo (끝)</text>
+    <text x="500" y="160" font-size="10" fill="#6b7280" transform="rotate(-90 500 160)">← 최신 · 오래된 →</text>
+  </svg>
+  </div>
+  <figcaption>UPDATE 한 번 = ① 현재 값을 undo로 복사 → ② 행을 제자리에서 덮어쓰고 <code>DB_TRX_ID</code>/<code>DB_ROLL_PTR</code> 갱신 → ③ 복사된 undo 안에 "그 이전 포인터"가 그대로 들어 있어 연결 리스트가 된다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>저장 구조 — 한 문장</h4>
+  <div class="rule ok">행 하나에 버전은 여러 개 있되, 테이블(클러스터드 인덱스)에는 <u>항상 최신 하나만</u> 있고<br>나머지는 undo에 <u>사슬로 매달려</u> 있다.</div>
+</div>
+
+<h4>undo 로그의 두 종류 <span class="badge bonus">가산점</span></h4>
+<div class="scroll"><table>
+  <thead><tr><th>종류</th><th>담는 것</th><th>누가 필요로 하나</th><th>언제 지우나</th></tr></thead>
+  <tbody>
+    <tr><td><b>insert undo</b></td><td>INSERT를 되돌리는 정보</td><td>롤백(A)만. INSERT 전엔 행이 없었으니 남이 "과거 버전"으로 볼 일이 없다</td><td class="good">커밋 즉시 폐기</td></tr>
+    <tr class="hl"><td><b>update undo</b></td><td>UPDATE/DELETE의 이전 값</td><td>롤백(A) <b>+ 다른 트랜잭션의 일관된 읽기(I)</b></td><td class="bad">커밋해도 못 지움 — "이 버전을 봐야 하는 Read View가 하나도 없다"가 확인될 때 <b>purge</b>가 정리</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout warn"><span class="t">DELETE도 지우지 않는다 — delete-mark</span>
+  InnoDB의 DELETE는 행을 물리적으로 지우지 않고 <b>delete-mark(삭제 표시) 비트만 켠다.</b> 아직 그 행을 봐야 할 Read View가 있을 수 있기 때문이다. 실제 제거는 역시 <b>purge</b>의 몫이다. → 3절 사슬 ⑥ "유령 인덱스 엔트리"의 원인.
+</div>
+
+<h3 id="s2-3">2-3. Read View — "내 눈에 보이는 트랜잭션의 경계"</h3>
+<p>버전 체인이 "재료"라면, Read View는 <b>"어느 버전을 고를지 정하는 기준"</b>이다. 일관된 읽기(consistent read)를 시작하는 순간 InnoDB는 <b>그 시점에 어떤 트랜잭션이 아직 안 끝났는지</b>를 스냅샷으로 찍어 둔다. 구성 요소는 넷이다.</p>
+
+<div class="memo">
+  <h4>Read View 4요소 — "목록 · 하한 · 상한 · 나"</h4>
+  <div class="grid">
+    <div class="tile"><div class="k">m_ids</div><div class="s">활성 트랜잭션 ID 목록</div><div class="d">생성 시점에 시작됐지만 <b>아직 커밋/롤백 안 된</b> 쓰기 트랜잭션들</div></div>
+    <div class="tile"><div class="k">m_up_limit_id</div><div class="s">하한선 (low water mark)</div><div class="d">활성 목록 중 <b>최솟값</b>. 이보다 작은 ID는 전부 이미 끝난 트랜잭션 → <b style="color:var(--ok)">무조건 보임</b></div></div>
+    <div class="tile"><div class="k">m_low_limit_id</div><div class="s">상한선 (high water mark)</div><div class="d">생성 시점에 <b>다음에 발급될 ID</b>(= 현재 최대 + 1). 이 이상은 내 스냅샷 이후 시작 → <b style="color:var(--danger)">무조건 안 보임</b></div></div>
+    <div class="tile"><div class="k">m_creator_trx_id</div><div class="s">자기 트랜잭션 ID</div><div class="d">내가 만든 변경은 커밋 전이라도 <b>나에게는 보여야</b> 하므로 따로 기억</div></div>
+  </div>
+  <div class="callout trap" style="margin:12px 0 0"><span class="t">이름 함정 — 소스의 이름이 직관과 반대</span>
+    <code>up_limit</code>이 <b>하한</b>, <code>low_limit</code>이 <b>상한</b>이다. 면접에서는 소스 이름 대신 <b>"하한선 = 활성 중 최소 ID, 상한선 = 다음 발급 ID"</b>라는 뜻으로 말하면 충분하다.
+  </div>
+</div>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 720 190" width="720" height="190" role="img" aria-label="트랜잭션 ID 수직선 위의 가시성 구간">
+    <text x="360" y="20" text-anchor="middle" font-size="13" font-weight="700">트랜잭션 ID 수직선 위의 세 구간 (예: 하한 115, 상한 121, 활성 목록 {115, 120})</text>
+    <!-- zones -->
+    <rect x="20" y="40" width="250" height="60" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <rect x="270" y="40" width="240" height="60" rx="0" fill="#fffbeb" stroke="#fde68a"/>
+    <rect x="510" y="40" width="190" height="60" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="145" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#16a34a">ID &lt; 하한선</text>
+    <text x="145" y="82" text-anchor="middle" font-size="11" fill="#166534">전부 끝난 트랜잭션 → 무조건 보임</text>
+    <text x="390" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#d97706">하한 ≤ ID &lt; 상한</text>
+    <text x="390" y="82" text-anchor="middle" font-size="11" fill="#92400e">활성 목록 확인: 있으면 안 보임 / 없으면 보임</text>
+    <text x="605" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">ID ≥ 상한선</text>
+    <text x="605" y="82" text-anchor="middle" font-size="11" fill="#991b1b">스냅샷 이후 시작 → 무조건 안 보임</text>
+    <!-- axis -->
+    <line x1="20" y1="125" x2="700" y2="125" stroke="#374151" stroke-width="2" marker-end="url(#ar)"/>
+    <text x="704" y="145" font-size="10" fill="#6b7280" text-anchor="end">ID 증가 = 시작 순서</text>
+    <!-- boundary lines -->
+    <line x1="270" y1="35" x2="270" y2="140" stroke="#16a34a" stroke-width="2" stroke-dasharray="5 3"/>
+    <text x="270" y="158" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">하한 115</text>
+    <line x1="510" y1="35" x2="510" y2="140" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 3"/>
+    <text x="510" y="158" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">상한 121</text>
+    <!-- points -->
+    <circle cx="80" cy="125" r="6" fill="#16a34a"/><text x="80" y="112" text-anchor="middle" font-size="11" class="mono">90</text>
+    <circle cx="170" cy="125" r="6" fill="#16a34a"/><text x="170" y="112" text-anchor="middle" font-size="11" class="mono">101</text>
+    <circle cx="290" cy="125" r="6" fill="#dc2626"/><text x="290" y="112" text-anchor="middle" font-size="11" class="mono">115</text>
+    <text x="290" y="175" text-anchor="middle" font-size="10" fill="#dc2626">목록에 있음</text>
+    <circle cx="390" cy="125" r="6" fill="#16a34a"/><text x="390" y="112" text-anchor="middle" font-size="11" class="mono">118</text>
+    <text x="390" y="175" text-anchor="middle" font-size="10" fill="#16a34a">목록에 없음(이미 커밋)</text>
+    <circle cx="480" cy="125" r="6" fill="#dc2626"/><text x="480" y="112" text-anchor="middle" font-size="11" class="mono">120</text>
+    <text x="480" y="175" text-anchor="middle" font-size="10" fill="#dc2626">목록에 있음</text>
+    <circle cx="600" cy="125" r="6" fill="#dc2626"/><text x="600" y="112" text-anchor="middle" font-size="11" class="mono">125</text>
+  </svg>
+  </div>
+  <figcaption>초록 점 = 보임, 빨간 점 = 안 보임. 가운데 노란 구간은 "시작 순서와 커밋 순서가 다를 수 있는 구간"이라 활성 목록을 직접 확인해야 한다. 118은 115보다 늦게 시작했지만 먼저 커밋했으므로 보인다.</figcaption>
+</figure>
+
+<h4>판정 규칙 4단계 — 순서대로 적용</h4>
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 720 330" width="720" height="330" role="img" aria-label="Read View 가시성 판정 4단계 흐름도">
+    <!-- step boxes -->
+    <rect x="40" y="14" width="330" height="48" rx="10" fill="#fff" stroke="#374151" stroke-width="1.5"/>
+    <text x="205" y="34" text-anchor="middle" font-size="13" font-weight="700">① trx_id == 내 트랜잭션 ID ?</text>
+    <text x="205" y="52" text-anchor="middle" font-size="11" fill="#6b7280">내가 바꾼 건 나에게 보인다</text>
+    <rect x="40" y="90" width="330" height="48" rx="10" fill="#fff" stroke="#374151" stroke-width="1.5"/>
+    <text x="205" y="110" text-anchor="middle" font-size="13" font-weight="700">② trx_id &lt; 하한선 ?</text>
+    <text x="205" y="128" text-anchor="middle" font-size="11" fill="#6b7280">스냅샷 찍기 전에 이미 끝난 트랜잭션</text>
+    <rect x="40" y="166" width="330" height="48" rx="10" fill="#fff" stroke="#374151" stroke-width="1.5"/>
+    <text x="205" y="186" text-anchor="middle" font-size="13" font-weight="700">③ trx_id ≥ 상한선 ?</text>
+    <text x="205" y="204" text-anchor="middle" font-size="11" fill="#6b7280">스냅샷 이후에 시작한 트랜잭션</text>
+    <rect x="40" y="242" width="330" height="62" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="205" y="264" text-anchor="middle" font-size="13" font-weight="700" fill="#92400e">④ 그 사이 → 활성 목록(m_ids)에 있나?</text>
+    <text x="205" y="282" text-anchor="middle" font-size="11" fill="#92400e">찍을 당시 진행 중이었으면 그 후 커밋됐어도 내 스냅샷엔 없다</text>
+    <text x="205" y="297" text-anchor="middle" font-size="11" fill="#92400e">← 핵심 단계</text>
+    <!-- down arrows (아니오) -->
+    <line x1="205" y1="62" x2="205" y2="88" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="214" y="80" font-size="10" fill="#6b7280">아니오</text>
+    <line x1="205" y1="138" x2="205" y2="164" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="214" y="156" font-size="10" fill="#6b7280">아니오</text>
+    <line x1="205" y1="214" x2="205" y2="240" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+    <text x="214" y="232" font-size="10" fill="#6b7280">아니오</text>
+    <!-- verdict boxes -->
+    <line x1="370" y1="38" x2="440" y2="38" stroke="#16a34a" stroke-width="2" marker-end="url(#arg)"/>
+    <text x="405" y="30" text-anchor="middle" font-size="10" fill="#16a34a">예</text>
+    <rect x="442" y="20" width="120" height="36" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="502" y="43" text-anchor="middle" font-size="13" font-weight="800" fill="#16a34a">보임</text>
+    <line x1="370" y1="114" x2="440" y2="114" stroke="#16a34a" stroke-width="2" marker-end="url(#arg)"/>
+    <text x="405" y="106" text-anchor="middle" font-size="10" fill="#16a34a">예</text>
+    <rect x="442" y="96" width="120" height="36" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="502" y="119" text-anchor="middle" font-size="13" font-weight="800" fill="#16a34a">보임</text>
+    <line x1="370" y1="190" x2="440" y2="190" stroke="#dc2626" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="405" y="182" text-anchor="middle" font-size="10" fill="#dc2626">예</text>
+    <rect x="442" y="172" width="120" height="36" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="502" y="195" text-anchor="middle" font-size="13" font-weight="800" fill="#dc2626">안 보임</text>
+    <line x1="370" y1="262" x2="440" y2="262" stroke="#dc2626" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="405" y="254" text-anchor="middle" font-size="10" fill="#dc2626">있음</text>
+    <rect x="442" y="244" width="120" height="36" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="502" y="267" text-anchor="middle" font-size="13" font-weight="800" fill="#dc2626">안 보임</text>
+    <line x1="370" y1="292" x2="440" y2="300" stroke="#16a34a" stroke-width="2" marker-end="url(#arg)"/>
+    <text x="405" y="310" text-anchor="middle" font-size="10" fill="#16a34a">없음</text>
+    <rect x="442" y="286" width="120" height="36" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="502" y="309" text-anchor="middle" font-size="13" font-weight="800" fill="#16a34a">보임</text>
+    <!-- side note -->
+    <text x="580" y="130" font-size="11" fill="#6b7280">"안 보임"이면 →</text>
+    <text x="580" y="146" font-size="11" fill="#6b7280">ROLL_PTR을 따라</text>
+    <text x="580" y="162" font-size="11" fill="#6b7280">이전 버전으로 가서</text>
+    <text x="580" y="178" font-size="11" fill="#6b7280">①부터 다시 판정</text>
+  </svg>
+  </div>
+  <figcaption>④가 핵심이다. "하한선과 상한선 사이"는 ID 발급 순서와 커밋 순서가 다를 수 있는 구간이라 목록을 직접 봐야 한다. 이 규칙 덕분에 <b>"내가 스냅샷을 찍은 순간 커밋되어 있던 세상"</b>이 정확히 재구성된다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>판정 4단계 — 외우는 순서 "나 · 아래 · 위 · 목록"</h4>
+  <div class="chain" style="justify-content:center">
+    <span class="chip g">① 나(내 ID) → 보임</span><span class="arrow">→</span>
+    <span class="chip g">② 하한 아래 → 보임</span><span class="arrow">→</span>
+    <span class="chip r">③ 상한 위 → 안 보임</span><span class="arrow">→</span>
+    <span class="chip w">④ 사이 → 목록에 있으면 안 보임, 없으면 보임</span>
+  </div>
+</div>
+
+<h3 id="s2-4">2-4. 한 행을 읽는 절차 — 판정 → 체인 순회 (단계별 도식)</h3>
+<p>일반 SELECT가 행 하나를 만났을 때의 절차를 <b>구체적인 숫자</b>로 따라가 본다. 2-2절의 체인(<code>stock</code> 7 → 8 → 9 → 10, TRX 120 → 115 → 101 → 90)을 그대로 쓴다.</p>
+
+<div class="card" style="border-color:var(--accent-line);background:var(--accent-soft)">
+  <b>시나리오 A — 내 Read View</b>
+  <div class="chain" style="margin:6px 0 0">
+    <span class="chip b">활성 목록 m_ids = {115, 120}</span>
+    <span class="chip g">하한선 = 115</span>
+    <span class="chip r">상한선 = 121</span>
+    <span class="chip w">내 ID: 아직 아무것도 안 바꿈 (①은 해당 없음)</span>
+  </div>
+  <p class="sub" style="margin:6px 0 0">= "내가 스냅샷을 찍은 순간 115와 120은 아직 진행 중이었고, 121부터는 아직 시작도 안 했다"</p>
+</div>
+
+<div class="step">
+  <div class="n">1</div>
+  <div class="body">
+    <b>클러스터드 인덱스의 현재 행</b>을 본다. <code>DB_TRX_ID = 120</code> → 115 ≤ 120 &lt; 121, 사이 구간 → 목록에 <b>있음</b> → <span class="v no">안 보임</span> → <code>DB_ROLL_PTR</code>을 따라간다.
+    <div class="svgwrap"><svg viewBox="0 0 720 96" width="720" height="96" role="img" aria-label="1단계: 현재 행 판정">
+      <rect x="10" y="18" width="160" height="56" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="3"/>
+      <text x="90" y="40" text-anchor="middle" font-size="12" class="mono" font-weight="700">stock=7  TRX 120</text>
+      <text x="90" y="58" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">목록에 있음 → ✕</text>
+      <text x="90" y="88" text-anchor="middle" font-size="10" fill="#6b7280">현재 행</text>
+      <line x1="170" y1="46" x2="188" y2="46" stroke="#2563eb" stroke-width="2" marker-end="url(#arb)"/>
+      <rect x="190" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="270" y="40" text-anchor="middle" font-size="12" class="mono" fill="#6b7280">stock=8  TRX 115</text>
+      <text x="270" y="58" text-anchor="middle" font-size="11" fill="#9ca3af">undo</text>
+      <line x1="350" y1="46" x2="368" y2="46" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ar)"/>
+      <rect x="370" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="450" y="40" text-anchor="middle" font-size="12" class="mono" fill="#6b7280">stock=9  TRX 101</text>
+      <text x="450" y="58" text-anchor="middle" font-size="11" fill="#9ca3af">undo</text>
+      <line x1="530" y1="46" x2="548" y2="46" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ar)"/>
+      <rect x="550" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="630" y="40" text-anchor="middle" font-size="12" class="mono" fill="#6b7280">stock=10  TRX 90</text>
+      <text x="630" y="58" text-anchor="middle" font-size="11" fill="#9ca3af">undo (끝)</text>
+    </svg></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="n">2</div>
+  <div class="body">
+    undo 레코드에서 <b>직전 버전을 재구성</b>한다. <code>TRX_ID = 115</code> → 사이 구간 → 목록에 <b>있음</b> → <span class="v no">안 보임</span> → 다시 <code>ROLL_PTR</code>을 따라 더 과거로.
+    <div class="svgwrap"><svg viewBox="0 0 720 96" width="720" height="96" role="img" aria-label="2단계: 첫 undo 버전 판정">
+      <rect x="10" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#fecaca" stroke-width="1.5"/>
+      <text x="90" y="40" text-anchor="middle" font-size="12" class="mono" fill="#9ca3af">stock=7  TRX 120</text>
+      <text x="90" y="58" text-anchor="middle" font-size="11" fill="#dc2626">✕ 지나감</text>
+      <line x1="170" y1="46" x2="188" y2="46" stroke="#2563eb" stroke-width="2" marker-end="url(#arb)"/>
+      <rect x="190" y="18" width="160" height="56" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="3"/>
+      <text x="270" y="40" text-anchor="middle" font-size="12" class="mono" font-weight="700">stock=8  TRX 115</text>
+      <text x="270" y="58" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">목록에 있음 → ✕</text>
+      <line x1="350" y1="46" x2="368" y2="46" stroke="#2563eb" stroke-width="2" marker-end="url(#arb)"/>
+      <rect x="370" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="450" y="40" text-anchor="middle" font-size="12" class="mono" fill="#6b7280">stock=9  TRX 101</text>
+      <text x="450" y="58" text-anchor="middle" font-size="11" fill="#9ca3af">undo</text>
+      <line x1="530" y1="46" x2="548" y2="46" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ar)"/>
+      <rect x="550" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="630" y="40" text-anchor="middle" font-size="12" class="mono" fill="#6b7280">stock=10  TRX 90</text>
+      <text x="630" y="58" text-anchor="middle" font-size="11" fill="#9ca3af">undo (끝)</text>
+    </svg></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="n">3</div>
+  <div class="body">
+    <code>TRX_ID = 101</code> → 101 &lt; 하한선 115 → 규칙 ② → <span class="v see">보임</span> → <b><code>stock = 9</code>를 결과로 반환.</b> 순회 종료. (더 과거인 TRX 90 버전은 볼 필요가 없다.)
+    <div class="svgwrap"><svg viewBox="0 0 720 96" width="720" height="96" role="img" aria-label="3단계: 보이는 버전 발견">
+      <rect x="10" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#fecaca" stroke-width="1.5"/>
+      <text x="90" y="40" text-anchor="middle" font-size="12" class="mono" fill="#9ca3af">stock=7  TRX 120</text>
+      <text x="90" y="58" text-anchor="middle" font-size="11" fill="#dc2626">✕ 지나감</text>
+      <line x1="170" y1="46" x2="188" y2="46" stroke="#2563eb" stroke-width="2" marker-end="url(#arb)"/>
+      <rect x="190" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#fecaca" stroke-width="1.5"/>
+      <text x="270" y="40" text-anchor="middle" font-size="12" class="mono" fill="#9ca3af">stock=8  TRX 115</text>
+      <text x="270" y="58" text-anchor="middle" font-size="11" fill="#dc2626">✕ 지나감</text>
+      <line x1="350" y1="46" x2="368" y2="46" stroke="#2563eb" stroke-width="2" marker-end="url(#arb)"/>
+      <rect x="370" y="18" width="160" height="56" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="3"/>
+      <text x="450" y="40" text-anchor="middle" font-size="12" class="mono" font-weight="700">stock=9  TRX 101</text>
+      <text x="450" y="58" text-anchor="middle" font-size="11" fill="#16a34a" font-weight="700">101 &lt; 하한 115 → 보임 ✓</text>
+      <text x="450" y="88" text-anchor="middle" font-size="11" fill="#16a34a" font-weight="700">→ 반환 stock = 9</text>
+      <line x1="530" y1="46" x2="548" y2="46" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="3 3" marker-end="url(#ar)"/>
+      <rect x="550" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#e5e7eb" stroke-width="1.5" stroke-dasharray="3 3"/>
+      <text x="630" y="40" text-anchor="middle" font-size="12" class="mono" fill="#cbd5e1">stock=10  TRX 90</text>
+      <text x="630" y="58" text-anchor="middle" font-size="11" fill="#cbd5e1">안 감</text>
+    </svg></div>
+  </div>
+</div>
+
+<div class="callout info"><span class="t">체인 끝까지 갔는데도 보이는 버전이 없다면?</span>
+  내 스냅샷 시점엔 이 행이 <b>존재하지 않았던 것</b> (그 뒤에 INSERT됨) → 결과에서 제외한다.
+</div>
+
+<h4>시나리오 B — 규칙 ④의 "없으면 보임"이 왜 필요한가</h4>
+<div class="card" style="border-color:var(--warn-line);background:var(--warn-soft)">
+  같은 체인. 이번엔 <b>TRX 120이 115보다 늦게 시작했지만 먼저 커밋</b>한 뒤에 내가 스냅샷을 찍었다.
+  <div class="chain" style="margin:6px 0 0">
+    <span class="chip b">m_ids = {115}</span><span class="chip g">하한 = 115</span><span class="chip r">상한 = 121</span>
+  </div>
+  <div class="svgwrap"><svg viewBox="0 0 720 96" width="720" height="96" role="img" aria-label="시나리오 B: 현재 행이 바로 보임">
+    <rect x="10" y="18" width="160" height="56" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="3"/>
+    <text x="90" y="40" text-anchor="middle" font-size="12" class="mono" font-weight="700">stock=7  TRX 120</text>
+    <text x="90" y="58" text-anchor="middle" font-size="11" fill="#16a34a" font-weight="700">사이지만 목록에 없음 → ✓</text>
+    <text x="90" y="88" text-anchor="middle" font-size="11" fill="#16a34a" font-weight="700">→ 즉시 반환 stock = 7</text>
+    <line x1="170" y1="46" x2="188" y2="46" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="3 3" marker-end="url(#ar)"/>
+    <rect x="190" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#e5e7eb" stroke-dasharray="3 3"/>
+    <text x="270" y="40" text-anchor="middle" font-size="12" class="mono" fill="#cbd5e1">stock=8  TRX 115</text>
+    <text x="270" y="58" text-anchor="middle" font-size="11" fill="#cbd5e1">안 감 (115는 아직 진행 중이지만 무관)</text>
+    <line x1="350" y1="46" x2="368" y2="46" stroke="#e5e7eb" stroke-width="2" stroke-dasharray="3 3"/>
+    <rect x="370" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#e5e7eb" stroke-dasharray="3 3"/>
+    <text x="450" y="40" text-anchor="middle" font-size="12" class="mono" fill="#cbd5e1">stock=9  TRX 101</text>
+    <line x1="530" y1="46" x2="548" y2="46" stroke="#e5e7eb" stroke-width="2" stroke-dasharray="3 3"/>
+    <rect x="550" y="18" width="160" height="56" rx="8" fill="#fff" stroke="#e5e7eb" stroke-dasharray="3 3"/>
+    <text x="630" y="40" text-anchor="middle" font-size="12" class="mono" fill="#cbd5e1">stock=10  TRX 90</text>
+  </svg></div>
+  <p style="margin:6px 0 0;font-size:.95rem">"하한 ≤ ID"라고 무조건 숨기면 <b>이미 커밋된 120의 값을 못 보게 되어</b> 스냅샷이 실제 세상보다 낡아진다. 그래서 사이 구간은 <b>목록을 직접 확인</b>한다 — 시작 순서(ID)와 커밋 순서가 다르기 때문이다.</p>
+</div>
+
+<div class="memo green">
+  <h4>이 절차에서 반드시 짚을 두 가지</h4>
+  <div class="grid">
+    <div class="tile ok"><div class="k">락은 어디에도 없다</div><div class="d">남이 지금 그 행을 UPDATE 중이어도(배타 락을 잡고 있어도) 나는 undo에서 이전 버전을 꺼내 읽으면 된다. 이것이 <b>"읽기가 락을 안 잡는" 정확한 이유</b>다.</div></div>
+    <div class="tile red"><div class="k">비용의 씨앗</div><div class="d">2단계의 반복 횟수 = <b>버전 체인의 길이</b>. 체인이 짧으면 공짜에 가깝고, 길면 행 하나 읽는 데 undo 페이지를 여러 번 뒤진다. → <a href="#s3">3절 사슬</a>의 출발점.</div></div>
+  </div>
+</div>
+
+<h3 id="s2-5">2-5. 격리 수준별 Read View 생성 시점 — 차이는 "언제 찍느냐" 하나</h3>
+<p>숨은 컬럼도 undo 체인도 똑같다. RC와 RR의 내부 차이는 코드 몇 줄 — <b>"Read View를 문장마다 새로 만드느냐, 트랜잭션당 한 번 만드느냐"</b>다.</p>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 720 290" width="720" height="290" role="img" aria-label="RC와 RR의 Read View 생성 시점 타임라인">
+    <!-- time axis header -->
+    <line x1="150" y1="30" x2="700" y2="30" stroke="#374151" stroke-width="2" marker-end="url(#ar)"/>
+    <text x="690" y="20" text-anchor="end" font-size="11" fill="#6b7280">시간 →</text>
+    <!-- events -->
+    <g font-size="11" text-anchor="middle">
+      <line x1="200" y1="22" x2="200" y2="270" stroke="#e5e7eb" stroke-dasharray="3 3"/><text x="200" y="14">BEGIN</text>
+      <line x1="300" y1="22" x2="300" y2="270" stroke="#e5e7eb" stroke-dasharray="3 3"/><text x="300" y="14">SELECT ①</text>
+      <line x1="430" y1="22" x2="430" y2="270" stroke="#dc2626" stroke-dasharray="3 3"/><text x="430" y="14" fill="#dc2626" font-weight="700">남이 10→3 UPDATE + COMMIT</text>
+      <line x1="560" y1="22" x2="560" y2="270" stroke="#e5e7eb" stroke-dasharray="3 3"/><text x="560" y="14">SELECT ②</text>
+      <line x1="650" y1="22" x2="650" y2="270" stroke="#e5e7eb" stroke-dasharray="3 3"/><text x="650" y="14">COMMIT</text>
+    </g>
+    <!-- RC lane -->
+    <rect x="10" y="50" width="700" height="95" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="24" y="74" font-size="13" font-weight="700" fill="#2563eb">READ COMMITTED</text>
+    <text x="24" y="92" font-size="11" fill="#6b7280">문장마다 새 Read View</text>
+    <line x1="200" y1="110" x2="650" y2="110" stroke="#94a3b8" stroke-width="3"/>
+    <!-- RV icons -->
+    <rect x="286" y="98" width="28" height="24" rx="5" fill="#2563eb"/><text x="300" y="115" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">RV</text>
+    <text x="300" y="138" text-anchor="middle" font-size="12" font-weight="700" fill="#16a34a">stock = 10</text>
+    <rect x="546" y="98" width="28" height="24" rx="5" fill="#2563eb"/><text x="560" y="115" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">RV</text>
+    <text x="560" y="138" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">stock = 3</text>
+    <text x="640" y="138" text-anchor="end" font-size="11" fill="#dc2626">← non-repeatable read</text>
+    <!-- RR lane -->
+    <rect x="10" y="160" width="700" height="110" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="24" y="184" font-size="13" font-weight="700" fill="#2563eb">REPEATABLE READ</text>
+    <text x="24" y="202" font-size="11" fill="#6b7280">첫 일관된 읽기 때 한 번, 끝까지 재사용</text>
+    <line x1="200" y1="225" x2="650" y2="225" stroke="#94a3b8" stroke-width="3"/>
+    <rect x="286" y="213" width="28" height="24" rx="5" fill="#2563eb"/><text x="300" y="230" text-anchor="middle" font-size="10" fill="#fff" font-weight="700">RV</text>
+    <path d="M314 225 C 400 190, 480 190, 546 225" fill="none" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arb)"/>
+    <text x="430" y="198" text-anchor="middle" font-size="10" fill="#2563eb">같은 RV 재사용</text>
+    <text x="300" y="253" text-anchor="middle" font-size="12" font-weight="700" fill="#16a34a">stock = 10</text>
+    <text x="560" y="253" text-anchor="middle" font-size="12" font-weight="700" fill="#16a34a">stock = 10</text>
+    <text x="640" y="253" text-anchor="end" font-size="11" fill="#16a34a">← 같은 스냅샷</text>
+    <!-- BEGIN note -->
+    <rect x="160" y="236" width="80" height="26" rx="6" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="200" y="253" text-anchor="middle" font-size="10" fill="#dc2626" font-weight="700">BEGIN엔 없음!</text>
+  </svg>
+  </div>
+  <figcaption>RC는 SELECT마다 Read View(RV)를 새로 찍어 매번 "그 순간 커밋된 최신"을 보고, RR은 첫 SELECT 때 찍은 RV를 끝까지 재사용한다. RR의 RV는 <b>BEGIN이 아니라 첫 일관된 읽기 시점</b>에 만들어진다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>격리 수준별 일반 SELECT의 동작 — Read View는 "언제"</h4>
+  <div class="scroll"><table>
+    <thead><tr><th>격리 수준</th><th>Read View</th><th>결과</th></tr></thead>
+    <tbody>
+      <tr><td>READ UNCOMMITTED</td><td>안 만듦. 클러스터드 인덱스의 <b>현재 행을 그대로</b> 읽음</td><td class="bad">미커밋 값도 보임 (dirty read)</td></tr>
+      <tr class="hl"><td><b>READ COMMITTED</b></td><td><b>문장(statement)마다 새로</b></td><td>매 SELECT가 그 순간 커밋된 최신을 봄 → non-repeatable read 발생</td></tr>
+      <tr class="hl"><td><b>REPEATABLE READ</b></td><td><b>트랜잭션의 첫 일관된 읽기 때 한 번</b>, 끝까지 재사용</td><td class="good">같은 스냅샷 → non-repeatable read·phantom 방지</td></tr>
+      <tr><td>SERIALIZABLE</td><td>안 씀. 일반 SELECT도 <b>공유 락을 잡는 잠금 읽기</b>로 바뀜</td><td>MVCC 스냅샷을 쓰지 않음</td></tr>
+    </tbody>
+  </table></div>
+  <div class="rule">RC = 문장마다 &nbsp;·&nbsp; RR = 트랜잭션당 한 번 (첫 SELECT 때)</div>
+</div>
+
+<h4>주의할 디테일 두 가지 <span class="badge bonus">가산점</span></h4>
+<div class="grid">
+  <div class="tile"><div class="k">RR의 Read View는 BEGIN 시점이 아니다</div><div class="d"><b>첫 일관된 읽기(SELECT)를 실행하는 순간</b> 만들어진다. BEGIN 후 한참 있다가 첫 SELECT를 하면 스냅샷은 그 SELECT 시점. 즉시 만들려면 <code>START TRANSACTION WITH CONSISTENT SNAPSHOT</code>.</div></div>
+  <div class="tile red"><div class="k">스냅샷 읽기 vs 현재 읽기</div><div class="d">Read View를 쓰는 건 <b>일반 SELECT뿐</b>. <code>SELECT ... FOR UPDATE / FOR SHARE</code>, <code>UPDATE</code>, <code>DELETE</code>는 격리 수준과 무관하게 <b>항상 최신 커밋 버전을 읽고 락을 잡는다</b> (locking read, 흔히 current read).</div></div>
+</div>
+
+<div class="memo red">
+  <h4>실무 함정 — 두 읽기가 다른 세상을 본다</h4>
+  <p style="margin:0">RR에서 내 SELECT는 <b>과거 스냅샷</b>을 보는데 내 UPDATE는 <b>최신 행</b>에 적용된다. "SELECT로 재고 10개 확인 → <code>UPDATE SET stock = 9</code>"는 그 사이 남이 재고를 3으로 줄였어도 <b>9로 덮어쓴다(갱신 유실)</b>. → <a href="#s5">꼬리질문 4</a>에서 고치는 법.</p>
+  <div class="rule red" style="margin-bottom:0">MVCC의 스냅샷은 보고용, 결정용 읽기는 잠금 읽기여야 한다.</div>
+</div>
+
+<!-- ===================== 3. 비용 사슬 ===================== -->
+<h2 id="s3">3. 비용 — "긴 트랜잭션 → undo 누적 → purge 지연 → 조회 저하" 사슬</h2>
+<p>이 절이 이 페이지가 가장 겨냥하는 지점이다. "긴 트랜잭션은 안 좋다"가 아니라 <b>어떤 부품이 어떤 순서로 막혀서 누구의 무엇이 느려지는지</b>를 이름 붙여 말해야 한다.</p>
+
+<h3 id="s3-1">3-1. purge는 무엇을 하는가</h3>
+<div class="grid">
+  <div class="tile"><div class="k">치우는 것 ①</div><div class="d">더 이상 어떤 Read View도 필요로 하지 않는 <b>update undo 레코드</b> 폐기</div></div>
+  <div class="tile"><div class="k">치우는 것 ②</div><div class="d">delete-mark만 켜져 있던 행과 그 <b>인덱스 엔트리를 물리적으로 제거</b></div></div>
+</div>
+<div class="memo green">
+  <h4>purge의 진도를 정하는 단 하나</h4>
+  <div class="rule ok">"더 이상 필요 없다"의 기준 = <u>현재 살아 있는 가장 오래된 Read View</u>가 그 버전을 볼 가능성이 없는가.<br>→ 가장 오래된 Read View <b>하나</b>가 purge의 진도를 결정한다.</div>
+  <p style="margin:6px 0 0;font-size:.95rem">커밋됐지만 아직 purge되지 않은 undo의 목록이 <b>history list</b>, 그 길이가 <code>SHOW ENGINE INNODB STATUS</code>의 <b>History list length</b> — MVCC 건강의 대표 지표다.</p>
+</div>
+
+<h3 id="s3-2">3-2. 사슬 — 이름 붙여서 순서대로</h3>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 720 350" width="720" height="350" role="img" aria-label="긴 트랜잭션이 남들을 느리게 만드는 타임라인">
+    <!-- axis -->
+    <line x1="130" y1="24" x2="700" y2="24" stroke="#374151" stroke-width="2" marker-end="url(#ar)"/>
+    <text x="695" y="14" text-anchor="end" font-size="11" fill="#6b7280">시간 →</text>
+    <g font-size="10" text-anchor="middle" fill="#6b7280">
+      <text x="160" y="14">t0</text><text x="250" y="14">t1</text><text x="320" y="14">t2</text><text x="390" y="14">t3</text><text x="460" y="14">t4</text><text x="530" y="14">t5</text><text x="640" y="14">t_end</text>
+    </g>
+    <line x1="160" y1="20" x2="160" y2="330" stroke="#2563eb" stroke-dasharray="3 3"/>
+    <line x1="640" y1="20" x2="640" y2="330" stroke="#dc2626" stroke-dasharray="3 3"/>
+
+    <!-- lane 1: long trx -->
+    <text x="10" y="52" font-size="12" font-weight="700">① 긴 트랜잭션</text>
+    <text x="10" y="66" font-size="10" fill="#6b7280">외부 호출 대기 / 콘솔 방치</text>
+    <rect x="160" y="40" width="480" height="26" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+    <rect x="164" y="43" width="26" height="20" rx="4" fill="#2563eb"/><text x="177" y="57" text-anchor="middle" font-size="9" fill="#fff" font-weight="700">RV</text>
+    <text x="400" y="57" text-anchor="middle" font-size="11" fill="#1e40af">Read View 보유 중 — 이 테이블을 안 봐도 무관 (Read View는 DB 전체에 걸린다)</text>
+
+    <!-- lane 2: hot row updates -->
+    <text x="10" y="100" font-size="12" font-weight="700">④ 핫 로우 갱신</text>
+    <text x="10" y="114" font-size="10" fill="#6b7280">남들의 짧은 UPDATE·커밋</text>
+    <g font-size="9" text-anchor="middle">
+      <rect x="240" y="84" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/>
+      <rect x="310" y="84" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/><rect x="310" y="100" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/>
+      <rect x="380" y="84" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/><rect x="380" y="100" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/><rect x="380" y="116" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/>
+      <rect x="450" y="84" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/><rect x="450" y="100" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/><rect x="450" y="116" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/><rect x="450" y="132" width="20" height="14" rx="3" fill="#fee2e2" stroke="#dc2626"/>
+      <rect x="520" y="84" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/><rect x="520" y="100" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/><rect x="520" y="116" width="20" height="14" rx="3" fill="#eff6ff" stroke="#2563eb"/><rect x="520" y="132" width="20" height="14" rx="3" fill="#fee2e2" stroke="#dc2626"/><rect x="520" y="148" width="20" height="14" rx="3" fill="#fee2e2" stroke="#dc2626"/>
+      <text x="250" y="110" fill="#6b7280">체인 1</text><text x="320" y="126" fill="#6b7280">2</text><text x="390" y="142" fill="#6b7280">3</text><text x="460" y="158" fill="#dc2626" font-weight="700">4</text><text x="530" y="174" fill="#dc2626" font-weight="700">5 …</text>
+    </g>
+    <text x="600" y="120" font-size="10" fill="#dc2626" text-anchor="middle">커밋됐는데도</text>
+    <text x="600" y="132" font-size="10" fill="#dc2626" text-anchor="middle">undo가 안 지워져</text>
+    <text x="600" y="144" font-size="10" fill="#dc2626" text-anchor="middle">체인만 길어짐</text>
+
+    <!-- lane 3: purge -->
+    <text x="10" y="204" font-size="12" font-weight="700">②③ purge / history list</text>
+    <text x="10" y="218" font-size="10" fill="#6b7280">purge 진도는 t0에 고정</text>
+    <rect x="150" y="192" width="14" height="30" fill="#dc2626"/>
+    <text x="172" y="203" font-size="10" fill="#dc2626" font-weight="700">purge 정지 — 가장 오래된 RV(t0) 뒤는 못 지움</text>
+    <polyline points="160,222 250,216 320,210 390,203 460,195 530,186 640,176" fill="none" stroke="#d97706" stroke-width="2.5"/>
+    <text x="560" y="172" font-size="10" fill="#d97706" font-weight="700">History list length ↑</text>
+
+    <!-- lane 4: unrelated select -->
+    <text x="10" y="262" font-size="12" font-weight="700">⑤ 무관한 짧은 SELECT</text>
+    <text x="10" y="276" font-size="10" fill="#6b7280">범인이 아닌데 느려짐</text>
+    <rect x="520" y="248" width="22" height="22" rx="5" fill="#fff" stroke="#374151" stroke-width="1.5"/>
+    <text x="531" y="263" text-anchor="middle" font-size="10">S</text>
+    <path d="M542 259 L 570 259" stroke="#dc2626" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="575" y="256" font-size="10" fill="#dc2626" font-weight="700">행마다 체인 5개 순회</text>
+    <text x="575" y="268" font-size="10" fill="#dc2626">undo 페이지 I/O + 재구성 CPU</text>
+    <text x="575" y="280" font-size="10" fill="#dc2626">버퍼 풀이 undo로 오염</text>
+
+    <!-- lane 5: end -->
+    <text x="10" y="316" font-size="12" font-weight="700">⑦ 종료 시</text>
+    <polyline points="600,330 620,330 640,296 655,330 700,330" fill="none" stroke="#dc2626" stroke-width="2.5"/>
+    <text x="560" y="322" font-size="10" fill="#dc2626" text-anchor="end">밀린 purge 폭주 → I/O 스파이크</text>
+    <text x="560" y="334" font-size="10" fill="#dc2626" text-anchor="end">롤백이면 undo 역순 적용으로 종료도 느림</text>
+  </svg>
+  </div>
+  <figcaption>t0에 열린 긴 트랜잭션 하나가 Read View를 쥐고 있는 동안, 남들의 짧은 갱신은 커밋됐는데도 undo가 안 지워져 체인이 1→5로 길어진다. t5의 무관한 SELECT가 그 체인을 전부 순회한다. t_end에 트랜잭션이 끝나면 밀린 purge가 한꺼번에 돈다.</figcaption>
+</figure>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 720 470" width="720" height="470" role="img" aria-label="비용 사슬 7단계 흐름도">
+    <g font-size="12">
+      <rect x="20" y="10" width="680" height="50" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <text x="36" y="31" font-weight="700" fill="#2563eb">① Read View 보유</text>
+      <text x="36" y="49" fill="#374151">트랜잭션 하나가 오래 열려 있다 (RR이면 첫 SELECT 이후 Read View를 쥔다)</text>
+      <line x1="360" y1="60" x2="360" y2="74" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+
+      <rect x="20" y="76" width="680" height="62" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+      <text x="36" y="97" font-weight="700" fill="#d97706">② purge 정지</text>
+      <text x="36" y="115" fill="#374151">"가장 오래된 Read View가 볼 수도 있는 버전"이라 그 이후의 update undo를 하나도 못 지운다</text>
+      <text x="36" y="131" fill="#b45309" font-weight="700">— 그 트랜잭션이 그 테이블을 안 보더라도 무관. Read View는 테이블 단위가 아니다</text>
+      <line x1="360" y1="138" x2="360" y2="152" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+
+      <rect x="20" y="154" width="680" height="46" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+      <text x="36" y="175" font-weight="700" fill="#d97706">③ History list length 증가</text>
+      <text x="36" y="192" fill="#374151">커밋됐지만 purge 안 된 undo 누적, undo 테이블스페이스 팽창</text>
+      <line x1="360" y1="200" x2="360" y2="214" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+
+      <rect x="20" y="216" width="680" height="46" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+      <text x="36" y="237" font-weight="700" fill="#dc2626">④ 버전 체인 길이 증가</text>
+      <text x="36" y="254" fill="#374151">자주 갱신되는 행(핫 로우)의 체인이 수십·수백 개로</text>
+      <line x1="360" y1="262" x2="360" y2="276" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+
+      <rect x="20" y="278" width="680" height="62" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+      <text x="36" y="299" font-weight="700" fill="#dc2626">⑤ 체인 순회 비용 — 무관한 트랜잭션에 전파</text>
+      <text x="36" y="317" fill="#374151">그 행을 읽는 "다른 모든" 트랜잭션이 행마다 체인을 순회 — undo 페이지 I/O + 버전 재구성 CPU</text>
+      <text x="36" y="333" fill="#991b1b">범인이 아닌 짧은 조회까지 느려지고, 버퍼 풀이 undo 페이지로 오염돼 데이터 페이지 적중률이 떨어진다</text>
+      <line x1="360" y1="340" x2="360" y2="354" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+
+      <rect x="20" y="356" width="680" height="46" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+      <text x="36" y="377" font-weight="700" fill="#d97706">⑥ 유령 인덱스 엔트리</text>
+      <text x="36" y="394" fill="#374151">delete-mark 행이 물리 삭제되지 않아 범위 스캔·COUNT가 "이미 지운 행"까지 읽고 걸러낸다 — 테이블은 비는데 조회는 느려지는 역설</text>
+      <line x1="360" y1="402" x2="360" y2="416" stroke="#6b7280" stroke-width="1.5" marker-end="url(#ar)"/>
+
+      <rect x="20" y="418" width="680" height="46" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+      <text x="36" y="439" font-weight="700" fill="#dc2626">⑦ 종료 시 purge 폭주</text>
+      <text x="36" y="456" fill="#374151">밀린 purge가 한꺼번에 돌아 I/O 스파이크. 롤백이면 자기 undo를 역순 적용하느라 롤백 자체가 오래 걸림 (A의 비용 — 겸직)</text>
+    </g>
+  </svg>
+  </div>
+  <figcaption>"조회가 느려진다"에서 멈추면 결과만 말한 것이다. "왜 <b>무관한</b> 조회까지"에 답하려면 ②(Read View는 DB 전체)와 ⑤(읽는 쪽이 체인을 순회)가 있어야 한다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>사슬 7단계 — 이름으로 부르기 "보유 · 정지 · 증가 · 길어짐 · 순회 · 유령 · 폭주"</h4>
+  <div class="chain">
+    <span class="chip b">① Read View 보유</span><span class="arrow">→</span>
+    <span class="chip w">② purge 정지</span><span class="arrow">→</span>
+    <span class="chip w">③ history list 증가</span><span class="arrow">→</span>
+    <span class="chip r">④ 체인 길이 증가</span><span class="arrow">→</span>
+    <span class="chip r">⑤ 체인 순회 비용 (무관 트랜잭션 전파)</span><span class="arrow">→</span>
+    <span class="chip w">⑥ 유령 인덱스 엔트리</span><span class="arrow">→</span>
+    <span class="chip r">⑦ 종료 시 purge 폭주</span>
+  </div>
+  <div class="rule red" style="margin-bottom:0">MVCC의 청구서는 "무엇을 했는가"가 아니라 <u>"얼마나 오래 열려 있었는가"</u>에 비례하고,<br>그 청구서를 받는 건 그 트랜잭션이 아니라 <u>남들</u>이다.</div>
+</div>
+
+<h3 id="s3-3">3-3. 세컨더리 인덱스와 MVCC — 커버링 인덱스가 조용히 무력화되는 순간 <span class="badge bonus">가산점</span></h3>
+<p><code>DB_TRX_ID</code>는 <b>클러스터드 인덱스 레코드에만</b> 있다. 세컨더리 인덱스 엔트리에는 없다. 그럼 세컨더리 인덱스만 읽고 끝내는 커버링 인덱스 조회는 버전 판정을 어떻게 하나?</p>
+<div class="card">
+  <div class="chain">
+    <span class="chip b">인덱스 페이지의 <code>PAGE_MAX_TRX_ID</code></span><span class="arrow">&lt; 내 하한선?</span>
+  </div>
+  <div class="grid">
+    <div class="tile ok"><div class="k">예 — 페이지 전체가 내 스냅샷 이전</div><div class="d">이 페이지의 엔트리는 전부 봐도 되는 것 → <b>인덱스만으로 끝</b> (커버링 유지)</div></div>
+    <div class="tile red"><div class="k">아니오 — 최근 누가 건드렸다 / delete-mark</div><div class="d">판정 불가 → <b>클러스터드 인덱스로 내려가 <code>DB_TRX_ID</code> 확인</b> → 북마크 룩업(랜덤 I/O) 부활</div></div>
+  </div>
+  <p style="margin:8px 0 0">커버링 인덱스로 설계했는데 <b>갱신이 잦은 구간</b>에서 느려진다면 숨은 원인 하나가 MVCC다. "커버링 인덱스인데 왜 느리지"의 답 후보.</p>
+</div>
+
+<h3 id="s3-4">3-4. 실무에서 사슬 ①을 만드는 전형적인 코드</h3>
+<p>가장 흔한 범인은 <b>트랜잭션 안의 외부 호출</b>이다. 락 점유·커넥션 풀 고갈 관점의 피해는 ACID 문서에서 다뤘고, 여기서는 <b>MVCC 관점</b>의 피해를 붙인다 — 이 코드가 도는 동안 <b>DB 전체의 purge가 멈춘다.</b></p>
+
+<div class="codehead bad"><span class="tag">BEFORE</span> 트랜잭션 안에서 외부 PG 호출</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> settle(Long orderId) {
+<span class="ln-bad">    Order order = orderRepository.findById(orderId).orElseThrow();<span class="note">RR: 여기서 Read View 생성 → purge가 이 시점에 묶임</span></span>
+
+<span class="ln-bad">    PgResult result = pgClient.capture(order);<span class="note">외부 HTTP. 평소 300ms, 장애 시 30초 × 재시도</span></span>
+    <span class="cm">// 그동안 이 트랜잭션은 "살아 있는 가장 오래된 Read View"가 되어</span>
+    <span class="cm">// DB의 모든 테이블에 대한 undo 정리를 막는다. 커넥션도 점유.</span>
+
+    order.markPaid(result);
+}   <span class="cm">// 커밋 → 그제야 Read View 해제 → 밀린 purge 폭주</span></code></pre>
+
+<div class="codehead good"><span class="tag">AFTER</span> 읽기 트랜잭션 / 외부 호출 / 쓰기 트랜잭션을 분리</div>
+<pre><code><span class="kw">public void</span> settle(Long orderId) {
+<span class="ln-good">    OrderSnapshot snapshot = orderTxService.loadForSettlement(orderId);<span class="note">짧은 @Transactional(readOnly=true) — 수 ms 안에 RV 생성·해제</span></span>
+
+<span class="ln-good">    PgResult result = pgClient.capture(snapshot);<span class="note">트랜잭션 밖. 30초 걸려도 DB는 아무것도 안 붙듦</span></span>
+
+<span class="ln-good">    orderTxService.markPaid(orderId, result);<span class="note">별도의 짧은 @Transactional — 이미 처리됐는지 검증 후 갱신</span></span>
+}
+<span class="cm">// orderTxService는 별도 빈이어야 @Transactional 프록시가 적용된다 (자기 호출 함정)</span></code></pre>
+
+<div class="callout trap"><span class="t">두 번째 범인 — 사람이 연 콘솔 트랜잭션</span>
+  <code>SET autocommit = 0</code> 상태의 DB 클라이언트에서 <code>SELECT</code> 한 번 날리고 창을 켜 둔 채 퇴근하면, 그 세션이 밤새 "가장 오래된 Read View"가 된다. <b>코드 리뷰로는 절대 못 잡는 유형</b>이라 4-2절의 DB 쪽 안전망이 필요하다.
+</div>
+
+<!-- ===================== 4. 트레이드오프 + 안전망 ===================== -->
+<h2 id="s4">4. 트레이드오프 양면 조립 + 안전망 고정</h2>
+
+<h3 id="s4-1">4-1. MVCC의 양면 — 한 호흡으로</h3>
+<p>"MVCC는 읽기 성능이 좋다"까지만 말하면 절반이다. 얻는 것과 내는 것을 같은 문장에 넣는다.</p>
+<div class="scroll"><table>
+  <thead><tr><th>축</th><th style="color:var(--ok)">얻는 것</th><th style="color:var(--danger)">내는 것</th></tr></thead>
+  <tbody>
+    <tr><td><b>읽기</b></td><td>락 없이 일관된 스냅샷 — 읽기와 쓰기가 서로 안 막힘</td><td>행마다 버전 판정 + 체인 순회 (CPU · undo 페이지 I/O)</td></tr>
+    <tr><td><b>쓰기</b></td><td>읽기에 막히지 않음</td><td>모든 UPDATE/DELETE가 undo를 추가로 기록(쓰기 증폭); 쓰기끼리는 여전히 락</td></tr>
+    <tr><td><b>저장 공간</b></td><td>—</td><td>undo 누적, delete-mark 유령 엔트리, purge 백그라운드 부하</td></tr>
+    <tr><td><b>정합성</b></td><td>긴 리포트도 일관된 결과를 봄</td><td>스냅샷은 "과거"다 — 판단(check-then-act)에 쓰면 갱신 유실 위험</td></tr>
+  </tbody>
+</table></div>
+
+<div class="memo green">
+  <h4>조립한 문장 — 그대로 말하기</h4>
+  <div class="rule ok" style="font-weight:600;text-align:left">"MVCC는 읽기 락을 없애 <b>읽기-쓰기 비차단</b>을 얻는 대신, 그 대가를 <b>undo 공간 · 버전 체인 순회 · purge 부하</b>로 치른다. 그리고 그 청구서는 <b>트랜잭션 길이에 비례</b>해 커지고, <b>범인이 아닌 트랜잭션들</b>에게 배달된다."</div>
+  <p style="margin:6px 0 0;font-size:.95rem">이 문장이 그대로 <b>"그래서 트랜잭션은 짧게"</b>의 근거가 된다.</p>
+</div>
+
+<div class="callout info"><span class="t">한 겹 더 <span class="badge senior">시니어 변별</span></span>
+  이 트레이드오프는 <b>읽기 위주 OLTP 워크로드에 최적화된 선택</b>이다. 쓰기 비중이 압도적이거나 같은 행을 초고빈도로 갱신하는 워크로드(카운터, 재고)에서는 버전 체인이 빨리 길어지고 쓰기끼리 락 직렬화가 병목이라 MVCC의 강점이 거의 안 보인다 — 그런 구간은 <b>원자적 UPDATE · 버퍼링 · 배치 반영</b>으로 설계를 바꾸는 것이 답이지 격리 수준을 만지는 게 아니다.
+</div>
+
+<h3 id="s4-2">4-2. 안전망 — 기억이 아니라 시스템이 잡게 한다</h3>
+<p>"트랜잭션을 짧게 유지하자"는 규칙을 사람의 기억에 맡기면 반드시 뚫린다. DB 쪽과 애플리케이션 쪽에 <b>각각</b> 고정한다.</p>
+
+<h4>DB 쪽 — 지금 누가 purge를 막고 있는지 즉시 찾는 쿼리</h4>
+<pre><code><span class="cm">-- ① 열려 있는 트랜잭션, 오래된 순. trx_query가 NULL인데 age가 크면</span>
+<span class="cm">--    "쿼리는 안 돌고 트랜잭션만 열어 둔" 전형적 범인 (외부 호출 대기, 콘솔 방치)</span>
+<span class="kw">SELECT</span> trx_id, trx_state, trx_started,
+       TIMESTAMPDIFF(<span class="kw">SECOND</span>, trx_started, NOW()) <span class="kw">AS</span> age_sec,
+       trx_mysql_thread_id, trx_rows_locked, trx_query
+  <span class="kw">FROM</span> information_schema.INNODB_TRX
+ <span class="kw">ORDER BY</span> trx_started
+ <span class="kw">LIMIT</span> 10;
+
+<span class="cm">-- ② purge 대기 중인 undo 양 (History list length)</span>
+<span class="kw">SELECT</span> COUNT <span class="kw">FROM</span> information_schema.INNODB_METRICS
+ <span class="kw">WHERE</span> NAME = <span class="st">'trx_rseg_history_len'</span>;
+<span class="cm">-- 또는 SHOW ENGINE INNODB STATUS\G 의 TRANSACTIONS 절 "History list length"</span></code></pre>
+
+<div class="grid g3">
+  <div class="tile"><div class="k">지표 알림</div><div class="d">②를 모니터링 지표로 수집해 임계치 알림. 평소 대비 급증 = "어딘가에 긴 트랜잭션이 생겼다". 조회가 느려지기 <b>전에</b> 잡는 유일한 선행 지표.</div></div>
+  <div class="tile"><div class="k">범인 특정 → KILL</div><div class="d">알림이 오면 ①로 스레드를 특정하고 <code>KILL &lt;thread_id&gt;</code>. "N분 이상 열린 idle 트랜잭션 자동 종료"를 도구(<code>pt-kill</code>류)로 고정. 사람이 새벽에 깨서 죽이는 구조는 안전망이 아니다.</div></div>
+  <div class="tile"><div class="k">사후 정리</div><div class="d"><code>innodb_undo_log_truncate</code>로 팽창한 undo 테이블스페이스를 자동 축소. 단 이건 사후 정리이지 사슬 ①을 막는 게 아니다.</div></div>
+</div>
+
+<h4>애플리케이션 쪽 — 긴 트랜잭션을 만들 수 없게</h4>
+<pre><code><span class="cm">// 1) 트랜잭션 시간 상한을 코드에 박는다</span>
+<span class="ln-good"><span class="kw">@Transactional</span>(timeout = 3)<span class="note">초 단위. 초과 시 다음 JDBC 호출/커밋 시점에 예외</span></span>
+<span class="kw">public void</span> markPaid(Long orderId, PgResult result) { ... }
+<span class="cm">// 주의: 외부 HTTP 대기 중에는 아무것도 확인되지 않는다 — 결국 호출 자체를</span>
+<span class="cm">//       밖으로 빼는 게 근본. timeout은 "빼먹은 곳"을 드러내는 2차 안전망이다.</span>
+
+<span class="cm">// 2) 구조로 금지 — @Transactional 클래스가 외부 클라이언트를 의존하지 못하게 (ArchUnit)</span>
+<span class="kw">@ArchTest</span>
+<span class="kw">static final</span> ArchRule transactional_services_do_not_call_external_clients =
+    noClasses()
+        .that().areAnnotatedWith(Transactional.class)
+<span class="ln-good">        .should().dependOnClassesThat().resideInAnyPackage(<span class="st">"..client.."</span>, <span class="st">"..external.."</span>)</span>
+        .because(<span class="st">"트랜잭션 안의 외부 호출은 커넥션 점유와 purge 정지를 동시에 일으킨다"</span>);</code></pre>
+
+<pre><code><span class="cm"># 3) 커넥션 장기 점유를 로그로 노출 (HikariCP) — 긴 트랜잭션은 반드시 긴 커넥션 점유를 동반한다</span>
+spring:
+  datasource:
+    hikari:
+<span class="ln-good">      leak-detection-threshold: 5000<span class="note">ms. 초과 점유 시 스택 트레이스 경고</span></span></code></pre>
+
+<div class="memo green">
+  <h4>세 겹의 역할 — "못 만들게 · 끊게 · 알려주게"</h4>
+  <div class="grid g3">
+    <div class="tile big ok"><div class="k">ArchUnit</div><div class="d"><b>만들지 못하게</b><br>빌드 실패</div></div>
+    <div class="tile big ok"><div class="k">timeout</div><div class="d"><b>만들어졌으면 끊게</b><br>실행 중 예외</div></div>
+    <div class="tile big ok"><div class="k">leak detection</div><div class="d"><b>어디서 만들어졌는지</b><br>스택으로 알려주게</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.95rem">"트랜잭션은 짧게"라는 격언이 팀에서 실제로 지켜지는 건 이 셋이 CI와 운영에 박혀 있을 때다.</p>
+</div>
+
+<!-- ===================== 5. 꼬리질문 ===================== -->
+<h2 id="s5">5. 꼬리질문 셀프 테스트</h2>
+<p class="sub">질문만 보고 소리 내어 답한 뒤 펼쳐서 확인한다. 답에 <b>부품 이름</b>(숨은 컬럼 · undo 체인 · Read View · purge · history list)이 들어갔는지 스스로 채점한다.</p>
+<div class="tools"><button type="button" onclick="document.querySelectorAll('details.q').forEach(d=>d.open=true)">모두 펼치기</button><button type="button" onclick="document.querySelectorAll('details.q').forEach(d=>d.open=false)">모두 접기</button></div>
+
+<details class="q"><summary>MVCC가 있는데 왜 락이 여전히 필요한가요?<span class="hint">힌트: MVCC가 없애는 대기는 딱 한 종류</span></summary><div class="a">
+  <p>MVCC가 없애는 건 <b>읽기-쓰기 사이의 대기</b>뿐이다. 두 트랜잭션이 같은 행을 동시에 UPDATE하는 <b>쓰기-쓰기 충돌</b>은 버전을 아무리 쌓아도 "누구 것이 최종인가"를 정할 수 없어 배타 락으로 직렬화한다.</p>
+  <p>또 <code>UPDATE</code>·<code>DELETE</code>·<code>SELECT ... FOR UPDATE</code> 같은 잠금 읽기는 스냅샷이 아니라 <b>최신 버전을 읽고 락을 잡는다</b> — 스냅샷을 근거로 갱신하면 갱신 유실이 나기 때문이다. 마지막으로 RR에서 "아직 없는 행"의 INSERT를 막는 건 MVCC가 못 하는 일이라 <b>갭 락</b>이 맡는다(다음 문항).</p>
+  <div class="rule">읽기 절반은 MVCC, 쓰기 절반과 범위 보호는 락.</div>
+</div></details>
+
+<details class="q"><summary>READ COMMITTED와 REPEATABLE READ의 차이를 InnoDB 내부 동작으로 설명해 보세요.<span class="hint">힌트: 부품은 같다. 다른 건 딱 하나</span></summary><div class="a">
+  <p>숨은 컬럼도 undo 체인도 똑같다. 차이는 <b>Read View를 언제 만드느냐</b> 하나다. RC는 <b>문장마다 새 Read View</b>를 만들어 매 SELECT가 그 순간 커밋된 최신을 보고, RR은 <b>트랜잭션의 첫 일관된 읽기 때 한 번 만들어 끝까지 재사용</b>한다. 그래서 RC에서는 두 SELECT 사이에 남이 커밋하면 값이 바뀌고(non-repeatable read), RR에서는 같은 스냅샷을 보니 안 바뀐다.</p>
+  <p>덧붙이면 RR의 Read View는 <code>BEGIN</code>이 아니라 첫 SELECT 시점에 만들어지고, 잠금 읽기는 두 수준 모두 스냅샷을 쓰지 않는다.</p>
+  <p><b>운영 관점 한 줄</b> — RC는 Read View 수명이 문장 단위라 <b>긴 트랜잭션이 purge를 막는 정도가 훨씬 약하다.</b> 배치·통계성 긴 조회를 RC로 내리는 판단의 근거가 이것이다.</p>
+</div></details>
+
+<details class="q"><summary>긴 트랜잭션 하나가 왜 그것과 무관한 다른 조회까지 느리게 만드나요? 어떻게 확인하죠?<span class="hint">힌트: 사슬 7단계를 이름으로. "무관한"의 답은 ②와 ⑤</span></summary><div class="a">
+  <p>메커니즘 사슬로 답한다. ① 긴 트랜잭션이 <b>Read View를 보유</b>한다 → ② purge는 "가장 오래된 Read View가 볼 수도 있는 버전"을 지울 수 없어 그 이후의 update undo를 전부 보존한다 — <b>Read View는 테이블 단위가 아니라 DB 전체에 걸린다</b>, 그래서 무관한 테이블도 영향권이다 → ③ <b>History list length 증가</b> → ④ 자주 갱신되는 행의 <b>버전 체인이 길어진다</b> → ⑤ 그 행을 읽는 모든 트랜잭션이 <b>행마다 체인을 순회</b>하며 undo 페이지 I/O와 CPU를 쓴다 → ⑥ delete-mark 행이 인덱스에 <b>유령</b>으로 남아 범위 스캔이 더 읽는다.</p>
+  <p><b>확인</b>은 <code>INNODB_METRICS</code>의 <code>trx_rseg_history_len</code>(또는 <code>SHOW ENGINE INNODB STATUS</code>의 History list length) 급증으로 감지하고, <code>information_schema.INNODB_TRX</code>를 <code>trx_started</code> 순으로 정렬해 <b>쿼리는 없는데 오래 열린</b> 트랜잭션을 특정한다. 재발 방지는 지표 알림 + 장기 idle 트랜잭션 자동 종료 + 코드 쪽 ArchUnit·timeout.</p>
+</div></details>
+
+<details class="q"><summary>REPEATABLE READ에서 SELECT로 재고 10개를 확인하고 UPDATE로 9를 썼는데 재고가 꼬였습니다. 왜 그렇고, 어떻게 고치나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 두 읽기가 다른 세상을 본다</span></summary><div class="a">
+  <p><b>스냅샷 읽기와 현재 읽기가 다른 세상을 보기 때문</b>이다. 일반 SELECT는 Read View 기준 과거 스냅샷(10)을 보여 주지만, UPDATE는 격리 수준과 무관하게 <b>최신 커밋 행</b>에 적용된다. 그 사이 다른 트랜잭션들이 재고를 3까지 줄여 커밋했어도 내 SELECT는 여전히 10이라 하고, 내 <code>SET stock = 9</code>는 최신 행을 9로 덮어쓴다 — 갱신 유실이다. 격리 수준을 올려서 풀 문제가 아니다(SERIALIZABLE은 전역 비용).</p>
+  <p><b>고치는 법 — "판단의 근거가 되는 읽기는 현재 읽기로"</b></p>
+  <ol style="margin:0 0 8px;padding-left:20px">
+    <li>가장 싼 건 읽기 자체를 없애는 <b>원자적 UPDATE</b> — <code>UPDATE item SET stock = stock - 1 WHERE id = ? AND stock &gt;= 1</code>, affected rows 0이면 재고 부족.</li>
+    <li>차감 전후로 검증 로직이 필요하면 <code>SELECT ... FOR UPDATE</code>로 <b>최신을 읽으면서 잠근다.</b></li>
+    <li>충돌이 드물면 버전 컬럼 기반 <b>낙관적 락 + 재시도.</b></li>
+  </ol>
+  <div class="rule red">MVCC의 스냅샷은 보고용이고, 결정용 읽기는 잠금 읽기여야 한다.</div>
+</div></details>
+
+<details class="q"><summary>PostgreSQL의 MVCC와 InnoDB의 MVCC는 어떻게 다른가요? <span class="badge bonus">가산점</span><span class="hint">힌트: 과거 버전을 어디에 두느냐</span></summary><div class="a">
+  <p><b>과거 버전을 어디에 두느냐</b>가 다르다. InnoDB는 테이블(클러스터드 인덱스)에 최신 버전 하나만 두고 과거 버전을 <b>undo 로그</b>에 사슬로 매단다. PostgreSQL은 UPDATE를 "새 튜플 INSERT + 옛 튜플에 만료 표시"로 처리해 <b>과거 버전이 테이블 힙 안에 그대로 남는다</b>(각 튜플이 xmin/xmax로 생성·만료 트랜잭션을 기록).</p>
+  <div class="scroll"><table>
+    <thead><tr><th></th><th>InnoDB</th><th>PostgreSQL</th></tr></thead>
+    <tbody>
+      <tr><td>과거 버전 위치</td><td>undo 로그 (테이블 밖)</td><td>테이블 힙 안 (옛 튜플 그대로)</td></tr>
+      <tr><td>비용의 모양</td><td>undo 팽창 + 체인 순회</td><td>테이블·인덱스 비대화(bloat) + VACUUM 부하 + 인덱스 쓰기 증폭(HOT로 일부 완화)</td></tr>
+      <tr><td>정리 작업</td><td>purge</td><td>VACUUM</td></tr>
+      <tr><td>공통점</td><td colspan="2"><b>긴 트랜잭션이 정리 작업을 막아 남들을 느리게 한다</b> — 어느 DB든 "트랜잭션은 짧게"의 근거는 같다</td></tr>
+    </tbody>
+  </table></div>
+  <p>이 비교를 할 수 있으면 MVCC를 특정 DB의 기능이 아니라 <b>설계 선택</b>으로 이해하고 있다는 신호가 된다.</p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 부품 하나씩 콕 찍어 묻는 것들</h4>
+
+<details class="q"><summary>undo 로그는 ACID의 어느 글자를 담당하나요? <span class="badge trap">약점 겨냥</span><span class="hint">힌트: 한 글자가 아니다</span></summary><div class="a">
+  <p><b>두 글자를 겸직</b>한다. <b>A(원자성)</b> — 변경 전 값을 적어 뒀다가 롤백 때 역순으로 되돌리는 도구. <b>I(격리성)</b> — 그 "변경 전 값"이 곧 다른 트랜잭션에게 보여줄 "과거 버전"이므로 MVCC의 버전 저장소. 같은 장부 하나가 롤백용이자 과거 버전 제공용이다.</p>
+  <p>그래서 undo가 누적되면 <b>A의 비용(롤백이 오래 걸림)과 I의 비용(조회가 느려짐)이 동시에 청구</b>된다. 참고로 D(지속성)는 redo 로그의 몫이고, A/I를 헷갈리지 않는 축은 — <b>A는 "끝났을 때 전부냐 전무냐", I는 "동시에 도는 남이 내 중간을 보느냐"</b>.</p>
+</div></details>
+
+<details class="q"><summary>REPEATABLE READ의 Read View는 BEGIN 시점에 만들어지나요?<span class="hint">힌트: 아니다. 그럼 언제?</span></summary><div class="a">
+  <p>아니다. <b>첫 일관된 읽기(일반 SELECT)를 실행하는 순간</b> 만들어진다. <code>BEGIN</code> 후 한참 있다가 첫 SELECT를 하면 스냅샷은 그 SELECT 시점이다. 즉시 만들고 싶으면 <code>START TRANSACTION WITH CONSISTENT SNAPSHOT</code>을 쓴다. 이 디테일은 "긴 트랜잭션이 언제부터 purge를 막기 시작하는가"에도 그대로 적용된다 — <b>첫 SELECT부터</b>다.</p>
+</div></details>
+
+<details class="q"><summary>DELETE를 커밋하면 행이 바로 사라지나요?<span class="hint">힌트: 비트 하나</span></summary><div class="a">
+  <p>아니다. InnoDB의 DELETE는 행을 물리적으로 지우지 않고 <b>delete-mark 비트만 켠다.</b> 아직 그 행을 봐야 할 Read View가 있을 수 있기 때문이다. 실제 제거(행 + 인덱스 엔트리)는 <b>purge</b>가 "그 버전을 볼 Read View가 하나도 없다"를 확인한 뒤 수행한다. 그래서 긴 트랜잭션이 있으면 지운 행이 인덱스에 <b>유령 엔트리</b>로 남아, 대량 삭제 후에도 범위 스캔·COUNT가 느린 역설이 생긴다.</p>
+</div></details>
+
+<details class="q"><summary>insert undo는 왜 커밋 즉시 지워도 되나요? update undo와 뭐가 다르죠?<span class="hint">힌트: INSERT 전엔 무엇이 있었나</span></summary><div class="a">
+  <p>insert undo는 <b>롤백(A)에만</b> 필요하다. INSERT 전에는 행이 없었으므로, 다른 트랜잭션이 "과거 버전"으로 볼 것이 없다 — 그 행이 안 보여야 할 Read View에는 그냥 안 보이면 된다(체인 끝까지 가도 보이는 버전 없음 → 제외). 그래서 커밋하는 순간 폐기한다.</p>
+  <p>반면 update undo는 <b>이전 값</b>을 담고 있어 롤백(A)뿐 아니라 <b>다른 트랜잭션의 일관된 읽기(I)</b>에도 쓰인다. 커밋했다고 바로 못 지우고, 그 버전을 봐야 할 Read View가 사라질 때까지 <b>history list</b>에 남아 purge를 기다린다.</p>
+</div></details>
+
+<details class="q"><summary>History list length 알림이 왔습니다. 첫 조치 순서는?<span class="hint">힌트: 찾고 → 끊고 → 못 만들게</span></summary><div class="a">
+  <ol style="margin:0;padding-left:20px">
+    <li><code>information_schema.INNODB_TRX</code>를 <code>trx_started</code> 오름차순으로 조회 — <b><code>trx_query</code>가 NULL인데 age가 큰</b> 트랜잭션이 범인 후보(외부 호출 대기 또는 콘솔 방치).</li>
+    <li><code>trx_mysql_thread_id</code>로 <code>KILL &lt;thread_id&gt;</code>. 끝나면 밀린 purge가 돌면서 History list length가 내려가고 잠시 I/O가 튈 수 있음을 알고 본다.</li>
+    <li>재발 방지 — 장기 idle 트랜잭션 자동 종료(<code>pt-kill</code>류), 코드 쪽 <code>@Transactional(timeout)</code>·ArchUnit·HikariCP leak detection. 팽창한 undo는 <code>innodb_undo_log_truncate</code>로 사후 축소.</li>
+  </ol>
+</div></details>
+
+<details class="q"><summary>커버링 인덱스로 설계했는데 갱신이 잦은 구간에서 느립니다. MVCC와 무슨 관계죠? <span class="badge bonus">가산점</span><span class="hint">힌트: 세컨더리 인덱스엔 DB_TRX_ID가 없다</span></summary><div class="a">
+  <p><code>DB_TRX_ID</code>는 <b>클러스터드 인덱스 레코드에만</b> 있다. 세컨더리 인덱스만 읽는 커버링 조회는 <b>페이지 단위의 <code>PAGE_MAX_TRX_ID</code></b>(그 페이지를 마지막으로 수정한 트랜잭션 ID)로 판정한다. 이 값이 내 Read View의 하한선보다 작으면 페이지 전체가 보이는 것이라 인덱스만으로 끝낸다. 그런데 <b>최근 누군가 그 페이지를 건드렸거나</b> 엔트리가 delete-mark 상태면 판정이 불가능해 <b>클러스터드 인덱스로 내려가 <code>DB_TRX_ID</code>를 확인</b>한다 — 커버링이 깨지고 북마크 룩업(랜덤 I/O)이 되살아난다.</p>
+</div></details>
+
+<details class="q"><summary>SERIALIZABLE에서도 MVCC 스냅샷을 쓰나요?<span class="hint">힌트: 일반 SELECT의 정체가 바뀐다</span></summary><div class="a">
+  <p>InnoDB의 SERIALIZABLE은 <b>일반 SELECT도 공유 락을 잡는 잠금 읽기로 바꾼다.</b> 즉 Read View 기반 스냅샷 읽기를 쓰지 않고, 읽는 행마다 락을 잡아 락만으로 격리하는 1-1절의 세계로 돌아간다. 그래서 읽기가 쓰기를 막고 쓰기가 읽기를 막는 비용이 전역으로 되살아난다 — "격리 수준을 올려서 갱신 유실을 막자"가 답이 아닌 이유.</p>
+</div></details>
+
+<details class="q"><summary>스냅샷 읽기가 phantom을 막는다면서 왜 RR에 갭 락이 필요한가요?<span class="hint">힌트: 잠금 읽기는 스냅샷을 안 쓴다</span></summary><div class="a">
+  <p>일반 SELECT(스냅샷 읽기)는 같은 Read View를 재사용하므로 남이 INSERT해 커밋한 행이 <b>안 보인다</b> — 여기까진 MVCC가 phantom을 가린다. 그러나 <code>SELECT ... FOR UPDATE</code>·<code>UPDATE</code>·<code>DELETE</code> 같은 <b>잠금 읽기는 최신 버전을 읽으므로</b> 새로 INSERT된 행이 보인다. 이걸 막으려면 "아직 없는 행"이 들어올 <b>범위(갭) 자체를 잠가 INSERT를 차단</b>해야 하고, 그게 갭 락·넥스트 키 락이다. MVCC는 과거 버전을 보여줄 수는 있어도 <b>미래의 INSERT를 막을 수는 없다.</b></p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  <b>MVCC</b>는 "읽는 쪽이 락 대신 자기 시점의 과거 버전을 보는" 격리(I) 구현으로, InnoDB는 행의 숨은 컬럼 <code>DB_TRX_ID</code>·<code>DB_ROLL_PTR</code>, undo 로그로 이어진 <b>버전 체인</b>, 그리고 "어떤 트랜잭션까지 보이는가"를 찍은 <b>Read View</b>(활성 목록·하한선·상한선·자기 ID)로 구현한다 — Read View를 문장마다 만들면 <b>RC</b>, 트랜잭션당 한 번이면 <b>RR</b>이고, 잠금 읽기는 스냅샷이 아닌 최신을 읽는다. 읽기-쓰기 비차단을 얻는 대가는 undo 공간·체인 순회·purge 부하이며, 이 청구서는 트랜잭션 길이에 비례해 커져 <b>"긴 트랜잭션 → purge 정지 → history list 증가 → 체인 길어짐 → 무관한 조회까지 행마다 체인 순회"</b>라는 사슬로 남들에게 배달된다. 그래서 History list length를 지표로 걸고, 외부 호출을 트랜잭션 밖으로 빼는 규칙을 ArchUnit·timeout·leak detection으로 고정한다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/04-rdb-sql/mvcc-innodb.md</code> · 선행 문서: transaction-acid · transaction-isolation-levels · 후속: 갭 락·데드락, 긴 트랜잭션의 해악</p>
+</main>
+</body>
+</html>
