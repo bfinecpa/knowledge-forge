@@ -6,8 +6,8 @@
 
 | 경로 | 용도 |
 |---|---|
-| `interview-questions/interview-questions-backend.md` | 질문지 (22개 섹션, ~507문항) |
-| `interview-questions/interview-questions-rationale.md` | 출제 의도 문서 |
+| `interview-questions/questions/` | 질문지 — 섹션별 파일 `NN-슬러그.md` (26개 섹션, ~507문항). 목차: `README.md` |
+| `interview-questions/rationale/` | 출제 의도 문서 — 질문지와 같은 파일명으로 1:1 대응 |
 | `interview-questions/interview-state.md` | 면접 진행 상태 (재개 지점) |
 | `interview-questions/knowledge/` | 학습 지식 문서 (26개 카테고리: 01-java-kotlin ~ 26-auth-session) |
 | `interview-questions/knowledge-web/` | 위 문서의 웹 버전 (HTML, 1:1 매핑). `node build.mjs`로 재생성 — HTML 직접 수정 금지 |

@@ -1,6 +1,6 @@
 ---
 name: interview
-description: interview-questions-backend.md 기반 백엔드 모의 기술면접을 진행하는 면접관. 꼬리질문으로 이해의 깊이를 파고들며, 진행 상태를 interview-state.md에 기록해 세션을 닫았다가 다시 열어도 정확히 이어서 진행한다. "면접 연습하자", "면접 이어서 하자", "/interview" 등으로 트리거.
+description: interview-questions/questions/ 질문지 기반 백엔드 모의 기술면접을 진행하는 면접관. 꼬리질문으로 이해의 깊이를 파고들며, 진행 상태를 interview-state.md에 기록해 세션을 닫았다가 다시 열어도 정확히 이어서 진행한다. "면접 연습하자", "면접 이어서 하자", "/interview" 등으로 트리거.
 ---
 
 # 백엔드 기술 면접관 (Backend Interviewer)
@@ -17,13 +17,13 @@ description: interview-questions-backend.md 기반 백엔드 모의 기술면접
 
 | 파일 | 용도 |
 |---|---|
-| `interview-questions/interview-questions-backend.md` | 질문지 (22개 섹션 × 난이도 ⭐/⭐⭐/⭐⭐⭐/+α, 총 ~507문항) |
-| `interview-questions/interview-questions-rationale.md` | 출제 의도 — 각 질문이 후보자의 무엇을 드러내는지. **꼬리질문 설계와 답변 평가의 기준으로 반드시 참조** |
+| `interview-questions/questions/NN-*.md` | 질문지 — 섹션별 파일 (26개 섹션 × 난이도 ⭐/⭐⭐/⭐⭐⭐/+α, 총 ~507문항). 목차·준비 팁은 `questions/README.md` |
+| `interview-questions/rationale/NN-*.md` | 출제 의도 — 질문지와 같은 파일명으로 1:1 대응. 각 질문이 후보자의 무엇을 드러내는지. **꼬리질문 설계와 답변 평가의 기준으로 반드시 참조** |
 | `interview-questions/interview-state.md` | **현재 위치(재개 지점)만** 담는다. 그 외 아무것도 넣지 않는다. |
 | `interview-questions/transcript/NN-*.md` | **섹션별** 문답 전문 파일. 본질문·답변·꼬리질문 원문 + 각 질문 평가(상/중/하)·메모 + **그 섹션의 약점 노트**. 예: `transcript/01-java-kotlin.md` |
 | `interview-questions/transcript/_summary.md` | 횡단/집계 정보만 — **세션 로그·완료 현황**. (약점 노트는 여기 두지 않고 섹션 파일에 둔다) |
 
-두 질문 파일은 매우 크다(각 900줄+). **전체를 읽지 말고**, `grep -n "^## \|^### "`으로 섹션 오프셋을 잡은 뒤 현재 진행 중인 섹션만 Read(offset/limit)로 읽는다. rationale 문서도 같은 섹션 부분만 읽는다.
+질문지와 출제 의도는 섹션별 파일로 나뉘어 있다. **현재 진행 중인 섹션의 `questions/NN-*.md`와 `rationale/NN-*.md` 두 파일만 읽는다** — 다른 섹션 파일이나 README는 필요할 때만 읽는다.
 
 질문지에서 `<!-- -->`로 주석 처리된 문항(또는 문항 일부)은 출제 제외 대상이다. 건너뛰고, 진행률 집계에서도 제외한다.
 

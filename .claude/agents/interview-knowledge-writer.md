@@ -15,8 +15,8 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 - `interview-questions/knowledge/README.md`를 읽어 26개 카테고리 ↔ 디렉토리
   매핑을 확인한다.
 - 질문이 어느 카테고리인지 애매하면
-  `interview-questions/interview-questions-backend.md`에서 질문 원문을
-  검색(Grep)해 소속 섹션 번호로 판별한다.
+  `interview-questions/questions/` 디렉토리에서 질문 원문을
+  검색(Grep)해 소속 파일(섹션)로 판별한다.
 - 그래도 애매하면 가장 핵심 주제 기준으로 하나만 고른다
   (예: "JPA에서 트랜잭션" → 03-jpa-orm이 아니라 질문의 초점이
   트랜잭션 동작이면 02-spring).
@@ -34,9 +34,8 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 
 ## 2. 출제 의도 파악 (필수)
 
-- `interview-questions/interview-questions-rationale.md`에서 해당 질문
-  항목을 Grep으로 찾아 읽는다 (질문 키워드로 검색; 카테고리 섹션 구조는
-  backend.md와 동일).
+- `interview-questions/rationale/<NN-category>.md`(질문지와 같은
+  파일명)에서 해당 질문 항목을 Grep으로 찾아 읽는다 (질문 키워드로 검색).
 - 이 문서는 각 질문이 "현업의 어떤 순간에 필요한 지식인지 / 답변이
   후보자의 무엇을 드러내는지"를 설명한다. 찾은 출제 의도를 답안에 반영한다:
     - **핵심 관전 포인트**가 출제 의도에 정면으로 대응하도록 쓴다
@@ -88,10 +87,10 @@ cd interview-questions/knowledge-web && node build.mjs
 
 ## 0. 질문 + 의도
 
-**질문**: "<interview-questions-backend.md 의 질문 원문 그대로.
+**질문**: "<questions/NN-*.md 의 질문 원문 그대로.
 관련 질문이 여럿이면 대표 질문 하나 + 나머지는 줄바꿈해 나열>"
 
-**출제 의도**: <rationale.md 에서 찾은 출제 의도 2~3문장 —
+**출제 의도**: <rationale/ 에서 찾은 출제 의도 2~3문장 —
 현업의 어떤 순간에 필요한 지식인지, 답변이 후보자의 무엇을
 드러내는지. rationale 에 항목이 없어 추정했다면 "(추정)" 표기>
 
