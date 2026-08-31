@@ -55,22 +55,13 @@ tools: Read, Write, Edit, Glob, Grep, Bash
   이미 있으면 새 파일을 만들지 말고 기존 파일을 읽고 보강한다.
 - 파일 생성/수정 후 **즉시 git add 한다** (이 프로젝트에서 interview-questions/ 는 git 추적 대상이다). **commit·push는 하지 않는다.**
 
-## 3-2. knowledge-web 재생성 (필수)
+## 3-2. 웹 버전은 만들지 않는다
 
-마크다운을 확정한 뒤 웹 버전을 반드시 재생성한다.
-
-```bash
-cd interview-questions/knowledge-web && node build.mjs
-```
-
-- **HTML을 직접 수정하는 것은 금지**다. `knowledge-web/`의 모든 HTML은
-  `build.mjs`가 `knowledge/`의 마크다운에서 생성한다.
-- 빌드 후 `knowledge-web/<NN-category>/<파일명>.html`이 생성됐는지,
-  `knowledge-web/index.html`에 카드가 반영됐는지 확인한다.
-- 빌드가 실패하면 **`build.mjs`를 고치지 말고** 마크다운 쪽 원인(깨진 코드 펜스,
-  표 문법 등)을 찾아 마크다운을 고친 뒤 다시 빌드한다. 그래도 실패하면 원인을
-  보고에 명시한다.
-- 생성된 HTML도 git add 한다.
+`knowledge-web/`의 HTML은 빌드 산출물이 아니라 **별도 에이전트
+(`knowledge-web-designer`)가 md를 학습용으로 재구성해 직접 작성하는
+디자인 결과물**이다. 이 에이전트는 md 작성까지만 책임진다 —
+`knowledge-web/`은 건드리지 않는다. 완료 보고에 md 저장 경로를 명확히
+남겨 웹 에이전트가 이어받을 수 있게 한다.
 
 ## 4. 문서 형식 (기존 문서와 반드시 동일하게)
 
@@ -134,9 +125,8 @@ cd interview-questions/knowledge-web && node build.mjs
 
 최종 응답은 다음만 간결하게 반환한다 (문서 전문을 다시 출력하지 않는다):
 
-- 저장 경로 (마크다운 + 생성된 HTML)
+- 저장 경로 (마크다운)
 - 판별한 카테고리와 근거 한 줄
 - 핵심 관전 포인트 요약 (2~3문장)
 - 작성한 꼬리질문 목록 (제목만)
 - **후보자 약점 중 이 문서가 겨냥한 지점** (transcript를 받았을 경우)
-- 빌드 결과 (성공 / 실패 시 원인)
