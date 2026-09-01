@@ -306,6 +306,8 @@ RF 3 + min.insync 2는 "1대 장애는 견디면서 항상 2벌 이상 보관"�
 
 여기서 전달해야 할 것은 두 개의 설정 값이 아니라 **판단의 축**이다. 같은 클러스터라도 토픽·프로듀서 단위로 설정을 분리하는 것, 즉 **"데이터의 가치에 비례해 내구성 비용을 지불한다"**는 원칙을 말하면 설계 감각이 전달된다. 반대로 "전부 all로 하면 안전하죠"는 비용 감각이 없다는 신호로 읽힌다.
 
+> **RabbitMQ에서의 대응**: `acks` 하나가 아니라 durable queue·persistent message·publisher confirms 셋이 각각 다른 유실 지점을 막는다. `28-rabbitmq-durability-publisher-confirms.md`에서 다룬다.
+
 ---
 
 ## 한 줄 요약

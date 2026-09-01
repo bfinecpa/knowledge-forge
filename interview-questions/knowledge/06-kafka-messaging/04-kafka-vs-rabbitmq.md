@@ -311,6 +311,24 @@ RabbitMQ는 큐 자체는 FIFO지만, **컨슈머 여러 대가 붙거나 실패
 
 한 걸음 더 가면, **둘을 같이 쓰는 것도 이상한 선택이 아니다.** 도메인 이벤트 스트림은 Kafka로 흘리고, 메일 발송·썸네일 생성 같은 작업 큐는 RabbitMQ로 두는 분리다. 다만 브로커를 둘 운영하는 비용이 실제로 값을 하는지 — 즉 한쪽만으로 감당이 안 되는 요구가 정말 있는지 — 를 먼저 확인해야 한다.
 
+## 더 들어가려면 — RabbitMQ 심화 문서 지도
+
+이 문서는 두 도구의 구조 차이와 선택 기준까지를 다룬다. RabbitMQ 쪽을 실제로 운영하는 관점에서 더 파고드는 내용은 아래 문서들로 이어진다.
+
+| 주제 | 문서 | 이 문서와의 연결 |
+|---|---|---|
+| 구성요소와 라우팅 경로, 조용한 유실 | `25-rabbitmq-core-components.md` | 1-1의 어휘를 실무 장애 추적까지 확장 |
+| exchange 타입 선택과 다수 소비자 설계 | `26-rabbitmq-exchange-types-routing.md` | 1-2의 라우팅을 설계 판단으로 |
+| ack/nack, prefetch, 오프셋과의 대비 | `27-rabbitmq-ack-nack-prefetch.md` | 2-4의 "개별 ack vs 오프셋"을 깊게 |
+| 내구성 3종과 publisher confirms | `28-rabbitmq-durability-publisher-confirms.md` | Kafka `acks`에 대응하는 축 |
+| 재시도·DLX·DLQ, requeue 무한 루프 | `29-rabbitmq-retry-dlx-dlq.md` | 실패 처리 차이의 실무 구현 |
+| 순서 보장의 조건과 키별 큐 분리 | `30-rabbitmq-message-ordering.md` | 파티션 키에 대응하는 해법 |
+| classic vs quorum queue, split-brain | `31-classic-vs-quorum-queue.md` | Kafka ISR/`min.insync.replicas`와 대비 |
+| 큐 적체 진단과 해소 | `32-rabbitmq-queue-backlog-diagnosis.md` | 컨슈머 랙과 증상이 다른 이유 |
+| 컨슈머 처리량 올리기 | `33-rabbitmq-consumer-throughput-prefetch.md` | 파티션 상한이 없다는 이점 |
+| 지연 메시지와 스케줄링 | `34-rabbitmq-delayed-message-scheduling.md` | Kafka로는 어려운 영역 |
+| Outbox + 폴링 퍼블리셔 | `35-rabbitmq-outbox-polling-publisher.md` | CDC(`12-...`)의 RabbitMQ 판 |
+| Kafka 이관 판단과 전략 | `36-rabbitmq-to-kafka-migration.md` | 3절의 선택을 시간축으로 확장 |
 ---
 
 ## 한 줄 요약

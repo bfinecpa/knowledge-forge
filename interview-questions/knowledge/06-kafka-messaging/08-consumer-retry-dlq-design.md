@@ -393,6 +393,8 @@ Kafka의 기본 세계관이 **at-least-once**(최소 한 번 전달, 중복 허
 
 **"DLQ에 넣는 것"이 아니라 "DLQ에서 꺼내는 것"까지가 설계**라는 답이 핵심이다.
 
+> **RabbitMQ에서의 대응**: 재시도 토픽 대신 `x-dead-letter-exchange`와 TTL 대기 큐를 엮어 브로커가 타이머 역할을 한다. requeue 무한 루프라는 고유 함정을 포함해 `29-rabbitmq-retry-dlx-dlq.md`에서 다룬다.
+
 ---
 
 ## 한 줄 요약

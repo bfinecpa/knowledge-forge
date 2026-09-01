@@ -1,0 +1,382 @@
+# RabbitMQ 컨슈머 처리량 올리기 — prefetch, 동시성, 채널 모델과 그 대가
+
+> 핵심 관전 포인트: **RabbitMQ의 처리량 확장은 Kafka보다 단순하다 — 파티션 수 같은 상한이 없어서 큐 하나에 컨슈머를 몇 대든 붙일 수 있다. 그래서 1차 수단은 항상 "워커를 늘린다"이고, 그것으로 부족할 때 컨슈머 내부를 손댄다. 내부 수단은 셋이다: ① prefetch를 키워 네트워크 왕복을 줄이고, ② 리스너 동시성(스레드 수)을 올려 한 프로세스가 여러 건을 병렬 처리하고, ③ 메시지를 모아 배치로 처리해 DB 왕복을 줄인다. 그런데 셋 다 무언가를 대가로 낸다 — prefetch를 키우면 부하 분배가 불균등해지고 실패 시 순서가 크게 흐트러지며, 동시성을 올리면 순서가 완전히 사라지고 다운스트림 부하가 배로 늘며, 배치는 "일부만 실패했을 때 어디까지 ack할 것인가"라는 문제를 새로 만든다. 그리고 모든 수단에 앞서 확인할 것이 있다 — 병목이 정말 컨슈머인가. 병목이 DB인데 워커를 늘리면 DB만 더 아프다.**
+
+---
+
+## 0. 질문 + 의도
+
+**질문**: "RabbitMQ 컨슈머의 처리량을 높이는 방법은? (prefetch 튜닝, 리스너 동시성, connection/channel 모델) 이때 순서 보장과 ack 처리는 어떻게 달라지나요?"
+
+**출제 의도**: 처리량을 올리는 모든 수단이 순서 보장이나 ack 정확성을 대가로 요구한다는 것을 인식하는지 본다. 튜닝의 부작용을 미리 말하는지, 그리고 병목을 확인하지 않고 설정부터 바꾸는 습관이 없는지를 확인한다.
+
+## 1. 전제 — 처리량은 어디서 나오는가
+
+### 1-1. 분해해서 보기
+
+컨슈머 전체 처리량은 세 요소의 곱이다.
+
+```
+전체 처리량 = 컨슈머 프로세스 수
+             × 프로세스당 동시 처리 스레드 수
+             × 스레드당 초당 처리 건수
+```
+
+세 요소를 올리는 수단이 각각 다르고 대가도 다르다.
+
+- **프로세스 수** → 파드/인스턴스 증설. 가장 안전하고 효과가 확실하다.
+- **스레드 수** → 리스너 동시성 설정. 프로세스를 안 늘리고 자원을 더 쓴다.
+- **건당 속도** → 배치 처리, 쿼리 튜닝, 불필요한 호출 제거. 근본적이지만 시간이 든다.
+
+여기에 **네트워크 왕복 대기**를 줄이는 prefetch가 곱셈 밖에서 보정 역할을 한다.
+
+### 1-2. Kafka와 결정적으로 다른 점
+
+Kafka에서는 **파티션 수가 컨슈머 수의 상한**이다. 파티션 3개인 토픽에 컨슈머 4대를 띄우면 한 대는 아무 파티션도 못 받고 논다. 그래서 급할 때 컨슈머를 늘리는 것으로 해결되지 않고, 파티션 증설은 즉시 할 수 있는 작업이 아니다(키 순서가 깨진다).
+
+RabbitMQ에는 그 상한이 없다. **큐 하나에 컨슈머 100대를 붙여도 100대가 모두 일한다.** 이것이 운영 중 급한 상황에서 RabbitMQ가 가진 명확한 이점이다.
+
+그래서 순서가 이렇게 된다. **일단 워커를 늘려보고, 그래도 안 되면 내부를 손댄다.** 반대 순서로 하면 튜닝에 시간을 쓰는 동안 큐가 계속 쌓인다.
+
+### 1-3. 시작은 항상 병목 확인
+
+수단을 고르기 전에 **병목이 어디인지 확정**해야 한다. 확인 방법은 단순하다.
+
+**컨슈머 프로세스의 스레드 덤프를 뜬다.** 대부분의 스레드가 어디에 있는지가 답이다.
+
+| 스레드가 있는 곳 | 병목 | 대응 |
+|---|---|---|
+| DB 커넥션 대기, JDBC 실행 중 | 데이터베이스 | 쿼리·인덱스·배치화. 워커 증설은 역효과 |
+| HTTP 응답 대기 | 외부 API | 타임아웃, 병렬 호출, 캐시 |
+| 실제 연산 중 (CPU) | 컨슈머 자신 | **증설·동시성 증가가 유효** |
+| 대부분 대기 없음, 큐만 쌓임 | 배달이 안 됨 | prefetch·컨슈머 수 확인 |
+
+**세 번째 행일 때만 이 문서의 수단들이 제값을 한다.** 나머지는 다른 문제다.
+
+## 2. 수단 ① — prefetch
+
+### 2-1. 무엇을 줄이는가
+
+prefetch를 키우면 **컨슈머가 다음 메시지를 기다리는 시간**이 사라진다. prefetch가 1이면 ack을 보낸 뒤 다음 메시지가 도착할 때까지 네트워크 왕복만큼 논다.
+
+```
+prefetch = 1
+  [처리 10ms][대기 1ms][처리 10ms][대기 1ms] ...   -> 약 9% 손해
+
+prefetch = 50
+  [처리][처리][처리][처리] ...  손안에 이미 있어 대기 없음
+```
+
+**처리 시간이 짧을수록 이 손해가 커진다.** 처리에 500ms 걸리는 작업이면 왕복 1ms는 0.2%이므로 prefetch를 키울 이유가 없다.
+
+### 2-2. 대가
+
+**부하 분배가 불균등해진다.** prefetch 100인 컨슈머 3대가 있고 큐에 150건이 있으면, 앞의 두 대가 다 가져가고 세 번째는 논다.
+
+**실패 시 순서가 크게 흐트러진다.** 손에 쥔 50건 중 3번째가 실패해 재시도로 빠지면, 나머지 47건이 먼저 처리된 뒤 돌아온다.
+
+**메모리를 쓴다.** prefetch × 컨슈머 수 × 메시지 크기가 프로세스가 안고 있는 양이다.
+
+**정지 시간이 길어진다.** 배포로 컨슈머를 내릴 때 손에 쥔 메시지를 다 처리하거나 반납해야 하므로 graceful shutdown이 느려진다.
+
+### 2-3. 정하는 법
+
+원칙은 하나다. **처리 시간이 짧으면 크게, 길면 작게.**
+
+| 건당 처리 시간 | 권장 방향 | 이유 |
+|---|---|---|
+| 1ms 이하 | 크게 (수백) | 왕복이 처리 시간을 압도한다 |
+| 10~100ms | 중간 (10~50) | 균형 |
+| 수백 ms 이상 | 작게 (1~5) | 왕복은 무시할 수준, 공정 분배가 중요 |
+
+그리고 **큐마다 다르게 잡는다.** 한 애플리케이션 안에서도 무거운 큐와 가벼운 큐의 prefetch가 같을 이유가 없다.
+
+```java
+@Bean("heavyFactory")
+SimpleRabbitListenerContainerFactory heavy(ConnectionFactory cf) {
+    var f = new SimpleRabbitListenerContainerFactory();
+    f.setConnectionFactory(cf);
+    f.setPrefetchCount(2);        // 건당 수 초 — 공정 분배 우선
+    f.setConcurrentConsumers(4);
+    return f;
+}
+
+@Bean("lightFactory")
+SimpleRabbitListenerContainerFactory light(ConnectionFactory cf) {
+    var f = new SimpleRabbitListenerContainerFactory();
+    f.setConnectionFactory(cf);
+    f.setPrefetchCount(250);      // 건당 1ms 미만 — 왕복 제거가 이득
+    f.setConcurrentConsumers(2);
+    return f;
+}
+
+@RabbitListener(queues = "settlement.batch", containerFactory = "heavyFactory")
+public void handleHeavy(SettlementEvent e) { ... }
+```
+
+## 3. 수단 ② — 리스너 동시성
+
+### 3-1. 두 가지 컨테이너
+
+Spring AMQP에는 리스너 컨테이너가 두 종류 있고, 스레드 모델이 다르다.
+
+**`SimpleMessageListenerContainer`** — `concurrentConsumers`만큼 **컨슈머 스레드를 만들고, 각 스레드가 자기 채널을 갖는다.** 스레드 하나가 채널 하나에서 순차적으로 메시지를 처리한다.
+
+```java
+factory.setConcurrentConsumers(5);      // 시작 스레드 수
+factory.setMaxConcurrentConsumers(20);  // 부하에 따라 여기까지 자동 증가
+```
+
+`maxConcurrentConsumers`를 주면 큐가 쌓일 때 스레드를 자동으로 늘리고 한가해지면 줄인다. **부하 변동이 큰 큐에 유용하다.**
+
+**`DirectMessageListenerContainer`** — 큐마다 `consumersPerQueue`만큼 컨슈머를 두고, **메시지 처리는 공유 태스크 실행자(스레드 풀)에서 한다.** 스레드와 컨슈머가 1:1로 묶이지 않으므로, **큐가 많을 때 스레드 낭비가 적다.**
+
+선택 기준은 이렇다. **큐가 적고 부하 변동이 크면 Simple**(자동 스케일이 있다). **큐가 많고 스레드를 아껴야 하면 Direct**(공유 풀을 쓴다).
+
+### 3-2. prefetch와 동시성의 관계
+
+둘을 곱해서 생각해야 한다. `SimpleMessageListenerContainer`에서 prefetch는 **채널당** 적용되므로, 실제 컨슈머가 쥐는 총량은 이렇다.
+
+```
+프로세스가 쥐는 최대 메시지 수 = concurrentConsumers × prefetchCount
+
+예: concurrentConsumers=10, prefetch=100  ->  최대 1000건을 쥔다
+    메시지가 100KB면 100MB.  힙 여유를 넘길 수 있다.
+```
+
+**동시성을 올릴 때 prefetch를 그대로 두면 메모리 사용량이 배로 뛴다**는 점을 놓치기 쉽다. 둘을 함께 계산하는 습관이 필요하다.
+
+### 3-3. 대가
+
+**순서가 완전히 사라진다.** 스레드가 여럿이면 같은 큐의 메시지들이 동시에 처리되므로, 컨슈머가 한 대여도 순서가 보장되지 않는다.
+
+**다운스트림 부하가 배로 늘어난다.** 동시성 20이면 DB 커넥션도 최대 20개를 동시에 쓴다. **커넥션 풀 크기보다 동시성이 크면 스레드들이 풀 대기에서 줄을 선다** — 동시성만 올리고 풀을 안 늘리면 아무것도 빨라지지 않는다.
+
+```java
+// 이 셋의 균형이 맞아야 한다
+factory.setConcurrentConsumers(20);   // 동시 처리 20건
+// spring.datasource.hikari.maximum-pool-size: 10  <- 여기서 막힌다
+// 다운스트림 API rate limit: 초당 50건        <- 또는 여기서
+```
+
+**실무에서 동시성 튜닝이 실패하는 대부분의 이유가 이 불균형**이다. 컨슈머 동시성, DB 커넥션 풀, 다운스트림 허용량을 함께 맞춰야 한다.
+
+## 4. 수단 ③ — 배치 처리
+
+### 4-1. 건당 비용을 줄인다
+
+메시지 하나마다 DB에 INSERT 한 번이면, 1만 건은 왕복 1만 번이다. 이것을 100건씩 묶어 bulk insert하면 왕복이 100번으로 준다. **가장 극적인 개선이 여기서 나오는 경우가 많다.**
+
+Spring AMQP는 배치 리스너를 지원한다.
+
+```java
+@Bean
+SimpleRabbitListenerContainerFactory batchFactory(ConnectionFactory cf) {
+    var f = new SimpleRabbitListenerContainerFactory();
+    f.setConnectionFactory(cf);
+    f.setBatchListener(true);
+    f.setConsumerBatchEnabled(true);
+    f.setBatchSize(100);                 // 최대 100건을 모은다
+    f.setReceiveTimeout(1000L);          // 100건이 안 차도 1초 뒤엔 넘긴다
+    f.setPrefetchCount(200);             // 배치 크기보다 커야 배치가 찬다
+    return f;
+}
+
+@RabbitListener(queues = "metrics.raw", containerFactory = "batchFactory")
+public void handleBatch(List<MetricEvent> events) {
+    // 왕복 1회로 100건 저장
+    metricRepository.saveAll(events);
+}
+```
+
+`receiveTimeout`이 중요하다. 이것이 없으면 **트래픽이 적을 때 배치가 안 차서 메시지가 무한정 기다린다.** "100건 모이거나 1초 지나면 처리"라는 두 조건이 항상 짝이어야 한다.
+
+`prefetchCount`가 `batchSize`보다 커야 한다는 점도 놓치기 쉽다. prefetch 50인데 batchSize 100이면 배치가 절대 50건을 넘지 못한다.
+
+### 4-2. 대가 — 부분 실패의 ack
+
+배치의 진짜 난점은 성능이 아니라 **일부만 실패했을 때**다.
+
+```
+100건 중 37번째가 유효성 위반으로 실패했다.
+  - 전부 ack 하면?      -> 37번이 처리 안 됐는데 사라진다 (유실)
+  - 전부 nack 하면?     -> 99건을 다시 처리한다 (중복)
+  - 37번만 nack 하면?   -> 가능하지만 직접 구현해야 한다
+```
+
+정석은 **애플리케이션에서 건별 결과를 판정하고, 실패한 것만 골라내는 것**이다.
+
+```java
+@RabbitListener(queues = "metrics.raw", containerFactory = "batchFactory",
+                ackMode = "MANUAL")
+public void handleBatch(List<Message> messages, Channel channel) throws IOException {
+    List<Message> failed = new ArrayList<>();
+    List<MetricEvent> valid = new ArrayList<>();
+
+    for (Message m : messages) {
+        try {
+            valid.add(parse(m));
+        } catch (Exception e) {
+            failed.add(m);   // 파싱 단계에서 이미 걸러낸다
+        }
+    }
+
+    metricRepository.saveAll(valid);  // 유효한 것만 한 번에 저장
+
+    // 성공한 것은 마지막 태그로 일괄 ack (multiple=true)
+    long lastTag = messages.get(messages.size() - 1)
+                           .getMessageProperties().getDeliveryTag();
+
+    for (Message m : failed) {
+        // 실패한 것만 개별 거부 -> DLX로. 일괄 ack 전에 처리해야 한다
+        channel.basicNack(m.getMessageProperties().getDeliveryTag(), false, false);
+    }
+    channel.basicAck(lastTag, true);  // 나머지 전부 완료 처리
+}
+```
+
+**저장이 통째로 실패하는 경우(DB 다운)는 다르다.** 이때는 전부 nack해서 재시도해야 하며, 그 결과 중복이 발생하므로 **멱등 처리가 전제 조건**이다. 배치 처리는 멱등성 없이는 쓸 수 없다고 봐도 된다.
+
+### 4-3. 대가 — 지연과 메모리
+
+배치는 **모으는 동안 지연이 생긴다.** `receiveTimeout`이 1초면 최악의 경우 1초 늦게 처리된다. 실시간성이 중요한 큐에는 부적합하다.
+
+그리고 배치 크기 × 메시지 크기만큼 메모리를 더 쓴다. 이것이 prefetch 메모리와 별개로 추가된다.
+
+## 5. 수단 ④ — 커넥션과 채널 모델
+
+### 5-1. 발행용과 소비용 커넥션을 분리한다
+
+실무에서 효과가 큰데 잘 안 알려진 설정이다.
+
+**브로커가 메모리 alarm으로 발행을 블로킹하면, 그 커넥션의 모든 채널이 막힌다.** 발행과 소비가 같은 커넥션을 쓰고 있으면 **소비 쪽 ack까지 막혀** 상황이 더 나빠진다. 처리를 끝내고도 ack을 못 보내니 큐가 안 줄어들고, 큐가 안 줄어드니 alarm이 안 풀린다. **교착이다.**
+
+Spring Boot에는 이를 분리하는 설정이 있다.
+
+```yaml
+spring:
+  rabbitmq:
+    # 발행용 커넥션을 소비용과 분리한다.
+    # 발행이 블로킹돼도 컨슈머는 계속 ack을 보내 큐를 줄일 수 있다.
+    cache:
+      connection:
+        mode: connection
+```
+
+또는 `CachingConnectionFactory`에 `setPublisherConnectionFactory(...)`를 지정해 발행 전용 커넥션 팩토리를 따로 둔다. **적체 장애에서 회복 가능성을 크게 높이는 설정**이므로 언급하면 좋다. (가산점 포인트)
+
+### 5-2. 채널 캐시 크기
+
+Spring AMQP는 채널을 캐시해 재사용한다. 캐시 크기가 동시 사용 채널 수보다 작으면 **매번 채널을 새로 열고 닫아** 오버헤드가 생긴다.
+
+```yaml
+spring:
+  rabbitmq:
+    cache:
+      channel:
+        size: 50   # 동시 발행 스레드 수보다 넉넉하게
+```
+
+증상은 특징적이다. **처리량은 낮은데 브로커의 채널 생성/종료 지표가 계속 튄다.** 이 지표를 보면 바로 판별된다.
+
+### 5-3. 커넥션 수는 적게 유지한다
+
+반대로 커넥션을 많이 만드는 것은 나쁘다. TCP 연결마다 브로커가 소켓과 메모리를 쓰고, 인증·핸드셰이크 비용도 든다. **커넥션은 소수(용도별 1~2개), 채널은 필요한 만큼**이 원칙이다.
+
+특히 요청마다 커넥션을 만드는 코드는 반드시 잡아야 한다. 초당 수백 개의 커넥션이 생성·소멸하면 브로커의 CPU가 그것만으로 소진된다.
+
+## 6. 꼬리질문 대비 포인트
+
+### "컨슈머를 늘렸는데 처리량이 안 늘어납니다. 무엇을 확인하나요?"
+
+순서대로 확인한다.
+
+1. **prefetch가 너무 큰가.** 기존 컨슈머가 큐의 메시지를 다 쥐고 있으면 새 컨슈머에게 갈 것이 없다. 이것이 가장 흔하다.
+2. **다운스트림이 한계인가.** DB 커넥션 풀, 외부 API rate limit. 스레드 덤프로 확인한다.
+3. **Single Active Consumer가 켜져 있는가.** 이 설정이 있으면 컨슈머를 몇 대 띄워도 한 대만 일한다.
+4. **큐가 하나뿐인가.** 큐 자체가 브로커의 한 노드에 있으므로, 그 노드가 한계면 컨슈머를 늘려도 소용없다. 이때는 큐를 여러 개로 쪼개고 consistent hash exchange로 나눠야 한다.
+
+1번과 4번이 RabbitMQ 특유의 답이라 변별력이 있다. 특히 4번은 **"RabbitMQ에서 큐 하나의 처리량 상한은 그 큐의 홈 노드 성능"**이라는 구조를 이해했다는 신호다.
+
+### "prefetch를 무한정 키우면 안 되나요?"
+
+안 된다. 세 가지가 무너진다.
+
+**부하 분배** — 한 컨슈머가 다 가져가면 나머지가 논다. 컨슈머 증설이 무의미해진다.
+**메모리** — prefetch × 동시성 × 메시지 크기만큼 힙을 쓴다. OOM으로 죽으면 그 안의 메시지가 전부 재배달된다.
+**재배포 시간** — graceful shutdown에서 손에 쥔 것을 다 처리해야 하므로 배포가 느려지고, 강제 종료하면 대량 재배달이 발생한다.
+
+**"prefetch는 왕복 대기를 없애기 위한 것이지 처리량 자체를 늘리는 것이 아니다"**가 정확한 이해다. 왕복 대기가 이미 무시할 수준이면 더 키워도 얻는 것이 없고 잃는 것만 있다.
+
+### "컨슈머 안에서 스레드 풀에 던져 병렬 처리해도 되나요?" (시니어 변별 포인트)
+
+동작은 하지만 **ack 처리가 위험해진다.**
+
+```java
+// 위험한 코드 — 리스너가 즉시 리턴하고 실제 처리는 나중에
+@RabbitListener(queues = "orders")  // ackMode=AUTO
+public void handle(OrderEvent e) {
+    executor.submit(() -> process(e));  // 던지고 바로 리턴
+    // 리턴하는 순간 프레임워크가 ack을 보낸다.
+    // 아직 처리도 안 했는데 브로커에서 메시지가 삭제된다.
+    // 프로세스가 죽으면 큐에 있던 작업이 전부 사라진다.
+}
+```
+
+리스너가 리턴하면 `AcknowledgeMode.AUTO`는 ack을 보낸다. 실제 처리는 아직 시작도 안 했는데 브로커는 완료로 안다. **auto-ack과 같은 유실 구조를 손으로 만든 것**이다.
+
+제대로 하려면 `MANUAL` 모드로 두고 **작업이 끝난 시점에 그 스레드에서 ack**해야 한다.
+
+```java
+@RabbitListener(queues = "orders", ackMode = "MANUAL")
+public void handle(OrderEvent e, Channel channel,
+                   @Header(AmqpHeaders.DELIVERY_TAG) long tag) {
+    executor.submit(() -> {
+        try {
+            process(e);
+            channel.basicAck(tag, false);   // 처리 완료 후에 ack
+        } catch (Exception ex) {
+            channel.basicNack(tag, false, false);
+        }
+    });
+}
+```
+
+그런데 이렇게 해도 **prefetch 한도가 배압 역할을 못 하게 된다** — 리스너가 즉시 리턴하므로 브로커는 계속 밀어넣고, 큐 대기열이 컨슈머 프로세스 안에 무한정 쌓인다. 스레드 풀 큐 크기 제한과 거부 정책까지 설계해야 한다.
+
+**결론은 이렇다. 웬만하면 하지 말고 `concurrentConsumers`를 쓰라.** 프레임워크가 채널·ack·배압을 다 처리해주기 때문이다. 직접 스레드 풀을 쓰는 것은 그것으로 표현할 수 없는 요구(예: 건별로 다른 우선순위의 실행자)가 있을 때만이다.
+
+### "Kafka에서 처리량을 올리는 것과 무엇이 다른가요?"
+
+**핵심 차이는 확장의 상한**이다.
+
+| | Kafka | RabbitMQ |
+|---|---|---|
+| 컨슈머 증설 상한 | 파티션 수 | 없음 |
+| 상한 도달 후 수단 | 컨슈머 내부 병렬화 (순서 포기) | 그냥 컨슈머를 더 붙인다 |
+| 배치 | `max.poll.records`로 자연스럽게 배치 폴링 | 배치 리스너 설정 필요 |
+| 진행 관리 | 오프셋 하나 (배치 중 실패 시 커밋 지점 고민) | 메시지별 ack (부분 실패 처리 가능) |
+
+Kafka는 **처음부터 배치 지향**이라 폴링 한 번에 수백 건을 가져오는 것이 기본 동작이다. 대신 파티션 상한 때문에 스케일 아웃이 설계 시점에 묶인다.
+
+RabbitMQ는 **건 단위 push가 기본**이라 배치를 쓰려면 명시적으로 설정해야 하지만, 컨슈머 증설에 제약이 없다.
+
+**"Kafka는 처리량 상한이 설계 시점(파티션 수)에 정해지고, RabbitMQ는 운영 중에 워커만 늘리면 된다"**가 이 비교의 핵심 문장이다.
+
+### "처리량을 올렸더니 다운스트림이 죽었습니다. 어떻게 하나요?"
+
+컨슈머는 **큐라는 버퍼 뒤에 있어서 다운스트림을 보호할 수 있는 위치**에 있다. 이 위치를 활용하는 것이 답이다.
+
+**첫째, 컨슈머 쪽에 속도 제한을 둔다.** 다운스트림이 초당 100건까지 받는다면 컨슈머도 그 이상 보내지 않는다. 처리 못 한 메시지는 큐에 남고, 큐는 원래 그러라고 있는 것이다.
+
+**둘째, 서킷 브레이커를 건다.** 다운스트림 실패율이 임계치를 넘으면 리스너 컨테이너를 멈춘다. 재시도로 두들기는 것보다 낫다.
+
+**셋째, 동시성을 다운스트림 용량에 맞춘다.** DB 커넥션 풀이 10인데 컨슈머 동시성이 50이면 40개 스레드는 풀 대기만 한다. 자원만 쓰고 처리량은 그대로다.
+
+**"큐가 있다는 것은 처리 속도를 내가 정할 수 있다는 뜻"**이라는 관점이 중요하다. 동기 호출이었다면 트래픽을 그대로 맞아야 했지만, 큐 뒤에서는 **소비 속도를 조절해 다운스트림을 보호할 수 있다.** 이것이 메시지 큐를 도입하는 본래 이유 중 하나이기도 하다.
+
+---
+
+## 한 줄 요약
+
+RabbitMQ에서 처리량을 올리는 1순위는 **파티션 상한이 없다는 이점을 살려 워커를 늘리는 것**이고, 내부 수단(prefetch·동시성·배치)은 각각 **분배 공정성·순서·부분 실패 ack**을 대가로 내므로, 무엇보다 먼저 스레드 덤프로 **병목이 정말 컨슈머인지** 확인해야 한다.

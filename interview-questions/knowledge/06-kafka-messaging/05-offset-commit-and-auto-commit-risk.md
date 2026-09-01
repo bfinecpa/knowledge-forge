@@ -364,6 +364,8 @@ async가 재시도하지 않는 이유는 **오프셋 커밋의 순서 역전**�
 
 **"병렬화가 처리량을 올리는 대신 커밋 관리 복잡도를 사는 것"**이라는 트레이드오프를 말할 수 있으면 컨슈머 구현 레벨을 다뤄본 사람이다. (깊은 논의: `14-single-consumer-throughput-and-offset-commit.md`)
 
+> **RabbitMQ에서의 대응**: 오프셋 대신 메시지 단위 ack을 쓴다. auto-ack의 위험과 prefetch(QoS)의 역할, 그리고 "연속 진도"와 "메시지별 상태"라는 두 모델의 차이는 `27-rabbitmq-ack-nack-prefetch.md`에서 다룬다.
+
 ---
 
 ## 한 줄 요약

@@ -9,7 +9,7 @@
 | `03-jpa-orm` | 3. JPA / ORM |
 | `04-rdb-sql` | 4. RDB / SQL / 데이터 모델링 |
 | `05-redis-caching` | 5. Redis / 캐싱 |
-| `06-kafka-messaging` | 6. Kafka / 메시징 / 이벤트 기반 아키텍처 |
+| `06-kafka-messaging` | 6. 메시징 / 이벤트 기반 아키텍처 (Kafka · RabbitMQ) |
 | `07-traffic-performance` | 7. 대용량 트래픽 / 성능 최적화 |
 | `08-network-http` | 8. 네트워크 / HTTP / 웹 |
 | `09-rest-api` | 9. REST API 설계 |

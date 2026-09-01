@@ -397,6 +397,8 @@ DB와 브로커를 아우르는 분산 트랜잭션(2PC, 2단계 커밋)이 이�
 
 그래서 실무 표준은 **원자성을 로컬 트랜잭션 하나로 모으는 Outbox**다. "두 시스템을 묶을 방법을 찾는" 대신 **"묶어야 할 두 시스템을 하나로 만드는"** 발상의 전환이 이 패턴의 본질이다.
 
+> **RabbitMQ에서의 대응**: Debezium CDC 같은 정석 경로가 없어 `FOR UPDATE SKIP LOCKED` 폴링 퍼블리셔 + publisher confirm 콜백이 실무 기본형이다. `35-rabbitmq-outbox-polling-publisher.md`에서 다룬다.
+
 ---
 
 ## 한 줄 요약
