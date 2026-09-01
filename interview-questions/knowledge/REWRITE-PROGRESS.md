@@ -10,8 +10,8 @@
 | 디렉토리 | 건수 | 완료 | 상태 |
 |---|---|---|---|
 | 05-redis-caching | 27 | 27 | 완료 |
-| 06-kafka-messaging | 24 | 0 | 다음 차례 |
-| 07-traffic-performance | 23 | 0 | 대기 |
+| 06-kafka-messaging | 24 | 24 | 완료 |
+| 07-traffic-performance | 23 | 0 | 다음 차례 |
 | 08-network-http | 22 | 0 | 대기 |
 | 09-rest-api | 18 | 0 | 대기 |
 | 01-java-kotlin | 32 | 0 | 대기 |
@@ -59,3 +59,35 @@
 | 25-hyperloglog-bitmap-cheap-counting.md | 완료 |
 | 26-cold-cache-and-cache-warming.md | 완료 |
 | 27-multi-exec-watch-vs-lua.md | 완료 |
+
+## 06-kafka-messaging (24/24 — 완료)
+
+| 파일 | 상태 |
+|---|---|
+| 01-why-message-queue-sync-vs-async.md | 완료 |
+| 02-kafka-core-components.md | 완료 |
+| 03-partition-vs-consumer-count.md | 완료 |
+| 04-kafka-vs-rabbitmq.md | 완료 |
+| 05-offset-commit-and-auto-commit-risk.md | 완료 |
+| 06-message-ordering-partition-key.md | 완료 |
+| 07-delivery-semantics-and-exactly-once-reality.md | 완료 |
+| 08-consumer-retry-dlq-design.md | 완료 |
+| 09-consumer-rebalancing-and-in-flight-messages.md | 완료 |
+| 10-producer-acks-durability.md | 완료 |
+| 11-idempotent-consumer-implementation.md | 완료 |
+| 12-transactional-outbox-cdc-kafka.md | 완료 |
+| 13-partition-count-sizing.md | 완료 |
+| 14-single-consumer-throughput-and-offset-commit.md | 완료 |
+| 15-fat-vs-thin-event-payload.md | 완료 |
+| 16-consumer-lag-diagnosis-and-resolution.md | 완료 |
+| 17-partition-increase-side-effects.md | 완료 |
+| 18-schema-evolution-compatibility.md | 완료 |
+| 19-bulk-replay-isolation.md | 완료 |
+| 20-eventual-consistency-ux.md | 완료 |
+| 21-saga-choreography-orchestration-compensation.md | 완료 |
+| 22-max-poll-interval-vs-session-timeout.md | 완료 |
+| 23-log-compaction-compacted-topic.md | 완료 |
+| 24-large-payload-claim-check.md | 완료 |
+
+메모: 12번은 MySQL binlog 중심 서술을 PostgreSQL(WAL·논리적 디코딩·복제 슬롯) 기준으로 전환한다.
+22번은 꼬리질문이 `## 3.`에 있던 것을 본문 3섹션 + 꼬리질문 `## 4.`로 재구성 완료.
