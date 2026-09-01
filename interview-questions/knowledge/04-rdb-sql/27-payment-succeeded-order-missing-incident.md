@@ -20,6 +20,10 @@
 > 불일치**로 바꾼다. 이 전부를 사람의 주의가 아니라 **ArchUnit(트랜잭션 안
 > PG 호출 금지)·부분 실패 테스트·대사 배치 코드**로 고정한다.
 
+> **용어 주의**: 이 문서에서 **PG는 결제대행사(Payment Gateway)**를 가리킨다.
+> 데이터베이스는 줄이지 않고 **PostgreSQL**로 쓴다 — 둘 다 "PG"로 부르면
+> 면접에서도 문서에서도 반드시 꼬인다.
+
 ---
 
 ## 0. 질문 + 의도
@@ -167,19 +171,46 @@ t6  프록시가 RuntimeException 감지 → ROLLBACK
 ```
 
 t5의 예외는 무엇이든 될 수 있다 — 쿠폰 검증, 배송지 검증, `order_no`
-유니크 충돌(`DataIntegrityViolationException`), 다른 트랜잭션과의 데드락
-희생, 재고 행 락 대기 시간 초과(`innodb_lock_wait_timeout`). 그리고 PG가
+유니크 충돌(`23505` → `DataIntegrityViolationException`), 다른 트랜잭션과의
+데드락 희생(`40P01 deadlock detected` → `CannotAcquireLockException`), 재고 행
+락 대기 시간 초과(`lock_timeout`을 걸어 뒀다면 `55P03 lock_not_available`).
+PostgreSQL에서 특히 조심할 것은 **락 대기에 기본 타임아웃이 없다**는 점이다
+(`lock_timeout` 기본 0 = 무한) — 안전판이 없으면 예외가 나는 대신 트랜잭션이
+하염없이 길어져 (c)의 "불명"으로 넘어간다. 그리고 PG가
 느린 날엔 **PG 응답 자체가 t5를 만든다**: PG가 8초 걸리면 그동안 재고
-락과 커넥션을 쥔 채 대기하고, 트랜잭션 타임아웃이나 뒤이은 SQL의 락
-대기 실패가 예외를 던져 롤백된다 — "PG가 느려지는 날에만 결제 유실이
+락과 커넥션(PostgreSQL에서는 백엔드 프로세스 하나)을 쥔 채 대기하고,
+문장 타임아웃(`statement_timeout`)이나 뒤이은 SQL의 락
+대기 실패가 예외를 던져 롤백된다. **PostgreSQL에는 이 경로를 정확히
+저격하는 설정이 하나 더 있다** — HTTP 응답을 기다리는 동안 그 세션은
+`pg_stat_activity`에서 `idle in transaction` 상태로 놀고 있는데,
+운영에서 흔히 켜 두는 `idle_in_transaction_session_timeout`이 걸려 있으면
+서버가 그 세션을 **끊어 버린다**(`25P03`). 승인은 이미 났고 트랜잭션은
+서버가 롤백한 뒤다 — DBA가 롱 트랜잭션을 막으려고 켠 안전장치가, 승인을
+트랜잭션 안에 둔 코드 때문에 결제 유실 장치로 작동하는 셈이다 — "PG가 느려지는 날에만 결제 유실이
 늘어난다"는 패턴은 거의 이 사슬이다(DB 쪽 해악은
 [16-long-transaction-harm-and-shortening.md](./16-long-transaction-harm-and-shortening.md)
 §2 참고).
 
 **단서**: 앱 에러 로그에 "승인 성공" 로그 직후 수백 ms 뒤 예외 스택.
-`orders`에는 행이 없지만 **`AUTO_INCREMENT` 값은 롤백돼도 되돌아오지
-않으므로 ID에 구멍이 남는다** — 사고 시각 부근의 ID 갭이 "INSERT까지는
-갔다가 롤백됐다"는 DB 쪽 증거다.
+`orders`에는 행이 없지만 **시퀀스는 롤백을 따라오지 않으므로 ID에 구멍이
+남는다** — PostgreSQL의 `nextval()`은 트랜잭션 밖에서 동작한다(그래야 동시
+삽입이 서로를 기다리지 않는다). 그래서 롤백된 INSERT가 소모한 번호는 영원히
+비고, 사고 시각 부근의 ID 갭이 "INSERT까지는 갔다가 롤백됐다"는 DB 쪽
+증거가 된다. 현재 위치는 `SELECT last_value FROM orders_id_seq`로 보고, 실제
+최대 ID와의 차이가 그날 갑자기 벌어졌는지를 확인한다.
+
+```sql
+-- 시각별 ID 갭 — 연속이어야 할 id 사이에 빈 구간이 사고 시각에 몰렸는지
+SELECT id, created_at,
+       id - lag(id) OVER (ORDER BY id) - 1 AS gap_before
+FROM   orders
+WHERE  created_at BETWEEN $1 AND $2
+ORDER  BY id;
+```
+
+> **참고**: ID 갭은 정상 상황(동시 삽입, `ON CONFLICT` 충돌, 시퀀스 `CACHE`로
+> 인한 세션별 점프)에서도 생긴다. "갭이 있다 = 사고"가 아니라 **"평소보다
+> 갭이 몰린 구간이 예외 로그 시각과 겹친다"**가 증거다.
 
 한 가지 변형을 같이 알아 둔다. t5가 **checked 예외**였다면 기본 규칙상
 롤백되지 않고 **커밋**된다 — 이때는 주문이 남으므로 이 증상이 아니라
@@ -205,7 +236,25 @@ t4  클라이언트 → 우리 서버  POST /orders/confirm  (결제창에서 �
 결과  PG = 승인 / orders = 없음 / 웹훅은 이미 버려져서 두 번째 기회도 없음
 ```
 
-변형: 웹훅 핸들러가 5xx를 돌려주면 PG는 재시도하지만 **재시도 횟수와
+**변형 하나 — "없다"가 사실이 아닐 수 있다 (PostgreSQL 읽기 경로 함정).**
+t3의 `findByOrderNo`가 `@Transactional(readOnly = true)`로 선언돼 리드 리플리카
+(hot standby)로 라우팅되면, 프라이머리에서 방금 커밋된 주문이 **아직 리플리카에
+도착하지 않아** 없는 것으로 보인다. 스트리밍 복제는 기본이 비동기이고, 리플리카가
+무거운 조회를 돌고 있으면 재생이 밀린다. 즉 **주문은 있는데 "없다"고 판단해 웹훅을
+버리는** 사고다 — 코드도 데이터도 멀쩡한데 증상만 (b)와 똑같아서 가장 오래
+헤매는 갈래다. 확인은 두 줄이면 된다.
+
+```sql
+-- 리플리카에서: 지금 얼마나 밀려 있나 (재생 지연)
+SELECT pg_is_in_recovery(), now() - pg_last_xact_replay_timestamp() AS replay_lag;
+```
+
+처방은 **"진실을 판정하는 읽기는 프라이머리에서"** — 웹훅·대사·멱등 확인처럼
+분기를 결정하는 조회는 리플리카로 보내지 않는다(라우팅 애노테이션을 명시적으로
+프라이머리로 고정). 그리고 §5-3처럼 Inbox에 먼저 적재하고 지연 재시도하면,
+설령 리플리카를 봤더라도 다음 시도에서 정상 매칭된다.
+
+변형 둘: 웹훅 핸들러가 5xx를 돌려주면 PG는 재시도하지만 **재시도 횟수와
 간격은 PG가 정한다.** 그 창 안에 우리 배포가 겹치거나, 웹훅 엔드포인트가
 새 버전에서 경로·인증 방식이 바뀌어 4xx를 돌려주면 PG는 재시도를 멈춘다.
 **웹훅을 "받아서 곧바로 처리"하는 구조 자체가 (b)를 만든다** — 처리 실패와
@@ -269,24 +318,40 @@ t5  멱등 필터: "K 는 처리 중" → 409 Conflict. 비즈니스 로직에 �
 t1  pgClient.approve() 성공
 t2  INSERT INTO orders ... 전송
 t3  COMMIT 요청 전송
-    이 순간 DB failover(마스터 교체) 또는 배포로 커넥션 종료
+    이 순간 DB failover(standby 승격으로 프라이머리 교체) 또는 배포로 커넥션 종료
     (α) 커밋 전에 단절 → 트랜잭션 통째로 사라짐 → orders 없음
     (β) 커밋 요청은 갔는데 응답 전 단절 → DB는 커밋했을 수도, 아닐 수도
-        → 드라이버는 CommunicationsException → 앱은 "실패"로 판단해 고객에게 에러
-    (γ) 커밋됐지만 비동기 복제라 마지막 커밋이 승격된 리플리카에 없음 → 승격 후 그 주문은 존재하지 않는다
+        → pgjdbc는 PSQLException("An I/O error occurred while sending to the backend")
+        → 앱은 "실패"로 판단해 고객에게 에러
+    (γ) 커밋됐지만 스트리밍 복제가 비동기라 마지막 커밋이 승격된 standby 의 WAL 에 없음
+        → 승격 후 그 주문은 존재하지 않는다 (프라이머리가 앞서간 만큼 통째로 사라진다)
+    (δ) synchronous_commit = off 였다 → 커밋 응답을 이미 받았는데도 그 커밋의 WAL 이
+        아직 디스크에 없어, 서버 크래시 시 마지막 수백 ms 가 사라진다 (데이터 손상은 아니고 "유실")
+    (ε) 승격이 끝난 뒤 앱이 옛 프라이머리(아직 standby)에 다시 붙음
+        → ERROR 25006 cannot execute INSERT in a read-only transaction 이 쏟아진다
 결과  특정 시각(배포·failover 창)에 불일치가 군집으로 발생
 ```
 
-(β)는 (c)와 같은 "불명" 문제가 **DB 쪽에서** 일어난 것이다. (γ)는 인프라
+(β)는 (c)와 같은 "불명" 문제가 **DB 쪽에서** 일어난 것이다. (γ)(δ)는 인프라
 설정의 문제라 애플리케이션 코드만 봐서는 영원히 원인을 못 찾는다 —
-반동기 복제(semi-sync)가 아니면 failover는 마지막 몇 건을 잃을 수 있다는
-사실을 알아야 한다. 이 후보는 "내 코드 밖에서 벌어지는 일"이라 후보
-목록에서 가장 잘 빠진다(4장 마지막 고난이도 문항 "failover 중
-애플리케이션 동작"과 같은 뿌리).
+PostgreSQL에서 이 유실 창을 닫는 손잡이는 두 개다. **`synchronous_commit`**
+(커밋 응답 전에 WAL을 어디까지 확정할지: `off` → `local`(로컬 fsync) →
+`on`(기본) → `remote_write`/`remote_apply`(standby까지))와
+**`synchronous_standby_names`**(동기 복제 대상 지정). 결제 원장을 담은
+DB에서 **`synchronous_commit = off`는 금지**다 — 벌크 적재 배치에서나
+쓸 수 있는 설정이고, "커밋 응답을 받았으니 남았다"는 앱의 전제를 깨뜨린다.
+동기 복제로 (γ)까지 막으면 RPO는 0에 가까워지지만 **커밋 지연이 standby
+왕복만큼 늘고, standby가 죽으면 프라이머리 쓰기가 멈춘다**(그래서 보통
+standby 두 대 이상 + `ANY 1 (...)` 구성). 이 후보는 "내 코드 밖에서
+벌어지는 일"이라 후보 목록에서 가장 잘 빠진다(4장 마지막 고난이도 문항
+"failover 중 애플리케이션 동작"과 같은 뿌리).
 
 **단서**: 사고 건들의 시각이 배포 이벤트·failover 이벤트와 정확히 겹침.
-`CommunicationsException`, `Connection is closed`, `The last packet
-successfully received` 류 로그가 같은 시각에 묶여 있음.
+pgjdbc의 `An I/O error occurred while sending to the backend`,
+`This connection has been closed`, `terminating connection due to
+administrator command`, 그리고 승격 직후의 `25006 read-only transaction`
+류 로그가 같은 시각에 묶여 있음. 승격 여부는 `SELECT pg_is_in_recovery()`
+한 줄로 확인한다.
 
 ### 3-6. (f) 비동기 후처리에서 주문 생성 — `@Async`·이벤트 리스너가 조용히 죽었다
 
@@ -334,6 +399,10 @@ UNION ALL
 SELECT 'idem',         id, status, created_at FROM idempotency_record WHERE idem_key = :idemKey;
 ```
 
+> **이 조회는 반드시 프라이머리에서 한다.** 리플리카에 붙어 "없다"를 확인하면
+> §3-2 변형 하나의 함정을 조사자가 그대로 밟는다. `SELECT pg_is_in_recovery()`가
+> `false`인지 먼저 보고 시작하는 습관이 사고 조사에서 한 시간을 아낀다.
+
 - **아무것도 없다** → (a) 롤백, (c)(ii) 크래시, (e)(α)(γ). 이때 ID 갭과
   에러 로그 시각으로 (a)를 먼저 확인한다.
 - **멱등 레코드만 `IN_PROGRESS`/`FAILED`** → (d).
@@ -350,7 +419,7 @@ SELECT 'idem',         id, status, created_at FROM idempotency_record WHERE idem
 | 웹훅 로그 "order not found" + 200, PG 콘솔 전송 성공 | (b) |
 | `SocketTimeoutException` / 로그 절단 + 재시작 이벤트 | (c) |
 | 멱등 레코드 `IN_PROGRESS`·`FAILED`, 409 반복 | (d) |
-| 배포·failover 시각과 일치, `CommunicationsException` 군집 | (e) |
+| 배포·failover 시각과 일치, pgjdbc I/O 에러·`25006 read-only transaction` 군집 | (e) |
 | 고객은 성공 화면, 응답 200, 비동기 예외 핸들러 로그 | (f) |
 
 면접에서 "여섯 가지 다 조사하겠습니다"는 답이 아니다. **어떤 단서로 어떤
@@ -396,7 +465,9 @@ WHERE o.status = 'CONFIRMED' AND p.status = 'APPROVED'
 API나 정산 파일을 받아 임시 테이블에 적재하고 우리 주문과 대조한다.
 
 ```sql
--- PG 거래내역을 pg_tx_snapshot(payment_key, order_no, amount, status, approved_at) 에 적재한 뒤
+-- PG 거래내역 CSV 를 COPY 로 적재한다 (INSERT 반복보다 훨씬 빠르고, 사고 중엔 이 차이가 크다)
+--   \copy pg_tx_snapshot FROM 'pg_ledger_20260830.csv' WITH (FORMAT csv, HEADER true)
+-- pg_tx_snapshot(payment_key, order_no, amount, status, approved_at) 에 적재한 뒤
 SELECT s.payment_key, s.order_no, s.amount, s.approved_at
 FROM pg_tx_snapshot s
 LEFT JOIN orders o ON o.order_no = s.order_no AND o.status = 'CONFIRMED'
@@ -410,8 +481,26 @@ WHERE s.status = 'DONE'
 
 주의: 이 쿼리들은 사고 대응 중 운영 DB에 날린다. `payment(status,
 approved_at)`, `orders(status, confirmed_at)`, `orders(order_no)` 인덱스가
-없으면 풀스캔이고, 사고 중에 긴 조회를 얹는 것은 2차 사고다. 대사
-배치(§6-1)가 상시 도는 구조라면 이 인덱스는 이미 있어야 한다.
+없으면 Seq Scan이고, 사고 중에 긴 조회를 얹는 것은 2차 사고다. 대사
+배치(§6-1)가 상시 도는 구조라면 이 인덱스는 이미 있어야 한다. PostgreSQL이면
+**부분 인덱스**가 이 용도에 정확히 맞는다 — 대사가 관심 있는 것은 전체가 아니라
+"미결" 행뿐이라, 인덱스가 그 행만 담으면 크기도 갱신 비용도 작다.
+
+```sql
+-- 미결 주문만 담는 인덱스 — CONFIRMED 로 전이하면 인덱스에서 스스로 빠진다
+CREATE INDEX CONCURRENTLY idx_orders_pending_created
+    ON orders (created_at) WHERE status = 'PENDING';
+
+-- 사고 조사·대사용 anti-join 축
+CREATE INDEX CONCURRENTLY idx_payment_approved_at
+    ON payment (approved_at) WHERE status = 'APPROVED';
+```
+
+`CONCURRENTLY`를 붙이는 이유는 운영 중 인덱스 생성이 쓰기를 막지 않게 하기
+위해서다(대신 트랜잭션 블록 안에서는 못 쓰고, 실패하면 `INVALID` 인덱스가
+남으니 `pg_index.indisvalid`를 확인하고 DROP 후 재시도한다). 조건부 UPDATE로
+상태가 바뀌면 그 행이 부분 인덱스에서 자동으로 빠져 인덱스가 늘 작게 유지되는
+것도 이 설계와 궁합이 맞는다.
 
 ### 4-2. 임시 조치 — 출혈 차단과 고객 복구를 분리한다
 
@@ -429,8 +518,13 @@ CONFIRMED 주문 생성), 아니면 PG 취소 API로 환불하고 안내한다. 
 문제로 넘어가므로 **방향 2가 방향 1보다 먼저 막아야 하는 출혈**일 때가
 많다.
 
-**증거 보존**: 재시작·재배포 전에 앱 로그, `SHOW ENGINE INNODB STATUS`,
-PG 콘솔의 웹훅·승인 이력, 배포·failover 타임라인을 캡처한다. 재시작은
+**증거 보존**: 재시작·재배포 전에 앱 로그, PG 콘솔의 웹훅·승인 이력,
+배포·failover 타임라인을 캡처한다. DB 쪽에서 재시작하면 사라지는 것들이
+있으므로 **스냅샷을 먼저 뜬다** — `pg_stat_activity`(진행 중 쿼리·
+`idle in transaction`·`xact_start`), `pg_locks` + `pg_blocking_pids()`(누가
+누구를 막고 있었나), `pg_stat_statements`(재시작이 아니라 `pg_stat_statements_reset()`
+으로 날아간다), 그리고 서버 로그의 데드락·락 대기 기록(`log_lock_waits`,
+`log_min_duration_statement`가 켜져 있어야 남는다). 재시작은
 원인 (e)(f)의 증거를 지운다.
 
 ## 5. 재발 방지 — 방어선 다섯 겹과 각각의 대가
@@ -491,7 +585,8 @@ public class OrderTxService {
 
     @Transactional
     public void confirm(Long orderId, PgApproval approval) {
-        // UPDATE orders SET status='CONFIRMED', confirmed_at=NOW() WHERE id=? AND status='PENDING'
+        // UPDATE orders SET status='CONFIRMED', confirmed_at=now() WHERE id=$1 AND status='PENDING'
+        //   → 갱신된 행 수가 0이면 이미 다른 경로가 확정한 것. 별도 SELECT+체크가 필요 없다
         int updated = orderRepository.confirmIfPending(orderId);
         if (updated == 0) return;                                    // 이미 확정(웹훅·대사가 먼저 왔다) — 두 번 실행돼도 무해
         paymentRepository.save(Payment.approved(orderId, approval)); // payment_key UNIQUE — DB 레벨 최후 방어선
@@ -559,7 +654,39 @@ FAILED / EXPIRED`. PENDING은 "PG에 물어보는 중"이라는 **정식 상태*
   `orders.order_no UNIQUE`, 그리고 조건부 UPDATE. 위 두 층이 모두
   뚫려도 DB가 두 번째 INSERT를 거절한다. 4장 관점에서 가장 중요한
   층이다 — **애플리케이션 멱등은 버그가 날 수 있지만 유니크 제약은
-  안 난다.**
+  안 난다.** PostgreSQL에서 이 층이 특히 중요한 이유가 하나 더 있다:
+  **없는 행은 잠글 수 없다.** 갭 락이 없으므로 "조회해서 없으면 INSERT"는
+  아무리 잘 짜도 두 요청이 동시에 통과할 수 있고, 이 경쟁을 막는 것은
+  **유니크 인덱스 하나뿐**이다.
+
+PostgreSQL에서 이 세 층을 코드로 내리는 정석 문장이 있다 —
+**`INSERT ... ON CONFLICT DO NOTHING ... RETURNING`**. "이미 있으면 조용히
+넘어가되, 내가 만든 것인지 아닌지는 반환 행으로 안다"가 한 왕복에서 끝난다.
+
+```sql
+-- ✅ 멱등 삽입: 같은 멱등키로 두 번 들어와도 주문은 하나. 반환 행이 있으면 "내가 만들었다"
+INSERT INTO orders (order_no, idempotency_key, user_id, amount, status, created_at)
+VALUES ($1, $2, $3, $4, 'PENDING', now())
+ON CONFLICT (idempotency_key) DO NOTHING
+RETURNING id, order_no;
+--   0행 반환 → 이미 존재 → 그 주문을 읽어 상태별로 이어간다(§5-2 after 코드)
+
+-- ✅ 결제 기록도 같은 형태. payment_key 는 PG 가 준 값이라 최후 방어선이 된다
+INSERT INTO payment (order_id, payment_key, amount, status, approved_at)
+VALUES ($1, $2, $3, 'APPROVED', $4)
+ON CONFLICT (payment_key) DO NOTHING;
+```
+
+> **(가산점 포인트) 왜 `try { insert } catch (DuplicateKeyException)`이 아니라
+> `ON CONFLICT`인가.** PostgreSQL은 트랜잭션 안에서 에러가 하나라도 나면 그
+> 트랜잭션 전체가 abort 상태가 되어 이후 명령이 전부
+> `current transaction is aborted` 로 거부된다. 유니크 위반을 잡아서 "그럼
+> 기존 주문을 읽자"로 이어가려면 `SAVEPOINT`(스프링 `@Transactional(propagation
+> = NESTED)`)가 필요하다 — 결제 경로에서 이 함정을 밟으면 "중복 요청 하나
+> 때문에 정상 트랜잭션이 통째로 죽는" 2차 사고가 난다. 그래서 **예외를 아예
+> 만들지 않는 `ON CONFLICT`**가 PostgreSQL의 정석이다. `DO UPDATE`를 쓸 때는
+> `RETURNING (xmax = 0) AS inserted`로 삽입/갱신을 구분할 수 있다는 것도
+> 같이 알아 두면 좋다.
 
 ```java
 // before — "봤다"만 기억하는 멱등 필터
@@ -613,7 +740,13 @@ public ResponseEntity<Void> onWebhook(@RequestBody PgWebhook w, @RequestHeader("
 
 @Scheduled(fixedDelay = 1_000)
 public void processInbox() {
-    for (WebhookInbox in : inboxRepository.findDue(100)) {              // next_attempt_at <= now
+    // findDue 의 실제 SQL — 인스턴스가 여러 대여도 서로 같은 행을 잡지 않는다
+    //   SELECT * FROM webhook_inbox
+    //    WHERE status = 'PENDING_RETRY' AND next_attempt_at <= now()
+    //    ORDER BY next_attempt_at
+    //    LIMIT 100
+    //    FOR UPDATE SKIP LOCKED          ← 잠긴 행은 기다리지 않고 건너뛴다 (PostgreSQL 작업 큐 정석)
+    for (WebhookInbox in : inboxRepository.findDue(100)) {
         Optional<Order> order = orderRepository.findByOrderNo(in.orderNo());
         if (order.isEmpty()) {                                          // 순서 역전 — 주문이 아직 없다
             in.scheduleRetry(backoff(in.attempts()));                   // 1s → 5s → 30s → 5m … 상한 초과 시 수동 큐 + 알람
@@ -632,6 +765,24 @@ public void processInbox() {
 이벤트가 아니라 Outbox를 거친다.** Outbox 내부(릴레이·멱등 소비·순서)는
 [22-transaction-boundary-and-domain-events.md](../03-jpa-orm/22-transaction-boundary-and-domain-events.md)
 §7에 있으니 여기서는 반복하지 않는다.
+
+**PostgreSQL이 이 패턴에 주는 도구 셋 (가산점 포인트).**
+
+- **`FOR UPDATE SKIP LOCKED`** — Outbox·Inbox 릴레이를 여러 인스턴스로 돌려도
+  같은 행을 두 번 집지 않는다. 별도 분산 락이 필요 없는, PostgreSQL로 작업
+  큐를 만드는 표준 문장이다.
+- **논리 디코딩 기반 CDC** — Outbox 테이블을 폴링하는 대신 WAL을 읽어 흘려보낸다
+  (Debezium + `pgoutput` 플러그인, `wal_level = logical`). 폴링 지연과 DB 부하가
+  사라지지만 **복제 슬롯이라는 새 운영 대상**이 생긴다: 컨슈머가 멈춘 슬롯은
+  WAL을 붙잡아 디스크를 채우고, 심하면 프라이머리가 멈춘다
+  (`pg_replication_slots.active`, 슬롯별 지연 감시가 필수. `max_slot_wal_keep_size`로
+  상한을 둘 수 있다). 결제 이벤트를 여러 소비자가 나눠 쓰는 규모가 아니면 폴링이
+  더 싸다.
+- **`LISTEN` / `NOTIFY`** — Outbox에 INSERT한 트랜잭션이 커밋되면 대기 중인
+  릴레이를 즉시 깨운다(커밋 시점에만 전달되므로 롤백된 알림은 안 나간다). 폴링
+  주기를 1초에서 사실상 0으로 줄이는 값싼 장치인데, **전달 보장이 없다**는 것이
+  한계다 — 리스너가 죽어 있는 동안의 알림은 사라진다. 그래서 `NOTIFY`는
+  "빨리 깨우는 용도"로만 쓰고, **정합성은 여전히 폴링(백스톱)이 지킨다.**
 
 **얻는 것**: 웹훅 순서 역전·일시 실패가 사고가 아니라 "재시도 대기"가
 된다. 후속 처리가 프로세스 사망에도 살아남는다. 두 테이블 자체가
@@ -689,7 +840,7 @@ PENDING의 나이 분포와 대사 불일치 건수를 알람 대상으로 둔�
 | (b) 웹훅 역전·유실 | ③ Inbox + 지연 재시도 | ④ 대사 (PG 조회) |
 | (c) 불명·크래시 | ① PENDING 흔적 + graceful shutdown | ④ 대사 |
 | (d) 멱등 충돌 | ② 결과 저장·상태별 재개 | ④ 대사 |
-| (e) failover | ① PENDING 흔적 + 반동기 복제 | ④ 대사 |
+| (e) failover | ① PENDING 흔적 + 동기 복제(`synchronous_commit`/`synchronous_standby_names`) | ④ 대사 |
 | (f) 비동기 유실 | 주문 생성은 동기 [A]로, 후속만 ③ Outbox | ④ 대사 |
 
 표에서 보이듯 **④는 모든 행의 마지막 칸**이다. 그래서 "무엇부터
@@ -715,6 +866,13 @@ public class PaymentOrderReconciler {
     // 방향 (1) — 우리 쪽 오래된 PENDING → PG 에 진실을 묻는다 (분 단위)
     @Scheduled(fixedDelay = 60_000)
     public void reconcilePendingOrders() {
+        // 인스턴스가 여러 대여도 한 대만 돈다 — PostgreSQL 어드바이저리 락(테이블·행과 무관한 이름표 락).
+        //   SELECT pg_try_advisory_lock(:key)  → false 면 다른 인스턴스가 도는 중이라 그냥 반환
+        //   세션 단위 락이므로 finally 에서 pg_advisory_unlock, 또는 트랜잭션 단위인
+        //   pg_try_advisory_xact_lock 을 쓴다(커밋/롤백 시 자동 해제라 실수가 적다).
+        //   ★ 정합성 장치가 아니라 "헛수고 방지" 최적화다 — 보정 자체는 조건부 UPDATE 로 멱등하다
+        if (!advisoryLock.tryLock(RECONCILE_LOCK_KEY)) return;
+
         Instant threshold = clock.instant().minus(GRACE);
         long total = orderRepository.countPendingOlderThan(threshold);
         if (total > CIRCUIT_BREAK) { alert.critical("PENDING 폭증 — 대사 중단", total); return; }
@@ -882,13 +1040,21 @@ class PaymentPartialFailureTest {
 
 ```sql
 -- 오래된 PENDING 건수 — 0 이 아니어도 되지만 늘어나면 안 된다 (결제창 유효 시간을 임계치로)
-SELECT COUNT(*) FROM orders
-WHERE status = 'PENDING' AND created_at < NOW() - INTERVAL 10 MINUTE;
+--   위의 부분 인덱스 idx_orders_pending_created 를 그대로 탄다
+SELECT count(*) FROM orders
+WHERE status = 'PENDING' AND created_at < now() - interval '10 minutes';
+
+-- PENDING 나이 분포 — "건수"가 아니라 "나이 p99"를 봐야 결제창 체류와 사고가 구분된다
+SELECT count(*)                                                         AS pending,
+       percentile_cont(0.99) WITHIN GROUP (ORDER BY now() - created_at)  AS age_p99
+FROM   orders WHERE status = 'PENDING';
 
 -- 분 단위 승인 vs 확정 차이 — PG 승인 콜백/웹훅 수와 CONFIRMED 전이 수를 같은 창에서 비교
-SELECT DATE_FORMAT(confirmed_at, '%Y-%m-%d %H:%i') AS minute, COUNT(*) AS confirmed
-FROM orders WHERE confirmed_at >= NOW() - INTERVAL 30 MINUTE
-GROUP BY minute;
+SELECT date_trunc('minute', confirmed_at) AS minute, count(*) AS confirmed
+FROM   orders
+WHERE  confirmed_at >= now() - interval '30 minutes'
+GROUP  BY 1
+ORDER  BY 1;
 ```
 
 알람 대상은 네 가지로 고정한다 — **① 대사 불일치 건수(방향 2·3) > 0
@@ -897,6 +1063,16 @@ GROUP BY minute;
 배포·failover 이벤트를 같은 대시보드에 마커로 올려 (e)의 상관을 한눈에
 보게 한다. 인프라 쪽 처방도 한 줄 — `server.shutdown=graceful`과 종료
 유예 시간을 두어 SIGTERM 시 진행 중인 [B]가 끝날 시간을 준다(c)(ii).
+
+PostgreSQL 쪽에서 결제 DB에 걸어 둘 설정도 목록으로 고정한다.
+**① `synchronous_commit`을 끄지 않는다**(기본 `on` 유지. 유실 창을 만드는
+설정이라 결제 원장에서는 금지 — §3-5(δ)). **② `lock_timeout`·`statement_timeout`을
+명시한다**(무한 대기 대신 빠른 실패로 만들어 재시도 가능한 오류로 바꾼다).
+**③ `idle_in_transaction_session_timeout`을 켜되, 그 전에 §5-1로 트랜잭션 안
+외부 호출을 없앤다**(순서를 반대로 하면 이 설정이 §3-1의 사고를 만든다).
+**④ 복제 지연과 슬롯을 감시한다** — 리플리카의 `pg_last_xact_replay_timestamp()`
+지연(§3-2 오판 방지)과 `pg_replication_slots`의 미소비 슬롯(§5-3 CDC를 쓴다면
+WAL 폭증 방지).
 
 ### 6-5. 회고 — 무엇을 남기나
 
@@ -917,7 +1093,14 @@ GROUP BY minute;
 commit 프로토콜을 걸 수 없다. **② 설령 된다 해도 "불명"은 남는다** —
 2PC의 커밋 응답이 유실되면 코디네이터도 참여자 상태를 모르고, 그
 복구가 곧 대사다. **③ 비용** — 2PC는 prepare 상태에서 락을 쥔 채 남의
-응답을 기다리므로 §3-1의 "PG가 느린 날" 문제가 더 커진다. 그래서
+응답을 기다리므로 §3-1의 "PG가 느린 날" 문제가 더 커진다. PostgreSQL로
+좁혀 한 겹 더 말하면 (가산점 포인트): PostgreSQL은 `PREPARE TRANSACTION`으로
+2PC를 **지원한다**(기본은 `max_prepared_transactions = 0`이라 꺼져 있다).
+그런데 이 기능의 운영 리스크가 정확히 이 문항의 교훈을 보여준다 —
+코디네이터가 죽어 `COMMIT PREPARED`가 오지 않으면 **prepared 트랜잭션이
+락과 XID를 쥔 채 영원히 남고**(`pg_prepared_xacts`), 그 XID 때문에 VACUUM이
+막혀 블로트와 wraparound 경고까지 번진다. 즉 PostgreSQL에서 2PC를 켜는 것은
+"원자성을 얻는" 일이 아니라 **"고아 트랜잭션을 감시할 의무를 지는"** 일이다. 그래서
 외부 시스템과의 정합성은 원자성으로 푸는 것이 아니라 **"시도의 흔적 +
 멱등 + 대사"로 최종적 일관성**을 만드는 것이 정석이다. 이 답이 있어야
 "왜 Outbox·대사 같은 번거로운 걸 하느냐"에 대한 근거가 선다.
@@ -972,6 +1155,27 @@ commit 프로토콜을 걸 수 없다. **② 설령 된다 해도 "불명"은 �
 §4-4의 기준)과, 그래도 새는 것을 잡는 **대사 방향 (3)**이다. 이 질문에
 "양방향 대사가 그래서 필요하다"로 연결하면 §5-4를 이해한 것이다.
 
+### "MySQL로 물어보면 답이 달라지는 부분은?" (경험 대조)
+
+사고의 뼈대(두 원장·롤백의 한계·다섯 겹 방어선)는 엔진과 무관하지만, **구현
+문장과 실패 모드**는 네 군데가 갈린다. ① **멱등 삽입** — MySQL은
+`INSERT ... ON DUPLICATE KEY UPDATE` / `INSERT IGNORE`이고 PostgreSQL은
+`INSERT ... ON CONFLICT (충돌 대상 명시) DO NOTHING/DO UPDATE`다. 특히
+PostgreSQL은 **에러가 나면 트랜잭션 전체가 abort**되므로 "유니크 위반을
+잡아서 이어가기"가 성립하지 않아 `ON CONFLICT`가 사실상 필수인 반면, MySQL은
+예외를 잡고 같은 트랜잭션을 계속 쓸 수 있다. ② **"조회 후 없으면 INSERT"의
+경쟁** — InnoDB는 REPEATABLE READ + 갭 락이 그 틈을 어느 정도 막아 주지만,
+PostgreSQL에는 갭 락이 없어 **없는 행을 잠글 수단이 아예 없다** → 유니크
+제약·`ON CONFLICT`·어드바이저리 락·SERIALIZABLE 중 하나를 명시적으로 골라야
+한다. ③ **CDC와 복제** — MySQL은 binlog 기반(Debezium binlog 커넥터,
+`sync_binlog`·`innodb_flush_log_at_trx_commit`로 내구성을 조절)이고,
+PostgreSQL은 WAL 하나로 복제·PITR·논리 디코딩을 모두 하되 **복제 슬롯이
+소비되지 않으면 WAL이 쌓여 프라이머리가 위험해진다**는 고유 운영 부담이 있다.
+④ **작업 큐** — Outbox·Inbox 릴레이에서 PostgreSQL은 `FOR UPDATE SKIP LOCKED`가
+관용구이고(MySQL도 8.0부터 지원한다), PostgreSQL에는 `LISTEN/NOTIFY`라는
+깨우기 장치가 추가로 있다. 이 넷을 짚으면 "패턴을 외웠다"가 아니라 "쓰는
+엔진에서 그 패턴이 어떻게 구현되는지 안다"로 들린다.
+
 ---
 
 ## 한 줄 요약
@@ -987,4 +1191,11 @@ Inbox/Outbox ④ 양방향 대사 배치 ⑤ 알람** 다섯 겹으로 — 각�
 배치·키 저장소·릴레이 운영·PG 조회 비용과 의존·오탐이라는 값을 치르며
 — 쌓되, 이 모든 것을 **ArchUnit·부분 실패 테스트·대사 코드·"0이 정상"인
 카운터**로 못 어기게 고정해야 사고 대응 사이클이 사람의 기억이 아니라
-시스템의 성질이 된다.
+시스템의 성질이 된다. PostgreSQL로 구현할 때 이 다섯 겹이 기대는 문장은
+넷이다 — **유니크 제약 + `INSERT ... ON CONFLICT DO NOTHING RETURNING`**
+(갭 락이 없어 "없는 행"을 잠글 수 없으므로 중복을 막는 것은 결국 인덱스
+하나이고, 예외를 던지면 트랜잭션 전체가 abort되므로 예외를 안 만드는 문장을
+쓴다), **조건부 UPDATE**(세 경로가 동시에 확정해도 한 번만 성공),
+**`FOR UPDATE SKIP LOCKED`**(Inbox·Outbox 릴레이를 여러 대로),
+그리고 **`synchronous_commit`을 끄지 않는 것**(커밋 응답을 받았다는 앱의
+전제를 DB가 배신하지 않게).

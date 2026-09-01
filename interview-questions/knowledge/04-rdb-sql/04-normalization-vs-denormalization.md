@@ -5,9 +5,14 @@
 > 조회 패턴에 맞춰 의도적으로 중복·연산 값을 허용하고, 그 대가(갱신
 > 정합성)를 관리하는 결정이다 — "대가 관리"까지 말해야 정의가 완성된다.
 > 선택 기준은 4축: ① 읽기:쓰기 비율 ② 실측된 조인·집계 병목 ③ 인덱스·
-> 커버링 인덱스·캐시 선행 검토 ④ 대가 지불 준비. 그리고 핫 로우의 비용은
-> "성능 저하"라는 뭉뚱그린 말 대신 락 경합 → 사실상 직렬화 → 트랜잭션
-> 장기화 → 커넥션 풀 고갈 → 전 서비스 전파라는 이름 붙은 사슬로 말한다.**
+> Index Only Scan·캐시 선행 검토 ④ 대가 지불 준비. PostgreSQL은 generated
+> column·트리거·materialized view로 관리 장치 일부를 DB 안으로 끌어올 수
+> 있지만, 다른 테이블을 세는 집계 컬럼은 어느 도구로도 FK 같은 선언적
+> 제약이 되지 못한다 — 보정 배치가 끝까지 남는 이유다. 그리고 핫 로우의
+> 비용은 "성능 저하"라는 뭉뚱그린 말 대신 락 경합 → 사실상 직렬화 →
+> 트랜잭션 장기화 → 커넥션 풀 고갈 → 전 서비스 전파라는 이름 붙은 사슬로
+> 말한다 — PostgreSQL에서는 UPDATE마다 쌓이는 죽은 튜플(bloat)이 그 위에
+> 한 겹 더 얹힌다.**
 
 ---
 
@@ -38,23 +43,24 @@
 ```sql
 -- ❌ before: "부서 이름"이라는 하나의 사실이 직원 수만큼 복제됨
 CREATE TABLE employees (
-    id        BIGINT PRIMARY KEY,
-    name      VARCHAR(50),
-    dept_name VARCHAR(50)   -- '개발1팀'이 소속 직원 300행에 흩어져 있다
+    id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name      text NOT NULL,
+    dept_name text             -- '개발1팀'이 소속 직원 300행에 흩어져 있다
 );
 -- 부서 이름이 바뀌면? UPDATE employees SET dept_name = ... WHERE dept_name = ...
 -- 조건을 잘못 쓰거나 일부 행만 갱신되면 → 한 부서에 두 이름 (update anomaly)
 
 -- ✅ after: 부서 이름은 departments에 딱 한 곳
 CREATE TABLE departments (
-    id   BIGINT PRIMARY KEY,
-    name VARCHAR(50)         -- '개발1팀'은 여기 한 행에만 존재
+    id   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name text NOT NULL         -- '개발1팀'은 여기 한 행에만 존재
 );
 CREATE TABLE employees (
-    id      BIGINT PRIMARY KEY,
-    name    VARCHAR(50),
-    dept_id BIGINT           -- 사실을 복제하지 않고 참조(FK)만 든다
+    id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name    text NOT NULL,
+    dept_id bigint NOT NULL REFERENCES departments (id)  -- 복제 대신 참조(FK)
 );
+CREATE INDEX ON employees (dept_id);  -- PG는 FK 컬럼 인덱스를 자동으로 만들지 않는다
 -- 부서 이름 변경 = 한 행 UPDATE. 어긋날 "다른 곳"이 구조적으로 없다.
 ```
 
@@ -106,8 +112,8 @@ CREATE TABLE employees (
 | 축 | 질문 | 통과 조건 |
 |---|---|---|
 | ① 읽기:쓰기 비율 | 이 데이터, 읽기가 압도적인가? | 사본은 읽을 때 이득, 쓸 때 비용이다. 쓰기가 잦으면 대가만 키운다 |
-| ② 실측 병목 | 조인·집계 비용이 **측정으로** 확인된 병목인가? | "느릴 것 같아서"는 근거가 아니다. 실행 계획·슬로 쿼리로 확인 |
-| ③ 선행 검토 | 인덱스·커버링 인덱스·캐시로 먼저 해결되지 않는가? | 반정규화는 스키마를 바꾸는 비가역에 가까운 수단 — 더 싼 수단부터 |
+| ② 실측 병목 | 조인·집계 비용이 **측정으로** 확인된 병목인가? | "느릴 것 같아서"는 근거가 아니다. `EXPLAIN (ANALYZE, BUFFERS)`·`pg_stat_statements`로 확인 |
+| ③ 선행 검토 | 인덱스·커버링(Index Only Scan)·쿼리 형태·캐시로 먼저 해결되지 않는가? | 반정규화는 스키마를 바꾸는 비가역에 가까운 수단 — 더 싼 수단부터 |
 | ④ 대가 지불 준비 | 갱신 정합성 관리 장치를 설계했는가? | 동기 트랜잭션 + 원자적 UPDATE(+ 핫 로우 경합 대비) + 보정 배치 |
 
 ④가 빠진 반정규화 제안은 "대출로 뭘 살지"만 정하고 상환 계획이 없는
@@ -122,13 +128,15 @@ DB 스키마를 건드리지 않지만, 반정규화 컬럼은 **모든 쓰기 �
 
 ```sql
 -- ❌ before: 정규화 그대로 — 목록 한 페이지에 집계 조인
-SELECT p.id, p.title, COUNT(c.id) AS comment_count
+SELECT p.id, p.title, count(c.id) AS comment_count
 FROM posts p
 LEFT JOIN comments c ON c.post_id = p.id
-GROUP BY p.id, p.title
+GROUP BY p.id          -- PK로 묶으면 p.title은 함수 종속으로 인정돼 GROUP BY에 안 써도 된다
 ORDER BY p.created_at DESC
 LIMIT 20;
 -- 목록 20건을 위해 그 글들에 달린 댓글 수만큼 행을 만나 집계한다.
+-- 계획을 보면 Limit 아래의 집계 노드는 posts 전체를, 조인 노드는 comments
+-- 전체를 훑는다(actual rows가 20이 아니다).
 -- 트래픽이 큰 목록 화면이라면 이 비용이 실측 병목으로 잡힐 수 있다.
 ```
 
@@ -137,27 +145,36 @@ LIMIT 20;
 
 ```sql
 -- ✅ after: 반정규화 + 3단 관리 장치
-ALTER TABLE posts ADD COLUMN comment_count INT NOT NULL DEFAULT 0;
+ALTER TABLE posts ADD COLUMN comment_count integer NOT NULL DEFAULT 0;
+-- 상수 DEFAULT의 컬럼 추가는 테이블을 다시 쓰지 않고 카탈로그만 바꾼다(PG 11+).
+-- 다만 ACCESS EXCLUSIVE 잠금은 잡으므로 SET lock_timeout = '2s' 와 함께 실행한다.
 
 -- 장치 ① 같은 트랜잭션: 원본(댓글)과 사본(카운트)의 운명을 묶는다
 BEGIN;
-INSERT INTO comments (post_id, author_id, body) VALUES (?, ?, ?);
-UPDATE posts SET comment_count = comment_count + 1 WHERE id = ?;
+INSERT INTO comments (post_id, author_id, body) VALUES ($1, $2, $3);
+UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1;
 COMMIT;
 -- 카운트 갱신이 실패하면 댓글 INSERT도 함께 롤백 — 어긋난 채 커밋되는
 -- 경로를 트랜잭션이 막는다. (대가: 댓글 쓰기가 posts 갱신 비용까지 짊어짐)
 
 -- 장치 ② 원자적 UPDATE: 값을 읽어와 더하지 않는다
-UPDATE posts SET comment_count = comment_count + 1 WHERE id = ?;
+UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1;
 -- "SELECT로 읽고 → 애플리케이션에서 +1 → UPDATE"로 쪼개면, 두 요청이
 -- 같은 값을 읽고 같은 값을 쓰는 lost update가 난다. DB가 행 락을 잡고
 -- 현재 값 위에서 더하게 하는 위 형태여야 동시 요청에도 안 샌다.
+-- (PG의 READ COMMITTED는 앞선 UPDATE의 커밋을 기다린 뒤 그 행의 최신
+--  버전을 다시 읽어 그 위에 +1 한다 — 그래서 위 한 문장이면 안 샌다.)
 
 -- 장치 ③ 주기적 보정 배치: 어긋남을 전제로 한 안전망
 UPDATE posts p
-SET p.comment_count = (
-    SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id
-);
+SET    comment_count = c.cnt
+FROM  (SELECT p2.id, count(c2.id) AS cnt
+       FROM posts p2 LEFT JOIN comments c2 ON c2.post_id = p2.id
+       GROUP BY p2.id) c
+WHERE  c.id = p.id
+  AND  p.comment_count IS DISTINCT FROM c.cnt;   -- ★ 이미 맞는 행은 건드리지 않는다
+-- PG의 UPDATE는 값이 같아도 새 튜플 버전을 쓴다(죽은 튜플 + WAL + 인덱스
+-- 갱신 가능성). 가드가 없으면 보정 배치가 posts 전체를 매번 다시 쓰는 셈이다.
 -- (실전에서는 전체가 아니라 최근 변경분·표본 검증 위주로 돈다)
 ```
 
@@ -181,6 +198,48 @@ FK나 UNIQUE 제약은 DB가 지키므로 어떤 코드 경로로 들어와도 �
 그래서 장치 ③(보정 배치)은 "버그가 있으면 돌리는 것"이 아니라 **어긋남을
 전제로 처음부터 설계에 포함하는 안전망**이다. 드리프트는 막는 게 아니라
 "주기적으로 0으로 되돌리는" 대상이다.
+
+### 2-4. PostgreSQL이 주는 반정규화 도구 — 관례를 DB 안으로 얼마나 옮길 수 있나
+
+2-3의 결론은 "불변식이 애플리케이션 관례에 산다"였다. PostgreSQL에는
+이 관례를 DB 쪽으로 옮겨 주는 도구가 몇 개 있는데, **각각 옮겨 주는
+범위가 다르다.** 무엇을 DB가 대신 져 주고 무엇이 여전히 내 몫인지가
+선택 기준이다.
+
+| 도구 | DB가 대신 져 주는 것 | 여전히 내 몫 |
+|---|---|---|
+| generated column `GENERATED ALWAYS AS (...) STORED` (PG 12+) | 같은 행 안의 연산 값 계산·저장 — 어긋날 경로 자체가 없다 | 다른 테이블을 참조하는 식은 불가 → `comment_count`에는 못 쓴다 |
+| 트리거 (`AFTER INSERT OR DELETE ON comments`) | 콘솔 DELETE·새 코드 경로까지 모든 쓰기가 카운트 갱신을 거친다 | 절차적 코드라 우회 가능(트리거 비활성화, `session_replication_role = replica`), 핫 로우 비용은 그대로 |
+| materialized view + `REFRESH MATERIALIZED VIEW CONCURRENTLY` | 집계 결과를 통째로 스냅샷 — 쓰기 경로를 안 건드린다 | 신선도가 REFRESH 주기에 묶임, CONCURRENTLY는 유니크 인덱스 필수, 매번 전체 재계산 |
+| `jsonb`·배열에 자식 데이터 내장 | 1:N 조인을 없앤다 | 부분 갱신 없음 — 원소 하나 바꿔도 값 전체를 새 튜플로 재기록 |
+
+```sql
+-- ✅ 같은 행 안의 연산 값이면 generated column — 드리프트가 구조적으로 불가능
+ALTER TABLE order_items
+    ADD COLUMN amount numeric GENERATED ALWAYS AS (qty * unit_price) STORED;
+
+-- ✅ 다른 테이블을 세는 값이면 트리거로 "관례"를 DB 안으로 — 단, 선언적 제약은 아니다
+CREATE FUNCTION bump_comment_count() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE posts SET comment_count = comment_count + 1 WHERE id = NEW.post_id;
+    ELSIF TG_OP = 'DELETE' THEN
+        UPDATE posts SET comment_count = comment_count - 1 WHERE id = OLD.post_id;
+    END IF;
+    RETURN NULL;   -- AFTER 트리거의 반환값은 무시된다 (댓글의 post_id 변경 처리는 생략)
+END $$;
+CREATE TRIGGER trg_comment_count
+AFTER INSERT OR DELETE ON comments
+FOR EACH ROW EXECUTE FUNCTION bump_comment_count();
+```
+
+기준은 하나로 정리된다 — **사본이 가리키는 원본이 같은 행 안에 있으면
+generated column, 다른 테이블이면 트리거 또는 앱 트랜잭션 + 보정 배치,
+"잠시 후"로 느슨해도 되면 materialized view.** 트리거는 2-3의 구멍 중
+"DB 직접 수정"과 "새 코드 경로"를 막아 주지만, 로직이 앱 코드 밖에 숨고
+대량 적재 때 꺼 두는 순간 다시 뚫린다. 어느 도구를 써도 다른 테이블을
+세는 집계 컬럼은 FK·UNIQUE 같은 선언적 제약이 되지는 못하므로, 장치
+③(보정 배치)은 도구 선택과 무관하게 남는다.
 
 ---
 
@@ -223,6 +282,17 @@ FK나 UNIQUE 제약은 DB가 지키므로 어떤 코드 경로로 들어와도 �
 기다리며 계산대를 점유하고, 그 상품과 무관한 손님까지 빈 계산대가 없어
 줄을 선다.
 
+> **PostgreSQL 보충**: 행 락은 별도 락 테이블이 아니라 튜플 헤더의 `xmax`에
+> 기록되므로 락 개수 제한이나 에스컬레이션은 없지만, 줄 서기 자체는 똑같이
+> 일어난다 — `pg_stat_activity`에 `wait_event_type = 'Lock'`,
+> `wait_event = 'transactionid'`인 세션이 쌓이는 것으로 보인다. 그리고
+> PG는 UPDATE를 제자리에서 고치지 않고 **새 튜플 버전을 삽입**하므로, 초당
+> 수백 번 갱신되는 행 하나는 그 페이지에 죽은 튜플을 수백 개씩 남긴다.
+> `comment_count`에 인덱스가 없으면 HOT 업데이트로 인덱스 갱신은 피하지만
+> 페이지 여유 공간은 금세 바닥나고, VACUUM이 따라잡지 못하면 bloat이 사슬
+> ⑴ 위에 한 겹 더 얹힌다(`pg_stat_user_tables`의 `n_tup_upd` 대
+> `n_tup_hot_upd`, `n_dead_tup`으로 관찰).
+
 ### 3-2. 말하기 훈련 — 뭉뚱그린 표현을 사슬로 교체
 
 | 뭉뚱그린 표현 | 이름 | 사슬로 말하면 |
@@ -241,14 +311,17 @@ FK나 UNIQUE 제약은 DB가 지키므로 어떤 코드 경로로 들어와도 �
 푸는 방향이다. (상세는 꼬리질문 2)
 
 - **비동기 집계**: 댓글 트랜잭션에서 카운트 UPDATE를 빼고, 이벤트를
-  쌓아 모아서(배치로 묶어) 반영. 정합성이 "즉시"에서 "잠시 후"로
-  느슨해지는 대가를 치른다.
+  쌓아 모아서(배치로 묶어) 반영 — 모아 둔 N건을 `+ N` 한 번의 UPDATE로
+  반영하면 락을 잡는 횟수도 새 튜플 버전도 1/N이 된다. 정합성이
+  "즉시"에서 "잠시 후"로 느슨해지는 대가를 치른다.
 - **카운터 분산(sharded counter)**: 카운터를 N개 행으로 쪼개 무작위로
   하나에 +1, 읽을 때 SUM. 락 경합이 1/N로.
 - **외부 카운터**: Redis 같은 인메모리 카운터에 증가시키고 주기적으로
   DB에 반영.
 - 최소한의 완화로, 트랜잭션 안에서 **UPDATE를 커밋 직전(마지막 문장)에**
-  두면 락 보유 시간이 줄어든다(⑶ 고리에 대한 개입).
+  두면 락 보유 시간이 줄어든다(⑶ 고리에 대한 개입). PG에서는 `posts`의
+  `fillfactor`를 낮춰 HOT 업데이트 여지를 넓히는 것이 같은 층의 완화다 —
+  새 버전이 같은 페이지 안에서 소화되면 인덱스 갱신과 bloat 확산이 준다.
 
 ---
 
@@ -288,10 +361,13 @@ DB가 지키는 규칙은 어떤 경로로 와도 뚫리지 않지만, "댓글�
 
 ### "반정규화를 하기 전에 먼저 검토해야 할 것은 무엇인가요?"
 
-순서가 답이다. ① **실측** — 실행 계획과 슬로 쿼리로 조인·집계가 진짜
-병목인지 확인("느릴 것 같아서"는 근거가 아니다). ② **더 싼 수단 먼저**
-— 인덱스 추가, 커버링 인덱스(조인·집계 대상 컬럼을 인덱스에 포함해
-테이블 접근 제거), 애플리케이션·캐시 계층(자주 읽는 목록이면 캐시 적중이
+순서가 답이다. ① **실측** — `EXPLAIN (ANALYZE, BUFFERS)`와
+`pg_stat_statements`로 조인·집계가 진짜 병목인지 확인("느릴 것 같아서"는
+근거가 아니다). ② **더 싼 수단 먼저** — 인덱스 추가(`comments(post_id)`
+인덱스만 있어도 `count(*)`는 `Index Only Scan`으로 센다 — VACUUM이
+visibility map을 신선하게 유지한다는 전제에서), 쿼리 형태 변경(목록
+20건을 먼저 자르고 그 20건만 상관 서브쿼리로 세면 집계 범위가 전체에서
+20건으로 준다), 애플리케이션·캐시 계층(자주 읽는 목록이면 캐시 적중이
 집계 자체를 없앤다). 인덱스는 되돌리기 쉽고 캐시는 스키마를 안 건드리는
 반면, 반정규화 컬럼은 **모든 쓰기 경로에 영구적 갱신 의무**를 새기는
 가장 비싼 수단이므로 마지막에 꺼낸다. ③ 그래도 필요하면 **대가 지불
@@ -310,6 +386,22 @@ DB가 지키는 규칙은 어떤 경로로 와도 뚫리지 않지만, "댓글�
 반정규화와 스냅샷을 같은 것으로 취급하는 것이고, 구분해서 말하면 중복의
 의미론까지 설계해본 사람으로 변별된다.
 
+### "MySQL로 물어보면 답이 달라지는 부분은?" (경험 대조)
+
+네 지점이다. ① **카운터 UPDATE의 저장 비용** — InnoDB는 행을 제자리에서
+고치고 옛 값을 언두 로그로 빼내지만, PG는 새 튜플 버전을 삽입하고 옛
+버전을 죽은 튜플로 남긴다. 락 직렬화 사슬은 둘 다 같지만 PG는 그 위에
+bloat·VACUUM 추격이 한 겹 더 있다. ② **같은 값으로의 UPDATE** — MySQL은
+값이 안 바뀌면 행을 건드리지 않지만, PG는 값이 같아도 새 버전을 쓴다.
+그래서 보정 배치의 `IS DISTINCT FROM` 가드가 PG에서는 선택이 아니라
+필수다. ③ **문법** — 보정 배치는 PG `UPDATE ... FROM`, MySQL `UPDATE ...
+JOIN`이고, MySQL의 `SET p.col = ...`처럼 SET에 테이블 한정자를 붙이면 PG는
+에러다. ④ **도구** — materialized view는 PG에만 있고(MySQL은 집계 테이블 +
+배치를 직접 짠다), JSON 부분 갱신은 반대로 MySQL 8.0에만 있다(PG `jsonb`는
+값 전체 재기록). 컬럼 추가는 PG 11+가 상수 DEFAULT를 카탈로그만 바꾸고
+MySQL 8.0은 `ALGORITHM=INSTANT`로 같은 효과를 내는데, PG는 ACCESS
+EXCLUSIVE 대기열이 뒤의 SELECT까지 세우므로 `lock_timeout`이 붙어야 한다.
+
 ---
 
 ## 한 줄 요약
@@ -318,6 +410,8 @@ DB가 지키는 규칙은 어떤 경로로 와도 뚫리지 않지만, "댓글�
 반정규화는 조회 패턴을 위해 의도적으로 중복·연산 값을 두되 그 대가(갱신
 정합성)를 관리 장치(같은 트랜잭션 + 원자적 UPDATE + 보정 배치)와 함께
 지불하는 결정이다. 선택 기준은 읽기:쓰기 비율 · 실측 병목 · 인덱스/캐시
-선행 검토 · 대가 지불 준비의 4축이고, 핫 로우의 비용은 락 경합 → 사실상
-직렬화 → 트랜잭션 장기화 → 커넥션 풀 고갈 → 전 서비스 전파라는 이름 붙은
-사슬로 말한다.**
+선행 검토 · 대가 지불 준비의 4축이고, PostgreSQL의 generated column·
+트리거·materialized view는 관리 장치 일부를 DB 안으로 옮겨 주되 보정
+배치를 없애 주지는 않는다. 핫 로우의 비용은 락 경합 → 사실상 직렬화 →
+트랜잭션 장기화 → 커넥션 풀 고갈 → 전 서비스 전파라는 이름 붙은 사슬로
+말하고, PG에서는 UPDATE마다 쌓이는 죽은 튜플(bloat)이 그 위에 얹힌다.**
