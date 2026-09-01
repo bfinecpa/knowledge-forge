@@ -13,8 +13,8 @@
 | 06-kafka-messaging | 24 | 24 | 완료 |
 | 07-traffic-performance | 23 | 23 | 완료 |
 | 08-network-http | 22 | 22 | 완료 |
-| 09-rest-api | 18 | 0 | 다음 차례 |
-| 01-java-kotlin | 32 | 0 | 대기 |
+| 09-rest-api | 18 | 18 | 완료 |
+| 01-java-kotlin | 32 | 0 | 다음 차례 |
 | 02-spring | 35 | 0 | 대기 |
 | 03-jpa-orm | 27 | 0 | 대기 (이미 깊이 있음 — 조정 위주) |
 | 04-rdb-sql | 35 | 0 | 대기 (PostgreSQL 기준 유지) |
@@ -258,3 +258,125 @@ C10K 메모리(1MB × 10,000 = 약 10GB) / 버퍼링 처리량(200 ÷ 10.05 ≈ 
 08장 평균이 12.1KB → 55.2KB가 됐다. 최대는 14번(85KB)·15번(75KB)·18번(71KB)이고,
 07장의 20번(122KB) 같은 이상치는 없다. 06장 최대치(52KB)보다는 크지만 전체가 40~85KB 구간에 고르게 들어와
 07장에서 남겨둔 "20번급을 상한으로 볼 것인가"라는 물음은 이 장에서는 문제가 되지 않았다.
+
+## 09-rest-api (18/18) — 완료
+
+1차 배치(10건, 5에이전트 병렬) / 2차 배치(8건, 4에이전트 병렬)로 진행한다.
+
+| 파일 | 배치 | 상태 |
+|---|---|---|
+| 01-restful-design-principles-resource-naming.md | 1 | 완료 |
+| 02-put-vs-patch.md | 1 | 완료 |
+| 03-api-versioning-strategies.md | 1 | 완료 |
+| 04-pagination-offset-vs-cursor-api-contract.md | 1 | 완료 |
+| 05-error-response-body-standardization.md | 1 | 완료 |
+| 06-idempotency-key-design.md | 1 | 완료 |
+| 07-chatty-api-call-explosion.md | 1 | 완료 |
+| 08-backward-compatible-api-changes.md | 1 | 완료 |
+| 09-partner-api-vs-internal-api.md | 1 | 완료 |
+| 10-long-running-operations-202-polling-callback.md | 1 | 완료 |
+| 11-rest-vs-graphql-vs-grpc.md | 2 | 완료 |
+| 12-etag-if-match-optimistic-concurrency.md | 2 | 완료 |
+| 13-aggregation-api-partial-failure-contract.md | 2 | 완료 |
+| 14-gateway-vs-service-responsibility-boundary.md | 2 | 완료 |
+| 15-api-docs-implementation-sync.md | 2 | 완료 |
+| 16-bulk-api-partial-failure-response.md | 2 | 완료 |
+| 17-list-api-filter-sort-search-params.md | 2 | 완료 |
+| 18-api-datetime-format-contract.md | 2 | 완료 |
+
+착수 시점 검증기 결과: 18건 전부 FAIL. 하드랩 18건, 이모지 5건(04·05·07·16·17·18),
+섹션 번호가 `## 0.`~`## 6.`으로 뻗은 문서 3건(05·16·18).
+
+이 장에서 특히 주의할 것:
+
+- 17번이 정렬 비용을 MySQL 용어 `filesort`로 서술하고 검색 대안에 MySQL FULLTEXT를 앞세운다.
+  PostgreSQL 기준(`Sort` 노드, `work_mem` 초과 시 디스크 정렬, `tsvector`/GIN)으로 바꾼다.
+- 18번이 DB 타임존 처리를 "확인해 보라"로 뭉뚱그린다. PostgreSQL `timestamptz`의 실제 동작
+  (입력을 UTC로 변환해 저장, 출력 시 세션 `TimeZone`으로 변환 — 타임존 자체는 저장하지 않는다)으로 구체화한다.
+- 06번의 멱등성 키 선점이 MySQL 문법이면 `INSERT ... ON CONFLICT DO NOTHING`으로 바꾼다.
+- 13번과 16번이 둘 다 207 Multi-Status를 다룬다. 결론이 어긋나지 않게 맞춘다.
+
+### 1차 배치(01~10)에서 정정한 원문 사실 오류
+
+| 문서 | 원문 | 정정 |
+|---|---|---|
+| 01 | "캐시 가능·계층화 시스템·균일한 인터페이스까지가 REST의 제약 조건" | 클라이언트-서버와 코드 온 디맨드가 빠져 6개(5 필수 + 선택 1)다. 더 중요한 건 원문이 ①②③(URI 식별·메서드·상태 코드)을 균일한 인터페이스와 **병렬 항목처럼** 배치한 것 — 실제로는 그 제약의 하위 규칙이다. 표로 소속을 명시 |
+| 01 | `204 No Content`를 "돌려줄 바디 없음"으로만 서술 | 본문을 실을 수 있는 것처럼 읽힌다. "없음(있으면 규약 위반)"으로 못박음 |
+| 02 | "`JsonNullable`/`Optional` 래퍼 필드"를 동급 선택지로 나열 | Jackson에서 `Optional` 필드는 명시적 null이 `Optional.empty()`, 키 부재가 필드 `null`이라 **의미가 뒤집힌 3상태**가 된다. 오독 위험을 설명하고 `JsonNullable` 권장 근거로 교체 |
+| 02 | `marketingAgreed`가 "null/false로 덮임" | `Boolean`이면 null, `boolean`이면 `false`. **원시 타입일 때가 더 위험**하다(NOT NULL 제약에도 안 걸리고 정상값처럼 "동의 해제"로 저장) |
+| 03 | `Deprecation`·`Sunset`을 이름만 나열 | 형식이 서로 다르다. `Sunset`은 RFC 8594의 HTTP-date, `Deprecation`은 RFC 9745의 구조화 필드 Date(`@1798761599`). RFC 9745의 "Sunset은 Deprecation보다 이르면 안 된다" 제약과, 초안 형태(`Deprecation: true`)가 아직 통용된다는 현실을 병기 |
+| 03·08 | "필드 추가는 안전"의 근거가 막연 | Jackson 자체 기본값은 `FAIL_ON_UNKNOWN_PROPERTIES`가 **켜져 예외**이고 Spring Boot 자동 구성이 꺼 준다. 즉 "추가는 안전"은 소비자 설정에 의존하는 조건부 명제 |
+| 04 | "정확한 실시간 count는 매 요청 전체 스캔" | PostgreSQL 기준으로 부정확. MVCC라 확정 행수가 애초에 없고, 인덱스 엔트리에 가시성 정보가 없어 힙 확인이 필요하며, **가시성 맵**이 신선한 페이지에 한해 `Index Only Scan`으로 이를 건너뛴다. 근사치는 `pg_class.reltuples` |
+| 06 | 선점을 `try { insert } catch (DuplicateKeyException) { findByKey }` 로 구현 | **PostgreSQL에서 동작하지 않는다.** 유니크 위반이 터지면 트랜잭션 전체가 중단(aborted) 상태가 되어 catch 안의 조회가 다시 실패한다. `INSERT ... ON CONFLICT DO NOTHING` + 영향 행 수 판정으로 교체(우회로는 `REQUIRES_NEW` 또는 `SAVEPOINT`) |
+| 06 | 선점 INSERT의 트랜잭션 경계 미명시 | 핸들러 전체를 `@Transactional`로 묶으면 IN_PROGRESS 표식이 커밋 전까지 안 보여 설계 목적이 무너지고, 뒤에 온 INSERT가 PG 승인이 끝날 때까지 인덱스에서 대기해 409 대신 수 초를 붙잡힌다 |
+| 07 | "화면 하나에 **21 RPS**를 쓰는 클라이언트" | RPS는 초당 요청률이라 단위 오류. "요청 21건" |
+| 07 | "서버·프록시마다 URL 길이 상한이 있어(수 KB 수준)" | HTTP 스펙에 상한이 없다. RFC 7230의 8,000 옥텟은 **하한 권고**이고 실질 한계는 Nginx `large_client_header_buffers`(초과 시 414)·Tomcat `maxHttpHeaderSize`·통념상 2,000자로 주체가 각각 다르다. "수백 개면 걸리나"의 답이 id 형태에 달렸다로 바뀜 |
+| 08 | Tolerant Reader 서술에 Jackson 기본값 부재 | 모르는 **필드**는 `UnrecognizedPropertyException`, 모르는 **enum 값**은 `InvalidFormatException`으로 예외 타입이 다르다. `@JsonEnumDefaultValue`는 `READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE`를 켜야 동작한다 |
+| 09 | SLA–SLO 간격을 error budget이라 서술 | error budget은 SLO가 허용하는 실패 총량(1−SLO)이다. 둘을 분리 정의 |
+| 09 | `RateLimit-*` 를 표준인 양 서술 | IETF 초안이며 아직 RFC가 아니고, 초안 자체가 개별 헤더 3개에서 구조화 필드 하나로 통합되는 방향으로 바뀌었다. 현장 관행은 여전히 `X-RateLimit-*`. `429`(RFC 6585)·`Retry-After`(RFC 9110)만 확정 표준 |
+| 10 | `Retry-After`를 `202`에 붙이는 것을 표준처럼 서술 | RFC 9110이 규정한 것은 `503`·`3xx`(그리고 `429`는 RFC 6585)이고 `202`는 용법의 확장이다. 표준 위반은 아니나 클라이언트가 자동 해석해 줄 것으로 가정하면 안 된다 |
+| 10 | `Location`이 `202`의 정의된 메커니즘인 것처럼 서술 | RFC 9110 §15.3.3은 "응답 표현이 상태 모니터를 가리키도록" 권할 뿐이고 `Location`에 담는 것은 관행이다 |
+| 10 | 타임아웃 계층 다이어그램이 층 이름·수치 없이 07·08장과 어긋남 | `08-network-http/13`의 정렬 스택(앱 내부 8.0s → 가드 10s → Nginx 15s → LB 20s → CDN 25s → 클라이언트 30s)에 맞춤 |
+
+오케스트레이터가 직접 고친 2건:
+
+- 08번이 `Deprecation: true`(초안 형태)를 아무 단서 없이 예시로 써서, 03번이 정리한 RFC 9745 형식과의 관계를 한 문단으로 잇고 참조를 걸었다.
+- 06번이 `SET key value NX PX 30000`을 "예전 이름은 `SETNX`"라고 서술했다. `SETNX`는 별도 명령이고 만료를 못 걸어 `EXPIRE`를 따로 보내야 하는 **비원자적** 조합이라, 하필 원자성을 논하는 자리에서 의미가 뒤집혔다. `05-redis-caching/16`이 이미 정확히 서술하고 있어 그쪽에 맞추고 링크를 걸었다.
+
+1차 배치 검산: 0.999⁵ = 99.50% / 30일 43,200분 · 99.9% 43.2분 · 99.95% 21.6분 /
+`Deprecation: @1798761599` = 2026-12-31 23:59:59 UTC / 12345÷20 = 617.25 → 618페이지 /
+5,001페이지 = `OFFSET 100000`, 100,020행, 5,001배 / 21회×300ms = 6.3초 /
+HTTP/1.1 병렬 1+⌈20/6⌉ = 5 RTT, HTTP/2 = 2 RTT / 1−0.99²¹ ≈ 19% /
+URL 2,000자에 숫자 id 222개·UUID 54개 / 1,000,000×1KB ≈ 977MB / SHA-256 = 16진수 64자 /
+리틀의 법칙 1건/초×300초 = 300스레드 > 톰캣 기본 200, 소진 200초 /
+고정 5초 폴링 60회 중 헛질의 59회(98.3%), 지수 백오프(1s·×2·cap 30s)는 14회에 300초 초과(4.3배 감소) /
+rate limit 사례 30,000÷3분 = 10,000회/분(한도의 16.7배), 통과 1,800건·거절 28,200건, 분산 시 50분.
+
+### 2차 배치(11~18)에서 정정한 원문 사실 오류
+
+| 문서 | 원문 | 정정 |
+|---|---|---|
+| 12 | 약한 ETag에 대해 "`If-Match` 비교에서도 강한 ETag를 쓰는 것이 **안전하다**" | 과소 서술이다. RFC 9110 §13.1.1상 `If-Match`는 **강한 비교**를 쓰므로 약한 ETag는 **절대 일치하지 않는다** — `W/"7"`에 `If-Match: W/"7"`을 보내도 항상 412다. "안전하다"가 아니라 "아예 동작하지 않는다". 압축 필터가 강한 ETag를 약한 것으로 낮추면 `If-Match`가 상시 412가 되는 함정으로 연결(08장 20번과 일치) |
+| 12 | `@Version`의 UPDATE를 `SET ..., version = version + 1` 형태로 기대 | 하이버네이트는 새 버전 값을 메모리에서 계산해 바인딩하므로 실제 로그는 `version=?`이다. `03-jpa-orm/10`이 이미 이 점을 짚고 있어 개념형과 실제 로그형을 둘 다 보이고 차이를 설명 |
+| 12 | `@RequestHeader(required = false)`의 이유 미설명 | `required = true`면 Spring이 먼저 400을 내버려 **428을 쓸 기회 자체가 사라진다** |
+| 11 | "gRPC는 HTTP/2 프레임을 세밀하게 제어(트레일러 헤더 등)해야 하는데" | 원인을 뭉갠 서술. `grpc-status`가 **트레일러에 실리고** 브라우저 fetch/XHR이 트레일러를 노출하지 않는다는 정확한 인과로 교체 |
+| 13 | 예산 배분표가 검산 불가·자기모순 | ① `## 1.`의 5개 중 상품 서비스가 표에서 누락 ② 순차로 읽으면 700+500+300+300 = 1,800ms로 전체 예산 1,000ms를 80% 초과 ③ 다이어그램은 4개인데 코드는 3개만 호출. 의존 관계를 명시한 2단계 구조로 재설계: 400 + max(300,300,200,200) = 700ms + 여유 300 = 1,000ms (전부 순차면 1,400ms로 초과) |
+| 13 | status enum이 `OK / UNAVAILABLE / TIMEOUT` | **문서가 자기 주장을 스키마로 지키지 못한다.** 본문은 "'데이터 없음'과 '가져오지 못했다'는 달라야 한다"고 주장하는데 둘 다 `OK` + `data: null`로 뭉개진다. `EMPTY` 추가로 해결하고 `TIMEOUT` 같은 사유는 상태값이 아니라 `error.code`로 |
+| 13 | 207을 "중간 장비가 **오해할** 수 있다" | 207은 2xx라 대부분 도구가 성공으로 분류한다. 오해가 아니라 **특별 취급을 안 해서 얻는 게 없는 것**. 16번과 결론 일치 |
+| 16 | AWS SQS 배치를 "재시도 가능 여부 성격의 정보" | 실제 계약으로 대체 — 요청 엔트리마다 클라이언트가 부여한 `Id`, 응답은 `Successful`/`Failed` 두 목록, 실패 엔트리에 `Code`·`Message`·`SenderFault` 불리언, 요청당 최대 10건 |
+| 17 | "`LIMIT 20`이 있어도 정렬 대상 전체를 읽는 비용은 그대로다" | 결론은 맞지만 근거가 틀렸다. PostgreSQL은 `LIMIT`이 붙으면 `top-N heapsort`를 골라 **정렬 메모리는 억제한다**. "메모리는 아끼되 하위 `Seq Scan`의 전량 읽기는 그대로"로 정정. §3 사례의 `EXPLAIN` 결과를 `external merge Disk`로 단정한 것도 같은 이유로 자기모순이라 `top-N heapsort`로 수정 |
+| 17 | "중간 일치(`%키워드%`)는 인덱스를 탈 수 없어 전체 스캔" | PostgreSQL에서는 `pg_trgm` 트라이그램 GIN이 후보 축소에 쓰이므로 단정이 틀린다. 완화하고 대가(인덱스 크기·쓰기 비용, 3글자 미만이면 무효)를 명시 |
+| 18 | epoch 예시 값 `1756600000` | 2025-08-31T00:26:40Z라 같은 JSON의 다른 2026년 필드와 **자기모순**. `1788134400`(2026-08-31T00:00:00Z)로 교체 |
+| 18 | JS 파싱 예시 `"2026-08-31T09:00"` | 파싱 규칙 서술 자체는 정확했으나, 이 값은 KST에서 우연히 `"2026-08-31"`과 같은 순간이 되어 **9시간 차이를 실증하지 못한다**. 실제로 어긋나는 `"2026-08-31T00:00:00"`으로 교체 |
+| 18 | `ZonedDateTime`을 미래 예약 저장 타입으로 권고 | 권고는 맞지만 함정 누락 — Jackson은 기본 설정에서 직렬화 시 `[Asia/Seoul]`을 떼고 오프셋만 내보낸다(`WRITE_DATES_WITH_ZONE_ID` 기본 비활성). API 계약에서는 `startsAt` + `timeZone` 두 필드로 나누라는 권고 추가 |
+| 18 | date-only는 안전하다는 인상 | date-only 문자열도 JS `Date`에 넣으면 UTC 시점이 되어 같은 문제가 재발한다(`TZ=America/New_York`에서 `new Date("2026-08-31")`이 8/30로 표시) |
+
+PostgreSQL 전환: 17번의 `filesort` 4곳을 `Sort` 노드 / `work_mem` 초과 시 외부 병합 정렬 /
+`Sort Method: external merge Disk:` 관측으로 교체하고, 전문 검색의 "PostgreSQL `tsvector`/GIN, MySQL FULLTEXT" 병기에서
+MySQL을 빼고 `tsvector`·GIN·`pg_trgm` 3단계로 확장했다. 18번은 뭉뚱그려져 있던 DB 타임존 서술을
+`timestamptz`의 실동작(입력을 세션 타임존으로 해석해 UTC로 변환 저장, 출력 시 세션 `TimeZone`으로 변환 —
+타임존 자체는 저장하지 않는다)과 `timestamp`/`date`와의 대비, 그리고 Java 타입 대응표로 구체화했다.
+
+2차 배치 검산: 0.999¹⁻⁵ = 99.9000/99.8001/99.7003/99.6006/99.5010%,
+월 장애 43.2/86.4/129.5/172.5/215.6분(30일 43,200분 기준) /
+예산 병렬 400+max(300,300,200,200) = 700ms, 순차 1,400ms /
+벌크 건당 20ms × 1,000건 = 20초 > 앱 가드 10초(한도가 이미 깨져 있음), 역산 8초÷20ms = 400건, 여유 50%면 200건 /
+Protobuf 태그 `(1<<3)|0` = `0x08`, 값 42 = `0x2A` → 2바이트 vs JSON `{"order_id":42}` 15바이트,
+필드번호 15까지 1바이트 태그(`(15<<3)|7` = 127 < 128) / N+1 users 10명 → 11회, orders 20건 → 21회 /
+epoch `1788134400` = 2026-08-31T00:00:00Z, 초를 ms로 오해 시 1970-01-21, ms를 초로 오해 시 20,696,000일 ÷ 365.2425 ≈ 56,664년(서기 58,634) /
+KST 23:59:59 = `14:59:59Z`.
+
+18번은 에이전트가 Java 21 + Node 20을 실제로 실행해 검증했고, 오케스트레이터가 재현해 일치를 확인했다:
+`"2026-08-31"`(Seoul) → `2026-08-31T00:00:00.000Z`, `"2026-08-31T00:00:00"`(Seoul) → `2026-08-30T15:00:00.000Z`(9시간 어긋남),
+`"2026-08-31"`(New York 표시) → `8/30/2026, 8:00:00 PM`, `"1990-05-15T00:00:00Z"`(New York) → `5/14/1990`.
+
+### 09장 마감 검증
+
+18건 전부 `verify.py [OK]`. 이모지 0건, 장 내부 상호 참조 링크 23건 전부 실재, 섹션 번호 전부 0~4.
+13.0KB → 평균 41KB(합계 742KB). 07장 20번(122KB) 같은 이상치 없이 35~51KB에 고르게 들어왔다.
+
+### 다음 세션 인수인계
+
+다음 차례는 01-java-kotlin(32건)이다. 05~09장은 작고 균질해 2~3건씩 5에이전트 병렬이 잘 맞았으나,
+01·02장은 건수가 많고(32·35) 03·04장은 이미 분량이 커서(48KB·58KB) 성격이 다르다.
+03·04는 "전면 재작성"이 아니라 **설명 방식 조정 + 하드랩 해제 위주**임을 잊지 말 것.
