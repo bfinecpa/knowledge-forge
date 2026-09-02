@@ -398,7 +398,7 @@ public class CouponExpireChunkWorker {
 
 청크마다 락과 XID가 풀려 지평선이 전진하고, 죽은 튜플이 5,000개 단위로 "치워도 되는 상태"가 되어 autovacuum이 사이사이 따라오며, 논리 복제도 5,000행 단위로 흘러가고, 300만 건째에서 실패해도 299만 건은 남는다.
 
-조건에 `status = 'ACTIVE'`를 넣어 **재실행해도 결과가 같게** 만든 것에 주목 — 청크 커밋은 "중간 상태"를 만들기 때문에 재실행 가능성이 곧 세트다(2-9절). Spring Batch의 `chunk(n)`은 이 구조에 **재시작 지점 기록**까지 붙인 것이고, JPA 영속성 컨텍스트 누적 문제까지 포함한 대량 처리 전반은 [21-bulk-insert-jdbc-batch.md](../03-jpa-orm/21-bulk-insert-jdbc-batch.md) §6을 보라.
+조건에 `status = 'ACTIVE'`를 넣어 **재실행해도 결과가 같게** 만든 것에 주목 — 청크 커밋은 "중간 상태"를 만들기 때문에 재실행 가능성이 곧 세트다(2-9절). Spring Batch의 `chunk(n)`은 이 구조에 **재시작 지점 기록**까지 붙인 것이고, JPA 영속성 컨텍스트 누적 문제까지 포함한 대량 처리 전반은 [21-bulk-insert-jdbc-batch.md](../03-jpa-orm/21-bulk-insert-jdbc-batch.md)를 보라.
 
 (가산점 포인트) PostgreSQL이면 SELECT + UPDATE를 **한 문장**으로 합치고, 워커를 여럿 띄워도 서로 안 부딪히게 만들 수 있다:
 
@@ -599,7 +599,7 @@ ORDER BY xact_start;
 - **죽은 튜플 비율** — 핵심 테이블의 `n_dead_tup / (n_live_tup + n_dead_tup)`과 `last_autovacuum`의 낡음. autovacuum이 돌았는데도 비율이 안 떨어지면 "돌긴 도는데 못 치우는" 상태 = 지평선 정체다.
 - **복제 지연** — 물리는 `pg_stat_replication.replay_lag`, 논리는 `pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)`(`pg_replication_slots`). 계단처럼 뛰면 방금 큰 트랜잭션이 커밋된 것이다(사슬 c).
 
-애플리케이션 쪽 짝 — 트랜잭션 소요 시간 Micrometer 타이머와 HikariCP `hikaricp.connections.pending`·acquire 시간은 [22-transaction-boundary-and-domain-events.md](../03-jpa-orm/22-transaction-boundary-and-domain-events.md) §9-2에 있다. **DB 쪽 지표(`pg_stat_activity`의 긴 트랜잭션·지평선 정체)와 앱 쪽 지표(풀 대기)가 같은 시각에 같이 오르면 원인은 긴 트랜잭션**이라고 읽는다.
+애플리케이션 쪽 짝 — 트랜잭션 소요 시간 Micrometer 타이머와 HikariCP `hikaricp.connections.pending`·acquire 시간은 [22-transaction-boundary-and-domain-events.md](../03-jpa-orm/22-transaction-boundary-and-domain-events.md) §3에 있다. **DB 쪽 지표(`pg_stat_activity`의 긴 트랜잭션·지평선 정체)와 앱 쪽 지표(풀 대기)가 같은 시각에 같이 오르면 원인은 긴 트랜잭션**이라고 읽는다.
 
 ### 3-4. 테스트로 고정
 

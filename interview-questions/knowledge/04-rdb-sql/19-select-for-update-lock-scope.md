@@ -779,7 +779,7 @@ STATEMENT:  SELECT * FROM coupon WHERE code = $1 FOR UPDATE
 
 "이 락은 좁고, 약하고, 빠르다"를 테스트로 박아 두면, 누가 인덱스를 지우거나 `FOR UPDATE`로 되돌리는 순간 CI가 잡는다.
 
-두 커넥션을 직접 쓴다 — `@Transactional` 테스트 안에서는 두 트랜잭션이 재현되지 않는다([낙관적 락 vs 비관적 락 §6-2](../03-jpa-orm/10-optimistic-vs-pessimistic-lock.md)). 그리고 **H2가 아니라 Testcontainers로 운영과 같은 PostgreSQL**을 띄운다. 락 모양은 엔진마다 다르다.
+두 커넥션을 직접 쓴다 — `@Transactional` 테스트 안에서는 두 트랜잭션이 재현되지 않는다([낙관적 락 vs 비관적 락 §3](../03-jpa-orm/10-optimistic-vs-pessimistic-lock.md)). 그리고 **H2가 아니라 Testcontainers로 운영과 같은 PostgreSQL**을 띄운다. 락 모양은 엔진마다 다르다.
 
 ```java
 @Test

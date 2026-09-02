@@ -612,7 +612,7 @@ public PostListResponse list(Long boardId, String cursorToken, int size) {
 }
 ```
 
-동적 정렬(컬럼 헤더 클릭)을 지원하려는 순간 `afterCursor`가 정렬 축마다 분기해야 하고 커서 구성 값도 바뀐다 — §2-1에서 말한 "정렬 축마다 커서 설계"라는 대가가 코드에서 이렇게 드러난다. 동적 조건 조립 일반론은 [Querydsl 동적 쿼리](../03-jpa-orm/13-querydsl-dynamic-query-composition.md)에서 다룬다(§6-3에 페이지 상한 가드도 있다).
+동적 정렬(컬럼 헤더 클릭)을 지원하려는 순간 `afterCursor`가 정렬 축마다 분기해야 하고 커서 구성 값도 바뀐다 — §2-1에서 말한 "정렬 축마다 커서 설계"라는 대가가 코드에서 이렇게 드러난다. 동적 조건 조립 일반론은 [Querydsl 동적 쿼리](../03-jpa-orm/13-querydsl-dynamic-query-composition.md)에서 다룬다(§3에 페이지 상한 가드도 있다).
 
 ### 3-8. (가산점 포인트) Spring Data JPA 3.1의 키셋 스크롤 API
 

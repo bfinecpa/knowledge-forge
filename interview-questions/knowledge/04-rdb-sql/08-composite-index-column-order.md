@@ -605,7 +605,7 @@ WHERE a.indrelid = 'orders'::regclass
 
 ### "순서를 잘 잡았는데 어느 날부터 플래너가 그 인덱스를 안 탑니다" (가산점 포인트)
 
-순서는 안 바뀌었어도 **조합의 선택도**는 바뀐다. 후보 셋을 순서대로 본다. ① **데이터 분포 변화** — FAILED가 1%였다가 외부사 장애로 40%가 되면 `status = 'FAILED'` 구간이 손익분기를 넘어 Seq Scan이 정답이 된다(플래너가 맞다). ② **통계가 낡음** — 대량 적재·삭제 후 추정 행 수가 어긋나면 `ANALYZE`로 갱신([Q2 문서 §5-2](02-index-not-used-full-scan.md)). autovacuum의 analyze 임계가 큰 테이블에서 둔한 것도 흔한 원인 — `autovacuum_analyze_scale_factor`를 테이블 단위로 낮춘다. ③ **새로 추가된 인덱스가 후보로 경쟁** — 누군가 비슷한 인덱스를 만들어 플래너가 그쪽을 고르기 시작한 경우, 3-5의 중복 인덱스 쿼리로 확인한다. PostgreSQL에는 `FORCE INDEX` 같은 힌트가 기본으로 없다 — 진단은 세션에서 `SET enable_seqscan = off`로 가설을 검증하는 데까지만 쓰고, 정말 강제가 필요하면 `pg_hint_plan` 확장이 최후 수단이다. 쓰면 "왜 플래너를 못 믿었는지"를 주석과 이슈로 남긴다.
+순서는 안 바뀌었어도 **조합의 선택도**는 바뀐다. 후보 셋을 순서대로 본다. ① **데이터 분포 변화** — FAILED가 1%였다가 외부사 장애로 40%가 되면 `status = 'FAILED'` 구간이 손익분기를 넘어 Seq Scan이 정답이 된다(플래너가 맞다). ② **통계가 낡음** — 대량 적재·삭제 후 추정 행 수가 어긋나면 `ANALYZE`로 갱신([Q2 문서 §2](02-index-not-used-full-scan.md)). autovacuum의 analyze 임계가 큰 테이블에서 둔한 것도 흔한 원인 — `autovacuum_analyze_scale_factor`를 테이블 단위로 낮춘다. ③ **새로 추가된 인덱스가 후보로 경쟁** — 누군가 비슷한 인덱스를 만들어 플래너가 그쪽을 고르기 시작한 경우, 3-5의 중복 인덱스 쿼리로 확인한다. PostgreSQL에는 `FORCE INDEX` 같은 힌트가 기본으로 없다 — 진단은 세션에서 `SET enable_seqscan = off`로 가설을 검증하는 데까지만 쓰고, 정말 강제가 필요하면 `pg_hint_plan` 확장이 최후 수단이다. 쓰면 "왜 플래너를 못 믿었는지"를 주석과 이슈로 남긴다.
 
 ### "MySQL로 물어보면 답이 달라지는 부분은?" (경험 대조)
 

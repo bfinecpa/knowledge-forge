@@ -604,7 +604,7 @@ public class DailySalesAggregationJob {
 
 > MySQL 대조: MySQL에서는 같은 UPSERT가 `INSERT ... ON DUPLICATE KEY UPDATE col = new.col` 형태다. PostgreSQL의 `ON CONFLICT`는 충돌 대상(유니크 인덱스)을 명시해야 하고 `EXCLUDED`로 새 값을 참조한다 — 부작용 비교는 [`32-bulk-upsert-side-effects.md`](32-bulk-upsert-side-effects.md).
 
-다중 인스턴스에서 `@Scheduled`가 인스턴스 수만큼 도는 문제와 ShedLock은 [`../02-spring/34-scheduled-tasks-threading.md`](../02-spring/34-scheduled-tasks-threading.md) §5에 있다. 데이터가 커서 한 번에 못 읽으면 reader(스탠바이) – processor – writer(프라이머리) 청크 구조, 즉 Spring Batch의 기본 모양(11장)이 정확히 이 형태다.
+다중 인스턴스에서 `@Scheduled`가 인스턴스 수만큼 도는 문제와 ShedLock은 [`../02-spring/34-scheduled-tasks-threading.md`](../02-spring/34-scheduled-tasks-threading.md) §3에 있다. 데이터가 커서 한 번에 못 읽으면 reader(스탠바이) – processor – writer(프라이머리) 청크 구조, 즉 Spring Batch의 기본 모양(11장)이 정확히 이 형태다.
 
 ### 2-8. PostgreSQL 변종 — materialized view와 `REFRESH ... CONCURRENTLY`
 
@@ -800,7 +800,7 @@ public class DailySellerSalesRepository {
 
 ### 3-3. 층 1의 대안 — 이미 `AbstractRoutingDataSource`를 쓰고 있다면
 
-라우팅이 이미 있으면 키를 하나 추가하고 애노테이션으로 강제하는 방법도 있다. 골격만 적는다 — `LazyConnectionDataSourceProxy` 필수, `ThreadLocal` 정리, `@Async` 스레드에서의 유실 같은 함정은 라우팅 문서 §2·§6-3과 같다.
+라우팅이 이미 있으면 키를 하나 추가하고 애노테이션으로 강제하는 방법도 있다. 골격만 적는다 — `LazyConnectionDataSourceProxy` 필수, `ThreadLocal` 정리, `@Async` 스레드에서의 유실 같은 함정은 라우팅 문서 §1과 같다.
 
 ```java
 public enum DataSourceKey { PRIMARY, STANDBY, STATS }
@@ -819,7 +819,7 @@ public class StatsRouteAspect {
 }
 ```
 
-단점은 명확하다 — 같은 `EntityManagerFactory`·같은 `JdbcTemplate`을 공유하므로 **타임아웃·풀 크기·롤·세션 설정을 통계만 따로 주기가 어렵고**, 애노테이션을 빠뜨린 새 위젯은 조용히 프라이머리로 간다(라우팅 문서 §9-1의 "라우팅 키별 쿼리 수 비율" 지표가 유일한 안전망이 된다).
+단점은 명확하다 — 같은 `EntityManagerFactory`·같은 `JdbcTemplate`을 공유하므로 **타임아웃·풀 크기·롤·세션 설정을 통계만 따로 주기가 어렵고**, 애노테이션을 빠뜨린 새 위젯은 조용히 프라이머리로 간다(라우팅 문서 §3의 "라우팅 키별 쿼리 수 비율" 지표가 유일한 안전망이 된다).
 
 **통계처럼 경계가 뚜렷한 모듈은 별도 DataSource가 맞고, 라우팅은 같은 엔티티를 읽는 OLTP 조회 분산에 맞다.**
 
@@ -916,7 +916,7 @@ class DashboardIsolationTest {
 # ④ stats_batch_run 의 마지막 SUCCESS 시각 — 기준 시각(예: 01:00)까지 없으면 알람 (§2-9 실패 ①)
 ```
 
-①은 이 문서의 안전망 중 가장 값싸고 결정적이다 — **"통계 쿼리는 운영 DB로 가지 않는다"는 결정 자체를 지표로 감시**한다. 라우팅 문서 §9-1의 "라우팅 키별 쿼리 수 비율"과 같은 발상이다: 틀려도 에러가 안 나는 결정은 지표로만 지킬 수 있다.
+①은 이 문서의 안전망 중 가장 값싸고 결정적이다 — **"통계 쿼리는 운영 DB로 가지 않는다"는 결정 자체를 지표로 감시**한다. 라우팅 문서 §3의 "라우팅 키별 쿼리 수 비율"과 같은 발상이다: 틀려도 에러가 안 나는 결정은 지표로만 지킬 수 있다.
 
 ### 3-7. 실제 사례 — 월말 정산 대시보드가 주문 API를 세웠다
 
