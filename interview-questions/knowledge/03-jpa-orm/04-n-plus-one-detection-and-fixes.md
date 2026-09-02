@@ -703,7 +703,7 @@ class OrderQueryCountTest {
 2. **Hibernate를 경유한 쿼리만 센다.** 같은 트랜잭션 안에서 `JdbcTemplate`이나 MyBatis로 쏜 쿼리는 이 카운터에 안 잡힌다. ORM과 SQL을 병용하는 프로젝트라면 **실제보다 작게 보인다.**
 3. **픽스처가 전제다.** §1-5를 지키지 않으면 이 테스트는 영원히 통과한다. 장치가 있는데 아무것도 못 잡는 상태가 가장 위험하다 — "쿼리 수 테스트가 있으니 안심"이라는 잘못된 신뢰까지 만들어내기 때문이다.
 
-`Statistics`에는 다른 카운터도 있어서 함께 단정하면 진단력이 올라간다. `getEntityUpdateCount()`를 0으로 단정하면 조회 API의 유령 UPDATE까지 같이 잡힌다([02-persistence-context-dirty-checking.md](02-persistence-context-dirty-checking.md) §5-2). **(가산점 포인트)**
+`Statistics`에는 다른 카운터도 있어서 함께 단정하면 진단력이 올라간다. `getEntityUpdateCount()`를 0으로 단정하면 조회 API의 유령 UPDATE까지 같이 잡힌다([02-persistence-context-dirty-checking.md](02-persistence-context-dirty-checking.md) §3). **(가산점 포인트)**
 
 ### 3-4. 2층 — `SQLStatementCountValidator` (좌표 교정 필요)
 

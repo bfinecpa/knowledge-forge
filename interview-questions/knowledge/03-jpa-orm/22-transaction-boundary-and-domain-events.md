@@ -607,7 +607,7 @@ public void decrease(List<OrderItem> items) {
 }
 ```
 
-**Hibernate는 이 순서를 지켜주지 않는다.** flush 시점에 나가는 UPDATE 순서는 **영속성 컨텍스트에 올라온 순서**에 좌우되고, 그 순서는 요청마다 얼마든지 달라진다. `HashSet` 순회, `ORDER BY` 없는 SELECT의 반환 순서, `Set`으로 매핑한 연관관계 — 순서가 흔들리는 경로는 많다. **정렬은 프레임워크가 아니라 내가 코드로 고정해야 한다.** 자세한 메커니즘은 [flush 시점과 쓰기 지연 SQL 실행 순서](15-flush-timing-and-sql-ordering.md) §5에 있다.
+**Hibernate는 이 순서를 지켜주지 않는다.** flush 시점에 나가는 UPDATE 순서는 **영속성 컨텍스트에 올라온 순서**에 좌우되고, 그 순서는 요청마다 얼마든지 달라진다. `HashSet` 순회, `ORDER BY` 없는 SELECT의 반환 순서, `Set`으로 매핑한 연관관계 — 순서가 흔들리는 경로는 많다. **정렬은 프레임워크가 아니라 내가 코드로 고정해야 한다.** 자세한 메커니즘은 [flush 시점과 쓰기 지연 SQL 실행 순서](15-flush-timing-and-sql-ordering.md) §2에 있다.
 
 (`hibernate.order_updates=true`가 있지 않느냐고 물을 수 있는데, 그건 **JDBC 배치로 묶기 좋게 문장을 그룹핑하는 설정**이지 **애플리케이션이 원하는 락 순서를 보장하는 장치가 아니다.** 목적이 다르므로 데드락 대책으로 쓸 수 없다.)
 
