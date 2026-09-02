@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>멱등 컨슈머 구현 — 중복은 예외가 아니라 정상 동작이다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.split.g3{grid-template-columns:repeat(3,1fr)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane.w{background:var(--warn-soft);border-color:var(--warn-line)}
+.pane.w h4{color:var(--warn)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">06 메시징 · 이벤트 &nbsp;|&nbsp; 메시지 큐 공통 ⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>멱등 컨슈머 구현 — 중복은 예외가 아니라 정상 동작이다<br><span class="sub">키 선정 · 원자성 · 보관 기간, 이 세 디테일이 구현의 성패를 가른다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"멱등 컨슈머(idempotent consumer)를 어떻게 구현하나요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>멱등성은 "같은 작업을 여러 번 실행해도 결과가 한 번 실행한 것과 같은 성질"</b>이고, at-least-once 세계에서 <b>중복 수신은 버그가 아니라 스펙</b>이다 — 커밋 전 크래시, 리밸런스, 프로듀서 재발행, 대량 재처리 어디서든 온다. 구현은 두 축이다: <b>① 연산 자체를 멱등하게 설계</b>(절대값 세팅, UPSERT, 상태 기계 조건부 전이) — 가능하면 최선. <b>② 처리 이력 기반 중복 제거</b> — 프로듀서가 발급한 이벤트 ID를 멱등 키로, 이력 테이블(유니크 제약)과 비즈니스 변경을 <b>같은 DB 트랜잭션</b>으로 묶는다. 키는 <b>메시지가 담고 있는 비즈니스적 사실</b>에 붙어야지 파티션-오프셋 같은 <b>위치</b>에 붙으면 안 되고, 중복 판정은 애플리케이션의 SELECT가 아니라 <b>DB의 유니크 제약 + <code>ON CONFLICT DO NOTHING</code>이 원자적으로</b> 해야 하며, 이력은 <b>최소한 토픽의 리텐션 기간보다 길게</b> 보관해야 한다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>중복은 "혹시"가 아니라 "반드시" 온다</b> — at-least-once의 스펙이다. 커밋 전 크래시, <b>배포할 때마다 일어나는 리밸런스</b>, 애플리케이션의 재발행, 운영상의 replay까지 <b>경로가 넷</b>이다. 그래서 <b>"중복은 반드시 온다"를 전제로</b> 컨슈머를 설계한다.</div></li>
+    <li><span class="n">2</span><div><b>먼저 연산 자체를 멱등하게 바꿀 수 있는지 본다</b> — <b>상대 연산을 절대값 세팅으로</b>, <b>INSERT를 UPSERT로</b>, <b>상태 전이는 출발 상태를 WHERE에 박아</b>. 되면 이력 테이블도 정리 배치도 필요 없다. <b>가장 싼 해법이라 항상 먼저 검토</b>한다.</div></li>
+    <li><span class="n">3</span><div><b>안 되면 처리 이력 기반 중복 제거 — 그리고 세 디테일에서 승부가 난다</b> — 키는 <b>프로듀서가 발급한 이벤트 ID</b>(위치가 아니라 정체), 판정은 <b>유니크 제약 + <code>ON CONFLICT DO NOTHING</code></b>으로 원자적으로, <b>이력과 업무 변경은 같은 DB · 같은 트랜잭션</b>, 보관은 <b>토픽 리텐션보다 길게</b>.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">멱등성이란 — 엘리베이터 버튼과 은행 입금</a></li>
+    <li><a href="#s2">중복은 어디서 오는가 — 네 개의 경로</a></li>
+    <li><a href="#s3">두 전략 — 어느 쪽을 고를지 먼저 판정한다</a></li>
+    <li><a href="#s4">전략 1 — 연산 자체를 멱등하게</a></li>
+    <li><a href="#s5">전략 2 ① 키 선정 — 위치가 아니라 정체</a></li>
+    <li><a href="#s6">전략 2 ② 원자성 — 두 겹이 필요하다</a></li>
+    <li><a href="#s7">전략 2 ③ 이력 보관 기간 — 근거 있는 숫자</a></li>
+    <li><a href="#s8">트랜잭션 밖의 부수효과 — 멱등의 사각지대</a></li>
+    <li><a href="#s9">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "멱등 컨슈머(idempotent consumer)를 어떻게 구현하나요?"</p>
+  <p><b>출제 의도</b>: at-least-once 세계에서 <b>중복은 예외가 아니라 정상 동작</b>이다. 처리 이력 기반 중복 제거의 <b>구현 디테일(키 선정, 저장소, 원자성)</b>까지 들어가는지로 실전 경험을 가린다 — <b>"중복 체크하면 된다"</b> 수준과 <b>"체크와 반영이 원자적이지 않으면 레이스에서 뚫린다"</b>를 아는 수준의 차이를 보는 질문이다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"이력 테이블에 기록하고 다음에 확인한다"에서 멈추는 것</b> → 6절에서 <b>SELECT 후 INSERT가 왜 레이스에서 뚫리는지</b>를 타임라인으로 보여준다. 여기가 <b>변별의 정중앙</b>이다.<br>
+    ② <b>멱등 키를 아무거나 잡는 것</b> → 5절에서 <b>파티션-오프셋 키가 유실과 중복 양쪽으로 뚫리는</b> 세 시나리오를 그린다.<br>
+    ③ <b>"이력은 적당히 지우면 되죠"</b> → 7절에서 <b>토픽 리텐션이 바닥선</b>이라는 근거를 타임라인으로 세운다. 숫자가 아니라 <b>도출 논리</b>를 말하는 게 답이다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 멱등성이란 — 엘리베이터 버튼과 은행 입금</h2>
+
+<p>용어부터 정확히 잡는다. <b>멱등성(idempotency)은 같은 작업을 여러 번 실행해도 결과가 한 번 실행한 것과 같은 성질</b>이다.</p>
+
+<p>수학에서 온 말이다. 어떤 함수 f에 대해 <code>f(f(x)) = f(x)</code>가 성립하면 그 함수를 멱등하다고 부른다. 한 번 적용한 결과에 또 적용해도 값이 안 바뀐다는 뜻이다. <b>"멱(冪)"은 거듭제곱, "등(等)"은 같다</b> — 거듭 적용해도 같다는 뜻의 조어다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 292" role="img" aria-label="왼쪽은 엘리베이터 버튼을 세 번 눌러도 5층 호출 상태가 되어 한 번만 도착하는 멱등 연산, 오른쪽은 만 원 입금을 세 번 하면 잔액이 삼만 원이 되는 비멱등 연산을 대비한 도식">
+    <defs>
+      <marker id="m1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+      <marker id="m1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <line x1="450" y1="14" x2="450" y2="236" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- LEFT: idempotent -->
+    <text x="225" y="30" font-size="14.5" font-weight="700" fill="#15803d" text-anchor="middle">멱등하다 — 「이 상태가 되게 하라」</text>
+    <rect x="24" y="52" width="118" height="30" rx="8" fill="#fff" stroke="#94a3b8"/><text x="83" y="72" font-size="11.5" fill="#374151" text-anchor="middle">5층 버튼 누름 ①</text>
+    <rect x="24" y="94" width="118" height="30" rx="8" fill="#fff" stroke="#94a3b8"/><text x="83" y="114" font-size="11.5" fill="#374151" text-anchor="middle">5층 버튼 누름 ②</text>
+    <rect x="24" y="136" width="118" height="30" rx="8" fill="#fff" stroke="#94a3b8"/><text x="83" y="156" font-size="11.5" fill="#374151" text-anchor="middle">5층 버튼 누름 ③</text>
+    <path d="M142,67 L180,105" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#m1)"/>
+    <path d="M142,109 L180,109" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#m1)"/>
+    <path d="M142,151 L180,113" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#m1)"/>
+    <rect x="188" y="84" width="176" height="52" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="276" y="105" font-size="13" font-weight="700" fill="#15803d" text-anchor="middle">5층 = 호출된 상태</text>
+    <text x="276" y="124" font-size="11" fill="#15803d" text-anchor="middle">상태를 「세팅」했을 뿐</text>
+    <text x="276" y="164" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">→ 엘리베이터는 한 번 온다</text>
+    <text x="225" y="196" font-size="13" class="mono" font-weight="700" fill="#16a34a" text-anchor="middle">f(f(x)) = f(x)</text>
+    <text x="225" y="220" font-size="11.5" fill="#6b7280" text-anchor="middle">누른 횟수가 결과에 남지 않는다</text>
+
+    <!-- RIGHT: non-idempotent -->
+    <text x="676" y="30" font-size="14.5" font-weight="700" fill="#b91c1c" text-anchor="middle">멱등하지 않다 — 「얼마만큼 바꿔라」</text>
+    <rect x="474" y="52" width="126" height="30" rx="8" fill="#fff" stroke="#94a3b8"/><text x="537" y="72" font-size="11.5" fill="#374151" text-anchor="middle">입금 +10,000 ①</text>
+    <rect x="474" y="94" width="126" height="30" rx="8" fill="#fff" stroke="#94a3b8"/><text x="537" y="114" font-size="11.5" fill="#374151" text-anchor="middle">입금 +10,000 ②</text>
+    <rect x="474" y="136" width="126" height="30" rx="8" fill="#fff" stroke="#94a3b8"/><text x="537" y="156" font-size="11.5" fill="#374151" text-anchor="middle">입금 +10,000 ③</text>
+    <path d="M600,67 L640,105" fill="none" stroke="#dc2626" stroke-width="1.5" marker-end="url(#m1r)"/>
+    <path d="M600,109 L640,109" fill="none" stroke="#dc2626" stroke-width="1.5" marker-end="url(#m1r)"/>
+    <path d="M600,151 L640,113" fill="none" stroke="#dc2626" stroke-width="1.5" marker-end="url(#m1r)"/>
+    <rect x="648" y="84" width="176" height="52" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="736" y="105" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="middle">잔액 30,000원</text>
+    <text x="736" y="124" font-size="11" fill="#b91c1c" text-anchor="middle">상대적 변경이 세 번 누적</text>
+    <text x="736" y="164" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">→ 반복하면 결과가 달라진다</text>
+    <text x="676" y="196" font-size="13" class="mono" font-weight="700" fill="#dc2626" text-anchor="middle">f(f(x)) ≠ f(x)</text>
+    <text x="676" y="220" font-size="11.5" fill="#6b7280" text-anchor="middle">누른 횟수가 결과에 그대로 남는다</text>
+
+    <rect x="24" y="248" width="852" height="34" rx="10" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.4"/>
+    <text x="450" y="270" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">멱등하게 만든다 = 「얼마만큼 바꿔라」를 「이 상태가 되게 하라」로 바꾸는 일</text>
+  </svg>
+  <figcaption>이 대비가 <b>4절(전략 1) 전체의 뼈대</b>다. 코드를 볼 때마다 <b>"이건 버튼인가, 입금인가"</b>를 먼저 물으면 멱등 여부가 바로 갈린다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>한 줄로 외우는 멱등의 정의</h4>
+  <div class="rule">멱등 = <b>"몇 번 눌러도 결과가 같다"</b> · 만드는 법 = <b>상대 연산 → 절대 상태 세팅</b></div>
+  <p class="sub" style="margin:6px 0 0">면접에서 정의를 물으면 <b>"같은 작업을 여러 번 실행해도 결과가 한 번 실행한 것과 같은 성질"</b> + <b>엘리베이터 버튼</b> 한 문장이면 충분하다. 정의를 못 대면 그 뒤 구현 이야기가 전부 흐려진다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 중복은 어디서 오는가 — 네 개의 경로</h2>
+
+<p>멱등 처리가 방어해야 할 중복은 <b>한 곳에서 오지 않는다.</b> 경로를 먼저 세어 두면 "왜 이렇게까지 하나"라는 의문이 사라진다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 322" role="img" aria-label="프로듀서에서 브로커, 컨슈머, DB로 이어지는 파이프라인 위에 중복이 유입되는 세 지점을 표시한 도식. 프로듀서 재발행, 운영 replay, 컨슈머 커밋 전 크래시와 리밸런스가 각각 화살표로 파이프라인에 들어온다">
+    <defs>
+      <marker id="m2" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+      <marker id="m2r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <!-- pipeline -->
+    <rect x="40" y="138" width="150" height="56" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="115" y="163" font-size="13" font-weight="700" fill="#374151" text-anchor="middle">프로듀서</text>
+    <text x="115" y="181" font-size="10.5" fill="#6b7280" text-anchor="middle">이벤트 발행</text>
+    <line x1="190" y1="166" x2="324" y2="166" stroke="#475569" stroke-width="1.8" marker-end="url(#m2)"/>
+
+    <rect x="330" y="138" width="210" height="56" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="435" y="163" font-size="13" font-weight="700" fill="#374151" text-anchor="middle">브로커 (토픽 · 파티션)</text>
+    <text x="435" y="181" font-size="10.5" fill="#6b7280" text-anchor="middle">리텐션 기간 동안 보관 · 재읽기 가능</text>
+    <line x1="540" y1="166" x2="674" y2="166" stroke="#475569" stroke-width="1.8" marker-end="url(#m2)"/>
+
+    <rect x="680" y="138" width="160" height="56" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="760" y="163" font-size="13" font-weight="700" fill="#374151" text-anchor="middle">컨슈머</text>
+    <text x="760" y="181" font-size="10.5" fill="#6b7280" text-anchor="middle">처리 → 오프셋 커밋</text>
+    <line x1="840" y1="166" x2="924" y2="166" stroke="#16a34a" stroke-width="1.8" marker-end="url(#m2)"/>
+
+    <rect x="930" y="138" width="150" height="56" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="1005" y="163" font-size="13" font-weight="700" fill="#15803d" text-anchor="middle">업무 DB</text>
+    <text x="1005" y="181" font-size="10.5" fill="#15803d" text-anchor="middle">여기서 중복을 흡수한다</text>
+
+    <!-- cause 1: producer -->
+    <rect x="40" y="34" width="268" height="58" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+    <text x="174" y="55" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">① 프로듀서 재발행</text>
+    <text x="174" y="73" font-size="10.8" fill="#b91c1c" text-anchor="middle">앱 레벨 재시도 · 재기동 후 재발행</text>
+    <text x="174" y="87" font-size="10.5" fill="#991b1b" text-anchor="middle">enable.idempotence로도 못 막는다</text>
+    <path d="M174,94 L232,158" fill="none" stroke="#dc2626" stroke-width="1.7" marker-end="url(#m2r)"/>
+
+    <!-- cause 2: replay -->
+    <rect x="470" y="34" width="300" height="58" rx="10" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5"/>
+    <text x="620" y="55" font-size="12.5" font-weight="700" fill="#92400e" text-anchor="middle">③ 운영 replay · 오프셋 되감기</text>
+    <text x="620" y="73" font-size="10.8" fill="#92400e" text-anchor="middle">과거 메시지 전체가 「합법적으로」 다시 온다</text>
+    <text x="620" y="87" font-size="10.5" fill="#92400e" text-anchor="middle">아무것도 고장 나지 않았는데 쏟아지는 중복</text>
+    <line x1="620" y1="94" x2="620" y2="158" stroke="#d97706" stroke-width="1.7" marker-end="url(#m2r)"/>
+
+    <!-- cause 3: consumer -->
+    <rect x="612" y="234" width="468" height="60" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+    <text x="846" y="256" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">② 처리 완료 후 오프셋 커밋 전 크래시 · 리밸런스</text>
+    <text x="846" y="274" font-size="10.8" fill="#b91c1c" text-anchor="middle">리밸런스는 장애에서만 일어나지 않는다 — 배포할 때마다 인스턴스가 내려갔다 올라오며 발생</text>
+    <text x="846" y="289" font-size="11" font-weight="700" fill="#991b1b" text-anchor="middle">즉 「배포 = 중복 발생 가능 이벤트」</text>
+    <path d="M760,234 L760,200" fill="none" stroke="#dc2626" stroke-width="1.7" marker-end="url(#m2r)"/>
+
+    <!-- bottom note -->
+    <rect x="40" y="234" width="540" height="60" rx="10" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+    <text x="310" y="257" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">at-least-once는 실수가 아니라 의도된 선택이다</text>
+    <text x="310" y="276" font-size="11" fill="#1d4ed8" text-anchor="middle">유실을 막으려면 「확실하지 않으면 다시 보낸다」가 유일한 전략이고,</text>
+    <text x="310" y="290" font-size="11" fill="#1d4ed8" text-anchor="middle">그 대가가 중복이다 — 그 대가를 흡수하는 장치가 멱등 컨슈머다</text>
+  </svg>
+  <figcaption>경로가 이렇게 많으니 <b>"중복이 오면 어떡하지"가 아니라 "중복은 반드시 온다"를 전제로</b> 설계하는 것이 출발점이다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table class="wide">
+  <caption>중복 유입 경로 — 무엇이 막아 주고, 무엇은 못 막는가</caption>
+  <thead><tr><th>경로</th><th>언제 발생</th><th>인프라 설정으로 막히나</th><th>연결 문서</th></tr></thead>
+  <tbody>
+    <tr><td><b>컨슈머 크래시</b><br><span class="sub">처리 후 커밋 전 사망</span></td><td>프로세스 강제 종료, OOM, 노드 장애</td><td class="bad">아니오 — 처리와 오프셋 커밋은 애초에 원자적이지 않다</td><td><code>23-offset-commit-and-auto-commit-risk.md</code></td></tr>
+    <tr class="hl"><td><b>리밸런스</b><br><span class="sub">가장 자주 겪는 경로</span></td><td><b>배포할 때마다</b>, 스케일 인·아웃, <code>max.poll.interval.ms</code> 초과</td><td class="bad">아니오 — 정상 운영 행위에서 발생한다</td><td><code>26-consumer-rebalancing-and-in-flight-messages.md</code></td></tr>
+    <tr><td><b>프로듀서 재발행</b></td><td>애플리케이션 레벨 재시도, 재기동 후 같은 이벤트 재발행</td><td class="bad">아니오 — <code>enable.idempotence</code>는 <b>한 번의 send가 네트워크 재시도로 두 번 저장되는 것</b>만 막는다. 앱이 의도적으로 두 번 send한 것은 <b>서로 다른 메시지</b>로 본다</td><td><code>03-delivery-semantics-and-exactly-once-reality.md</code></td></tr>
+    <tr><td><b>운영 replay</b><br><span class="sub">합법적 중복</span></td><td>장애 복구용 오프셋 되감기, 대량 재처리</td><td class="bad">아니오 — 오히려 <b>의도적으로</b> 다시 흘리는 것이다</td><td><code>33-bulk-replay-isolation.md</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>흔한 오해 — "멱등 프로듀서를 켰으니 컨슈머는 안 해도 되지 않나?"</h4>
+  <p style="margin:6px 0 0">아니다. <b>멱등 프로듀서가 막는 것은 「전송 계층의 중복」</b>(한 번의 <code>send()</code>가 네트워크 재시도로 브로커에 두 번 저장되는 것)뿐이다. 위 표의 <b>네 경로 중 어느 것도 막지 못한다.</b> 인프라 설정은 <b>중복의 빈도를 줄이고</b>, 멱등 컨슈머는 <b>정확성을 보장한다</b> — 역할이 다른 두 층이다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 두 전략 — 어느 쪽을 고를지 먼저 판정한다</h2>
+
+<p>구현은 두 축이다. 순서가 중요하다 — <b>전략 1이 되는지를 먼저 보고, 안 될 때만 전략 2로 간다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="멱등 처리 전략 선택 결정 트리. 결과 상태를 세팅하거나 덮어쓸 수 있으면 전략 1 연산 자체를 멱등하게, 아니면 DB 안에서 끝나는 일인지 물어 전략 2 처리 이력 방식 또는 전략 2에 경계 이동을 더한 방식으로 간다">
+    <defs>
+      <marker id="m3" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+      <marker id="m3g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+      <marker id="m3b" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <rect x="16" y="126" width="152" height="56" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="92" y="150" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">같은 메시지가</text>
+    <text x="92" y="168" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">두 번 왔다</text>
+    <line x1="168" y1="154" x2="204" y2="154" stroke="#475569" stroke-width="1.8" marker-end="url(#m3)"/>
+
+    <path d="M330,98 L452,154 L330,210 L208,154 Z" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="330" y="146" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">결과 상태를 세팅하거나</text>
+    <text x="330" y="164" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">덮어쓸 수 있나?</text>
+
+    <path d="M330,98 L330,58 L520,58" fill="none" stroke="#16a34a" stroke-width="1.7"/>
+    <line x1="506" y1="58" x2="524" y2="58" stroke="#16a34a" stroke-width="1.7" marker-end="url(#m3g)"/>
+    <text x="392" y="50" font-size="12" font-weight="700" fill="#15803d">예</text>
+
+    <rect x="528" y="20" width="330" height="78" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="693" y="43" font-size="13" font-weight="700" fill="#15803d" text-anchor="middle">전략 1 — 연산 자체를 멱등하게</text>
+    <text x="693" y="62" font-size="11.5" fill="#15803d" text-anchor="middle">절대값 세팅 · UPSERT · 조건부 상태 전이</text>
+    <text x="693" y="82" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">이력 테이블 · 유니크 제약 · 정리 배치 전부 불필요</text>
+    <rect x="874" y="42" width="212" height="34" rx="17" fill="#dcfce7" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="980" y="64" font-size="12" font-weight="700" fill="#166534" text-anchor="middle">추가 인프라 0 · 가장 싸다</text>
+
+    <path d="M330,210 L330,246 L436,246" fill="none" stroke="#475569" stroke-width="1.7"/>
+    <line x1="422" y1="246" x2="440" y2="246" stroke="#475569" stroke-width="1.7" marker-end="url(#m3)"/>
+    <text x="352" y="234" font-size="12" font-weight="700" fill="#6b7280">아니오</text>
+    <text x="330" y="272" font-size="10.8" fill="#6b7280" text-anchor="middle">총액을 모른다 / 사건을 기록해야 한다</text>
+    <text x="330" y="288" font-size="10.8" fill="#6b7280" text-anchor="middle">/ 부수효과가 있다</text>
+
+    <path d="M560,206 L676,246 L560,286 L444,246 Z" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="560" y="242" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">효과가 DB 안에서</text>
+    <text x="560" y="260" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">끝나는 일인가?</text>
+
+    <path d="M560,206 L560,168 L716,168" fill="none" stroke="#2563eb" stroke-width="1.7"/>
+    <line x1="702" y1="168" x2="720" y2="168" stroke="#2563eb" stroke-width="1.7" marker-end="url(#m3b)"/>
+    <text x="596" y="160" font-size="12" font-weight="700" fill="#1d4ed8">예</text>
+    <rect x="724" y="140" width="362" height="56" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="905" y="163" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">전략 2 — 처리 이력 기반 중복 제거</text>
+    <text x="905" y="182" font-size="11.5" fill="#1d4ed8" text-anchor="middle">이벤트 ID + 유니크 제약 + 같은 트랜잭션 (5·6·7절)</text>
+
+    <line x1="678" y1="246" x2="718" y2="246" stroke="#d97706" stroke-width="1.7" marker-end="url(#m3)"/>
+    <text x="698" y="238" font-size="12" font-weight="700" fill="#92400e" text-anchor="middle">아니오</text>
+    <rect x="724" y="216" width="362" height="60" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="905" y="238" font-size="13" font-weight="700" fill="#92400e" text-anchor="middle">전략 2 + 경계 이동</text>
+    <text x="905" y="256" font-size="11.5" fill="#92400e" text-anchor="middle">Idempotency-Key 위임 · 기록과 실행 분리 (8절)</text>
+    <text x="905" y="271" font-size="10.8" fill="#92400e" text-anchor="middle">메일 · 푸시 · 외부 결제 API처럼 롤백 불가능한 부수효과</text>
+
+    <rect x="16" y="300" width="1088" height="26" rx="8" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="560" y="318" font-size="12" font-weight="700" fill="#475569" text-anchor="middle">판정 순서를 지킨다 — 전략 1이 되는데 전략 2를 쓰면, 안 만들어도 될 테이블·인덱스·정리 배치를 평생 운영하게 된다</text>
+  </svg>
+  <figcaption>면접에서 <b>바로 이력 테이블부터 꺼내면</b> "패턴은 아는데 판단은 안 해 본 사람"으로 보인다. <b>"먼저 연산을 멱등하게 바꿀 수 있는지 봅니다"</b>가 첫 문장이어야 한다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table class="wide">
+  <caption>두 전략의 성격 비교</caption>
+  <thead><tr><th style="width:120px"></th><th>전략 1 — 연산 자체를 멱등하게</th><th>전략 2 — 처리 이력 기반 중복 제거</th></tr></thead>
+  <tbody>
+    <tr><td><b>발상</b></td><td>두 번 실행해도 <b>결과가 같아지도록 연산을 바꾼다</b></td><td>두 번째 실행을 <b>기록으로 알아채고 건너뛴다</b></td></tr>
+    <tr><td><b>추가 저장소</b></td><td class="good">없음</td><td><code>processed_event</code> 테이블 + 유니크 제약 + 정리 배치</td></tr>
+    <tr><td><b>적용 범위</b></td><td class="bad">제한적 — 덮어쓸 대상이 있어야 한다</td><td class="good">범용 — 사건 기록·부수효과에도 적용 가능</td></tr>
+    <tr><td><b>전제 조건</b></td><td>절대값 방식은 <b>파티션 내 순서 보장</b>이 세트 (<code>24-message-ordering-partition-key.md</code>)</td><td>프로듀서가 <b>이벤트 ID를 발급</b>해 줘야 한다</td></tr>
+    <tr><td><b>협의 대상</b></td><td class="bad">이벤트 스키마가 바뀐다 → <b>프로듀서와 합의 필요</b></td><td>ID 필드 추가만 합의하면 나머지는 컨슈머 내부 문제</td></tr>
+    <tr class="hl"><td><b>선택 기준</b></td><td colspan="2"><b>둘 중 하나가 아니라 순서다.</b> 전략 1로 되는 부분은 전략 1로 처리하고, 남는 부분에만 전략 2를 얹는다. 실제 서비스에서는 <b>한 컨슈머 안에서 둘이 공존</b>하는 경우가 흔하다.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 전략 1 — 연산 자체를 멱등하게 (가능하면 최선)</h2>
+
+<p>별도 인프라 없이, <b>두 번 실행해도 결과가 같은 연산으로 바꿀 수 있는지</b> 먼저 본다. 이 전략이 성립하면 이력 테이블도, 유니크 제약도, 정리 배치도 필요 없다. <b>가장 싼 해법이므로 항상 먼저 검토한다.</b></p>
+
+<div class="memo green">
+  <h4>전략 1의 세 가지 기법 — <span style="color:var(--ok)">절 · 업 · 조</span></h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k" style="font-family:inherit">절대값 세팅</div><div class="s">상대 연산 → 결과 상태</div><div class="d"><code>point += amount</code> 대신 <code>point = totalPoint</code></div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">업서트(UPSERT)</div><div class="s">분기를 DB에게</div><div class="d"><code>INSERT ... ON CONFLICT DO UPDATE</code> 한 문장</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">조건부 전이</div><div class="s">출발 상태를 WHERE에</div><div class="d"><code>UPDATE ... WHERE status = 'PAID'</code></div></div>
+  </div>
+  <div class="rule ok" style="margin:10px 0 0">셋 다 공통 원리는 하나 — <b>"얼마만큼 바꿔라"를 "이 상태가 되게 하라"로</b></div>
+</div>
+
+<h3>4-1. 상대 연산을 절대 상태 세팅으로 바꾼다</h3>
+
+<p>1절의 은행 비유가 그대로 코드가 된다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">문제</span> 상대 연산 — 두 번 오면 두 번 적립된다</div>
+<pre><code><span class="kw">@KafkaListener</span>(topics = <span class="st">"point-events"</span>)
+<span class="kw">public void</span> <span class="fn">handle</span>(PointEvent event) {
+<span class="ln-bad">    member.addPoint(event.amount());   <span class="cm">// point = point + amount</span></span>
+    <span class="cm">// 이벤트가 두 번 오면 포인트도 두 배로 쌓인다.</span>
+    <span class="cm">// 「입금 +10,000」을 세 번 말한 것과 같다.</span>
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">개선</span> 절대값 세팅 — 몇 번 와도 최종 상태가 같다</div>
+<pre><code><span class="kw">@KafkaListener</span>(topics = <span class="st">"point-events"</span>)
+<span class="kw">public void</span> <span class="fn">handle</span>(PointEvent event) {
+<span class="ln-good">    member.setPoint(event.totalPoint());  <span class="cm">// point = totalPoint</span></span>
+    <span class="cm">// 같은 이벤트가 몇 번 와도 최종 상태가 같다</span>
+    <span class="cm">// — 연산 자체가 멱등해졌다.</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="split">
+  <div class="pane b">
+    <h4>바뀐 것은 컨슈머 코드만이 아니다</h4>
+    <p style="margin:6px 0 0"><b>이벤트의 스키마가 바뀌었다.</b> 프로듀서가 <code>amount</code>(변화량)만 싣던 것을 <code>totalPoint</code>(결과 상태)까지 싣도록 바꿔야 한다. 즉 이 전략은 <b>컨슈머 혼자 결정할 수 없고 이벤트 설계 단계에서 합의돼야 하는 것</b>이다.</p>
+  </div>
+  <div class="pane w">
+    <h4>대가 — 순서가 지켜져야만 안전하다</h4>
+    <p style="margin:6px 0 0">100점 → 150점 → 200점 순으로 발행된 이벤트에서 <b>150점이 마지막에 도착하면 최종 상태가 150점으로 잘못 굳는다.</b> 그래서 이 전략은 <b>같은 회원의 이벤트가 같은 파티션에 들어가도록 파티션 키를 설계하는 것과 세트</b>다 — Kafka는 <b>파티션 안에서만</b> 순서를 보장한다. (<code>24-message-ordering-partition-key.md</code>)</p>
+  </div>
+</div>
+
+<h3>4-2. INSERT를 UPSERT로 바꾼다</h3>
+
+<p>"없으면 삽입, 있으면 갱신"을 <b>애플리케이션에서 분기하지 말고 DB가 한 문장으로 원자적으로 처리하게</b> 한다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> PostgreSQL UPSERT — 같은 키의 재수신은 같은 값으로 덮을 뿐이다</div>
+<pre><code><span class="kw">INSERT INTO</span> order_summary (order_id, status, total_amount, updated_at)
+<span class="kw">VALUES</span> (:orderId, :status, :amount, now())
+<span class="kw">ON CONFLICT</span> (order_id)
+<span class="kw">DO UPDATE SET</span> status       = EXCLUDED.status,
+              total_amount = EXCLUDED.total_amount,
+              updated_at   = now();
+
+<span class="cm">-- ON CONFLICT (order_id) : 「order_id의 유니크 제약에 걸리면」</span>
+<span class="cm">-- EXCLUDED               : 「삽입하려다 막힌 그 행」을 가리키는 특수 별칭</span>
+<span class="cm">-- 즉 이 한 문장이 「넣어 보고, 이미 있으면 새 값으로 갱신해라」를 뜻한다.</span>
+<span class="cm">-- MySQL이라면 INSERT ... ON DUPLICATE KEY UPDATE 가 같은 역할을 한다.</span></code></pre>
+
+<h3>4-3. 상태 기계 — 현재 상태를 조건에 박는다</h3>
+
+<p>도메인이 <b>상태 전이로 모델링</b>돼 있으면(주문, 정산, 구독) 가장 자연스러운 멱등 방식이 이것이다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> 조건부 전이 — 출발 상태를 WHERE에 박는다</div>
+<pre><code><span class="cm">-- 「결제완료 -&gt; 배송준비」 전이</span>
+<span class="kw">UPDATE</span> orders
+   <span class="kw">SET</span> status = <span class="st">'PREPARING'</span>
+ <span class="kw">WHERE</span> id = :orderId
+<span class="ln-good">   <span class="kw">AND</span> status = <span class="st">'PAID'</span>;   <span class="cm">-- 이 한 줄이 중복 방어 + 순서 방어를 동시에 한다</span></span>
+
+<span class="cm">-- 첫 처리:   status가 PAID이므로 1행 갱신</span>
+<span class="cm">-- 중복 처리: 이미 PREPARING이라 조건 불일치 -&gt; 0행 갱신</span></code></pre>
+
+<figure>
+  <svg viewBox="0 0 900 226" role="img" aria-label="주문 상태 기계 도식. PENDING에서 PAID, PREPARING, SHIPPED로 전이하며 중복 이벤트와 순서가 뒤바뀐 이벤트는 조건 불일치로 0행 갱신되어 튕겨 나간다">
+    <defs>
+      <marker id="m4" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="m4r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+    <rect x="30" y="88" width="150" height="46" rx="23" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="105" y="117" font-size="13" font-weight="700" fill="#475569" text-anchor="middle" class="mono">PENDING</text>
+    <line x1="180" y1="111" x2="248" y2="111" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m4)"/>
+    <rect x="254" y="88" width="150" height="46" rx="23" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="329" y="117" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">PAID</text>
+    <line x1="404" y1="111" x2="472" y2="111" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m4)"/>
+    <text x="438" y="102" font-size="10.5" fill="#1d4ed8" text-anchor="middle">1행 갱신</text>
+    <rect x="478" y="88" width="160" height="46" rx="23" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="558" y="117" font-size="13" font-weight="700" fill="#15803d" text-anchor="middle" class="mono">PREPARING</text>
+    <line x1="638" y1="111" x2="706" y2="111" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m4)"/>
+    <rect x="712" y="88" width="150" height="46" rx="23" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="787" y="117" font-size="13" font-weight="700" fill="#475569" text-anchor="middle" class="mono">SHIPPED</text>
+
+    <!-- duplicate bounce -->
+    <path d="M558,88 C558,44 700,44 700,64" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#m4r)"/>
+    <rect x="596" y="18" width="288" height="44" rx="9" fill="#fef2f2" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="740" y="37" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">중복 이벤트: 「PAID → PREPARING」 재수신</text>
+    <text x="740" y="53" font-size="11" fill="#b91c1c" text-anchor="middle">이미 PREPARING이라 조건 불일치 → 0행 갱신 → 튕김</text>
+
+    <!-- out-of-order bounce -->
+    <path d="M105,134 C105,180 300,180 300,164" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#m4r)"/>
+    <rect x="196" y="164" width="316" height="44" rx="9" fill="#fffbeb" stroke="#fde68a" stroke-width="1.4"/>
+    <text x="354" y="183" font-size="11.5" font-weight="700" fill="#92400e" text-anchor="middle">순서 역전: 아직 PENDING인데 배송준비 이벤트가 먼저 도착</text>
+    <text x="354" y="199" font-size="11" fill="#92400e" text-anchor="middle">PAID가 아니므로 0행 갱신 → 잘못된 전이를 막아 준다</text>
+
+    <rect x="546" y="164" width="338" height="44" rx="9" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.4"/>
+    <text x="715" y="183" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">AND status = 'PAID' 한 줄이</text>
+    <text x="715" y="199" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">중복 방어와 순서 방어를 동시에 수행한다</text>
+  </svg>
+  <figcaption>조건부 전이의 <b>부수 효과</b> — <code>AND status = 'PAID'</code>는 중복 방어인 동시에 <b>잘못된 순서의 전이를 막는 방어</b>이기도 하다. 4-1의 절대값 세팅이 순서에 취약한 것과 대조적이다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>0행 갱신일 때 예외를 던지면 안 된다</h4>
+  <p style="margin:6px 0 6px">갱신된 행 수가 0이면 <b>"이미 처리됨"으로 보고 예외 없이 조용히 넘어간 뒤 오프셋을 커밋</b>한다.</p>
+  <div class="rule red">중복은 오류가 아니라 <b>정상적으로 예상되는 상황</b> — 예외를 던지면 컨슈머가 같은 메시지를 <b>무한 재시도하며 파티션이 멈춘다</b></div>
+  <p class="sub" style="margin:6px 0 0">심하면 정상 이벤트가 DLQ로 흘러가 <b>"실패"로 집계</b>된다. 중복 skip은 <b>에러 로그가 아니라 카운터 메트릭</b>으로 남기는 것이 맞다 (9절 꼬리질문 참고).</p>
+</div>
+
+<h3>4-4. 이 전략이 안 통하는 경우</h3>
+
+<p>전략 1은 언제나 최선이지만 <b>언제나 가능하지는 않다.</b> 아래 셋 중 하나에 해당하면 전략 2로 간다.</p>
+
+<div class="split g3">
+  <div class="pane r">
+    <h4>① 결과 상태를 실을 수 없다</h4>
+    <p style="margin:6px 0 0">프로듀서가 총액을 모르거나, <b>여러 이벤트가 합산돼야</b> 최종 값이 나오는 경우.</p>
+  </div>
+  <div class="pane r">
+    <h4>② 행이 아니라 사건을 남긴다</h4>
+    <p style="margin:6px 0 0">포인트 원장, 감사 로그처럼 <b>"한 줄 추가되는 것" 자체가 요구사항</b>이면 덮어쓸 대상이 없다.</p>
+  </div>
+  <div class="pane r">
+    <h4>③ 부수효과가 있다</h4>
+    <p style="margin:6px 0 0">이메일·푸시·외부 결제 API는 <b>DB 상태가 아니라 바깥 세계</b>를 바꿔서 "덮어쓴다"는 개념이 없다. (→ 8절)</p>
+  </div>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 전략 2 ① 키 선정 — 위치가 아니라 정체</h2>
+
+<p>전략 2의 발상은 단순하다. <b>"이 이벤트 처리했음"을 어딘가에 기록해 두고, 다음에 같은 이벤트가 오면 기록을 보고 건너뛴다.</b> 그런데 이 단순한 발상은 <b>세 개의 디테일</b>에서 전부 뚫릴 수 있다 — 키 선정(5절), 원자성(6절), 보관 기간(7절).</p>
+
+<p>먼저 키다. 정석은 <b>프로듀서가 이벤트를 만들 때 발급한 고유 ID</b>(UUID 등, Outbox 패턴이라면 outbox 행의 PK)를 페이로드나 헤더에 실어 보내는 것이다. 소비 쪽에서 이것저것 조합해 만드는 것보다, <b>이벤트가 태어날 때 신분증을 쥐여주는</b> 쪽이 확실하다.</p>
+
+<div class="callout trap"><span class="t">자주 나오는 오답 — <code>토픽-파티션-오프셋</code> 조합을 키로 쓰는 것</span>
+메시지마다 유일한 값처럼 보이니 그럴듯한데, <b>실제로는 세 방향으로 뚫린다.</b> 더 나쁜 건 <b>한쪽으로는 유실, 다른 쪽으로는 중복</b>이라 어느 쪽으로 실패해도 알아채기 어렵다는 점이다.</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 350" role="img" aria-label="같은 비즈니스 이벤트에 대해 파티션-오프셋 좌표는 토픽 재생성, 파티션 증설, replay에서 각각 재사용되거나 달라져 유실 또는 중복을 만들지만 이벤트 ID는 세 경우 모두 동일하게 유지된다는 비교 도식">
+    <defs>
+      <marker id="m5" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+
+    <rect x="16" y="14" width="1088" height="40" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4"/>
+    <text x="230" y="39" font-size="13" font-weight="700" fill="#374151" text-anchor="middle">같은 비즈니스 이벤트 하나 — 「주문 A-2026-0417 생성됨」</text>
+    <text x="620" y="39" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">키 = 토픽-파티션-오프셋 (위치)</text>
+    <text x="950" y="39" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">키 = event_id (정체)</text>
+
+    <!-- row 1 -->
+    <rect x="16" y="64" width="428" height="80" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="34" y="88" font-size="12.5" font-weight="700" fill="#374151">(1) 토픽을 삭제하고 다시 만들었다</text>
+    <text x="34" y="107" font-size="11" fill="#6b7280">오프셋은 파티션 안에서 0부터 매겨지는 일련번호라,</text>
+    <text x="34" y="123" font-size="11" fill="#6b7280">재생성하면 <tspan class="mono">0</tspan>부터 다시 시작한다 — 같은 좌표가 재사용된다</text>
+    <text x="34" y="139" font-size="11" fill="#6b7280">→ 이력에 남은 옛 좌표가 <tspan font-weight="700" fill="#b91c1c">새 메시지를 가로막는다</tspan></text>
+    <line x1="446" y1="104" x2="470" y2="104" stroke="#64748b" stroke-width="1.5" marker-end="url(#m5)"/>
+    <rect x="476" y="70" width="288" height="68" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="620" y="92" font-size="12" class="mono" fill="#b91c1c" text-anchor="middle">(orders, p0, 517) → 이미 처리됨</text>
+    <text x="620" y="112" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">전혀 다른 새 메시지가 통째로 버려진다</text>
+    <text x="620" y="130" font-size="12.5" font-weight="800" fill="#dc2626" text-anchor="middle">= 유실</text>
+    <rect x="792" y="70" width="312" height="68" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="948" y="98" font-size="12" class="mono" fill="#15803d" text-anchor="middle">event_id = 9f3c-…-4a1</text>
+    <text x="948" y="120" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">토픽을 다시 만들어도 그대로 → 정상 판별</text>
+
+    <!-- row 2 -->
+    <rect x="16" y="152" width="428" height="80" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="34" y="176" font-size="12.5" font-weight="700" fill="#374151">(2) 파티션을 3개 → 6개로 늘렸다</text>
+    <text x="34" y="195" font-size="11" fill="#6b7280">파티션은 메시지 키의 해시를 파티션 수로 나눈 나머지로 정해진다.</text>
+    <text x="34" y="211" font-size="11" fill="#6b7280">수가 바뀌면 같은 주문의 이벤트가 <tspan font-weight="700">다른 파티션</tspan>으로 간다</text>
+    <text x="34" y="227" font-size="11" fill="#6b7280">(<tspan class="mono">32-partition-increase-side-effects.md</tspan>)</text>
+    <line x1="446" y1="192" x2="470" y2="192" stroke="#64748b" stroke-width="1.5" marker-end="url(#m5)"/>
+    <rect x="476" y="158" width="288" height="68" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="620" y="180" font-size="12" class="mono" fill="#b91c1c" text-anchor="middle">(orders, p2, 88) → (orders, p5, 12)</text>
+    <text x="620" y="200" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">좌표가 달라졌으니 이력이 안 걸린다</text>
+    <text x="620" y="218" font-size="12.5" font-weight="800" fill="#dc2626" text-anchor="middle">= 중복</text>
+    <rect x="792" y="158" width="312" height="68" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="948" y="186" font-size="12" class="mono" fill="#15803d" text-anchor="middle">event_id = 9f3c-…-4a1</text>
+    <text x="948" y="208" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">파티션이 몇 개가 되든 그대로 → 정상 판별</text>
+
+    <!-- row 3 -->
+    <rect x="16" y="240" width="428" height="80" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="34" y="264" font-size="12.5" font-weight="700" fill="#374151">(3) replay — 다른 토픽으로 복사하거나 미러링을 거쳤다</text>
+    <text x="34" y="283" font-size="11" fill="#6b7280">대량 재처리를 위해 이벤트를 다른 토픽으로 흘리면</text>
+    <text x="34" y="299" font-size="11" fill="#6b7280">같은 비즈니스 이벤트에 <tspan font-weight="700">완전히 다른 좌표</tspan>가 붙는다</text>
+    <text x="34" y="315" font-size="11" fill="#6b7280">(<tspan class="mono">33-bulk-replay-isolation.md</tspan>)</text>
+    <line x1="446" y1="280" x2="470" y2="280" stroke="#64748b" stroke-width="1.5" marker-end="url(#m5)"/>
+    <rect x="476" y="246" width="288" height="68" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="620" y="268" font-size="12" class="mono" fill="#b91c1c" text-anchor="middle">(orders-replay, p1, 12)</text>
+    <text x="620" y="288" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">이력에 없는 키 → 중복으로 인식되지 않는다</text>
+    <text x="620" y="306" font-size="12.5" font-weight="800" fill="#dc2626" text-anchor="middle">= 중복</text>
+    <rect x="792" y="246" width="312" height="68" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="948" y="274" font-size="12" class="mono" fill="#15803d" text-anchor="middle">event_id = 9f3c-…-4a1</text>
+    <text x="948" y="296" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">어느 토픽을 거쳐 와도 그대로 → 정상 판별</text>
+
+  </svg>
+  <figcaption>세 경우가 말하는 바는 하나로 모인다 — <b>파티션-오프셋은 "그 메시지가 어디에 놓여 있는가"라는 위치 정보이지, "그 메시지가 무엇인가"라는 정체 정보가 아니다.</b> <b>위치는 인프라 사정으로 바뀌지만 정체는 안 바뀐다.</b></figcaption>
+</figure>
+
+<div class="memo">
+  <h4>이 절의 결론 — 원리 한 줄</h4>
+  <div class="rule">멱등 키는 <b>메시지가 담고 있는 비즈니스적 사실</b>에 붙어야지, <b>그 메시지가 놓인 자리</b>에 붙으면 안 된다</div>
+  <div class="grid g3" style="margin-top:10px">
+    <div class="tile ok"><div class="k" style="font-family:inherit">조건 ①</div><div class="d">사건마다 <b>유일</b>하다</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">조건 ②</div><div class="d">재발행·경로 변경에도 <b>불변</b>이다</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">조건 ③</div><div class="d"><b>생성 측(프로듀서)</b>이 발급한다</div></div>
+  </div>
+</div>
+
+<div class="callout warn"><span class="t">업무 자연키(주문 ID)만 쓰는 것도 위험하다</span>
+같은 주문에 대해 <b>생성 · 수정 · 취소</b> 같은 서로 다른 이벤트가 오면, <b>두 번째 이벤트가 중복으로 오인되어 통째로 버려진다.</b> 자연키를 쓸 거면 <b>"주문 ID + 이벤트 종류 + 버전"</b>처럼 <b>사건을 유일하게 지목하는 조합</b>이어야 한다. 그래서 결국 <b>프로듀서가 발급한 이벤트 ID</b>가 가장 안전한 기본값이다.</div>
+
+<h3>이력 테이블은 이렇게 잡는다</h3>
+
+<div class="codehead plain"><span class="tag">DDL</span> processed_event — 중복 판정의 기준</div>
+<pre><code><span class="kw">CREATE TABLE</span> processed_event (
+    event_id       uuid         <span class="kw">NOT NULL</span>,
+    consumer_group varchar(100) <span class="kw">NOT NULL</span>,
+    processed_at   timestamptz  <span class="kw">NOT NULL DEFAULT</span> now(),
+<span class="ln-good">    <span class="kw">PRIMARY KEY</span> (event_id, consumer_group)   <span class="cm">-- 이 유니크 제약이 최후 방어선이다</span></span>
+);
+
+<span class="cm">-- consumer_group을 키에 넣는 이유:</span>
+<span class="cm">--   같은 토픽을 「정산 컨슈머」와 「알림 컨슈머」가 각자 소비하는데 이력 테이블을 공유하면,</span>
+<span class="cm">--   정산이 먼저 처리한 이벤트를 알림 쪽이 「이미 처리됨」으로 오인해 건너뛴다.</span>
+<span class="cm">--   소비 주체별로 이력이 따로여야 한다.</span>
+
+<span class="cm">-- 오래된 이력 정리(7절)를 위한 인덱스</span>
+<span class="kw">CREATE INDEX</span> idx_processed_event_at <span class="kw">ON</span> processed_event (processed_at);</code></pre>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 전략 2 ② 원자성 — 두 겹이 필요하다</h2>
+
+<p>여기가 출제 의도의 심장부다. 이력 기반 중복 제거는 <b>서로 다른 두 종류의 원자성</b>을 동시에 요구하는데, <b>하나만 챙기고 다른 하나를 빠뜨리는 답이 흔하다.</b></p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>(가) 확인과 선점의 원자성</h4>
+    <p style="margin:6px 0 0"><b>"이미 처리됐는지 확인"과 "없으면 내가 자리를 차지"</b>가 쪼갤 수 없는 한 동작이어야 한다. 안 그러면 <b>동시성 레이스</b>에서 뚫린다.</p>
+  </div>
+  <div class="pane b">
+    <h4>(나) 이력과 비즈니스 변경의 원자성</h4>
+    <p style="margin:6px 0 0"><b>이력 기록과 업무 변경이 함께 커밋되거나 함께 롤백</b>돼야 한다. 안 그러면 <b>한쪽은 유실, 다른 쪽은 중복</b>을 만든다.</p>
+  </div>
+</div>
+
+<h3>6-1. (가) "SELECT 후 INSERT"는 왜 새는가 <span class="badge senior">시니어 변별</span></h3>
+
+<p>가장 자연스러워 보이는 구현이 이것이다. 그리고 <b>가장 자주 뚫리는 구현</b>이기도 하다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">문제</span> check-then-act — 확인과 선점 사이에 틈이 있다</div>
+<pre><code><span class="kw">public void</span> <span class="fn">handle</span>(OrderEvent event) {
+<span class="ln-bad">    <span class="kw">if</span> (processedEventRepository.exists(event.eventId())) <span class="kw">return</span>;  <span class="cm">// ① 확인</span></span>
+    orderRepository.save(toOrder(event));                          <span class="cm">// ② 처리</span>
+<span class="ln-bad">    processedEventRepository.insert(event.eventId());              <span class="cm">// ③ 기록</span></span>
+    <span class="cm">// ①의 사실이 ③의 순간에는 이미 옛날 얘기가 되어 있을 수 있다.</span>
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">개선</span> 유니크 제약 + ON CONFLICT DO NOTHING</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">handle</span>(OrderEvent event) {
+<span class="ln-good">    <span class="kw">int</span> inserted = processedEventRepository.insertIfAbsent(
+            event.eventId(), consumerGroup);</span>
+    <span class="cm">// 실행되는 SQL:</span>
+    <span class="cm">//   INSERT INTO processed_event (event_id, consumer_group)</span>
+    <span class="cm">//   VALUES (:eventId, :group)</span>
+    <span class="cm">//   ON CONFLICT (event_id, consumer_group) DO NOTHING;</span>
+    <span class="cm">// 반환값은 삽입된 행 수 — 1이면 내가 처음, 0이면 이미 누가 처리했다.</span>
+
+<span class="ln-good">    <span class="kw">if</span> (inserted == 0) <span class="kw">return</span>;   <span class="cm">// 중복 — 조용히 넘어가고 오프셋 커밋</span></span>
+
+    orderRepository.save(toOrder(event));
+}</code></pre>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="왼쪽은 두 인스턴스가 SELECT 후 INSERT를 수행할 때 확인과 기록 사이의 틈으로 중복 처리가 일어나는 타임라인, 오른쪽은 유니크 제약과 ON CONFLICT DO NOTHING으로 뒤에 온 트랜잭션이 대기했다가 0행을 받고 종료하는 타임라인">
+    <defs>
+      <marker id="m6" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+    <line x1="560" y1="14" x2="560" y2="316" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- LEFT -->
+    <text x="280" y="30" font-size="14" font-weight="700" fill="#b91c1c" text-anchor="middle">check-then-act — 확인과 선점 사이에 틈이 열린다</text>
+    <text x="176" y="56" font-size="12" font-weight="700" fill="#374151" text-anchor="middle">인스턴스 A</text>
+    <text x="410" y="56" font-size="12" font-weight="700" fill="#374151" text-anchor="middle">인스턴스 B</text>
+    <line x1="36" y1="64" x2="36" y2="300" stroke="#cbd5e1" stroke-width="1.4" marker-end="url(#m6)"/>
+    <text x="20" y="80" font-size="10.5" fill="#9ca3af">t0</text>
+    <text x="20" y="122" font-size="10.5" fill="#9ca3af">t1</text>
+    <text x="20" y="164" font-size="10.5" fill="#9ca3af">t2</text>
+    <text x="20" y="206" font-size="10.5" fill="#9ca3af">t3</text>
+    <text x="20" y="248" font-size="10.5" fill="#9ca3af">t4</text>
+    <text x="20" y="290" font-size="10.5" fill="#9ca3af">t5</text>
+
+    <rect x="66" y="66" width="446" height="152" rx="10" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="289" y="228" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">↑ 이 틈에 B가 통째로 끼어든다 — 확인한 순간의 사실이 행동하는 순간엔 옛날 얘기</text>
+
+    <rect x="76" y="70" width="200" height="30" rx="7" fill="#fff" stroke="#94a3b8" stroke-width="1.3"/>
+    <text x="176" y="90" font-size="11" fill="#374151" text-anchor="middle" class="mono">SELECT E-1 → 0건</text>
+    <rect x="310" y="112" width="200" height="30" rx="7" fill="#fff" stroke="#94a3b8" stroke-width="1.3"/>
+    <text x="410" y="132" font-size="11" fill="#374151" text-anchor="middle" class="mono">SELECT E-1 → 0건</text>
+    <rect x="76" y="154" width="200" height="30" rx="7" fill="#eff6ff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="176" y="174" font-size="11.5" fill="#1d4ed8" text-anchor="middle">주문 생성 (비즈니스 처리)</text>
+    <rect x="76" y="188" width="200" height="26" rx="7" fill="#eff6ff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="176" y="206" font-size="11" fill="#1d4ed8" text-anchor="middle" class="mono">INSERT processed_event</text>
+    <rect x="310" y="240" width="200" height="30" rx="7" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="410" y="260" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">주문 생성 ← 중복!</text>
+    <rect x="310" y="276" width="200" height="26" rx="7" fill="#fef2f2" stroke="#fecaca" stroke-width="1.3"/>
+    <text x="410" y="294" font-size="11" fill="#b91c1c" text-anchor="middle" class="mono">INSERT processed_event</text>
+
+    <!-- RIGHT -->
+    <text x="840" y="30" font-size="14" font-weight="700" fill="#15803d" text-anchor="middle">유니크 제약 + ON CONFLICT — 확인과 선점이 DB 안에서 한 번에</text>
+    <text x="736" y="56" font-size="12" font-weight="700" fill="#374151" text-anchor="middle">인스턴스 A</text>
+    <text x="970" y="56" font-size="12" font-weight="700" fill="#374151" text-anchor="middle">인스턴스 B</text>
+    <line x1="596" y1="64" x2="596" y2="300" stroke="#cbd5e1" stroke-width="1.4" marker-end="url(#m6)"/>
+    <text x="580" y="80" font-size="10.5" fill="#9ca3af">t0</text>
+    <text x="580" y="122" font-size="10.5" fill="#9ca3af">t1</text>
+    <text x="580" y="206" font-size="10.5" fill="#9ca3af">t2</text>
+    <text x="580" y="248" font-size="10.5" fill="#9ca3af">t3</text>
+
+    <rect x="636" y="70" width="200" height="30" rx="7" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="736" y="90" font-size="10.8" fill="#15803d" text-anchor="middle" class="mono">INSERT .. DO NOTHING → 1행</text>
+    <rect x="870" y="112" width="216" height="82" rx="7" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+    <text x="978" y="134" font-size="11" fill="#92400e" text-anchor="middle" class="mono">INSERT 시도</text>
+    <text x="978" y="154" font-size="11.5" font-weight="700" fill="#92400e" text-anchor="middle">인덱스 레벨에서 대기</text>
+    <text x="978" y="172" font-size="10.5" fill="#92400e" text-anchor="middle">A가 커밋/롤백할 때까지</text>
+    <text x="978" y="188" font-size="10.5" fill="#92400e" text-anchor="middle">블록된다 — 끼어들 틈이 없다</text>
+    <rect x="636" y="154" width="200" height="26" rx="7" fill="#eff6ff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="736" y="172" font-size="11" fill="#1d4ed8" text-anchor="middle">주문 생성</text>
+    <rect x="636" y="192" width="200" height="26" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="736" y="210" font-size="11" font-weight="700" fill="#1d4ed8" text-anchor="middle">COMMIT</text>
+    <rect x="870" y="240" width="216" height="46" rx="7" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="978" y="260" font-size="11" fill="#15803d" text-anchor="middle" class="mono">충돌 확인 → 0행</text>
+    <text x="978" y="278" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">조용히 return — 중복 처리 없음</text>
+    <text x="840" y="310" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">t0~t3 사이에 「확인만 하고 아직 선점 안 한」 구간이 존재하지 않는다</text>
+  </svg>
+  <figcaption>왼쪽의 <b>t0(확인)과 t3(기록) 사이</b>가 <b>check-then-act 문제</b>다. 오른쪽은 그 구간 자체를 없앤다 — <b>"이미 있는지 확인하는 일"과 "없으면 내가 자리를 차지하는 일"이 DB 엔진 안에서 쪼갤 수 없는 한 동작</b>으로 일어난다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>여기서 반드시 나오는 두 개의 반문</h4>
+  <div class="split" style="margin:8px 0 0">
+    <div class="pane r" style="background:#fff">
+      <h4>"<code>@Transactional</code>을 붙이면 해결되지 않나?"</h4>
+      <p style="margin:6px 0 0"><b>안 된다.</b> 기본 격리 수준인 READ COMMITTED에서 B의 SELECT는 <b>A가 아직 커밋하지 않은 INSERT를 볼 수 없다.</b> 트랜잭션이 하는 일은 <b>"내 변경을 한 덩어리로 커밋/롤백하는 것"</b>이지 <b>"남이 끼어드는 것을 막는 것"</b>이 아니다.<br><span class="sub">SERIALIZABLE까지 올리면 막히지만, 처리량이 크게 떨어지고 직렬화 실패 재시도 로직을 따로 짜야 한다.</span></p>
+    </div>
+    <div class="pane r" style="background:#fff">
+      <h4>"파티션 하나는 컨슈머 하나가 소비하는데 동시 처리가 되나?"</h4>
+      <p style="margin:6px 0 0"><b>된다.</b> 긴 GC나 외부 API 지연으로 <code>max.poll.interval.ms</code>를 넘기면 브로커가 그 인스턴스를 그룹에서 빼고 리밸런스로 파티션을 넘긴다. 그런데 <b>쫓겨난 인스턴스는 자기가 쫓겨난 줄 모른 채 처리를 끝낸다</b> — <b>좀비 컨슈머(zombie consumer)</b>다. 자세한 타임라인은 <b>9절 꼬리질문</b>에.</p>
+    </div>
+  </div>
+</div>
+
+<div class="callout ok"><span class="t">왜 <code>ON CONFLICT DO NOTHING</code>이 예외 캐치보다 나은가 (PostgreSQL)</span>
+그냥 INSERT를 날리고 <code>DuplicateKeyException</code>을 잡는 방식도 <b>안전성은 같다.</b> 다만 PostgreSQL에서는 제약 위반이 나면 <b>그 트랜잭션 전체가 중단 상태(aborted)가 되어</b> 이후 쿼리가 전부 거부되므로, 예외를 잡아서 <b>같은 트랜잭션 안에서 뭔가를 더 하려면 세이브포인트가 필요</b>하다. <code>ON CONFLICT</code>는 <b>애초에 예외를 만들지 않으므로</b> 이 문제가 없다.</div>
+
+<h3>6-2. (나) 이력과 비즈니스 변경은 반드시 같은 트랜잭션</h3>
+
+<p>두 번째 원자성은 다른 이야기다. <b>이력 기록과 비즈니스 변경이 함께 커밋되거나 함께 롤백돼야 한다.</b> 왜 그런지는 <b>어긋나는 두 경우</b>를 보면 안다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 288" role="img" aria-label="이력 기록과 비즈니스 변경이 같은 트랜잭션일 때의 정상 동작과, 이력만 커밋되어 영구 유실이 발생하는 경우, 비즈니스 변경만 커밋되어 중복이 발생하는 경우를 나란히 비교한 도식">
+    <defs>
+      <marker id="m7" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+
+    <!-- panel 1 -->
+    <rect x="16" y="16" width="352" height="222" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="192" y="42" font-size="13.5" font-weight="700" fill="#15803d" text-anchor="middle">정상 — 하나의 트랜잭션</text>
+    <rect x="40" y="56" width="304" height="88" rx="10" fill="#fff" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <rect x="58" y="70" width="268" height="28" rx="7" fill="#dcfce7" stroke="#86efac" stroke-width="1.2"/>
+    <text x="192" y="89" font-size="11.5" fill="#166534" text-anchor="middle" class="mono">INSERT processed_event</text>
+    <rect x="58" y="104" width="268" height="28" rx="7" fill="#dcfce7" stroke="#86efac" stroke-width="1.2"/>
+    <text x="192" y="123" font-size="11.5" fill="#166534" text-anchor="middle">비즈니스 변경 (orders)</text>
+    <line x1="192" y1="146" x2="192" y2="166" stroke="#16a34a" stroke-width="1.7" marker-end="url(#m7)"/>
+    <rect x="88" y="170" width="208" height="30" rx="8" fill="#16a34a"/>
+    <text x="192" y="190" font-size="12.5" font-weight="700" fill="#fff" text-anchor="middle">함께 COMMIT (또는 함께 ROLLBACK)</text>
+    <text x="192" y="222" font-size="12" font-weight="700" fill="#15803d" text-anchor="middle">→ 결과는 언제나 「정확히 한 번 처리」</text>
+
+    <!-- panel 2 -->
+    <rect x="384" y="16" width="352" height="222" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="560" y="42" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">경우 1 — 이력만 커밋됐다</text>
+    <rect x="408" y="56" width="304" height="88" rx="10" fill="#fff" stroke="#fecaca" stroke-width="1.5"/>
+    <rect x="426" y="70" width="268" height="28" rx="7" fill="#dcfce7" stroke="#86efac" stroke-width="1.2"/>
+    <text x="560" y="89" font-size="11.5" fill="#166534" text-anchor="middle" class="mono">INSERT processed_event ✓ 커밋</text>
+    <rect x="426" y="104" width="268" height="28" rx="7" fill="#fee2e2" stroke="#fecaca" stroke-width="1.2"/>
+    <text x="560" y="123" font-size="11.5" fill="#b91c1c" text-anchor="middle">비즈니스 변경 ✗ 롤백</text>
+    <line x1="560" y1="146" x2="560" y2="166" stroke="#dc2626" stroke-width="1.7" marker-end="url(#m7)"/>
+    <rect x="424" y="170" width="272" height="30" rx="8" fill="#dc2626"/>
+    <text x="560" y="190" font-size="12.5" font-weight="700" fill="#fff" text-anchor="middle">재수신해도 이력에 걸려 skip</text>
+    <text x="560" y="218" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">→ 그 메시지는 영영 처리되지 않는다 = 유실</text>
+    <text x="560" y="234" font-size="11" fill="#991b1b" text-anchor="middle">더 나쁜 건 아무도 모른다는 점 — 시스템은 정상이라 믿는다</text>
+
+    <!-- panel 3 -->
+    <rect x="752" y="16" width="352" height="222" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="928" y="42" font-size="13.5" font-weight="700" fill="#92400e" text-anchor="middle">경우 2 — 비즈니스 변경만 커밋됐다</text>
+    <rect x="776" y="56" width="304" height="88" rx="10" fill="#fff" stroke="#fde68a" stroke-width="1.5"/>
+    <rect x="794" y="70" width="268" height="28" rx="7" fill="#fee2e2" stroke="#fecaca" stroke-width="1.2"/>
+    <text x="928" y="89" font-size="11.5" fill="#b91c1c" text-anchor="middle" class="mono">INSERT processed_event ✗ 롤백</text>
+    <rect x="794" y="104" width="268" height="28" rx="7" fill="#dcfce7" stroke="#86efac" stroke-width="1.2"/>
+    <text x="928" y="123" font-size="11.5" fill="#166534" text-anchor="middle">비즈니스 변경 ✓ 커밋</text>
+    <line x1="928" y1="146" x2="928" y2="166" stroke="#d97706" stroke-width="1.7" marker-end="url(#m7)"/>
+    <rect x="792" y="170" width="272" height="30" rx="8" fill="#d97706"/>
+    <text x="928" y="190" font-size="12.5" font-weight="700" fill="#fff" text-anchor="middle">재수신 시 이력이 없어 통과</text>
+    <text x="928" y="218" font-size="12" font-weight="700" fill="#92400e" text-anchor="middle">→ 또 처리한다 = 중복</text>
+    <text x="928" y="234" font-size="11" fill="#92400e" text-anchor="middle">막으려던 바로 그것이 그대로 발생한다</text>
+
+    <rect x="16" y="248" width="1088" height="32" rx="9" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.4"/>
+    <text x="560" y="269" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">둘 중 어느 쪽으로 어긋나도 이 패턴의 존재 이유 자체가 무너진다 — 그래서 반드시 하나의 트랜잭션이어야 한다</text>
+  </svg>
+  <figcaption>경우 1이 더 위험하다. <b>중복을 막으려던 장치가 유실을 만들었는데, 아무 에러도 나지 않는다.</b> 이런 유실은 보통 몇 달 뒤 정산이 안 맞을 때 발견된다.</figcaption>
+</figure>
+
+<h3>6-3. 그래서 Redis에 이력을 두면 안 되는가 — 이중 쓰기 문제</h3>
+
+<div class="codehead bad"><span class="tag">문제</span> 체크와 반영이 서로 다른 시스템에 흩어져 있다 — 두 군데서 깨진다</div>
+<pre><code><span class="kw">public void</span> <span class="fn">handle</span>(OrderEvent event) {
+<span class="ln-bad">    <span class="kw">if</span> (redis.exists(event.eventId())) <span class="kw">return</span>;  <span class="cm">// ① 체크 (Redis)</span></span>
+    orderRepository.save(toOrder(event));       <span class="cm">// ② 반영 (PostgreSQL)</span>
+<span class="ln-bad">    redis.set(event.eventId(), <span class="st">"done"</span>);         <span class="cm">// ③ 기록 (Redis)</span></span>
+}
+<span class="cm">// ②와 ③ 사이 크래시 -&gt; 이력 없음 -&gt; 재수신 시 ② 재실행 = 중복 (경우 2)</span>
+<span class="cm">// ①을 통과한 두 요청이 동시에 ②로 진입하는 레이스도 그대로 열려 있다 (6-1)</span></code></pre>
+
+<p>이 코드가 <b>고칠 수 없는 이유는 순서를 바꾸는 문제가 아니다.</b> <b>Redis와 PostgreSQL은 서로 다른 시스템이라 애초에 한 트랜잭션으로 묶을 수 없다.</b> <code>@Transactional</code>은 <b>하나의 DataSource가 관리하는 커넥션 안에서만</b> 원자성을 만들어 준다. 다른 시스템에 대한 쓰기는 그 트랜잭션 바깥이므로, <b>롤백돼도 되돌아오지 않고 커밋 직전에 죽으면 남지 않는다.</b></p>
+
+<p>이걸 <b>"이중 쓰기(dual write) 문제"</b>라고 부른다. 발행 측에서 이 문제를 푸는 것이 <b>Outbox 패턴</b>이고(<code>28-transactional-outbox-cdc-kafka.md</code>), <b>소비 측에서 이 문제를 회피하는 방법은 훨씬 간단하다</b> — <b>이력을 비즈니스 DB와 같은 DB에 두면 된다.</b> 그러면 이중 쓰기가 아니라 <b>한 트랜잭션 안의 두 쓰기</b>가 된다.</p>
+
+<div class="scroll">
+<table class="wide">
+  <caption>이력 저장소 선택 — 역할이 다르다. Redis는 보조, DB는 최종 방어선</caption>
+  <thead><tr><th>저장소</th><th>업무 변경과 원자적인가</th><th>확인·선점이 원자적인가</th><th>역할</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>업무와 같은 DB의 테이블</b><br><span class="sub">유니크 제약 + <code>ON CONFLICT</code></span></td><td class="good">예 — 같은 트랜잭션</td><td class="good">예 — 인덱스 레벨에서 보장</td><td class="good"><b>최종 방어선</b> (필수)</td></tr>
+    <tr><td><b>Redis</b> <code>SETNX</code></td><td class="bad">아니오 — 이중 쓰기</td><td>연산 하나로는 원자적이지만, <b>DB 변경과는 어긋날 수 있다</b></td><td><b>빠른 사전 차단(1차 필터)</b><br>replay로 수백만 건이 밀려올 때 <b>DB까지 안 가고 걸러</b> 부하를 줄인다. <b>단독 방어선이 될 수 없다</b></td></tr>
+    <tr><td><b>애플리케이션 메모리 캐시</b></td><td class="bad">아니오</td><td class="bad">아니오 — 인스턴스마다 따로 판단</td><td class="bad">멱등 장치로는 <b>사용 불가</b> (재기동하면 사라지고, 인스턴스 간 공유도 안 된다)</td></tr>
+    <tr><td><b>별도 DB의 이력 테이블</b></td><td class="bad">아니오 — 이중 쓰기</td><td class="good">예</td><td>확인은 원자적이지만 <b>(나)의 원자성이 깨진다</b> — 같은 DB에 둘 수 있으면 굳이 나눌 이유가 없다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>이 패턴의 핵심은 두 문장이다</h4>
+  <div class="rule ok">① <b>같은 DB, 같은 트랜잭션</b> — 이력과 비즈니스 변경이 함께 커밋되거나 함께 롤백되게 한다</div>
+  <div class="rule ok">② <b>유니크 제약이 최후 방어선</b> — 중복 판정을 애플리케이션의 SELECT가 아니라 DB가 원자적으로 하게 한다</div>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 전략 2 ③ 이력 보관 기간 — 근거 있는 숫자</h2>
+
+<p><code>processed_event</code>는 처리한 이벤트 수만큼 계속 자란다. 언젠가는 지워야 하는데, <b>"얼마나 보관하나"에는 근거가 있어야 한다.</b> 면접에서 이 질문은 <b>숫자를 맞히는 문제가 아니라 도출 논리를 보는 문제</b>다.</p>
+
+<div class="rule">바닥선은 명확하다 — <b>최소한 토픽의 리텐션 기간보다 길어야 한다</b></div>
+
+<figure>
+  <svg viewBox="0 0 900 262" role="img" aria-label="토픽 리텐션 7일 구간과 이력 보관 3일 구간을 비교한 타임라인. 두 구간의 차이인 4일이 사각지대가 되어 5일 전으로 되감으면 중복 판정에 실패한다">
+    <defs>
+      <marker id="m8" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+    <!-- axis -->
+    <line x1="60" y1="196" x2="856" y2="196" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="60" y="216" font-size="11" fill="#6b7280" text-anchor="middle">7일 전</text>
+    <text x="283" y="216" font-size="11" fill="#6b7280" text-anchor="middle">5일 전</text>
+    <text x="506" y="216" font-size="11" fill="#6b7280" text-anchor="middle">3일 전</text>
+    <text x="840" y="216" font-size="11" fill="#6b7280" text-anchor="middle">지금</text>
+    <line x1="60" y1="190" x2="60" y2="202" stroke="#94a3b8" stroke-width="1.4"/>
+    <line x1="283" y1="190" x2="283" y2="202" stroke="#94a3b8" stroke-width="1.4"/>
+    <line x1="506" y1="190" x2="506" y2="202" stroke="#94a3b8" stroke-width="1.4"/>
+    <line x1="840" y1="190" x2="840" y2="202" stroke="#94a3b8" stroke-width="1.4"/>
+
+    <!-- retention bar -->
+    <rect x="60" y="60" width="780" height="34" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="450" y="82" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">토픽 리텐션 7일 (retention.ms 기본 604,800,000ms) — 이 구간은 언제든 되감아 다시 읽을 수 있다</text>
+
+    <!-- history bar -->
+    <rect x="506" y="112" width="334" height="34" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="673" y="134" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">이력 보관 3일</text>
+
+    <!-- blind zone -->
+    <rect x="60" y="112" width="446" height="34" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="283" y="134" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">사각지대 4일 — 메시지는 남아 있는데 이력은 지워졌다</text>
+
+    <!-- rewind arrow -->
+    <line x1="283" y1="26" x2="283" y2="54" stroke="#dc2626" stroke-width="1.8" marker-end="url(#m8)"/>
+    <text x="283" y="20" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">장애 복구로 5일 전 오프셋으로 되감기</text>
+
+    <rect x="60" y="230" width="780" height="26" rx="8" fill="#fef2f2" stroke="#fecaca" stroke-width="1.3"/>
+    <text x="450" y="248" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">5일 전 ~ 3일 전 구간: 메시지는 다시 오는데 이력이 없다 → 중복 판정 실패 → 전부 재처리된다</text>
+  </svg>
+  <figcaption><b>이력 보관 기간이 리텐션보다 짧으면, replay 할 수 있는 범위 안에 멱등성이 보장되지 않는 구멍이 생긴다.</b> <b>되감기가 가능한 구간 전체를 이력이 덮고 있어야 논리가 닫힌다.</b></figcaption>
+</figure>
+
+<p>리텐션은 어디까지나 <b>하한</b>이고, 실제 기간은 <b>"중복이 도달할 수 있는 최대 시간 창"</b>을 기준으로 산정한다. 이 창을 이루는 요소가 셋이다.</p>
+
+<div class="memo">
+  <h4>보관 기간 산정 공식 — 「가장 긴 것 + 여유」</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">재시도 최대 지연</div><div class="d">DLQ로 보내기 전 <b>재시도를 며칠에 걸쳐</b> 하는 설계라면 그만큼 늦게 같은 메시지가 온다</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">예상 컨슈머 랙</div><div class="d">컨슈머가 <b>며칠 밀렸다가 따라잡는</b> 경우</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">운영 replay 범위</div><div class="d">실제로 <b>되감기를 하는 최대 폭</b></div></div>
+  </div>
+  <div class="rule" style="margin:10px 0 0">이 셋 중 <b>가장 긴 값</b>과 <b>토픽 리텐션</b>을 비교해 <b>더 긴 쪽</b>을 기준으로 잡고, 여기에 <b>여유</b>를 얹는다</div>
+</div>
+
+<h3>정리 방법 — DELETE가 아니라 파티션 드롭</h3>
+
+<div class="codehead plain"><span class="tag">DDL</span> 시간 기준 레인지 파티셔닝</div>
+<pre><code><span class="cm">-- 월별 레인지 파티셔닝: 오래된 이력을 DELETE가 아니라 파티션 통째로 버린다</span>
+<span class="kw">CREATE TABLE</span> processed_event (
+    event_id       uuid         <span class="kw">NOT NULL</span>,
+    consumer_group varchar(100) <span class="kw">NOT NULL</span>,
+    processed_at   timestamptz  <span class="kw">NOT NULL DEFAULT</span> now(),
+    <span class="kw">PRIMARY KEY</span> (event_id, consumer_group, processed_at)
+) <span class="kw">PARTITION BY RANGE</span> (processed_at);
+
+<span class="kw">CREATE TABLE</span> processed_event_2026_09 <span class="kw">PARTITION OF</span> processed_event
+    <span class="kw">FOR VALUES FROM</span> (<span class="st">'2026-09-01'</span>) <span class="kw">TO</span> (<span class="st">'2026-10-01'</span>);
+
+<span class="cm">-- 정리는 이 한 줄이면 끝난다</span>
+<span class="kw">DROP TABLE</span> processed_event_2026_09;   <span class="cm">-- 파일 자체가 사라진다</span></code></pre>
+
+<div class="split">
+  <div class="pane r">
+    <h4>대량 <code>DELETE</code>의 함정 (PostgreSQL)</h4>
+    <p style="margin:6px 0 0"><code>DELETE FROM processed_event WHERE processed_at &lt; ...</code>은 수천만 행에 <b>죽은 튜플(dead tuple)</b>을 만들고, 그 공간은 <b>VACUUM이 돌기 전까지 회수되지 않는다.</b> <b>지웠는데 테이블 크기는 그대로거나 오히려 부푼다.</b></p>
+  </div>
+  <div class="pane g">
+    <h4>파티션 드롭</h4>
+    <p style="margin:6px 0 0"><code>DROP TABLE</code> 한 줄이면 <b>파일 자체가 사라진다</b> — <b>죽은 튜플도, VACUUM 부담도 없다.</b> 이력 테이블처럼 <b>"시간이 지나면 통째로 버리는" 데이터</b>에는 압도적으로 싸다.</p>
+  </div>
+</div>
+
+<div class="callout info"><span class="t">가산점 — 이 창을 넘어서는 대규모 replay는 별도 절차로 <span class="badge bonus">운영 감각</span></span>
+보관 창을 넘는 replay는 <b>이력 정리와 정면으로 충돌한다.</b> 이때는 임기응변으로 보관 기간을 늘리는 것이 아니라, <b>격리된 컨슈머 그룹으로 별도 환경에서 돌리거나 사전 공지 후 정리 배치를 멈추는 등의 별도 절차</b>로 다룬다 (<code>33-bulk-replay-isolation.md</code>). 여기까지 말하면 <b>운영을 해 본 티</b>가 난다.</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 트랜잭션 밖의 부수효과 — 멱등의 사각지대</h2>
+
+<p>이메일 발송, 푸시 알림, 외부 API 호출은 <b>DB 트랜잭션으로 감쌀 수 없다.</b> 6-3에서 본 이중 쓰기 문제가 여기서 다시 나타난다 — <b>트랜잭션을 롤백해도 이미 나간 이메일은 회수되지 않는다.</b></p>
+
+<div class="codehead bad"><span class="tag">회색지대</span> 순서를 어떻게 바꿔도 "보냈는지 안 보냈는지 모르는" 구간이 남는다</div>
+<pre><code>t0  트랜잭션 시작
+t1  processed_event INSERT (성공)
+t2  이메일 발송 API 호출 -&gt; 메일 서버는 정상 접수했다
+<span class="ln-bad">t3  ★ 응답을 받기 직전 컨슈머 프로세스가 죽는다 -&gt; 트랜잭션 롤백</span>
+t4  재수신: 이력이 롤백됐으므로 통과 -&gt; 이메일을 또 보낸다   <span class="cm">&lt;- 중복 발송</span>
+
+<span class="cm">또는 t1과 t2의 순서를 바꾸면:</span>
+t1  이메일 발송 API 호출 (성공)
+<span class="ln-bad">t2  ★ processed_event INSERT 직전 크래시</span>
+t3  재수신: 이력 없음 -&gt; 또 보낸다                          <span class="cm">&lt;- 역시 중복 발송</span></code></pre>
+
+<p><b>트랜잭션의 원자성이 API 호출까지 미치지 못하기 때문</b>이다. <b>대응은 이 한계를 인정하고 경계를 옮기는 것</b>이고, 세 가지 방법이 있다.</p>
+
+<div class="split g3">
+  <div class="pane g">
+    <h4>(1) 수신 측에 멱등 키를 넘긴다</h4>
+    <p style="margin:6px 0 0">외부 API가 <code>Idempotency-Key</code> 헤더를 지원하면(<b>결제 게이트웨이 대부분이 지원</b>) 이벤트 ID를 그대로 넘긴다. 같은 키로 두 번 호출해도 <b>상대 시스템이 한 번만 실행하고 두 번째는 첫 번째 결과를 그대로 돌려준다.</b></p>
+    <p style="margin:6px 0 0"><b>중복 흡수 책임을 상대 경계로 위임</b> — 가능하면 이게 제일 깔끔하다.</p>
+  </div>
+  <div class="pane b">
+    <h4>(2) 발송 이력을 먼저 기록하고 조건부 발송</h4>
+    <p style="margin:6px 0 0">상대가 멱등 키를 안 받으면 우리 쪽에서 기록을 남긴다. <b>트랜잭션 안에는 "발송 예약"만</b> 넣고, 실제 발송은 밖에서 한다.</p>
+  </div>
+  <div class="pane b">
+    <h4>(3) 발송 자체를 별도 이벤트로 분리</h4>
+    <p style="margin:6px 0 0">컨슈머는 "주문 확정"만 하고 <code>order.confirmed</code>를 발행하며, <b>이메일 발송은 그 이벤트를 구독하는 별도 컨슈머</b>가 맡는다. 그 컨슈머도 <b>자기 이력 테이블로 멱등 처리</b>하고, 발송 실패는 <b>그쪽의 재시도·DLQ 정책</b>으로 다룬다.</p>
+  </div>
+</div>
+
+<div class="codehead good"><span class="tag">개선</span> (2) 기록만 트랜잭션 안에 — 실행은 밖으로</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">handle</span>(OrderEvent event) {
+    <span class="kw">if</span> (processedEventRepository.insertIfAbsent(event.eventId(), group) == 0) <span class="kw">return</span>;
+
+    orderRepository.save(toOrder(event));
+
+    <span class="cm">// 발송 「예약」만 트랜잭션 안에 기록한다. 실제 발송은 하지 않는다.</span>
+    <span class="cm">// 이 행이 커밋되면 「보내야 한다」는 사실이 확정되고,</span>
+    <span class="cm">// 롤백되면 「보낼 일 자체가 없었다」가 된다 — 원자성이 성립한다.</span>
+<span class="ln-good">    emailOutboxRepository.save(EmailOutbox.pending(event.eventId(), event.email()));</span>
+}</code></pre>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 268" role="img" aria-label="트랜잭션 안에는 이력 기록, 업무 변경, 이메일 발송 예약만 넣고 커밋한 뒤, 별도 워커가 예약 행을 읽어 실제 발송하고 상태를 SENT로 갱신하는 흐름도">
+    <defs>
+      <marker id="m9" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+      <marker id="m9d" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <rect x="24" y="44" width="524" height="122" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="286" y="34" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">── 하나의 DB 트랜잭션 (기록만 한다) ──</text>
+    <rect x="44" y="62" width="152" height="44" rx="9" fill="#fff" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="120" y="82" font-size="11" fill="#1d4ed8" text-anchor="middle" class="mono">INSERT</text>
+    <text x="120" y="98" font-size="11" fill="#1d4ed8" text-anchor="middle" class="mono">processed_event</text>
+    <rect x="210" y="62" width="152" height="44" rx="9" fill="#fff" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="286" y="89" font-size="11.5" fill="#1d4ed8" text-anchor="middle">업무 변경 (orders)</text>
+    <rect x="376" y="62" width="152" height="44" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="452" y="82" font-size="11" fill="#1d4ed8" text-anchor="middle" class="mono">email_outbox</text>
+    <text x="452" y="98" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">PENDING 기록</text>
+    <text x="286" y="132" font-size="11.5" fill="#1d4ed8" text-anchor="middle">커밋되면 「보내야 한다」가 확정 · 롤백되면 「보낼 일이 없었다」</text>
+    <rect x="196" y="140" width="180" height="20" rx="10" fill="#2563eb"/>
+    <text x="286" y="155" font-size="11.5" font-weight="700" fill="#fff" text-anchor="middle">COMMIT</text>
+
+    <line x1="548" y1="104" x2="592" y2="104" stroke="#475569" stroke-width="1.8" marker-end="url(#m9)"/>
+    <rect x="598" y="80" width="164" height="48" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="680" y="100" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">별도 워커</text>
+    <text x="680" y="117" font-size="10.5" fill="#6b7280" text-anchor="middle">PENDING 행을 폴링</text>
+    <line x1="762" y1="104" x2="806" y2="104" stroke="#475569" stroke-width="1.8" marker-end="url(#m9)"/>
+    <rect x="812" y="80" width="150" height="48" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="887" y="109" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">메일 서버 발송</text>
+    <path d="M962,104 L1020,104 L1020,164 L680,164 L680,132" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#m9d)"/>
+    <text x="852" y="180" font-size="11" fill="#6b7280" text-anchor="middle">상태를 SENT로 갱신</text>
+
+    <rect x="24" y="200" width="1072" height="56" rx="10" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5"/>
+    <text x="560" y="222" font-size="12.5" font-weight="700" fill="#92400e" text-anchor="middle">이 구조에서도 완전한 exactly-once는 아니다 — 워커가 발송 후 SENT 갱신 전에 죽으면 한 번 더 보낸다</text>
+    <text x="560" y="243" font-size="12.5" font-weight="700" fill="#92400e" text-anchor="middle">다만 「보냈는지 모르는 상태」가 「보낸 기록은 확실히 있고 중복 가능성만 남은 상태」로 줄어든다 — 부수효과 영역의 최선은 대체로 여기까지</text>
+  </svg>
+  <figcaption>(2)와 (3)의 <b>공통 구조</b>를 짚어 두면 이해가 굳는다 — <b>둘 다 "기록"과 "실행"을 분리해서, 기록만 트랜잭션 안에 넣고 실행은 그 기록을 읽는 별도 워커에게 넘기는 방식</b>이다. 이건 <b>발행 측의 Outbox 패턴을 소비 측에 그대로 다시 적용</b>한 것이다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>부수효과 대응의 원칙</h4>
+  <div class="rule ok">트랜잭션 안에는 <b>「기록」만</b> — <b>「실행」은 밖으로.</b> 그리고 <b>한계를 정확히 말하는 것</b>이 좋은 답이다</div>
+  <div class="chain" style="justify-content:center">
+    <span class="chip g">상대가 Idempotency-Key 지원?</span><span class="arrow">→</span><span class="chip g">예: 이벤트 ID 그대로 위임</span><span class="arrow">|</span><span class="chip b">아니오: 기록·실행 분리</span><span class="arrow">→</span><span class="chip b">더 밀면 별도 이벤트·별도 컨슈머</span>
+  </div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>면접 전날 이것만 — 인출 카드 8장</h3>
+
+<div class="grid g2">
+  <div class="tile red"><div class="k" style="font-family:inherit">① 중복의 네 경로</div><div class="d"><b>커밋 전 크래시 · 리밸런스(=배포) · 프로듀서 재발행 · 운영 replay.</b> 넷 다 <b>인프라 설정으로는 못 막는다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">② 두 전략의 순서</div><div class="d"><b>전략 1(연산 멱등) 먼저</b>, 안 되면 전략 2(이력). 바로 이력 테이블부터 꺼내면 판단을 안 해 본 사람으로 보인다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">③ 전략 1의 세 기법</div><div class="d"><b>절</b>대값 세팅 · <b>업</b>서트 · <b>조</b>건부 전이. 공통 원리 = <b>"얼마만큼"을 "이 상태로"</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">④ 키의 원리 한 줄</div><div class="d">키는 <b>비즈니스적 사실(정체)</b>에 붙인다. <b>파티션-오프셋(위치)</b>은 유실·중복 <b>양방향</b>으로 뚫린다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">⑤ 원자성은 두 겹</div><div class="d"><b>(가) 확인+선점</b> = 유니크 제약 + <code>ON CONFLICT DO NOTHING</code> / <b>(나) 이력+업무</b> = 같은 DB, 같은 트랜잭션.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">⑥ 보관 기간의 바닥선</div><div class="d"><b>최소한 토픽 리텐션보다 길게.</b> 정리는 <b>DELETE가 아니라 파티션 드롭.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">⑦ 부수효과</div><div class="d"><b>기록은 트랜잭션 안, 실행은 밖.</b> 상대가 <code>Idempotency-Key</code>를 받으면 <b>경계 밖으로 위임</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">⑧ 중복일 때 예외 금지</div><div class="d">중복은 <b>정상 상황</b>이다. 예외를 던지면 <b>무한 재시도로 파티션이 멈춘다.</b> 조용히 return + 오프셋 커밋.</div></div>
+</div>
+
+<div class="memo">
+  <h4>내 컨슈머가 멱등한지 3분 만에 판정하기</h4>
+  <div class="step"><span class="n">1</span><div class="body"><b>이 핸들러를 두 번 연속 실행하면 결과가 달라지는가?</b> 안 달라지면 이미 멱등하다 — 더 할 일이 없다. 달라진다면 <b>어느 줄</b> 때문인지 지목한다 (보통 <code>+=</code>, <code>INSERT</code>, 외부 호출).</div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>그 줄을 절대값·UPSERT·조건부 전이로 바꿀 수 있는가?</b> 되면 전략 1로 끝. 이벤트 스키마 변경이 필요하면 <b>프로듀서와 합의</b>한다.</div></div>
+  <div class="step red"><span class="n">3</span><div class="body"><b>안 된다면 이력 테이블 — 그리고 세 가지를 점검한다.</b> ① 키가 <b>이벤트 ID</b>인가 (오프셋·수신 시각이 아니라) ② 판정이 <b>유니크 제약</b>인가 (SELECT가 아니라) ③ 이력과 업무 변경이 <b>같은 트랜잭션</b>인가.</div></div>
+  <div class="step ok"><span class="n">4</span><div class="body"><b>부수효과가 있는가?</b> 있으면 <b>기록/실행 분리</b> 또는 <b>Idempotency-Key 위임</b>으로 경계를 옮긴다.</div></div>
+  <div class="rule" style="margin:10px 0 0">네 칸을 채우면 답이 나온다 — <b>"이 컨슈머는 ○○ 전략, 키는 ○○, 원자성은 ○○로 보장"</b></div>
+</div>
+
+<h3>꼬리질문 — 먼저 스스로 답한 뒤 펼친다</h3>
+
+<details class="q"><summary>멱등 키는 뭘로 잡나요? 파티션-오프셋을 쓰면 안 되나요? <span class="badge core">핵심</span><span class="hint">힌트: 같은 사건에 항상 같은 값이 붙어야 한다</span></summary><div class="a">
+  <p><b>프로듀서가 이벤트 생성 시점에 발급한 고유 ID</b>가 정석이다.</p>
+  <p>파티션-오프셋은 브로커상의 <b>"위치"일 뿐 "정체"가 아니다.</b> 토픽 재생성으로 오프셋이 0부터 다시 매겨지면 <b>같은 좌표가 전혀 다른 메시지에 재사용되어 새 메시지가 "이미 처리됨"으로 버려지고</b>(유실), 파티션 증설이나 다른 토픽으로의 재발행·미러링·replay에서는 <b>같은 비즈니스 이벤트에 다른 좌표가 붙어 중복 판별이 아예 안 걸린다</b>(중복).</p>
+  <div class="rule red">한쪽으로는 <b>유실</b>, 다른 쪽으로는 <b>중복</b> — <b>양방향으로 뚫린다</b></div>
+  <p>반대로 이벤트 ID는 <b>메시지가 어디를 거쳐 오든 불변</b>이다. 원리로 말하면 <b>키는 메시지가 담고 있는 비즈니스적 사실에 붙어야지 그 메시지가 놓인 위치에 붙으면 안 된다.</b></p>
+  <p style="margin-bottom:0" class="sub">Outbox 패턴을 쓴다면 <b>outbox 행의 PK가 자연스러운 이벤트 ID</b>가 된다 — <b>발행 경로와 멱등 키 체계가 한 번에 정리되는 조합</b>이다. <span class="badge bonus">가산점</span></p>
+</div></details>
+
+<details class="q"><summary>unique 제약 없이 SELECT로 존재 확인 후 INSERT 하면 안 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "파티션 하나에 컨슈머 하나"라는 반문을 미리 준비하라</span></summary><div class="a">
+  <p><b>동시성에서 깨진다.</b> <b>check-then-act 사이에 다른 처리가 끼어들 수 있기 때문</b>이다 — 같은 이벤트를 든 두 스레드가 동시에 SELECT하면 <b>둘 다 "없음"을 보고 둘 다 처리한다</b>(6-1의 타임라인).</p>
+  <p>여기서 반드시 나오는 반문이 <b>"파티션 하나는 컨슈머 하나가 소비하는데 동시 처리가 되나?"</b>인데, <b>된다.</b> 시나리오는 이렇다.</p>
+<pre><code>t0   인스턴스 A가 파티션 0의 메시지 E-1을 poll해서 처리를 시작한다
+t1   A에서 긴 GC 또는 외부 API 지연이 발생해 처리가 길어진다
+t2   A가 max.poll.interval.ms를 넘겨 poll을 못 하자,
+     브로커는 A가 죽었다고 판단하고 그룹에서 제외한다
+t3   리밸런스로 파티션 0이 인스턴스 B에게 넘어간다
+t4   B가 (A가 오프셋을 커밋하지 못했으므로) E-1을 처음부터 다시 받아 처리한다
+<span class="ln-bad">t5   ★ 이 순간 A는 자기가 쫓겨난 줄 모르고 t0에 시작한 처리를 계속 끝낸다
+     -&gt; 같은 메시지 E-1을 두 인스턴스가 동시에 처리 중이다</span></code></pre>
+  <p>t5의 A를 <b>좀비 컨슈머(zombie consumer)</b>라고 부른다. <b>자기가 이미 그룹에서 쫓겨났다는 사실을 모른 채 살아 움직이기 때문</b>이다 (<code>35-max-poll-interval-vs-session-timeout.md</code>).</p>
+  <div class="rule">유일하게 신뢰할 수 있는 심판은 <b>두 요청이 반드시 거쳐 가는 단일 지점인 DB</b>다</div>
+  <p style="margin-bottom:0">그래서 결론은 <b>애플리케이션 레벨 체크로는 원리적으로 못 막는다</b>는 것이다. 어느 인스턴스의 메모리에서 무슨 판단을 하든, <b>두 프로세스가 각자 판단하는 이상 틈은 생긴다.</b> 그래서 <b>유니크 제약 + <code>ON CONFLICT DO NOTHING</code>이 최후 방어선</b>이어야 한다.</p>
+</div></details>
+
+<details class="q"><summary>처리 이력 테이블이 무한히 커지는 문제는 어떻게 하나요?<span class="hint">힌트: 정답 숫자가 아니라 도출 논리를 말한다</span></summary><div class="a">
+  <p><b>보관 기간을 근거를 갖고 정하고</b>, 그보다 오래된 행을 정리한다.</p>
+  <p><b>바닥선은 토픽의 리텐션 기간이다.</b> 되감아 다시 읽을 수 있는 구간 전체를 이력이 덮고 있어야 하고, 이력이 그보다 짧으면 <b>replay 시 이미 지운 구간에서 중복 처리가 뚫린다.</b> 그 위에 <b>"중복이 도달 가능한 최대 창"</b>(재시도 최대 지연 + 예상 컨슈머 랙 + 통상 replay 범위)을 얹어 산정한다.</p>
+  <p>정리는 <b>시간 기준 레인지 파티셔닝</b>으로 한다. PostgreSQL에서 대량 <code>DELETE</code>는 <b>죽은 튜플</b>을 만들어 VACUUM이 돌기 전까지 공간이 회수되지 않지만, <b>파티션 드롭은 파일이 통째로 사라져</b> 비용이 거의 없다.</p>
+  <div class="rule ok">핵심은 <b>"중복 도달 창과 토픽 리텐션이라는 근거에서 기간을 도출"</b>하는 논리 구조를 보여주는 것</div>
+  <p style="margin-bottom:0" class="sub">그리고 <b>그 창을 넘는 replay는 별도 절차로 격리</b>한다고 덧붙인다 (<code>33-bulk-replay-isolation.md</code>).</p>
+</div></details>
+
+<details class="q"><summary>이메일 발송처럼 롤백 불가능한 부수효과는 어떻게 멱등하게 하나요?<span class="hint">힌트: 한계를 인정하는 문장이 답의 일부다</span></summary><div class="a">
+  <p><b>DB 트랜잭션 안에 넣을 수 없다는 한계를 먼저 인정하고, 경계를 옮겨서</b> 푼다.</p>
+  <p><b>첫째</b>, 외부 시스템이 <code>Idempotency-Key</code>를 받으면 이벤트 ID를 그대로 전달해 <b>중복 흡수를 그쪽 경계로 위임</b>한다.</p>
+  <p><b>둘째</b>, 그게 안 되면 <b>기록과 실행을 분리</b>한다 — 트랜잭션 안에서는 <b>"발송 예약" 행만</b> 남기고, 실제 발송은 그 행을 읽는 <b>별도 워커</b>가 수행한 뒤 상태를 SENT로 바꾼다. <b>소비 측에 다시 적용한 Outbox 구조</b>다.</p>
+  <p><b>셋째</b>, 한 걸음 더 나가면 <b>발송 자체를 별도 이벤트로 떼어내</b> 전용 컨슈머가 자기 이력 테이블로 멱등 처리하게 한다. <b>발송 실패의 재시도·DLQ 정책도 그쪽에 격리</b>된다.</p>
+  <div class="rule">솔직하게 덧붙일 것: <b>"보냈는지 모르는 상태"를 "중복 가능성만 남은 상태"로 줄이는 것</b>이 최선이다</div>
+  <p style="margin-bottom:0" class="sub">이 방법들도 <b>완전한 exactly-once는 아니다</b> — 워커가 발송 후 상태 갱신 전에 죽으면 한 번 더 보낸다. <b>그 한계를 정확히 말하는 것</b>이 좋은 답이다.</p>
+</div></details>
+
+<details class="q"><summary>멱등 컨슈머를 만들었으면 exactly-once 설정은 필요 없나요?<span class="hint">힌트: 대체 관계인지 층 관계인지</span></summary><div class="a">
+  <p><b>역할이 다르다. 대체 관계가 아니라 층이 다른 두 장치다.</b></p>
+  <div class="split">
+    <div class="pane b"><h4>인프라 층 — 빈도를 줄인다</h4><p style="margin:6px 0 0"><b>멱등 프로듀서와 Kafka 트랜잭션</b>은 <b>Kafka 경계 안의 중복</b>을 줄인다 — 프로듀서 재시도로 인한 중복, Kafka에서 읽어 Kafka로 쓰는 파이프라인의 중복이 대상이다.</p></div>
+    <div class="pane g"><h4>애플리케이션 층 — 정확성을 보장한다</h4><p style="margin:6px 0 0"><b>멱등 컨슈머</b>는 그걸로 못 막는 <b>비즈니스 레벨 중복까지 막는 최종 방어선</b>이다 — 애플리케이션의 재발행, 운영상의 replay, 좀비 컨슈머가 여기 해당한다.</p></div>
+  </div>
+  <div class="rule"><b>인프라 설정으로 중복 빈도를 낮추고, 애플리케이션 멱등으로 정확성을 보장하는 이중 구조</b></div>
+  <p style="margin-bottom:0">어느 하나만 있으면 부족하다 — <b>인프라 설정만 있으면 replay에서 뚫리고</b>, <b>애플리케이션 멱등만 있으면 불필요한 중복 트래픽을 전부 DB로 받아내야 한다.</b> (<code>03-delivery-semantics-and-exactly-once-reality.md</code>)</p>
+</div></details>
+
+<details class="q"><summary>이력 테이블 PK에 <code>consumer_group</code>은 왜 넣나요? 빼면 무슨 일이 생기나요? <span class="badge trap">함정</span><span class="hint">힌트: 같은 토픽을 구독하는 컨슈머가 하나뿐인가</span></summary><div class="a">
+  <p><b>같은 이벤트를 여러 컨슈머 그룹이 각자 처리하기 때문</b>이다. 이력을 <code>event_id</code>만으로 잡고 테이블을 공유하면 이렇게 된다.</p>
+<pre><code>정산 컨슈머가 E-1 처리 → processed_event(E-1) INSERT
+알림 컨슈머가 E-1 수신 → 이미 있다고 판단 → <span class="ln-bad">알림을 보내지 않고 skip</span>
+<span class="cm">// 알림은 한 번도 처리되지 않았는데 「처리됨」으로 취급된다 = 조용한 유실</span></code></pre>
+  <p><b>멱등의 단위는 "이벤트"가 아니라 "이벤트 × 소비 주체"</b>다. 같은 이벤트라도 <b>정산과 알림은 서로 다른 작업</b>이므로 이력도 따로 가져야 한다.</p>
+  <p>구현상 선택지는 둘이다 — <b>PK를 <code>(event_id, consumer_group)</code>으로 잡아 한 테이블을 공유</b>하거나, <b>컨슈머(서비스)마다 자기 DB에 자기 이력 테이블</b>을 두거나. 서비스별로 DB가 갈려 있는 마이크로서비스 구조라면 <b>후자가 자연스럽고</b>, 그때는 <code>consumer_group</code> 컬럼이 필요 없어진다.</p>
+  <div class="rule ok">판단 기준: <b>"이 이력 테이블을 누가 함께 쓰는가"</b> — 공유한다면 반드시 소비 주체를 키에 넣는다</div>
+</div></details>
+
+<details class="q"><summary>이력 INSERT가 모든 메시지마다 추가되는데 성능 부담은 없나요? 키 타입은 뭘 쓰는 게 좋나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 비용의 출처를 세어 본다 — 왕복인가, 인덱스인가</span></summary><div class="a">
+  <p><b>비용의 출처를 나눠서 보는 게 정확하다.</b></p>
+  <p><b>① 왕복 비용은 거의 없다.</b> 이력 INSERT는 <b>업무 변경과 같은 커넥션·같은 트랜잭션</b>에서 나가는 <b>한 행 INSERT</b>다. 다른 시스템을 부르는 것이 아니라서 네트워크 왕복이 새로 생기지 않는다. 대개 <b>업무 쿼리 한 개를 더 날리는 정도</b>의 비용이다.</p>
+  <p><b>② 진짜 비용은 인덱스와 테이블 크기</b>다. 처리량이 초당 수천 건이면 이력도 같은 속도로 쌓이므로, <b>7절의 파티셔닝과 보관 기간 정책이 성능 대책이기도 하다.</b> 오래된 파티션을 계속 떨어내면 <b>활성 인덱스가 캐시에 들어오는 크기로 유지</b>된다.</p>
+  <p><b>③ 키 타입의 트레이드오프.</b> 완전 랜덤한 UUID(v4)는 <b>B-tree 인덱스의 삽입 위치가 매번 흩어져</b> 캐시 적중률이 떨어지고 페이지 분할이 잦다. <b>시간순으로 정렬되는 ID</b>(UUIDv7, ULID 등)를 쓰면 삽입이 인덱스의 <b>오른쪽 끝에 몰려</b> 지역성이 좋아진다 — 대신 <b>그 끝 페이지에 경합</b>이 생긴다. 어느 쪽이든 <b>사건마다 유일 + 불변</b>이라는 조건만 만족하면 정확성에는 차이가 없고, <b>쓰기 처리량이 큰 시스템에서만 고민할 문제</b>다.</p>
+  <p style="margin-bottom:0"><b>④ replay처럼 중복이 폭주할 때</b>는 <b>Redis 1차 필터</b>가 실제로 효과가 크다 — 이미 처리된 수백만 건을 <b>DB까지 안 보내고 걸러낸다.</b> 다만 6-3에서 본 대로 <b>단독 방어선이 아니라 보조 수단</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>배치로 100건씩 한 번에 처리할 때도 같은 방식이 되나요?<span class="hint">힌트: 어떤 것이 새 이벤트인지 DB에게 물어볼 수 있다</span></summary><div class="a">
+  <p><b>된다. 오히려 한 번의 문장으로 처리할 수 있다.</b> PostgreSQL이라면 <code>RETURNING</code>을 붙여 <b>실제로 삽입된 행만 돌려받는다.</b></p>
+<pre><code><span class="kw">INSERT INTO</span> processed_event (event_id, consumer_group)
+<span class="kw">VALUES</span> (:id1, :g), (:id2, :g), (:id3, :g) <span class="cm">/* ... 100건 */</span>
+<span class="kw">ON CONFLICT</span> (event_id, consumer_group) <span class="kw">DO NOTHING</span>
+<span class="ln-good"><span class="kw">RETURNING</span> event_id;   <span class="cm">-- 돌아온 ID들 = 「내가 처음 처리하는」 이벤트</span></span></code></pre>
+  <p>돌아온 ID 집합만 골라 <b>비즈니스 처리를 수행</b>하면 된다. 확인·선점의 원자성은 단건과 동일하게 유지된다.</p>
+  <p>두 가지만 주의한다.</p>
+  <ul>
+    <li><b>배치 전체를 한 트랜잭션으로</b> 묶는다 — 일부만 커밋되면 6-2의 어긋남이 배치 단위로 생긴다. 전부 롤백되면 이력도 함께 사라지므로 <b>재수신 시 안전하게 다시 처리</b>된다.</li>
+    <li><b>배치 안에 같은 키가 두 번 들어 있어도</b> <code>DO NOTHING</code>은 에러 없이 첫 행만 삽입한다. (<code>DO UPDATE</code>는 같은 행을 한 명령에서 두 번 건드리면 에러가 난다.)</li>
+  </ul>
+  <p style="margin-bottom:0" class="sub">배치를 크게 잡을수록 트랜잭션이 길어지고 락 보유 시간이 늘어난다 — <b>처리량과 트랜잭션 길이의 균형</b>은 별개 주제다.</p>
+</div></details>
+
+<details class="q"><summary>중복을 조용히 skip하면 문제가 있어도 모르지 않나요? 어떻게 관측하나요?<span class="hint">힌트: 조용히 넘어가되, 세는 것은 별개다</span></summary><div class="a">
+  <p><b>"예외를 던지지 않는 것"과 "기록하지 않는 것"은 다르다.</b> skip은 <b>에러 로그가 아니라 카운터 메트릭</b>으로 남긴다.</p>
+  <ul>
+    <li><b>중복 skip 카운터</b>를 컨슈머 그룹·토픽 단위로 집계한다. 평상시에는 <b>0에 가깝게 유지</b>되는 것이 정상이다.</li>
+    <li><b>급증은 신호다</b> — 리밸런스가 잦아졌거나(배포·<code>max.poll.interval.ms</code> 초과), 프로듀서가 재발행을 하고 있거나, 누군가 replay를 돌린 것이다. <b>중복률이 시스템 건강의 지표</b>가 된다.</li>
+    <li>로그로 남길 때는 <b>DEBUG 레벨</b>로 <code>event_id</code>만 남긴다. WARN·ERROR로 남기면 <b>정상 동작이 알람을 울려</b> 진짜 장애가 묻힌다.</li>
+  </ul>
+  <div class="rule">중복은 <b>막되 숨기지 않는다</b> — 조용히 넘어가고, 대신 <b>센다</b></div>
+</div></details>
+
+<details class="q"><summary>멱등하게 만들었으면 순서는 신경 안 써도 되나요? <span class="badge trap">함정</span><span class="hint">힌트: "두 번 처리"와 "거꾸로 처리"는 다른 문제다</span></summary><div class="a">
+  <p><b>아니다. 멱등성은 "중복"을 푸는 장치이지 "순서"를 푸는 장치가 아니다.</b> 둘은 별개 문제이고, 전략마다 순서에 대한 태도가 다르다.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>방식</th><th>중복 방어</th><th>순서 역전 방어</th></tr></thead>
+    <tbody>
+      <tr><td>절대값 세팅 (4-1)</td><td class="good">완전</td><td class="bad">없음 — 오래된 값이 나중에 도착하면 <b>그 값으로 굳는다</b></td></tr>
+      <tr><td>UPSERT (4-2)</td><td class="good">완전</td><td class="bad">없음 — 마지막에 도착한 값이 이긴다</td></tr>
+      <tr class="hl"><td>조건부 상태 전이 (4-3)</td><td class="good">완전</td><td class="good">있음 — 출발 상태가 안 맞으면 0행으로 튕긴다</td></tr>
+      <tr><td>이력 테이블 (5~7절)</td><td class="good">완전</td><td class="bad">없음 — "두 번 처리"만 막고 <b>"거꾸로 처리"는 통과</b>시킨다</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p><b>순서까지 지켜야 한다면 별도 장치가 필요하다</b> — ① <b>파티션 키를 엔티티 ID로 잡아</b> 같은 엔티티의 이벤트를 한 파티션에 몰거나(<code>24-message-ordering-partition-key.md</code>), ② <b>이벤트에 버전·시퀀스를 실어</b> 현재 저장된 버전보다 낮으면 무시하거나, ③ <b>조건부 전이</b>로 상태 기계가 스스로 역행을 거부하게 한다.</p>
+  <div class="rule red">멱등 ≠ 순서 안전 — <b>"두 번 와도 같다"와 "거꾸로 와도 맞다"는 다른 보장</b></div>
+</div></details>
+
+<details class="q"><summary>MySQL이면 무엇이 달라지나요?<span class="hint">힌트: 문장은 다르지만 원리는 같다</span></summary><div class="a">
+  <p><b>문법과 정리 방법이 다를 뿐, 원리는 그대로다.</b></p>
+  <ul>
+    <li><b>확인+선점</b> — <code>INSERT ... ON DUPLICATE KEY UPDATE</code> 또는 <code>INSERT IGNORE</code>를 쓰고 <b>영향받은 행 수</b>로 판정한다. 다만 <code>INSERT IGNORE</code>는 <b>유니크 위반 말고 다른 오류(형 변환 실패 등)까지 경고로 삼켜 버려서</b> 조용히 잘못된 데이터가 들어갈 수 있다 — <b>제약 위반만 잡고 싶다면 <code>ON DUPLICATE KEY UPDATE</code> 쪽이 안전</b>하다.</li>
+    <li><b>동시성</b> — InnoDB에서도 <b>유니크 인덱스에 같은 키로 두 트랜잭션이 INSERT하면 뒤에 온 쪽이 잠금 대기</b>한다. 기본 격리 수준이 REPEATABLE READ라는 차이는 있지만, <b>"유니크 제약이 원자적 심판"이라는 논리는 동일</b>하다.</li>
+    <li><b>정리</b> — 레인지 파티셔닝 후 <code>ALTER TABLE ... DROP PARTITION</code>으로 통째로 버린다. PostgreSQL의 <b>죽은 튜플·VACUUM 이슈는 없지만</b>, 대량 DELETE가 <b>긴 트랜잭션과 언두 로그 증가</b>를 부르는 것은 마찬가지라 <b>파티션 드롭이 여전히 유리</b>하다.</li>
+  </ul>
+  <div class="rule ok">면접 답변 요령: <b>"엔진마다 문장은 다르지만, 확인과 선점을 DB가 원자적으로 하게 만든다는 원리는 같습니다"</b></div>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  멱등 컨슈머는 <b>"중복은 반드시 온다"</b>는 at-least-once의 전제를 받아들이고, 가능하면 <b>연산 자체를 멱등하게</b>(절대값 · UPSERT · 조건부 전이) 바꾸고, 안 되면 프로듀서가 발급한 <b>이벤트 ID</b>를 — 파티션-오프셋 같은 <b>위치</b>가 아니라 <b>비즈니스적 정체</b>를 가리키는 키를 — 유니크 제약 걸린 이력 테이블에 <code>ON CONFLICT DO NOTHING</code>으로 넣어 <b>확인과 선점을 원자적으로</b> 만들고, 그 이력을 비즈니스 변경과 <b>같은 트랜잭션</b>으로 묶으며, 이력은 <b>최소한 토픽 리텐션보다 길게</b> 보관해 — <b>키 선정 · 원자성 · 보관 기간</b>이라는 세 디테일로 exactly-once 효과를 <b>애플리케이션 레벨에서</b> 완성하는 패턴이다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/06-messaging/04-idempotent-consumer-implementation.md</code> · 이어서 볼 문서: 전달 의미론과 exactly-once의 현실(03) · 오프셋 커밋과 auto-commit 위험(23) · 메시지 순서와 파티션 키(24) · 컨슈머 재시도·DLQ 설계(25) · Transactional Outbox + CDC(28) · 파티션 증설 부작용(32) · 대량 replay 격리(33) · max.poll.interval vs session.timeout(35)</p>
+</main>
+</body>
+</html>

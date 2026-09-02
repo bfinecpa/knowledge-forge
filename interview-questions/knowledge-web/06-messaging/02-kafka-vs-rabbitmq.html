@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka vs RabbitMQ — 로그 기반과 큐 기반, 구조 차이가 요구사항 선택으로 이어지는 길</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">06 메시징 · 이벤트 &nbsp;|&nbsp; 기술 선택⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>Kafka vs RabbitMQ<br><span class="sub">로그 기반과 큐 기반, 구조 차이가 요구사항 선택으로 이어지는 길</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"Kafka와 RabbitMQ(전통적 MQ)의 차이는?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 근본 차이는 <b>저장 모델</b>이다. Kafka는 <b>append-only 로그</b> — 메시지를 소비해도 삭제되지 않고 보존 기간 동안 남아 있어 컨슈머가 <b>오프셋만 움직이며</b> 읽고, 되감아 재소비(replay)할 수 있다. RabbitMQ는 <b>전통적 큐</b> — 브로커가 exchange의 라우팅 규칙에 따라 메시지를 큐로 배분하고 컨슈머에게 밀어준 뒤 <b>ack을 받으면 삭제</b>하므로, 라우팅과 메시지 단위 제어에 강하다. 이 차이는 <b>실패 처리에서 가장 날카롭게 갈린다</b> — RabbitMQ는 실패한 한 건만 재큐잉하거나 DLQ로 보내고 나머지는 흘려보내지만, Kafka의 오프셋은 <b>"여기까지 처리했다"는 숫자 하나</b>라서 중간 한 건이 막히면 그 뒤가 전부 막힌다. 그래서 <b>"재처리와 다수 독립 소비자가 필요한 이벤트 스트림"이면 Kafka</b>, <b>"복잡한 라우팅과 메시지 단위 처리가 필요한 작업 큐"면 RabbitMQ</b> — 기능 목록 암기가 아니라 <b>요구사항에서 구조로 내려가는 매핑</b>으로 답하는 것이 핵심이다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>근본 차이는 소비 후 메시지의 운명</b> — Kafka는 <b>소비해도 남는 로그</b>(컨슈머가 오프셋을 들고 pull), RabbitMQ는 <b>ack 받으면 삭제되는 큐</b>(브로커가 push하고 메시지 단위로 배달 상태 추적). 나머지 차이는 대부분 여기서 파생된다.</div></li>
+    <li><span class="n">2</span><div><b>차이가 가장 날카로운 곳은 실패 처리</b> — RabbitMQ는 실패한 <b>한 건만</b> nack해 DLX로 격리하고 나머지는 흘러가지만, Kafka는 오프셋이 <b>연속 진도</b>라 한 건이 막히면 그 파티션 뒤가 전부 막힌다(<b>poison pill</b>). 브로커가 주던 기능을 애플리케이션이 만들어야 한다.</div></li>
+    <li><span class="n">3</span><div><b>선택은 기능 비교가 아니라 요구사항 매핑</b> — <b>"이 데이터를 다시 읽을 일이 있는가, 소비자가 늘어날 것인가"</b>에 하나라도 예면 Kafka, 둘 다 아니오면 라우팅·지연·우선순위·<b>실패 한 건 격리</b>가 필요한 RabbitMQ. 마지막으로 <b>팀의 운영 역량</b>을 비용에 넣는다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">한 장으로 보는 근본 차이 (핵심 도식)</a></li>
+    <li><a href="#s2">RabbitMQ 어휘 4종 — 부품부터 깐다</a></li>
+    <li><a href="#s3">exchange 타입 — "브로커가 똑똑하다"의 실체</a></li>
+    <li><a href="#s4">상태를 누가 들고 있나 — 브로커 vs 컨슈머</a></li>
+    <li><a href="#s5">한눈에 보는 대비 표</a></li>
+    <li><a href="#s6">라우팅 — 분기 조건 하나 바꾸는 비용</a></li>
+    <li><a href="#s7">Kafka는 왜 처리량이 높은가 — 근거 4+1</a></li>
+    <li><a href="#s8">실패 처리 — 개별 ack vs 오프셋</a></li>
+    <li><a href="#s9">요구사항 → 선택 매핑 (승부처)</a></li>
+    <li><a href="#s10">각각이 맞는 경우 · 둘 다 쓰기</a></li>
+    <li><a href="#s11">더 들어가려면 — 문서 지도</a></li>
+    <li><a href="#s12">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "Kafka와 RabbitMQ(전통적 MQ)의 차이는?"</p>
+  <p><b>출제 의도</b>: <b>로그 기반(재소비 가능) vs 큐 기반(소비 후 삭제)</b>의 구조 차이가 <b>"재처리가 필요한가"</b>라는 요구사항과 어떻게 연결되는지 — <b>요구사항→기술 매핑 능력</b>을 본다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>기능 목록 암기</b>("Kafka는 빠르고 RabbitMQ는 라우팅이 좋다")로 끝나는 것 → 1·4절에서 <b>모든 차이가 파생되는 한 가지 구조</b>를 못으로 박고, 9절에서 <b>묻는 순서</b>로 결론까지 내려간다.<br>
+    ② <b>RabbitMQ 어휘를 몰라 비교가 한쪽으로 기우는 것</b>(Kafka만 써 본 사람의 전형) → 2·3절에서 <b>exchange·큐·바인딩·라우팅 키</b>를 도식으로 깔고, "브로커가 똑똑하다"가 실제로 무엇을 뜻하는지 보여준다.<br>
+    ③ <b>"Kafka가 빠르다"를 근거 없이 말하는 것</b> → 7절에서 <b>네 가지 근거를 세어서</b> 말하고, 넷 모두 <b>"브로커가 메시지 단위 상태를 추적하지 않는다"</b>는 한 결정에서 나온다는 사슬로 마무리한다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 한 장으로 보는 근본 차이 — 소비 후에 사라지는가, 남는가</h2>
+
+<p>둘의 차이를 스무 개쯤 나열할 수 있지만, <b>실제로 외워야 할 것은 하나</b>다. <b>메시지를 소비한 뒤에 그것이 브로커에 남아 있는가.</b> 나머지 차이는 거의 전부 여기서 파생된다.</p>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">RabbitMQ = 우편함</div>
+    <div class="d">집배원(브로커)이 우편함에 넣어 <b>배달</b>하고, 받는 사람이 <b>수령 확인(ack)</b>을 하면 그 편지는 <b>사라진다.</b> 누가 뭘 받았는지는 <b>집배원이 장부로</b> 들고 있다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">Kafka = CCTV 녹화 테이프</div>
+    <div class="d">테이프는 <b>본 사람과 무관하게</b> 보존 기간 동안 돌아간다. 시청자는 각자 <b>"내가 어디까지 봤는지"(오프셋)</b>를 들고 있고, <b>되감아 다시 볼 수 있다.</b></div>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="왼쪽은 RabbitMQ에서 프로듀서가 exchange를 거쳐 큐에 넣은 메시지를 컨슈머가 받고 ack하면 브로커에서 삭제되는 구조, 오른쪽은 Kafka에서 프로듀서가 파티션 로그 끝에 덧붙이고 컨슈머 그룹들이 각자 오프셋을 들고 읽으며 되감을 수 있는 구조">
+    <defs>
+      <marker id="s1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="s1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="s1g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="s1b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <line x1="560" y1="14" x2="560" y2="358" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- ===== LEFT: RabbitMQ ===== -->
+    <text x="280" y="30" font-size="15" font-weight="700" fill="#dc2626" text-anchor="middle">RabbitMQ — 큐 (우편함)</text>
+    <text x="280" y="50" font-size="12.5" fill="#6b7280" text-anchor="middle">브로커가 push → ack 받으면 삭제 → 되돌아갈 데이터가 없다</text>
+
+    <rect x="40" y="66" width="110" height="40" rx="9" fill="#fff" stroke="#94a3b8"/><text x="95" y="91" font-size="12.5" fill="#374151" text-anchor="middle">프로듀서</text>
+    <line x1="95" y1="106" x2="95" y2="132" stroke="#475569" stroke-width="1.8" marker-end="url(#s1a)"/>
+    <rect x="40" y="138" width="110" height="42" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/><text x="95" y="158" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">Exchange</text><text x="95" y="173" font-size="10.5" fill="#b91c1c" text-anchor="middle">저장 안 함 · 배분만</text>
+    <line x1="150" y1="159" x2="188" y2="159" stroke="#475569" stroke-width="1.8" marker-end="url(#s1a)"/>
+
+    <!-- queue -->
+    <rect x="194" y="126" width="230" height="66" rx="10" fill="#fff" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="309" y="120" font-size="11.5" fill="#6b7280" text-anchor="middle">Queue — 여기에 쌓인다</text>
+    <rect x="206" y="142" width="46" height="34" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="4 3"/><text x="229" y="164" font-size="12" fill="#94a3b8" text-anchor="middle" class="mono">m1</text>
+    <rect x="260" y="142" width="46" height="34" rx="6" fill="#fef2f2" stroke="#dc2626"/><text x="283" y="164" font-size="12" fill="#b91c1c" text-anchor="middle" class="mono">m2</text>
+    <rect x="314" y="142" width="46" height="34" rx="6" fill="#fef2f2" stroke="#dc2626"/><text x="337" y="164" font-size="12" fill="#b91c1c" text-anchor="middle" class="mono">m3</text>
+    <rect x="368" y="142" width="46" height="34" rx="6" fill="#fef2f2" stroke="#dc2626"/><text x="391" y="164" font-size="12" fill="#b91c1c" text-anchor="middle" class="mono">m4</text>
+
+    <line x1="424" y1="150" x2="466" y2="150" stroke="#475569" stroke-width="1.8" marker-end="url(#s1a)"/>
+    <text x="445" y="143" font-size="10.5" fill="#475569" text-anchor="middle">push</text>
+    <rect x="472" y="126" width="68" height="66" rx="9" fill="#fff" stroke="#94a3b8"/><text x="506" y="155" font-size="12" fill="#374151" text-anchor="middle">컨슈머</text><text x="506" y="171" font-size="10.5" fill="#6b7280" text-anchor="middle">워커</text>
+
+    <path d="M472 186 C 430 214, 300 214, 252 186" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s1g)"/>
+    <text x="362" y="212" font-size="11.5" fill="#16a34a" text-anchor="middle" font-weight="700">ack — "처리 완료"</text>
+
+    <text x="229" y="196" font-size="10.5" fill="#94a3b8" text-anchor="middle">삭제됨</text>
+    <line x1="208" y1="159" x2="250" y2="159" stroke="#94a3b8" stroke-width="1.4"/>
+
+    <rect x="40" y="240" width="500" height="46" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="56" y="260" font-size="12.5" fill="#b91c1c" font-weight="700">브로커가 메시지마다 상태를 들고 있다</text>
+    <text x="56" y="277" font-size="11.5" fill="#7f1d1d" class="mono">미전송 / 전송 후 ack 대기 / ack 완료 → 삭제</text>
+
+    <rect x="40" y="296" width="500" height="48" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="56" y="316" font-size="12.5" fill="#374151">↳ 그래서 <tspan font-weight="700">한 건만 골라 재시도·격리</tspan>가 자연스럽다</text>
+    <text x="56" y="334" font-size="12.5" fill="#374151">↳ 대신 삭제된 메시지는 <tspan font-weight="700" fill="#dc2626">다시 읽을 수 없다</tspan></text>
+
+    <!-- ===== RIGHT: Kafka ===== -->
+    <text x="840" y="30" font-size="15" font-weight="700" fill="#16a34a" text-anchor="middle">Kafka — 로그 (녹화 테이프)</text>
+    <text x="840" y="50" font-size="12.5" fill="#6b7280" text-anchor="middle">컨슈머가 pull → 오프셋만 전진 → 보존 기간까지 남는다</text>
+
+    <rect x="600" y="66" width="110" height="40" rx="9" fill="#fff" stroke="#94a3b8"/><text x="655" y="91" font-size="12.5" fill="#374151" text-anchor="middle">프로듀서</text>
+    <text x="736" y="84" font-size="11" fill="#16a34a" font-weight="700">append (끝에만)</text>
+    <path d="M710 88 C 800 88, 940 92, 1044 118" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s1g)"/>
+
+    <text x="600" y="120" font-size="11.5" fill="#6b7280">파티션 로그 — 소비해도 지워지지 않는다</text>
+    <g>
+      <rect x="600" y="128" width="60" height="40" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="630" y="153" font-size="12" fill="#166534" text-anchor="middle" class="mono">0</text>
+      <rect x="662" y="128" width="60" height="40" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="692" y="153" font-size="12" fill="#166534" text-anchor="middle" class="mono">1</text>
+      <rect x="724" y="128" width="60" height="40" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="754" y="153" font-size="12" fill="#166534" text-anchor="middle" class="mono">2</text>
+      <rect x="786" y="128" width="60" height="40" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="816" y="153" font-size="12" fill="#166534" text-anchor="middle" class="mono">3</text>
+      <rect x="848" y="128" width="60" height="40" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="878" y="153" font-size="12" fill="#166534" text-anchor="middle" class="mono">4</text>
+      <rect x="910" y="128" width="60" height="40" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="940" y="153" font-size="12" fill="#166534" text-anchor="middle" class="mono">5</text>
+      <rect x="972" y="128" width="60" height="40" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="1002" y="153" font-size="12" fill="#166534" text-anchor="middle" class="mono">6</text>
+      <rect x="1034" y="128" width="60" height="40" rx="6" fill="#fff" stroke="#86efac" stroke-dasharray="4 3"/><text x="1064" y="153" font-size="12" fill="#86efac" text-anchor="middle" class="mono">7</text>
+    </g>
+
+    <!-- group A pointer -->
+    <path d="M878 176 l -7 -10 l 14 0 z" fill="#2563eb"/>
+    <line x1="878" y1="176" x2="878" y2="200" stroke="#2563eb" stroke-width="1.6"/>
+    <rect x="806" y="200" width="146" height="34" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="879" y="215" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">컨슈머 그룹 A</text>
+    <text x="879" y="229" font-size="11" fill="#1d4ed8" text-anchor="middle" class="mono">offset = 4</text>
+
+    <!-- group B pointer -->
+    <path d="M692 176 l -7 -10 l 14 0 z" fill="#7c3aed"/>
+    <line x1="692" y1="176" x2="692" y2="252" stroke="#7c3aed" stroke-width="1.6"/>
+    <rect x="619" y="252" width="146" height="34" rx="8" fill="#f5f3ff" stroke="#7c3aed"/>
+    <text x="692" y="267" font-size="11.5" fill="#6d28d9" text-anchor="middle" font-weight="700">컨슈머 그룹 B</text>
+    <text x="692" y="281" font-size="11" fill="#6d28d9" text-anchor="middle" class="mono">offset = 1</text>
+
+    <!-- replay -->
+    <path d="M866 190 C 800 196, 760 196, 700 190" fill="none" stroke="#d97706" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#s1a)"/>
+    <text x="783" y="186" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">되감기 = replay</text>
+
+    <rect x="600" y="296" width="500" height="48" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="616" y="316" font-size="12.5" fill="#374151">↳ 그룹마다 <tspan font-weight="700">자기 오프셋</tspan> → 같은 데이터를 서로 간섭 없이 소비</text>
+    <text x="616" y="334" font-size="12.5" fill="#374151">↳ 대신 진도가 <tspan font-weight="700" fill="#dc2626">숫자 하나</tspan>라 "12만 실패"를 표현할 자리가 없다</text>
+  </svg>
+  <figcaption><b>이 그림 하나가 이 문서의 전부다.</b> 왼쪽은 <b>배달 상태를 브로커가 메시지마다</b> 들고 있어 한 건만 골라낼 수 있고, 오른쪽은 <b>진도를 컨슈머가 숫자 하나로</b> 들고 있어 되감을 수 있다. 8절의 실패 처리 차이도, 7절의 처리량 근거도 전부 이 구조에서 나온다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>한 문장으로 박아두는 대비</h4>
+  <div class="rule">RabbitMQ = <b>"배달하고 지운다"</b> (브로커가 메시지 단위 장부) &nbsp;/&nbsp; Kafka = <b>"적어두고 남긴다"</b> (컨슈머가 오프셋 하나)</div>
+  <p style="margin-bottom:0" class="sub">면접에서 첫 문장으로 이걸 먼저 던지고, 나머지 차이는 "여기서 파생된다"는 형태로 붙여 나가면 나열이 아니라 유도가 된다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. RabbitMQ 어휘 4종 — 부품 이름부터 깐다</h2>
+
+<p>Kafka만 써 본 사람에게 이 비교가 어려운 이유는 대개 <b>RabbitMQ 쪽 어휘를 모르기 때문</b>이다. "브로커가 똑똑하다" 같은 말이 무슨 뜻인지 알려면 부품 이름부터 알아야 한다. <b>넷이다.</b></p>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k">Exchange (익스체인지, 교환대)</div>
+    <div class="d">프로듀서가 메시지를 보내는 곳. <b>여기가 큐가 아니라는 점이 중요하다</b> — 저장하지 않고 <b>규칙에 따라 큐로 배분</b>만 한다. <span class="s">우체국 분류 창구: 편지를 보관하지 않고 어느 우편함으로 갈지만 정한다.</span></div>
+  </div>
+  <div class="tile">
+    <div class="k">Queue (큐)</div>
+    <div class="d">메시지가 실제로 <b>쌓여 컨슈머를 기다리는 곳</b>. exchange가 정해준 목적지이고, <b>컨슈머는 exchange가 아니라 큐에 붙는다.</b></div>
+  </div>
+  <div class="tile">
+    <div class="k">Binding (바인딩)</div>
+    <div class="d">"어떤 exchange의 메시지를 어떤 큐로 보낼지" 정하는 <b>연결 규칙</b>. 그 조건 부분을 <b>바인딩 키</b>라고 부른다. <span class="s">우편함에 붙은 "이런 주소는 여기로" 안내판.</span></div>
+  </div>
+  <div class="tile">
+    <div class="k">Routing key (라우팅 키)</div>
+    <div class="d">프로듀서가 메시지에 붙여 보내는 <b>문자열 라벨</b>. exchange가 이 값을 <b>바인딩 키와 대조</b>해 목적지를 정한다. <span class="s">봉투에 적힌 주소.</span></div>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>4종 암기 — 한 문장으로 꿰기</h4>
+  <div class="chain">
+    <span class="chip b">Exchange 보내는 곳</span><span class="arrow">→</span>
+    <span class="chip b">Binding 잇는 규칙</span><span class="arrow">→</span>
+    <span class="chip b">Queue 쌓이는 곳</span><span class="arrow">←</span>
+    <span class="chip w">Routing key 봉투의 주소</span>
+  </div>
+  <p style="margin-bottom:0"><b>"봉투에 주소(라우팅 키)를 적어 분류 창구(exchange)에 내면, 안내판(바인딩)이 맞는 우편함(큐)으로 넣어준다."</b> — Kafka에는 <b>이 네 부품 중 셋이 없다.</b> 프로듀서가 <b>토픽</b>에 바로 쓰고, 어느 파티션에 갈지만 키로 정한다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 358" role="img" aria-label="프로듀서가 라우팅 키 payment.failed로 보낸 메시지가 exchange에서 세 개의 바인딩과 대조되어 조건에 맞는 두 큐로 복제되어 들어가고 맞지 않는 큐로는 가지 않으며, 어느 바인딩에도 걸리지 않으면 소멸하는 흐름">
+    <defs>
+      <marker id="s2g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="s2a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="s2x" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#cbd5e1"/></marker>
+      <marker id="s2r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">RabbitMQ 라우팅 경로 — 메시지 한 통이 어디로 갈지는 "브로커 설정"이 정한다</text>
+
+    <rect x="24" y="112" width="140" height="56" rx="10" fill="#fff" stroke="#94a3b8"/>
+    <text x="94" y="136" font-size="13" fill="#374151" text-anchor="middle">프로듀서</text>
+    <text x="94" y="155" font-size="11" fill="#6b7280" text-anchor="middle">publish()</text>
+    <rect x="16" y="180" width="156" height="34" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="94" y="196" font-size="10.5" fill="#92400e" text-anchor="middle">라우팅 키</text>
+    <text x="94" y="209" font-size="11.5" fill="#92400e" text-anchor="middle" class="mono" font-weight="700">"payment.failed"</text>
+
+    <line x1="172" y1="140" x2="216" y2="140" stroke="#475569" stroke-width="2" marker-end="url(#s2a)"/>
+
+    <rect x="222" y="96" width="164" height="88" rx="11" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="304" y="126" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">Exchange</text>
+    <text x="304" y="146" font-size="11" fill="#1d4ed8" text-anchor="middle">저장하지 않는다</text>
+    <text x="304" y="163" font-size="11" fill="#1d4ed8" text-anchor="middle">배분만 한다 (topic)</text>
+
+    <!-- binding 1 -->
+    <path d="M386 118 C 440 118, 470 58, 520 58" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s2g)"/>
+    <rect x="404" y="36" width="132" height="24" rx="12" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="470" y="53" font-size="11" fill="#166534" text-anchor="middle" class="mono">binding "payment.*"</text>
+    <rect x="562" y="40" width="150" height="44" rx="9" fill="#fff" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="637" y="60" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">알림 큐</text>
+    <text x="637" y="76" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">[payment.failed]</text>
+    <line x1="712" y1="62" x2="754" y2="62" stroke="#475569" stroke-width="1.6" marker-end="url(#s2a)"/>
+    <rect x="760" y="40" width="132" height="44" rx="9" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="826" y="67" font-size="12" fill="#374151" text-anchor="middle">알림 워커</text>
+
+    <!-- binding 2 -->
+    <path d="M386 140 C 450 140, 470 150, 520 150" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s2g)"/>
+    <rect x="392" y="118" width="160" height="24" rx="12" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="472" y="135" font-size="11" fill="#166534" text-anchor="middle" class="mono">binding "payment.failed"</text>
+    <rect x="562" y="128" width="150" height="44" rx="9" fill="#fff" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="637" y="148" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">보정 큐</text>
+    <text x="637" y="164" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">[payment.failed]</text>
+    <line x1="712" y1="150" x2="754" y2="150" stroke="#475569" stroke-width="1.6" marker-end="url(#s2a)"/>
+    <rect x="760" y="128" width="132" height="44" rx="9" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="826" y="155" font-size="12" fill="#374151" text-anchor="middle">보정 워커</text>
+
+    <!-- binding 3 (no match) -->
+    <path d="M386 162 C 440 162, 470 238, 520 238" fill="none" stroke="#cbd5e1" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#s2x)"/>
+    <rect x="404" y="216" width="126" height="24" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="467" y="233" font-size="11" fill="#94a3b8" text-anchor="middle" class="mono">binding "order.*"</text>
+    <rect x="562" y="216" width="150" height="44" rx="9" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+    <text x="637" y="236" font-size="12.5" fill="#94a3b8" text-anchor="middle">주문 큐</text>
+    <text x="637" y="252" font-size="10.5" fill="#94a3b8" text-anchor="middle">(안 들어옴)</text>
+    <text x="800" y="242" font-size="11.5" fill="#94a3b8">키가 안 맞으므로 배달되지 않는다</text>
+
+    <!-- 복제 note -->
+    <rect x="930" y="96" width="176" height="72" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="1018" y="118" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">조건에 맞는 큐가 여럿이면</text>
+    <text x="1018" y="136" font-size="11.5" fill="#1d4ed8" text-anchor="middle">각 큐에 <tspan font-weight="700">한 통씩 복제</tspan>돼</text>
+    <text x="1018" y="154" font-size="11.5" fill="#1d4ed8" text-anchor="middle">들어간다</text>
+
+    <!-- silent drop -->
+    <path d="M304 184 L 304 288" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#s2r)"/>
+    <text x="316" y="240" font-size="11.5" fill="#b91c1c">어느 바인딩에도 안 걸리면?</text>
+    <rect x="186" y="294" width="236" height="46" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="304" y="313" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">조용히 버려진다</text>
+    <text x="304" y="330" font-size="11" fill="#7f1d1d" text-anchor="middle">발행은 성공, 수신자는 없음 — 예외도 없다</text>
+    <text x="440" y="313" font-size="12" fill="#b91c1c">↳ 라우팅 키 오타 하나가 <tspan font-weight="700">"무응답 장애"</tspan>로 나타난다</text>
+    <text x="440" y="331" font-size="12" fill="#6b7280">↳ Kafka에는 없는 유형의 사고다 (토픽이 없으면 바로 드러난다)</text>
+  </svg>
+  <figcaption>exchange는 <b>저장소가 아니라 분류기</b>다. 큐로 들어간 뒤에야 메시지가 "쌓인다". 조건에 맞는 큐가 여럿이면 <b>복제</b>돼 각각에 한 통씩 들어가고, 하나도 없으면 <b>아무 오류 없이 사라진다.</b></figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>가장 자주 무는 지점 — 조용한 유실(silent drop)</h4>
+  <p><b>어느 바인딩에도 걸리지 않은 메시지는 조용히 사라진다.</b> 프로듀서는 발행에 성공했고 예외도 못 받는데, 컨슈머 쪽에는 아무것도 도착하지 않는다. <b>"보냈는데 아무도 못 받았다"</b>는 신고가 들어오면 코드보다 <b>바인딩과 라우팅 키 오타를 먼저 본다.</b></p>
+  <p style="margin-bottom:0" class="sub">방어 장치도 함께 말하면 좋다 — 발행 시 <code>mandatory</code> 옵션을 켜고 <b>반송(return) 콜백</b>을 붙여 "라우팅 실패"를 감지하거나, exchange에 <b>대체 exchange(alternate exchange)</b>를 지정해 미아 메시지를 한 곳에 모으는 방법이다. (상세: <code>10-rabbitmq-core-components.md</code>)</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. exchange 타입 — "브로커가 똑똑하다"의 실체</h2>
+
+<p>exchange는 배분 규칙에 따라 타입이 나뉜다. 실무에서 마주치는 것은 대개 셋이다. (헤더의 키·값 조합으로 매칭하는 <code>headers</code> 타입도 있다.)</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="direct는 라우팅 키와 바인딩 키가 정확히 같은 큐에만, fanout은 라우팅 키를 보지 않고 바인딩된 모든 큐에, topic은 점으로 끊은 단어열 패턴으로 매칭해 배달하는 세 가지 exchange 타입 비교">
+    <defs>
+      <marker id="s3g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+      <marker id="s3x" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#cbd5e1"/></marker>
+    </defs>
+
+    <!-- direct -->
+    <rect x="14" y="14" width="356" height="272" rx="12" fill="#fafbfc" stroke="#e5e7eb"/>
+    <text x="192" y="40" font-size="14" font-weight="700" fill="#2563eb" text-anchor="middle" class="mono">direct</text>
+    <text x="192" y="60" font-size="11.5" fill="#6b7280" text-anchor="middle">라우팅 키와 바인딩 키가 <tspan font-weight="700">정확히 같은</tspan> 큐에만</text>
+    <rect x="36" y="112" width="104" height="46" rx="9" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="88" y="132" font-size="11.5" fill="#1d4ed8" text-anchor="middle">라우팅 키</text>
+    <text x="88" y="148" font-size="10.5" fill="#1d4ed8" text-anchor="middle" class="mono">payment.failed</text>
+    <path d="M140 126 L 196 100" stroke="#16a34a" stroke-width="1.7" marker-end="url(#s3g)"/>
+    <path d="M140 146 L 196 186" stroke="#cbd5e1" stroke-width="1.7" stroke-dasharray="4 3" marker-end="url(#s3x)"/>
+    <rect x="202" y="80" width="152" height="42" rx="8" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="278" y="97" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">key: payment.failed</text>
+    <text x="278" y="113" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">일치 → 배달</text>
+    <rect x="202" y="166" width="152" height="42" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="278" y="183" font-size="10.5" fill="#94a3b8" text-anchor="middle" class="mono">key: payment.done</text>
+    <text x="278" y="199" font-size="11" fill="#94a3b8" text-anchor="middle">불일치 → 안 감</text>
+    <text x="192" y="250" font-size="11.5" fill="#374151" text-anchor="middle">한 가지 유형을 한 곳으로 — <tspan font-weight="700">가장 단순</tspan></text>
+    <text x="192" y="268" font-size="11" fill="#6b7280" text-anchor="middle">작업 종류별 큐 분리에 쓴다</text>
+
+    <!-- fanout -->
+    <rect x="382" y="14" width="356" height="272" rx="12" fill="#fafbfc" stroke="#e5e7eb"/>
+    <text x="560" y="40" font-size="14" font-weight="700" fill="#2563eb" text-anchor="middle" class="mono">fanout</text>
+    <text x="560" y="60" font-size="11.5" fill="#6b7280" text-anchor="middle">라우팅 키를 <tspan font-weight="700">아예 보지 않고</tspan> 바인딩된 모든 큐에 복제</text>
+    <rect x="404" y="122" width="104" height="46" rx="9" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="456" y="142" font-size="11.5" fill="#1d4ed8" text-anchor="middle">라우팅 키</text>
+    <text x="456" y="158" font-size="10.5" fill="#1d4ed8" text-anchor="middle" class="mono">(무엇이든)</text>
+    <path d="M508 134 L 566 92" stroke="#16a34a" stroke-width="1.7" marker-end="url(#s3g)"/>
+    <path d="M508 145 L 566 145" stroke="#16a34a" stroke-width="1.7" marker-end="url(#s3g)"/>
+    <path d="M508 156 L 566 198" stroke="#16a34a" stroke-width="1.7" marker-end="url(#s3g)"/>
+    <rect x="572" y="74" width="144" height="36" rx="8" fill="#f0fdf4" stroke="#16a34a"/><text x="644" y="97" font-size="11.5" fill="#166534" text-anchor="middle">큐 A</text>
+    <rect x="572" y="127" width="144" height="36" rx="8" fill="#f0fdf4" stroke="#16a34a"/><text x="644" y="150" font-size="11.5" fill="#166534" text-anchor="middle">큐 B</text>
+    <rect x="572" y="180" width="144" height="36" rx="8" fill="#f0fdf4" stroke="#16a34a"/><text x="644" y="203" font-size="11.5" fill="#166534" text-anchor="middle">큐 C</text>
+    <text x="560" y="250" font-size="11.5" fill="#374151" text-anchor="middle">지금 붙어 있는 <tspan font-weight="700">모두에게 방송</tspan></text>
+    <text x="560" y="268" font-size="11" fill="#dc2626" text-anchor="middle">단, <tspan font-weight="700">발행 시점에 존재하는 큐</tspan>에만 들어간다</text>
+
+    <!-- topic -->
+    <rect x="750" y="14" width="356" height="272" rx="12" fill="#fafbfc" stroke="#e5e7eb"/>
+    <text x="928" y="40" font-size="14" font-weight="700" fill="#2563eb" text-anchor="middle" class="mono">topic</text>
+    <text x="928" y="60" font-size="11.5" fill="#6b7280" text-anchor="middle">점(.)으로 끊은 <tspan font-weight="700">단어열 패턴</tspan>으로 매칭</text>
+    <rect x="768" y="126" width="112" height="46" rx="9" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="824" y="146" font-size="11.5" fill="#1d4ed8" text-anchor="middle">라우팅 키</text>
+    <text x="824" y="162" font-size="10.5" fill="#1d4ed8" text-anchor="middle" class="mono">order.kr.created</text>
+    <path d="M880 138 L 916 88" stroke="#16a34a" stroke-width="1.6" marker-end="url(#s3g)"/>
+    <path d="M880 145 L 916 130" stroke="#16a34a" stroke-width="1.6" marker-end="url(#s3g)"/>
+    <path d="M880 155 L 916 176" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#s3x)"/>
+    <path d="M880 162 L 916 218" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#s3x)"/>
+    <rect x="922" y="72" width="170" height="32" rx="7" fill="#f0fdf4" stroke="#16a34a"/><text x="1007" y="93" font-size="11" fill="#166534" text-anchor="middle" class="mono">order.#　✔</text>
+    <rect x="922" y="114" width="170" height="32" rx="7" fill="#f0fdf4" stroke="#16a34a"/><text x="1007" y="135" font-size="11" fill="#166534" text-anchor="middle" class="mono">order.*.created　✔</text>
+    <rect x="922" y="160" width="170" height="32" rx="7" fill="#f8fafc" stroke="#cbd5e1"/><text x="1007" y="181" font-size="11" fill="#94a3b8" text-anchor="middle" class="mono">order.us.*　✘</text>
+    <rect x="922" y="202" width="170" height="32" rx="7" fill="#f8fafc" stroke="#cbd5e1"/><text x="1007" y="223" font-size="11" fill="#94a3b8" text-anchor="middle" class="mono">order.*　✘</text>
+    <text x="928" y="256" font-size="11.5" fill="#374151" text-anchor="middle"><tspan font-weight="700" class="mono">*</tspan> = 정확히 한 단어 &nbsp;·&nbsp; <tspan font-weight="700" class="mono">#</tspan> = 0개 이상의 단어</text>
+    <text x="928" y="274" font-size="11" fill="#dc2626" text-anchor="middle"><tspan class="mono">order.*</tspan> 는 <tspan class="mono">kr.created</tspan>(두 단어)를 덮지 못한다</text>
+  </svg>
+  <figcaption>라우팅 키 <code>order.kr.created</code>를 세 타입에 넣어 본 결과. <b>topic의 <code>*</code>와 <code>#</code> 차이</b>가 실무에서 가장 자주 헷갈리는 부분이다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>topic 와일드카드 — 두 글자만 외우면 된다</h4>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k">* = 한 칸</div><div class="d"><b>정확히 한 단어</b>를 덮는다. <code class="mono">order.*</code>는 <code>order.created</code>는 잡지만 <code>order.kr.created</code>는 <b>못 잡는다.</b></div></div>
+    <div class="tile ok"><div class="k"># = 통째로</div><div class="d"><b>0개 이상의 단어</b>를 덮는다. <code class="mono">order.#</code>는 <code>order</code>, <code>order.created</code>, <code>order.kr.created</code>를 <b>전부 잡는다.</b></div></div>
+  </div>
+  <p style="margin-bottom:0"><b>"별(*)은 한 칸, 우물(#)은 통째로."</b> 이 한 줄이면 매칭 문제는 다 풀린다.</p>
+</div>
+
+<p><b>"RabbitMQ는 브로커가 똑똑하다"는 말의 실체가 정확히 이것이다.</b> "결제 실패 메시지만 보정 큐로, 결제 관련 전체는 알림 큐로"라는 분기를 <b>애플리케이션 코드 한 줄 없이 브로커 설정(exchange 타입 + 바인딩)으로 푼다.</b> 분기 조건이 바뀌면 <b>바인딩만 고치면 되고, 프로듀서도 컨슈머도 배포할 필요가 없다.</b></p>
+
+<div class="memo red">
+  <h4>여기서 반드시 나오는 반문 — "fanout이 있으니 Kafka의 다수 독립 소비자와 같은 것 아닌가?"</h4>
+  <p><b>아니다.</b> 두 가지가 결정적으로 다르다.</p>
+  <div class="grid g2">
+    <div class="tile red"><div class="k">① 과거를 못 받는다</div><div class="d">fanout은 <b>발행 시점에</b> 이미 존재하는 큐들에 복사본을 넣는다. 반년 뒤 새 큐를 바인딩하면 그 큐는 <b>그날 이후 메시지만</b> 받는다 — 과거는 한 통도 없다.</div></div>
+    <div class="tile red"><div class="k">② 진도 개념이 없다</div><div class="d">각 큐는 소비되면 비어버리므로 <b>"이 소비자가 어디까지 읽었나"</b>라는 위치 개념 자체가 없다. 되감을 대상도, 되감을 좌표도 없다.</div></div>
+  </div>
+  <p style="margin-bottom:0">Kafka는 <b>새 컨슈머 그룹이 보존 기간 안의 과거 데이터를 오프셋 0부터</b> 읽을 수 있다. 이 차이가 9절 판단 순서의 <b>질문 1</b>이 된다.</p>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 상태를 누가 들고 있나 — 이 문서의 축</h2>
+
+<p>1절의 그림을 한 단계 더 정확하게 보자. 두 시스템이 실제로 다른 것은 <b>"소비 진도라는 정보를 누가, 어떤 단위로 들고 있는가"</b>다.</p>
+
+<h3>4-1. RabbitMQ — 브로커가 메시지 단위 장부를 쓴다</h3>
+<p>브로커가 메시지를 컨슈머에게 <b>밀어주고(push)</b>, 컨슈머가 처리 확인(<b>ack</b>)을 보내면 브로커가 그 메시지를 <b>삭제</b>한다. 컨슈머가 ack 대신 <b>nack</b>(거부)을 보내면 큐로 되돌리거나(재큐잉) 별도 경로로 보낸다.</p>
+<p>핵심은 <b>"이 메시지를 누가 처리했는가"를 브로커가 메시지 단위로 관리한다</b>는 점이다. 브로커는 메시지마다 <b>"아직 안 보냄 / 보냈고 ack 대기 중 / ack 받아 삭제"</b>라는 상태를 들고 있다. <b>이 상태 관리가 있기 때문에 메시지 하나만 골라내 재시도하거나 격리하는 일이 자연스럽게 가능하다.</b></p>
+
+<h3>4-2. Kafka — 브로커는 아무도 추적하지 않는다</h3>
+<p>메시지는 파티션이라는 <b>append-only 로그</b>(끝에 덧붙이기만 하고 중간을 고치지 않는 파일)에 기록되어 <b>소비 여부와 무관하게 보존 기간 동안 남는다.</b> 컨슈머는 자기가 어디까지 읽었는지를 <b>오프셋</b>(파티션 안에서 0부터 증가하는 위치 번호)으로 관리하며 <b>직접 당겨간다(pull).</b></p>
+<p><b>"Kafka는 컨슈머가 똑똑하다"의 실체가 여기 있다.</b> 브로커는 <b>어떤 컨슈머가 무엇을 받았는지 추적하지 않는다.</b> 로그 파일과 위치 인덱스만 갖고 있고, "그룹 G가 파티션 P를 어디까지 읽었다"는 숫자조차 <b>컨슈머가 스스로 <code>__consumer_offsets</code>라는 평범한 내부 토픽에 적어 넣은 것</b>이다. 브로커가 하는 일은 <b>요청받은 오프셋 위치부터 바이트를 넘겨주는 것</b>뿐이고, 필터링·분기·재시도 판단은 전부 컨슈머 몫이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="RabbitMQ 브로커는 메시지마다 배달 상태를 담은 장부를 들고 있는 반면 Kafka 브로커는 로그 파일과 인덱스만 갖고 있고 오프셋은 컨슈머가 내부 토픽에 스스로 적어 넣는 구조 비교">
+    <defs>
+      <marker id="s4a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="s4b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <line x1="560" y1="14" x2="560" y2="316" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <text x="280" y="30" font-size="14" font-weight="700" fill="#dc2626" text-anchor="middle">RabbitMQ — 상태는 브로커 안에</text>
+    <rect x="30" y="44" width="500" height="176" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+    <text x="46" y="66" font-size="12" fill="#b91c1c" font-weight="700">브로커의 배달 장부 (메시지 단위)</text>
+    <rect x="46" y="76" width="468" height="26" rx="5" fill="#fff" stroke="#fecaca"/>
+    <text x="60" y="94" font-size="11.5" fill="#7f1d1d" class="mono">m1  ack 완료      → 삭제됨</text>
+    <rect x="46" y="106" width="468" height="26" rx="5" fill="#fff" stroke="#fecaca"/>
+    <text x="60" y="124" font-size="11.5" fill="#7f1d1d" class="mono">m2  전송함, ack 대기 중  (컨슈머 #3에게)</text>
+    <rect x="46" y="136" width="468" height="26" rx="5" fill="#fff" stroke="#fecaca"/>
+    <text x="60" y="154" font-size="11.5" fill="#7f1d1d" class="mono">m3  전송함, nack 받음   → 재큐잉 or DLX</text>
+    <rect x="46" y="166" width="468" height="26" rx="5" fill="#fff" stroke="#fecaca"/>
+    <text x="60" y="184" font-size="11.5" fill="#7f1d1d" class="mono">m4  아직 안 보냄</text>
+    <text x="46" y="210" font-size="11.5" fill="#b91c1c" font-weight="700">→ 상태가 메시지마다 있으니 한 건만 골라내는 조작이 가능</text>
+
+    <rect x="30" y="234" width="500" height="76" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="46" y="256" font-size="12.5" fill="#374151"><tspan font-weight="700">대가:</tspan> 이 장부를 갱신해야 하므로</text>
+    <text x="46" y="275" font-size="12.5" fill="#374151">· 저장이 <tspan font-weight="700">순수 순차 쓰기</tspan>가 아니다 (제자리 수정이 생긴다)</text>
+    <text x="46" y="294" font-size="12.5" fill="#374151">· 컨슈머마다 다른 메시지를 골라 보내므로 <tspan font-weight="700">파일 구간을 통째로 못 흘린다</tspan></text>
+
+    <text x="840" y="30" font-size="14" font-weight="700" fill="#16a34a" text-anchor="middle">Kafka — 상태는 컨슈머 쪽에</text>
+    <rect x="590" y="44" width="500" height="176" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
+    <text x="606" y="66" font-size="12" fill="#166534" font-weight="700">브로커가 가진 것 — 이게 전부다</text>
+    <rect x="606" y="76" width="220" height="52" rx="8" fill="#fff" stroke="#86efac"/>
+    <text x="716" y="97" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">로그 파일 (segment)</text>
+    <text x="716" y="115" font-size="11" fill="#166534" text-anchor="middle" class="mono">append-only</text>
+    <rect x="842" y="76" width="232" height="52" rx="8" fill="#fff" stroke="#86efac"/>
+    <text x="958" y="97" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">오프셋 → 파일 위치 인덱스</text>
+    <text x="958" y="115" font-size="11" fill="#166534" text-anchor="middle">"어디부터 읽어달라"의 좌표</text>
+    <text x="606" y="150" font-size="12" fill="#166534">누가 무엇을 받았는지 기록하는 자리는 <tspan font-weight="700">없다.</tspan></text>
+
+    <rect x="606" y="162" width="200" height="44" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="706" y="180" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">컨슈머 그룹</text>
+    <text x="706" y="196" font-size="10.5" fill="#1d4ed8" text-anchor="middle">"나는 offset 42까지 처리"</text>
+    <line x1="806" y1="184" x2="856" y2="184" stroke="#2563eb" stroke-width="1.8" marker-end="url(#s4b)"/>
+    <text x="831" y="177" font-size="10" fill="#2563eb" text-anchor="middle">commit</text>
+    <rect x="862" y="162" width="212" height="44" rx="8" fill="#fff" stroke="#2563eb" stroke-dasharray="4 3"/>
+    <text x="968" y="180" font-size="11" fill="#1d4ed8" text-anchor="middle" class="mono">__consumer_offsets</text>
+    <text x="968" y="196" font-size="10.5" fill="#1d4ed8" text-anchor="middle">그냥 또 하나의 내부 토픽</text>
+
+    <rect x="590" y="234" width="500" height="76" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="606" y="256" font-size="12.5" fill="#374151"><tspan font-weight="700">배당금:</tspan> 갱신할 상태가 없으므로</text>
+    <text x="606" y="275" font-size="12.5" fill="#374151">· 제자리 수정이 없다 → <tspan font-weight="700">랜덤 I/O가 원천적으로 없다</tspan></text>
+    <text x="606" y="294" font-size="12.5" fill="#374151">· 바이트를 열어볼 필요가 없다 → <tspan font-weight="700">zero-copy로 그대로 전송</tspan></text>
+  </svg>
+  <figcaption>같은 "소비 진도"라는 정보를 <b>RabbitMQ는 브로커가 메시지 단위로</b>, <b>Kafka는 컨슈머 그룹이 숫자 하나로</b> 들고 있다. 왼쪽 아래의 대가와 오른쪽 아래의 배당금이 7·8절의 내용 전부다.</figcaption>
+</figure>
+
+<div class="callout info">
+  <span class="t">이 단순함은 설계 취향이 아니라 처리량의 직접적 근거다</span>
+  브로커가 메시지 단위 상태를 갱신하지 않으니 <b>제자리 수정이 없고</b>, 제자리 수정이 없으니 <b>로그를 그대로 이어 붙이기만</b> 하면 되고, 메시지를 열어볼 필요가 없으니 <b>저장된 바이트를 가공 없이 그대로 내보낼 수 있다.</b> 이 인과를 7절에서 하나씩 푼다.
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 한눈에 보는 대비 표</h2>
+
+<table class="wide">
+  <caption>표는 대비를 빠르게 보기 위한 것이고, 면접에서 값이 나가는 것은 <b>굵게 표시한 세 줄의 "이유"</b>다 (6·7·8절).</caption>
+  <thead><tr><th style="width:150px">축</th><th>Kafka (로그)</th><th>RabbitMQ (큐)</th><th style="width:250px">한 줄 근거</th></tr></thead>
+  <tbody>
+    <tr><th>소비 후 메시지</th><td class="good">보존 기간까지 유지 → <b>재소비 가능</b></td><td class="bad">ack 시 삭제 → 재소비 불가</td><td>저장 모델의 차이 그 자체</td></tr>
+    <tr><th>전달 방식</th><td>컨슈머가 <b>pull</b></td><td>브로커가 <b>push</b></td><td>진도를 누가 들고 있느냐의 귀결</td></tr>
+    <tr><th>소비 진도 관리</th><td>컨슈머(그룹)의 <b>오프셋 숫자 하나</b></td><td>브로커가 <b>메시지 단위 ack</b> 추적</td><td>4절 — 이 문서의 축</td></tr>
+    <tr class="hl"><th>라우팅</th><td>단순 (토픽 / 파티션 키)</td><td>강력 (exchange: direct·topic·fanout 등)</td><td>6절 — 브로커가 똑똑 vs 컨슈머가 똑똑</td></tr>
+    <tr><th>순서 보장</th><td><b>파티션 내</b> 구조적 보장</td><td>큐 단위 FIFO, 단 <b>재큐잉·다중 컨슈머 시 흔들림</b></td><td>재큐잉된 건은 뒤 메시지 다음에 온다</td></tr>
+    <tr class="hl"><th>실패 처리 단위</th><td>오프셋 (<b>연속 진도</b>) → poison pill</td><td>메시지 개별 (nack, 개별 재큐잉, DLX)</td><td>8절 — 가장 날카로운 차이</td></tr>
+    <tr class="hl"><th>대표 강점</th><td>대용량 처리량, 스트림, <b>다수 독립 소비자</b></td><td>유연한 라우팅, 메시지 단위 제어(<b>지연·우선순위·TTL</b>)</td><td>7절 — 근거를 세어서 말한다</td></tr>
+  </tbody>
+</table>
+
+<div class="callout ok">
+  <span class="t">표를 외우지 말고 이 한 문장으로 복원하라</span>
+  <b>"브로커가 메시지 단위 상태를 갖는가?"</b> — 갖는다(RabbitMQ)면 push·개별 ack·라우팅·개별 격리가 따라오고, 안 갖는다(Kafka)면 pull·오프셋·재소비·고처리량이 따라온다. <b>표의 일곱 줄은 이 질문 하나에서 다시 만들어낼 수 있다.</b>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 라우팅 — 분기 조건 하나 바꾸는 비용이 다르다</h2>
+
+<p>RabbitMQ는 <b>브로커가 똑똑하다.</b> exchange가 라우팅 키·패턴·헤더로 메시지를 적절한 큐에 분배한다. Kafka는 <b>브로커는 단순하고 컨슈머가 똑똑하다.</b> 브로커는 로그에 쓰고 읽어줄 뿐, 필터링·분기는 컨슈머가 (또는 애초에 토픽을 나눠서) 해결한다.</p>
+
+<p>그래서 Kafka에서 조건 분기가 필요하면 방법이 <b>둘로 좁혀진다.</b></p>
+
+<div class="grid g2">
+  <div class="tile ok"><div class="k">① 토픽을 쪼갠다</div><div class="d"><code>payment.failed</code>를 아예 <b>별도 토픽으로 발행</b>한다. 분기가 <b>발행 시점으로 올라간다.</b> 관심 없는 데이터를 나르지 않아 깔끔하지만, 분기 축이 바뀌면 <b>토픽 설계를 다시</b> 해야 한다.</div></div>
+  <div class="tile red"><div class="k">② 컨슈머가 전부 받아서 거른다</div><div class="d">관심 없는 메시지도 <b>일단 네트워크로 가져온 뒤 버린다.</b> 조건이 자주 바뀔 때 쓰지만, <b>안 쓸 데이터까지 나르는 낭비</b>가 있고 조건 변경 = <b>컨슈머 재배포</b>다.</div></div>
+</div>
+
+<h3>6-1. 같은 요구, 세 가지 구현 — "결제 실패만 보정 워커로"</h3>
+
+<div class="codehead plain"><span class="tag">RabbitMQ</span> 분기를 <b>브로커 설정</b>으로 푼다 — 애플리케이션 코드에 조건문이 없다</div>
+<pre><code><span class="cm">// 선언만 한다. 컨슈머는 자기 큐에 온 것만 처리하면 된다.</span>
+<span class="kw">@Bean</span> <span class="fn">TopicExchange</span> paymentExchange() { <span class="kw">return new</span> TopicExchange(<span class="st">"payment.ex"</span>); }
+
+<span class="kw">@Bean</span> Binding alertBinding(Queue alertQ, TopicExchange ex) {
+    <span class="kw">return</span> BindingBuilder.bind(alertQ).to(ex).with(<span class="st">"payment.*"</span>);      <span class="cm">// 결제 관련 전체 → 알림 큐</span>
+}
+<span class="ln-good"><span class="kw">@Bean</span> Binding repairBinding(Queue repairQ, TopicExchange ex) {
+    <span class="kw">return</span> BindingBuilder.bind(repairQ).to(ex).with(<span class="st">"payment.failed"</span>); <span class="cm">// 실패만 → 보정 큐</span>
+}</span>
+
+<span class="kw">@RabbitListener</span>(queues = <span class="st">"payment.repair.q"</span>)
+<span class="kw">public void</span> <span class="fn">onFailure</span>(PaymentEvent e) {
+    repairService.compensate(e);  <span class="cm">// 조건문 없음 — 여기 오는 건 이미 실패 건뿐이다</span>
+}
+<span class="cm">// 분기 조건이 바뀌면? 바인딩 한 줄만 고친다. 프로듀서·컨슈머 배포 불필요.</span></code></pre>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Kafka · 안 좋은 쪽</span> 한 토픽에 다 넣고 컨슈머가 거른다</div>
+<pre><code><span class="kw">@KafkaListener</span>(topics = <span class="st">"payment-events"</span>)
+<span class="kw">public void</span> <span class="fn">consume</span>(PaymentEvent e) {
+<span class="ln-bad">    <span class="kw">if</span> (!<span class="st">"FAILED"</span>.equals(e.status())) {
+        <span class="kw">return</span>;   <span class="cm">// ← 99%를 버리려고 네트워크로 다 끌어왔다</span>
+    }</span>
+    repairService.compensate(e);
+}</code></pre>
+    <ul style="font-size:.92rem;margin:8px 0 0;padding-left:18px">
+      <li style="color:#dc2626"><b>안 쓸 데이터까지 전부 전송·역직렬화</b>한다</li>
+      <li style="color:#dc2626">조건이 바뀌면 <b>컨슈머 코드 수정 + 재배포</b></li>
+      <li style="color:#6b7280">단, <b>조건이 자주 바뀌거나 소비자마다 다를 때</b>는 이쪽이 유연하다</li>
+    </ul>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">Kafka · 정석</span> 발행 시점에 토픽을 쪼갠다</div>
+<pre><code><span class="cm">// 프로듀서: 분기를 여기로 올린다</span>
+String topic = e.isFailed()
+<span class="ln-good">        ? <span class="st">"payment-failed"</span>     <span class="cm">// 보정 워커용</span>
+        : <span class="st">"payment-succeeded"</span>;  <span class="cm">// 알림 워커용</span></span>
+kafkaTemplate.send(topic, e.paymentId(), e);
+
+<span class="kw">@KafkaListener</span>(topics = <span class="st">"payment-failed"</span>)
+<span class="kw">public void</span> <span class="fn">consume</span>(PaymentEvent e) {
+    repairService.compensate(e);  <span class="cm">// 조건문 없음</span>
+}</code></pre>
+    <ul style="font-size:.92rem;margin:8px 0 0;padding-left:18px">
+      <li style="color:#16a34a">필요한 것만 나른다 — <b>낭비 없음</b></li>
+      <li style="color:#16a34a">컨슈머가 단순해진다</li>
+      <li style="color:#d97706">대신 분기 축이 바뀌면 <b>토픽 설계 변경</b> — 비용이 크다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="rule">분기 조건 하나 바꾸는 비용: RabbitMQ는 <b>바인딩 수정</b>, Kafka는 <b>토픽 설계 변경 또는 컨슈머 재배포</b></div>
+
+<div class="callout warn" style="margin-top:16px">
+  <span class="t">균형을 잡는 한마디 — Kafka의 단순한 라우팅은 결함이 아니다</span>
+  브로커가 조건을 판정하려면 <b>메시지 내용을 열어봐야 하고</b>, 그러면 7절의 zero-copy가 성립하지 않는다. <b>"라우팅을 포기하고 처리량을 샀다"</b>가 정확한 서술이다. 그래서 Kafka 진영은 분기를 <b>스트림 처리 계층</b>(토픽 → 필터/분기 → 다른 토픽)으로 올려서 푼다 — 브로커가 아니라 <b>또 하나의 애플리케이션</b>이 하는 일이 된다.
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. Kafka는 왜 처리량이 높은가 — 근거 4+1</h2>
+
+<p>"Kafka가 빠르다"는 말은 흔한데, <b>근거를 세어 말할 수 있는 사람은 드물다.</b> 넷이다. 그리고 <b>넷 모두 "브로커가 메시지 단위 상태를 관리하지 않는다"는 한 가지 결정에서 파생된다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 344" role="img" aria-label="브로커가 메시지 단위 상태를 추적하지 않는다는 하나의 결정에서 순차 쓰기, 페이지 캐시, zero-copy, 배치라는 네 가지 처리량 근거가 파생되고 그 위에 파티션 수평 확장이 얹히는 구조">
+    <defs>
+      <marker id="s7a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="s7g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <rect x="310" y="18" width="500" height="56" rx="12" fill="#1e293b"/>
+    <text x="560" y="42" font-size="14" fill="#e2e8f0" text-anchor="middle" font-weight="700">하나의 설계 결정</text>
+    <text x="560" y="62" font-size="13" fill="#fbbf24" text-anchor="middle" font-weight="700">"브로커는 메시지 단위 상태를 추적하지 않는다"</text>
+
+    <path d="M420 74 C 380 100, 160 100, 140 122" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#s7a)"/>
+    <path d="M500 74 C 480 100, 400 100, 390 122" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#s7a)"/>
+    <path d="M620 74 C 640 100, 720 100, 730 122" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#s7a)"/>
+    <path d="M700 74 C 740 100, 960 100, 980 122" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#s7a)"/>
+
+    <!-- 1 -->
+    <rect x="18" y="128" width="244" height="122" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <circle cx="44" cy="154" r="14" fill="#2563eb"/><text x="44" y="159" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+    <text x="66" y="159" font-size="13" fill="#1d4ed8" font-weight="700">순차 쓰기 (append-only)</text>
+    <text x="34" y="184" font-size="11.5" fill="#1e3a8a">고칠 상태가 없다 → 제자리 수정이 없다</text>
+    <text x="34" y="203" font-size="11.5" fill="#1e3a8a">→ 파일 <tspan font-weight="700">끝에만</tspan> 이어 붙인다</text>
+    <text x="34" y="226" font-size="11.5" fill="#dc2626">랜덤 I/O: 매번 위치 찾는 비용</text>
+    <text x="34" y="243" font-size="11.5" fill="#16a34a">순차 I/O: 이미 그 자리에 있다</text>
+
+    <!-- 2 -->
+    <rect x="272" y="128" width="244" height="122" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <circle cx="298" cy="154" r="14" fill="#2563eb"/><text x="298" y="159" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+    <text x="320" y="159" font-size="13" fill="#1d4ed8" font-weight="700">OS 페이지 캐시</text>
+    <text x="288" y="184" font-size="11.5" fill="#1e3a8a">JVM 힙에 자체 캐시를 안 만든다</text>
+    <text x="288" y="203" font-size="11.5" fill="#1e3a8a">방금 쓴 것을 곧바로 읽는 패턴</text>
+    <text x="288" y="222" font-size="11.5" fill="#1e3a8a">→ 대부분 디스크에 <tspan font-weight="700">안 닿는다</tspan></text>
+    <text x="288" y="243" font-size="11.5" fill="#16a34a">부수 효과: GC 부담 없음, 재시작해도 캐시 유지</text>
+
+    <!-- 3 -->
+    <rect x="604" y="128" width="244" height="122" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <circle cx="630" cy="154" r="14" fill="#2563eb"/><text x="630" y="159" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+    <text x="652" y="159" font-size="13" fill="#1d4ed8" font-weight="700">zero-copy 전송</text>
+    <text x="620" y="184" font-size="11.5" fill="#1e3a8a">저장 포맷 = 전송 포맷</text>
+    <text x="620" y="203" font-size="11.5" fill="#1e3a8a">→ 바이트를 열어 가공할 필요 없음</text>
+    <text x="620" y="222" font-size="11.5" fill="#1e3a8a">→ 커널이 <tspan font-weight="700">파일 구간을 소켓으로 직행</tspan></text>
+    <text x="620" y="243" font-size="11.5" fill="#16a34a">복사 횟수 · 공간 전환 감소</text>
+
+    <!-- 4 -->
+    <rect x="858" y="128" width="244" height="122" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <circle cx="884" cy="154" r="14" fill="#2563eb"/><text x="884" y="159" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">4</text>
+    <text x="906" y="159" font-size="13" fill="#1d4ed8" font-weight="700">양쪽의 배치</text>
+    <text x="874" y="184" font-size="11.5" fill="#1e3a8a">프로듀서: 모아서 한 요청으로</text>
+    <text x="874" y="203" font-size="11.5" fill="#1e3a8a">컨슈머: 한 fetch로 여러 건</text>
+    <text x="874" y="222" font-size="11.5" fill="#1e3a8a">→ 요청당 <tspan font-weight="700">고정 비용을 나눠 낸다</tspan></text>
+    <text x="874" y="243" font-size="11.5" fill="#dc2626">대가: 지연 시간(배치를 기다린다)</text>
+
+    <!-- +1 -->
+    <path d="M560 250 L 560 274" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s7g)"/>
+    <rect x="230" y="280" width="660" height="50" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="560" y="300" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">+1 · 파티션 수평 확장 — 위 넷이 "한 대의 효율"이라면 이것은 "대수를 늘리는" 이야기</text>
+    <text x="560" y="319" font-size="11.5" fill="#166534" text-anchor="middle">토픽을 파티션으로 쪼개 여러 브로커에 분산 → 쓰기·읽기가 병렬로 흩어지고 컨슈머도 파티션 수만큼 늘어난다</text>
+  </svg>
+  <figcaption>면접에서 이 그림의 <b>맨 위 검은 박스를 먼저 말하고</b> 네 갈래를 내려가면, 항목을 외운 게 아니라 <b>구조에서 유도했다</b>는 인상을 준다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>인출 장치 — "순 · 캐 · 제 · 배 &nbsp;+&nbsp; 파"</h4>
+  <div class="grid g4">
+    <div class="tile big"><div class="k" style="font-size:1.3rem">순</div><div class="s">순차 쓰기</div></div>
+    <div class="tile big"><div class="k" style="font-size:1.3rem">캐</div><div class="s">페이지 캐시</div></div>
+    <div class="tile big"><div class="k" style="font-size:1.3rem">제</div><div class="s">제로 카피</div></div>
+    <div class="tile big"><div class="k" style="font-size:1.3rem">배</div><div class="s">배치</div></div>
+  </div>
+  <p style="margin-bottom:0">여기에 <b>"파(파티션)"</b>를 얹어 <b>4+1</b>로 답한다. 그리고 반드시 마무리 문장을 붙인다 — <b>"이 넷은 전부 브로커가 메시지 단위 상태를 추적하지 않기 때문에 성립합니다."</b></p>
+</div>
+
+<h3>7-1. 근거 ①·② — 순차 쓰기와 페이지 캐시</h3>
+<p>Kafka는 파티션 로그의 <b>끝에만</b> 데이터를 덧붙인다. 이미 쓴 메시지를 찾아가 고치는 일이 없다 — 브로커는 "누가 이 메시지를 ack했다" 같은 상태를 기록하지 않으니 <b>고칠 이유 자체가 없다.</b></p>
+<p>이것이 왜 빠른가. 디스크(회전 디스크는 물론이고 SSD도) 접근에는 <b>위치를 찾아가는 비용</b>이 붙는다. 여기저기 흩어진 곳을 고쳐 쓰는 <b>랜덤 I/O</b>는 이 비용을 매번 지불하지만, 파일 끝에 이어 붙이는 <b>순차 I/O</b>는 이미 그 자리에 있으므로 그 비용이 거의 없다.</p>
+<div class="rule">"메시지 단위 상태를 안 갖는다 → 제자리 수정이 없다 → <b>랜덤 I/O가 원천적으로 없다</b>"</div>
+
+<p><b>페이지 캐시</b>란 운영체제가 최근 읽고 쓴 파일 블록을 <b>커널 메모리에 들고 있는 캐시</b>다. Kafka는 자기만의 메시지 캐시를 JVM 힙에 만들지 않고 <b>파일 읽기·쓰기를 그냥 OS에 맡긴다.</b> 그런데 Kafka의 접근 패턴이 이 캐시와 절묘하게 맞는다 — 프로듀서는 로그 끝에 쓰고, 컨슈머는 대개 <b>그 끝 근처를 따라 읽는다.</b> 방금 쓴 데이터를 곧바로 읽는 패턴이므로 그 데이터는 아직 페이지 캐시에 있고, <b>컨슈머의 읽기는 디스크에 닿지 않는다.</b></p>
+<div class="grid g3">
+  <div class="tile ok"><div class="k">GC 부담 없음</div><div class="d">대용량 캐시를 JVM 힙에 두지 않으니 <b>GC가 훑을 객체가 없다.</b> 정지 시간이 짧다.</div></div>
+  <div class="tile ok"><div class="k">객체 오버헤드 없음</div><div class="d">메시지를 <b>자바 객체로 감쌀 필요가 없다.</b> 바이트 그대로 다룬다.</div></div>
+  <div class="tile ok"><div class="k">재시작에 강함</div><div class="d">브로커 프로세스가 죽었다 떠도 <b>페이지 캐시는 커널에 남아</b> 캐시를 다시 데울 필요가 없다.</div></div>
+</div>
+
+<h3>7-2. 근거 ③ — zero-copy가 실제로 줄이는 것</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 268" role="img" aria-label="일반 경로는 디스크에서 페이지 캐시를 거쳐 사용자 공간 애플리케이션 메모리로 복사한 뒤 다시 소켓 버퍼로 복사해 네트워크로 나가지만 zero-copy 경로는 사용자 공간을 거치지 않고 페이지 캐시에서 소켓 버퍼로 바로 전달되는 비교">
+    <defs>
+      <marker id="s7z" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="s7y" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <line x1="20" y1="96" x2="1100" y2="96" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="5 4"/>
+    <text x="1096" y="90" font-size="11" fill="#94a3b8" text-anchor="end">↑ 사용자 공간 &nbsp;/&nbsp; ↓ 커널 공간</text>
+
+    <text x="20" y="26" font-size="13.5" font-weight="700" fill="#dc2626">일반 경로 — 복사와 공간 전환이 여러 번</text>
+    <rect x="380" y="42" width="180" height="42" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="470" y="60" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">애플리케이션 메모리</text>
+    <text x="470" y="76" font-size="10.5" fill="#7f1d1d" text-anchor="middle">(사용자 공간 — 여기 올라온다)</text>
+
+    <rect x="30" y="110" width="130" height="42" rx="9" fill="#fff" stroke="#94a3b8"/><text x="95" y="136" font-size="12" fill="#374151" text-anchor="middle">디스크</text>
+    <line x1="160" y1="131" x2="204" y2="131" stroke="#dc2626" stroke-width="1.7" marker-end="url(#s7z)"/>
+    <rect x="210" y="110" width="150" height="42" rx="9" fill="#fff" stroke="#94a3b8"/><text x="285" y="136" font-size="12" fill="#374151" text-anchor="middle">페이지 캐시</text>
+    <path d="M340 110 L 400 88" stroke="#dc2626" stroke-width="1.7" marker-end="url(#s7z)"/>
+    <path d="M540 88 L 600 110" stroke="#dc2626" stroke-width="1.7" marker-end="url(#s7z)"/>
+    <rect x="608" y="110" width="150" height="42" rx="9" fill="#fff" stroke="#94a3b8"/><text x="683" y="136" font-size="12" fill="#374151" text-anchor="middle">소켓 버퍼</text>
+    <line x1="758" y1="131" x2="802" y2="131" stroke="#dc2626" stroke-width="1.7" marker-end="url(#s7z)"/>
+    <rect x="808" y="110" width="130" height="42" rx="9" fill="#fff" stroke="#94a3b8"/><text x="873" y="136" font-size="12" fill="#374151" text-anchor="middle">네트워크</text>
+    <text x="960" y="130" font-size="11.5" fill="#b91c1c" font-weight="700">복사 여러 번</text>
+    <text x="960" y="147" font-size="11.5" fill="#b91c1c">+ 커널↔사용자 전환</text>
+
+    <line x1="20" y1="172" x2="1100" y2="172" stroke="#e5e7eb" stroke-width="1"/>
+
+    <text x="20" y="196" font-size="13.5" font-weight="700" fill="#16a34a">zero-copy 경로 — 애플리케이션 메모리를 거치지 않는다 (sendfile 계열)</text>
+    <rect x="30" y="208" width="130" height="42" rx="9" fill="#fff" stroke="#94a3b8"/><text x="95" y="234" font-size="12" fill="#374151" text-anchor="middle">디스크</text>
+    <line x1="160" y1="229" x2="204" y2="229" stroke="#16a34a" stroke-width="1.7" marker-end="url(#s7y)"/>
+    <rect x="210" y="208" width="150" height="42" rx="9" fill="#f0fdf4" stroke="#16a34a"/><text x="285" y="234" font-size="12" fill="#166534" text-anchor="middle">페이지 캐시</text>
+    <line x1="360" y1="229" x2="600" y2="229" stroke="#16a34a" stroke-width="2.2" marker-end="url(#s7y)"/>
+    <text x="480" y="221" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">커널 안에서 바로 전달</text>
+    <rect x="608" y="208" width="150" height="42" rx="9" fill="#f0fdf4" stroke="#16a34a"/><text x="683" y="234" font-size="12" fill="#166534" text-anchor="middle">소켓 버퍼</text>
+    <line x1="758" y1="229" x2="802" y2="229" stroke="#16a34a" stroke-width="1.7" marker-end="url(#s7y)"/>
+    <rect x="808" y="208" width="130" height="42" rx="9" fill="#fff" stroke="#94a3b8"/><text x="873" y="234" font-size="12" fill="#374151" text-anchor="middle">네트워크</text>
+    <text x="960" y="228" font-size="11.5" fill="#166534" font-weight="700">가능한 이유:</text>
+    <text x="960" y="245" font-size="11.5" fill="#166534">가공할 게 없어서</text>
+  </svg>
+  <figcaption>Kafka는 컨슈머에게 로그를 넘길 때 <b>저장된 바이트를 열어보거나 가공할 필요가 없다</b> — 저장 포맷과 전송 포맷이 같기 때문이다. 그래서 커널에게 <b>"이 파일의 이 구간을 저 소켓으로 그대로 보내라"</b>고 시킬 수 있다.</figcaption>
+</figure>
+
+<div class="callout info">
+  <span class="t">여기서도 원인은 같다</span>
+  브로커가 메시지마다 <b>"누구에게 보냈는지" 같은 정보를 붙여야 했다면</b> 바이트를 열어 가공해야 하고, 그러면 zero-copy는 성립하지 않는다. <b>단순한 브로커 설계가 지불하는 배당금이다.</b>
+</div>
+
+<h3>7-3. 근거 ④ — 배치가 절약하는 것은 "요청당 고정 비용"</h3>
+<p>프로듀서는 <code>send()</code>를 부르는 즉시 네트워크로 보내지 않는다. 파티션별 버퍼에 메시지를 모아 두었다가, <b>정해진 크기가 차거나 정해진 대기 시간이 지나면 한 번의 요청으로 묶어</b> 보낸다. 컨슈머도 마찬가지로 한 번의 fetch 요청으로 여러 메시지를 한꺼번에 받아온다.</p>
+<p>이것이 왜 이득인가. 요청 하나에는 <b>메시지 개수와 무관한 고정 비용</b>이 붙는다 — 프로토콜 헤더, 네트워크 왕복 지연, 시스템 콜, 브로커의 요청 처리 오버헤드.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>1건씩 1,000번</h4>
+    <p style="margin:0;font-size:.94rem">고정 비용을 <b>1,000번</b> 지불한다. 실제 데이터보다 <b>봉투값이 더 나가는</b> 상황.</p>
+  </div>
+  <div class="pane g">
+    <h4>100건씩 10번</h4>
+    <p style="margin:0;font-size:.94rem">고정 비용을 <b>10번</b>만 낸다. 게다가 <b>압축이 배치 단위로</b> 걸려 비슷한 메시지끼리 모이면 <b>압축률까지 좋아진다.</b></p>
+  </div>
+</div>
+<p><b>대가는 지연 시간이다.</b> 배치를 채우려 기다리는 시간만큼 메시지가 늦게 나간다. <b>처리량과 지연은 여기서 맞바꾸는 관계다.</b></p>
+
+<div class="memo red">
+  <h4>반드시 붙여야 균형이 잡히는 말 — "RabbitMQ가 못 만든 게 아니다"</h4>
+  <p><b>메시지 단위로 배달 상태를 관리한다는 요구가 위 최적화들과 애초에 양립하지 않는다.</b> 메시지마다 상태를 갱신해야 하니 <b>순수 순차 쓰기가 아니고</b>, 컨슈머별로 다른 메시지를 골라 보내야 하니 <b>파일 구간을 통째로 소켓에 흘려보낼 수도 없다.</b> 대신 얻는 것이 <b>라우팅과 메시지 단위 제어</b>다.</p>
+  <div class="rule red" style="margin-bottom:0">둘은 같은 목표를 두고 성능이 갈린 게 아니라, <b>애초에 다른 것을 팔고 다른 것을 산 설계</b>다</div>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 실패 처리 — 개별 ack vs 오프셋 <span class="badge senior">시니어 변별</span></h2>
+
+<p>두 시스템의 차이가 <b>가장 날카롭게 드러나는 지점</b>이다. 여기를 설명할 수 있으면 "써 봤다"가 아니라 "실패 경로까지 설계해 봤다"가 된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="RabbitMQ에서는 실패한 메시지 하나만 nack해 DLX로 격리하고 나머지가 계속 흐르는 반면 Kafka에서는 오프셋 12에서 실패하면 커밋이 11에 멈춰 그 뒤 메시지 전부가 막히는 poison pill 상황 비교">
+    <defs>
+      <marker id="s8g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="s8r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="s8w" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+    <line x1="560" y1="14" x2="560" y2="316" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- LEFT RabbitMQ -->
+    <text x="280" y="32" font-size="14.5" font-weight="700" fill="#16a34a" text-anchor="middle">RabbitMQ — 메시지 단위 ack</text>
+    <text x="280" y="52" font-size="12" fill="#6b7280" text-anchor="middle">막히는 것은 실패한 <tspan font-weight="700">그 한 건뿐</tspan></text>
+
+    <text x="34" y="82" font-size="11.5" fill="#6b7280">큐</text>
+    <g>
+      <rect x="34" y="90" width="88" height="44" rx="8" fill="#f0fdf4" stroke="#16a34a"/><text x="78" y="118" font-size="12.5" fill="#166534" text-anchor="middle" class="mono">m1</text>
+      <rect x="130" y="90" width="88" height="44" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/><text x="174" y="112" font-size="12.5" fill="#b91c1c" text-anchor="middle" class="mono">m2</text><text x="174" y="127" font-size="10" fill="#b91c1c" text-anchor="middle">실패</text>
+      <rect x="226" y="90" width="88" height="44" rx="8" fill="#f0fdf4" stroke="#16a34a"/><text x="270" y="118" font-size="12.5" fill="#166534" text-anchor="middle" class="mono">m3</text>
+      <rect x="322" y="90" width="88" height="44" rx="8" fill="#f0fdf4" stroke="#16a34a"/><text x="366" y="118" font-size="12.5" fill="#166534" text-anchor="middle" class="mono">m4</text>
+      <rect x="418" y="90" width="88" height="44" rx="8" fill="#f0fdf4" stroke="#16a34a"/><text x="462" y="118" font-size="12.5" fill="#166534" text-anchor="middle" class="mono">m5</text>
+    </g>
+
+    <path d="M174 134 L 174 178" stroke="#dc2626" stroke-width="1.8" marker-end="url(#s8r)"/>
+    <text x="186" y="160" font-size="11.5" fill="#b91c1c" font-weight="700">nack (requeue=false)</text>
+    <rect x="96" y="184" width="156" height="42" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="174" y="203" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">DLX → DLQ</text>
+    <text x="174" y="219" font-size="10.5" fill="#7f1d1d" text-anchor="middle">격리 — 나중에 조사·재투입</text>
+
+    <path d="M270 134 C 270 152, 380 152, 400 168" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s8g)"/>
+    <path d="M366 134 C 380 150, 400 156, 410 168" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s8g)"/>
+    <path d="M462 134 C 462 150, 440 158, 424 168" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s8g)"/>
+    <rect x="330" y="174" width="176" height="42" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="418" y="193" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">m3·m4·m5 정상 처리</text>
+    <text x="418" y="209" font-size="10.5" fill="#166534" text-anchor="middle">아무 영향 없이 흘러간다</text>
+
+    <rect x="34" y="244" width="472" height="66" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="50" y="266" font-size="12.5" fill="#374151">브로커가 <tspan font-weight="700">메시지마다 배달 상태를 들고 있으므로</tspan></text>
+    <text x="50" y="285" font-size="12.5" fill="#374151">"한 건만 골라내는" 조작이 <tspan font-weight="700">구조적으로 성립</tspan>한다.</text>
+    <text x="50" y="303" font-size="12" fill="#16a34a" font-weight="700">→ 격리는 브로커 기능이다 (설정으로 끝)</text>
+
+    <!-- RIGHT Kafka -->
+    <text x="840" y="32" font-size="14.5" font-weight="700" fill="#dc2626" text-anchor="middle">Kafka — 오프셋은 숫자 하나</text>
+    <text x="840" y="52" font-size="12" fill="#6b7280" text-anchor="middle">한 건이 막히면 <tspan font-weight="700">그 뒤가 전부 막힌다 (poison pill)</tspan></text>
+
+    <text x="594" y="82" font-size="11.5" fill="#6b7280">파티션 로그</text>
+    <g>
+      <rect x="594" y="90" width="76" height="44" rx="8" fill="#f0fdf4" stroke="#86efac"/><text x="632" y="112" font-size="12" fill="#166534" text-anchor="middle" class="mono">10</text><text x="632" y="127" font-size="9.5" fill="#166534" text-anchor="middle">완료</text>
+      <rect x="676" y="90" width="76" height="44" rx="8" fill="#f0fdf4" stroke="#86efac"/><text x="714" y="112" font-size="12" fill="#166534" text-anchor="middle" class="mono">11</text><text x="714" y="127" font-size="9.5" fill="#166534" text-anchor="middle">완료</text>
+      <rect x="758" y="90" width="76" height="44" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2.4"/><text x="796" y="112" font-size="12" fill="#b91c1c" text-anchor="middle" class="mono" font-weight="700">12</text><text x="796" y="127" font-size="9.5" fill="#b91c1c" text-anchor="middle">독약</text>
+      <rect x="840" y="90" width="76" height="44" rx="8" fill="#f8fafc" stroke="#cbd5e1"/><text x="878" y="112" font-size="12" fill="#94a3b8" text-anchor="middle" class="mono">13</text><text x="878" y="127" font-size="9.5" fill="#94a3b8" text-anchor="middle">대기</text>
+      <rect x="922" y="90" width="76" height="44" rx="8" fill="#f8fafc" stroke="#cbd5e1"/><text x="960" y="112" font-size="12" fill="#94a3b8" text-anchor="middle" class="mono">14</text><text x="960" y="127" font-size="9.5" fill="#94a3b8" text-anchor="middle">대기</text>
+      <rect x="1004" y="90" width="76" height="44" rx="8" fill="#f8fafc" stroke="#cbd5e1"/><text x="1042" y="112" font-size="12" fill="#94a3b8" text-anchor="middle" class="mono">15</text><text x="1042" y="127" font-size="9.5" fill="#94a3b8" text-anchor="middle">대기</text>
+    </g>
+
+    <path d="M796 152 l -8 -12 l 16 0 z" fill="#dc2626"/>
+    <line x1="796" y1="152" x2="796" y2="174" stroke="#dc2626" stroke-width="1.8"/>
+    <rect x="700" y="174" width="192" height="42" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="796" y="192" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">커밋이 12 직전에서 멈춘다</text>
+    <text x="796" y="208" font-size="10.5" fill="#7f1d1d" text-anchor="middle">재시작하면 다시 12부터 읽는다</text>
+
+    <line x1="840" y1="146" x2="1080" y2="146" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="960" y="163" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">13·14·15는 멀쩡한데 아무도 못 읽는다</text>
+
+    <rect x="594" y="244" width="486" height="66" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="610" y="266" font-size="12.5" fill="#374151">13·14를 처리해 봐야 <tspan font-weight="700">커밋할 수 없다</tspan> — 커밋하는 순간</text>
+    <text x="610" y="285" font-size="12.5" fill="#374151">아직 처리 못 한 <tspan class="mono">12</tspan>를 <tspan font-weight="700">건너뛴 것</tspan>이 되기 때문이다.</text>
+    <text x="610" y="303" font-size="12" fill="#dc2626" font-weight="700">→ 격리를 애플리케이션이 직접 만들어야 한다 (재시도 + DLQ 토픽 + 오프셋 전진)</text>
+  </svg>
+  <figcaption><b>고속도로 비유가 잘 맞는다.</b> RabbitMQ는 고장 난 차를 <b>갓길(DLQ)로 빼내</b> 뒤차를 보내지만, Kafka의 파티션은 <b>차선이 하나뿐인 터널</b>이라 앞차가 서면 뒤가 전부 선다. 뒤차가 먼저 지나갈 방법이 없다.</figcaption>
+</figure>
+
+<h3>8-1. 코드로 보는 차이 — 같은 "실패 격리"를 만드는 두 가지 방법</h3>
+
+<div class="codehead bad"><span class="tag">Kafka · 문제</span> 예외를 그냥 던지면 같은 오프셋을 영원히 다시 읽는다</div>
+<pre><code><span class="kw">@KafkaListener</span>(topics = <span class="st">"orders"</span>, groupId = <span class="st">"order-worker"</span>)
+<span class="kw">public void</span> <span class="fn">consume</span>(OrderEvent e) {
+<span class="ln-bad">    orderService.process(e);   <span class="cm">// 이 건이 항상 실패하는 메시지라면?</span></span>
+}
+<span class="cm">// 예외 → 오프셋 커밋 안 됨 → 같은 레코드를 또 poll → 또 실패 → ...</span>
+<span class="cm">// 컨슈머는 살아 있고 CPU도 도는데 그 파티션의 랙만 조용히 쌓인다.</span>
+<span class="cm">// 더 나쁜 것: 재시도로 poll 간격을 넘기면 죽은 것으로 판정돼 리밸런싱이 터지고,</span>
+<span class="cm">// 파티션을 넘겨받은 다른 컨슈머가 같은 독약을 삼킨다.</span></code></pre>
+
+<div class="codehead good"><span class="tag">Kafka · 해결</span> 제한 재시도 후 DLQ 토픽으로 옮기고 <b>오프셋은 전진</b>시킨다</div>
+<pre><code><span class="kw">@Bean</span>
+<span class="kw">public</span> DefaultErrorHandler <span class="fn">errorHandler</span>(KafkaTemplate&lt;String, Object&gt; template) {
+<span class="ln-good">    <span class="cm">// 복구자: 끝내 실패한 레코드를 DLQ 토픽으로 발행한다 (기본 대상: 원본토픽 + ".DLT")</span>
+    <span class="kw">var</span> recoverer = <span class="kw">new</span> DeadLetterPublishingRecoverer(template);
+    <span class="cm">// 1초 간격 2회까지만 재시도하고, 그 뒤에는 recoverer로 넘긴다</span>
+    <span class="kw">return new</span> DefaultErrorHandler(recoverer, <span class="kw">new</span> FixedBackOff(1000L, 2L));</span>
+}
+<span class="cm">// 복구까지 끝나면 그 레코드는 "처리된 것"으로 간주되어 오프셋이 전진한다.</span>
+<span class="cm">// → 13, 14, 15가 다시 흐른다. RabbitMQ가 설정으로 주던 것을 여기서는 코드로 만든 것이다.</span>
+<span class="note">주의</span> <span class="cm">DLQ는 버리는 곳이 아니다 — 유입 알림과 재투입 절차까지 세트다.</span></code></pre>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">RabbitMQ · 함정</span> requeue=true 무한 루프</div>
+<pre><code><span class="kw">@RabbitListener</span>(queues = <span class="st">"order.q"</span>)
+<span class="kw">public void</span> <span class="fn">on</span>(OrderEvent e, Channel ch, <span class="kw">long</span> tag) <span class="kw">throws</span> IOException {
+    <span class="kw">try</span> { orderService.process(e); ch.basicAck(tag, <span class="kw">false</span>); }
+    <span class="kw">catch</span> (Exception ex) {
+<span class="ln-bad">        ch.basicNack(tag, <span class="kw">false</span>, <span class="kw">true</span>);  <span class="cm">// requeue=true → 큐 맨 앞으로 즉시 복귀</span></span>
+    }
+}
+<span class="cm">// 항상 실패하는 메시지가 초당 수천 번 재처리되는 핫 루프가 된다.</span>
+<span class="cm">// Kafka와 증상이 다를 뿐(막히는 게 아니라 태우는 것) 결과는 똑같이 장애다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">RabbitMQ · 정석</span> DLX 지정 + requeue=false</div>
+<pre><code><span class="ln-good"><span class="kw">@Bean</span> Queue orderQueue() {
+    <span class="kw">return</span> QueueBuilder.durable(<span class="st">"order.q"</span>)
+        .withArgument(<span class="st">"x-dead-letter-exchange"</span>, <span class="st">"order.dlx"</span>)
+        .build();   <span class="cm">// ← 격리 경로를 브로커에 선언해 둔다</span>
+}</span>
+
+<span class="cm">// 컨슈머는 "이건 못 살린다"만 알리면 된다</span>
+ch.basicNack(tag, <span class="kw">false</span>, <span class="kw">false</span>);  <span class="cm">// requeue=false → DLX로 이동</span>
+<span class="cm">// 나머지 메시지는 영향 없이 계속 처리된다.</span></code></pre>
+  </div>
+</div>
+
+<div class="rule red">한 줄 요약: <b>RabbitMQ가 브로커 기능으로 주는 것을 Kafka에서는 애플리케이션이 만든다</b></div>
+
+<h3>8-2. 그래서 "작업 큐면 RabbitMQ, 이벤트 스트림이면 Kafka"인 이유</h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4>작업 큐 — 메시지 하나 = 독립된 일감</h4>
+    <p style="font-size:.94rem;margin:0 0 6px">이미지 변환 요청 A와 B 사이에는 <b>순서도 인과도 없다.</b></p>
+    <ul>
+      <li>A가 실패하면 <b>A만 따로 다루고 B는 그냥 진행되는 것</b>이 정확히 원하는 동작</li>
+      <li>메시지 단위 ack이 그것을 <b>그대로 제공</b>한다</li>
+    </ul>
+  </div>
+  <div class="pane b">
+    <h4>이벤트 스트림 — 메시지 하나 = 사실의 기록</h4>
+    <p style="font-size:.94rem;margin:0 0 6px">주문 생성 → 수정 → 취소는 <b>순서가 의미를 갖고</b>, 뒤 이벤트가 앞을 전제한다.</p>
+    <ul>
+      <li>진도를 <b>"여기까지 반영했다"는 하나의 위치</b>로 말하는 것이 자연스럽다</li>
+      <li>순서를 지키려면 앞이 막혔을 때 뒤가 진행되면 <b>안 된다</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>이 절의 진짜 결론 — 오프셋은 결함이 아니다</h4>
+  <p><b>Kafka의 오프셋은 결함이 아니라 스트림 모델의 필연</b>이다. 그리고 오프셋 하나로 진도를 표현하는 덕분에 브로커가 메시지 단위 상태를 안 가져도 되고, 그래서 <b>7절의 최적화들이 성립한다.</b></p>
+  <div class="rule" style="margin-bottom:0">처리량과 실패 격리 유연성은 <b>같은 뿌리에서 갈라진 앞뒷면</b>이다</div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 요구사항 → 선택 매핑 (면접의 승부처)</h2>
+
+<p>기능 나열이 아니라 <b>"우리 요구사항이 무엇인가"</b>에서 출발한다. 표를 놓고 항목을 대조하는 방식으로는 결론이 안 난다 — <b>묻는 순서가 있다.</b> 앞의 두 질문 중 하나라도 "예"면 Kafka 쪽으로 기울고, <b>둘 다 "아니오"라야 비로소 RabbitMQ의 강점이 값을 하기 시작한다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 418" role="img" aria-label="네 개의 질문을 순서대로 물어 Kafka와 RabbitMQ 중 하나로 내려가는 판단 흐름도. 첫째 여러 소비자가 각자 진도로 읽는가, 둘째 되감아 다시 읽어야 하는가, 둘 중 하나라도 예면 Kafka. 둘 다 아니오면 셋째 라우팅과 메시지 단위 제어와 실패 격리가 필요한가를 묻고 예면 RabbitMQ, 마지막으로 팀의 운영 역량을 비용에 넣는다">
+    <defs>
+      <marker id="s9a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="s9g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="s9b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">순서대로 묻는다 — 위에서 하나라도 걸리면 아래는 볼 필요가 없다</text>
+
+    <!-- Q1 -->
+    <rect x="60" y="46" width="560" height="60" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="80" y="70" font-size="13" fill="#1d4ed8" font-weight="700">Q1. 같은 메시지를 여러 소비자가 각자 독립적으로, 각자의 진도로 읽어야 하는가?</text>
+    <text x="80" y="92" font-size="11.5" fill="#1e3a8a">주문 이벤트 하나를 알림·적립·정산·데이터 분석 팀이 각자 소비하는 그림이라면 → 예</text>
+
+    <path d="M620 76 L 786 76" stroke="#16a34a" stroke-width="2" marker-end="url(#s9g)"/>
+    <text x="700" y="68" font-size="12" fill="#16a34a" font-weight="700">예</text>
+    <line x1="200" y1="106" x2="200" y2="130" stroke="#475569" stroke-width="1.8" marker-end="url(#s9a)"/>
+    <text x="214" y="124" font-size="12" fill="#475569" font-weight="700">아니오</text>
+
+    <!-- Q2 -->
+    <rect x="60" y="136" width="560" height="60" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="80" y="160" font-size="13" fill="#1d4ed8" font-weight="700">Q2. 나중에 되감아 다시 읽어야 하는가? (replay)</text>
+    <text x="80" y="182" font-size="11.5" fill="#1e3a8a">컨슈머 버그로 3일치를 잘못 처리했다 / 신규 서비스가 과거 이벤트로 초기 상태를 만든다 → 예</text>
+
+    <path d="M620 166 C 700 166, 740 120, 786 104" stroke="#16a34a" stroke-width="2" marker-end="url(#s9g)"/>
+    <text x="700" y="150" font-size="12" fill="#16a34a" font-weight="700">예</text>
+    <line x1="200" y1="196" x2="200" y2="220" stroke="#475569" stroke-width="1.8" marker-end="url(#s9a)"/>
+    <text x="214" y="214" font-size="12" fill="#475569" font-weight="700">아니오 (둘 다)</text>
+
+    <!-- Kafka result -->
+    <rect x="792" y="46" width="300" height="72" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="942" y="76" font-size="16" fill="#166534" text-anchor="middle" font-weight="700">Kafka (로그)</text>
+    <text x="942" y="99" font-size="11.5" fill="#166534" text-anchor="middle">"이 데이터를 여러 곳에서, 여러 번 읽는다"</text>
+
+    <!-- Q3 -->
+    <rect x="60" y="226" width="560" height="98" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="80" y="250" font-size="13" fill="#92400e" font-weight="700">Q3. 이제 RabbitMQ의 강점을 묻는다 — 하나라도 예인가?</text>
+    <text x="80" y="272" font-size="11.5" fill="#78350f">· 라우팅 조건이 복잡한가 (수신자·유형별 분기 배달)?</text>
+    <text x="80" y="291" font-size="11.5" fill="#78350f">· 지연 메시지, 우선순위, 메시지별 TTL 같은 <tspan font-weight="700">메시지 단위 제어</tspan>가 필요한가?</text>
+    <text x="80" y="310" font-size="11.5" fill="#78350f">· 실패한 한 건을 나머지와 <tspan font-weight="700">독립적으로</tspan> 다뤄야 하는가? (8절)</text>
+
+    <path d="M620 275 L 786 275" stroke="#2563eb" stroke-width="2" marker-end="url(#s9b)"/>
+    <text x="700" y="267" font-size="12" fill="#2563eb" font-weight="700">예</text>
+    <rect x="792" y="240" width="300" height="72" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="942" y="270" font-size="16" fill="#1d4ed8" text-anchor="middle" font-weight="700">RabbitMQ (큐)</text>
+    <text x="942" y="293" font-size="11.5" fill="#1d4ed8" text-anchor="middle">"한 번 배달하고 끝내면 된다" · 훨씬 적은 코드</text>
+
+    <line x1="200" y1="324" x2="200" y2="346" stroke="#475569" stroke-width="1.8" marker-end="url(#s9a)"/>
+    <text x="214" y="341" font-size="12" fill="#475569" font-weight="700">전부 아니오</text>
+
+    <!-- Q4 -->
+    <rect x="60" y="352" width="1032" height="54" rx="11" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="80" y="374" font-size="12.5" fill="#374151"><tspan font-weight="700">Q4. 마지막으로 운영 역량을 비용에 넣는다</tspan> — 팀이 이미 운영해 본 브로커가 있다면 그 경험은 <tspan font-weight="700">실제 비용 항목</tspan>이다.</text>
+    <text x="80" y="394" font-size="12.5" fill="#374151">Kafka는 브로커·주키퍼(또는 KRaft)·파티션 설계·컨슈머 랙 모니터링까지 <tspan font-weight="700">운영 표면이 넓다.</tspan></text>
+  </svg>
+  <figcaption>Q1·Q2는 <b>"구조적으로 Kafka가 아니면 못 하는 일"</b>이라 우선순위가 높고, Q3은 <b>"RabbitMQ면 훨씬 싸게 되는 일"</b>이다. 이 비대칭이 순서를 만든다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>면접장에서 그대로 쓰는 두 질문</h4>
+  <div class="rule">"이 데이터를 <b>나중에 다시 읽을 일이 있는가?</b> <b>소비자가 늘어날 것인가?</b>"</div>
+  <div class="grid g2" style="margin-top:10px">
+    <div class="tile ok"><div class="k" style="font-family:inherit">→ Yes: Kafka (로그)</div><div class="d">되감기와 새 구독자가 <b>구조로 보장</b>된다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">→ No, 배달하고 끝: RabbitMQ (큐)</div><div class="d">라우팅·메시지 제어·개별 격리를 <b>적은 코드로</b> 얻는다.</div></div>
+  </div>
+</div>
+
+<h3>9-1. 두 질문에 흔히 나오는 반문과 답</h3>
+<div class="step">
+  <div class="n">Q1</div>
+  <div class="body"><b>"RabbitMQ도 fanout으로 여러 큐에 복제하면 되지 않나?"</b><br>
+  3절에서 본 대로 <b>발행 시점에 존재하는 큐에만</b> 들어간다. 반년 뒤 데이터 분석 팀이 합류해 큐를 새로 바인딩하면 <b>그 팀은 그날 이후 메시지만 받는다.</b> Kafka는 새 컨슈머 그룹이 <b>보존 기간 안의 과거 데이터를 처음부터</b> 읽을 수 있다. <b>소비자가 늘어날 것 같으면 이 차이가 결정적이다.</b></div>
+</div>
+<div class="step">
+  <div class="n">Q2</div>
+  <div class="body"><b>"RabbitMQ로는 재처리가 정말 불가능한가?"</b><br>
+  기본 큐 모델에서 <b>ack된 메시지는 이미 없다.</b> 되감으려면 <b>발행 시점에 별도 저장소에 복사해 두는 장치를 따로 지어야 하고, 그것은 사실상 로그를 직접 만드는 일이다.</b> 직접 만드느니 그 일을 이미 하는 도구를 쓰는 게 맞다.</div>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 정리 — 각각이 맞는 경우, 그리고 둘 다 쓰기</h2>
+
+<div class="split wide">
+  <div class="pane g">
+    <h4>Kafka가 맞는 경우 — "데이터를 여러 곳에서, 여러 번 읽어야 한다"</h4>
+    <ul>
+      <li>하나의 이벤트를 여러 팀/서비스가 <b>독립적으로 구독</b> (주문 이벤트를 알림·적립·정산·데이터 분석이 각자 소비)</li>
+      <li>컨슈머 버그로 잘못 처리한 데이터를 <b>되감아 재처리(replay)</b>해야 함</li>
+      <li>대용량 스트림 처리, 로그/메트릭 수집처럼 <b>처리량이 최우선</b></li>
+      <li>이벤트를 <b>"시스템의 사실 기록(로그)"</b>으로 남겨 나중에 새 소비자가 과거부터 읽게 하고 싶은 경우</li>
+    </ul>
+  </div>
+  <div class="pane b">
+    <h4>RabbitMQ가 맞는 경우 — "작업을 한 번 배달하고 끝내면 된다"</h4>
+    <ul>
+      <li>워커에게 작업을 분배하는 <b>작업 큐</b> (이미지 변환, 메일 발송)</li>
+      <li>라우팅 조건이 복잡 (수신자·유형별 분기 배달)</li>
+      <li><b>지연 메시지, 우선순위, 메시지별 TTL</b> 같은 메시지 단위 제어가 필요</li>
+      <li>메시지량이 크지 않고 <b>브로커 운영을 가볍게</b> 가져가고 싶은 경우</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">한 걸음 더 — 둘을 같이 쓰는 것도 이상한 선택이 아니다</span>
+  <b>도메인 이벤트 스트림은 Kafka</b>로 흘리고, <b>메일 발송·썸네일 생성 같은 작업 큐는 RabbitMQ</b>로 두는 분리다. 다만 <b>브로커를 둘 운영하는 비용이 실제로 값을 하는지</b> — 즉 한쪽만으로 감당이 안 되는 요구가 정말 있는지 — 를 먼저 확인해야 한다. <b>"쓸 수 있다"와 "둘 다 둘 만하다"는 다른 판단이다.</b>
+</div>
+
+<div class="callout warn">
+  <span class="t">경계가 흐려지고 있다는 점도 알아두면 가산점</span>
+  최근 RabbitMQ도 <b>로그 기반의 스트림 기능</b>을 추가해 "재소비 불가"라는 선이 절대적이지는 않다. 다만 <b>설계 기원이 다르고, 각자의 본진(라우팅 vs 스트림)에서 여전히 강하다</b>고 정리하면 균형 잡힌 답이 된다. <b>"경계는 흐려졌지만 무게중심은 그대로"</b>가 안전한 표현이다.
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 더 들어가려면 — 문서 지도</h2>
+<p>여기까지가 이 문서의 몫이다 — <b>두 도구의 구조 차이와, 그 차이가 요구사항을 만났을 때의 선택 기준.</b> 실제 운영 관점으로 파고드는 내용은 아래 문서들로 이어진다.</p>
+
+<table class="wide">
+  <thead><tr><th style="width:230px">주제</th><th style="width:330px">문서</th><th>이 문서와의 연결</th></tr></thead>
+  <tbody>
+    <tr><td>구성요소와 라우팅 경로, 조용한 유실</td><td><code>10-rabbitmq-core-components.md</code></td><td>2절의 어휘를 실무 장애 추적까지 확장</td></tr>
+    <tr><td>exchange 타입 선택과 다수 소비자 설계</td><td><code>11-rabbitmq-exchange-types-routing.md</code></td><td>3절의 라우팅을 설계 판단으로</td></tr>
+    <tr class="hl"><td>ack/nack, prefetch, 오프셋과의 대비</td><td><code>12-rabbitmq-ack-nack-prefetch.md</code></td><td>8절의 "개별 ack vs 오프셋"을 깊게</td></tr>
+    <tr><td>내구성 3종과 publisher confirms</td><td><code>13-rabbitmq-durability-publisher-confirms.md</code></td><td>Kafka <code>acks</code>에 대응하는 축</td></tr>
+    <tr class="hl"><td>재시도·DLX·DLQ, requeue 무한 루프</td><td><code>14-rabbitmq-retry-dlx-dlq.md</code></td><td>8-1 코드의 실무 구현 전체</td></tr>
+    <tr><td>순서 보장의 조건과 키별 큐 분리</td><td><code>15-rabbitmq-message-ordering.md</code></td><td>파티션 키에 대응하는 해법</td></tr>
+    <tr><td>컨슈머 처리량 올리기</td><td><code>16-rabbitmq-consumer-throughput-prefetch.md</code></td><td>파티션 상한이 없다는 이점</td></tr>
+    <tr><td>classic vs quorum queue, split-brain</td><td><code>17-classic-vs-quorum-queue.md</code></td><td>Kafka ISR/<code>min.insync.replicas</code>와 대비</td></tr>
+    <tr><td>큐 적체 진단과 해소</td><td><code>18-rabbitmq-queue-backlog-diagnosis.md</code></td><td>컨슈머 랙과 증상이 다른 이유</td></tr>
+    <tr><td>지연 메시지와 스케줄링</td><td><code>19-rabbitmq-delayed-message-scheduling.md</code></td><td>Kafka로는 어려운 영역</td></tr>
+    <tr><td>Outbox + 폴링 퍼블리셔</td><td><code>20-rabbitmq-outbox-polling-publisher.md</code></td><td>CDC(<code>28-transactional-outbox-cdc-kafka.md</code>)의 RabbitMQ 판</td></tr>
+    <tr class="hl"><td>Kafka 컨슈머 재시도·DLQ 설계</td><td><code>25-consumer-retry-dlq-design.md</code></td><td>8절 poison pill 대응의 전체 설계</td></tr>
+    <tr><td>파티션 증설의 부작용</td><td><code>32-partition-increase-side-effects.md</code></td><td>7절 "+1 수평 확장"의 대가</td></tr>
+    <tr><td>Kafka 이관 판단과 전략</td><td><code>34-rabbitmq-to-kafka-migration.md</code></td><td>9절의 선택을 시간축으로 확장</td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>12-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">두 시스템의 근본 차이 한 문장?</div><div class="d">소비 후 메시지가 <b>남는가(로그) / 사라지는가(큐)</b>. 진도를 <b>컨슈머가 오프셋으로 / 브로커가 메시지 단위로</b> 들고 있다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">RabbitMQ 부품 4종?</div><div class="d"><b>Exchange · Queue · Binding · Routing key.</b> "봉투 주소(R)를 분류 창구(E)에 내면 안내판(B)이 우편함(Q)으로."</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">exchange 타입 3종과 와일드카드?</div><div class="d"><b>direct(정확히 일치) · fanout(전부 복제) · topic(패턴).</b> <code>*</code>는 한 단어, <code>#</code>은 0개 이상.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">Kafka 처리량 근거 4+1?</div><div class="d"><b>순 · 캐 · 제 · 배 + 파</b> — 순차 쓰기, 페이지 캐시, zero-copy, 배치, 파티션 확장. 넷 다 <b>"메시지 단위 상태 없음"</b>에서 나온다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">한 건이 계속 실패하면?</div><div class="d">RabbitMQ는 <b>nack → DLX 격리, 나머지 정상.</b> Kafka는 <b>그 파티션 전체 정지(poison pill)</b> → 재시도 + DLQ 토픽 + 오프셋 전진을 <b>직접 구현.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">선택의 두 질문?</div><div class="d">"<b>다시 읽을 일이 있는가</b>, <b>소비자가 늘어날 것인가</b>" → 예면 Kafka. 아니면 라우팅·지연/우선순위·개별 격리를 보고 RabbitMQ. 마지막에 <b>운영 역량.</b></div></div>
+</div>
+
+<h3>12-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>Kafka는 왜 그렇게 처리량이 높은가요? <span class="badge core">필수</span><span class="hint">힌트: 근거를 "세어서" 답한다. 그리고 마지막 한 문장이 진짜 점수다</span></summary><div class="a">
+  <p><b>넷이고, 그 위에 하나가 얹힌다.</b></p>
+  <p><b>① append-only 순차 쓰기</b> — 브로커가 메시지 단위 상태를 안 가지므로 제자리 수정이 없고, 로그 끝에 이어 붙이기만 한다. 디스크는 랜덤 I/O에 약하지만 <b>순차 I/O에는 매우 빠르다.</b></p>
+  <p><b>② OS 페이지 캐시 활용</b> — 별도 캐시 계층을 JVM 힙에 두지 않고 파일 I/O를 OS에 맡긴다. <b>방금 쓴 데이터를 곧바로 읽는 패턴</b>이라 대부분 디스크에 닿지 않고, GC 부담도 없다.</p>
+  <p><b>③ zero-copy 전송</b> — 저장 포맷과 전송 포맷이 같아 바이트를 가공할 필요가 없으므로, <b>커널 페이지 캐시에서 소켓으로 바로</b> 흘려보낸다. 복사와 공간 전환이 줄어든다.</p>
+  <p><b>④ 양쪽의 배치</b> — 프로듀서는 모아서 한 요청으로 보내고 컨슈머는 한 요청으로 여러 건을 받는다. <b>요청당 고정 비용이 여러 메시지에 나눠지고</b> 압축률도 좋아진다. <b>대가는 지연 시간이다.</b></p>
+  <p>그 위에 <b>파티션 수평 확장</b>이 얹힌다 — 처리량이 필요하면 파티션과 브로커를 늘린다.</p>
+  <div class="rule">마무리: <b>"네 가지 모두가 '브로커가 메시지 단위 상태를 추적하지 않는다'는 한 가지 결정에서 나옵니다."</b></div>
+  <p style="margin-bottom:0" class="sub">이 한 문장이 있고 없고가 <b>"항목을 외웠다"와 "구조에서 유도했다"</b>를 가른다.</p>
+</div></details>
+
+<details class="q"><summary>RabbitMQ로는 재처리가 정말 불가능한가요?<span class="hint">힌트: 우회 방법을 끝까지 따라가면 무엇을 만들게 되는가</span></summary><div class="a">
+  <p><b>기본 큐 모델에서는 ack된 메시지가 삭제되므로 불가능하다.</b> 우회하려면 <b>발행 시점에 별도 저장소에 복사해 두거나</b> 원 발행자에게 <b>재발행을 요청</b>해야 한다.</p>
+  <p>그런데 "발행되는 모든 메시지를 순서대로 어딘가에 적어 두고 나중에 위치를 지정해 다시 읽는 장치"를 만들면 — <b>그것이 바로 로그다.</b> <b>직접 만들 것인가, 그 일을 하도록 설계된 도구를 쓸 것인가</b>의 문제로 환원된다.</p>
+  <p><b>가산점 한 줄</b> — 최근 RabbitMQ도 <b>로그 기반의 스트림 기능</b>을 추가해 경계가 흐려지고 있다. "설계 기원이 다르고, <b>각자의 본진(라우팅 vs 스트림)에서 여전히 강하다</b>"고 정리하면 균형 잡힌 답이 된다.</p>
+</div></details>
+
+<details class="q"><summary>메시지 하나가 계속 실패하면 두 시스템은 각각 어떻게 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 진도를 표현하는 자료구조가 다르다</span></summary><div class="a">
+  <p><b>RabbitMQ</b>는 그 메시지만 <b>nack → DLX로 격리</b>하면 <b>다른 메시지는 영향이 없다.</b> 브로커가 메시지 단위로 배달 상태를 들고 있기 때문에 <b>한 건만 골라내는 일이 성립</b>한다.</p>
+  <p><b>Kafka</b>는 오프셋이 <b>연속 진도</b>라서 실패한 메시지 앞에서 커밋을 멈추면 <b>그 파티션의 뒤 메시지 전부가 막힌다(poison pill).</b> 뒤 메시지를 처리해도 커밋할 수 없다 — <b>커밋하는 순간 앞의 실패 건을 처리한 것으로 선언하는 셈</b>이기 때문이다.</p>
+  <p>그래서 Kafka에서는 <b>"몇 회 재시도 후 실패 건을 DLQ 토픽으로 옮기고 오프셋은 전진"</b>시키는 설계를 컨슈머에 직접 넣어야 한다.</p>
+  <div class="rule red"><b>RabbitMQ가 브로커 기능으로 주는 것을 Kafka에서는 애플리케이션이 만든다</b></div>
+  <p style="margin-bottom:0" class="sub">이 차이를 아는 것이 <b>"실패 경로까지 설계해 본 사람"의 표식</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>순서 보장은 어느 쪽이 강한가요?<span class="hint">힌트: "큐는 FIFO니까 RabbitMQ"라고 답하면 함정에 빠진다</span></summary><div class="a">
+  <p><b>Kafka</b>는 <b>파티션 안에서 구조적으로 보장</b>된다 — 같은 키는 같은 파티션에 append 순서대로 쌓이고 그 순서로 읽힌다. <b>파티션 하나는 컨슈머 그룹 안에서 최대 한 컨슈머에게만 할당</b>되므로 소비 쪽에서도 순서가 유지된다.</p>
+  <p><b>RabbitMQ</b>는 큐 자체는 FIFO지만, <b>컨슈머 여러 대가 붙거나 실패한 메시지가 재큐잉되면 처리 순서가 쉽게 흔들린다.</b> 재큐잉된 메시지는 <b>이미 뒤 메시지가 지나간 뒤에</b> 다시 처리되기 때문이다.</p>
+  <p>연결 한 줄 — <b>"키 기반 순서 보장이 요구사항이면 Kafka의 파티션 키가 자연스러운 해법"</b>이다. RabbitMQ에서 같은 요구를 맞추려면 <b>키별로 큐를 나누고 큐마다 컨슈머 하나</b>를 붙이는 식으로 <b>직접 파티셔닝을 짜야 한다.</b> (상세: <code>24-message-ordering-partition-key.md</code>, <code>15-rabbitmq-message-ordering.md</code>)</p>
+</div></details>
+
+<details class="q"><summary>그래서 지금 우리 서비스에는 뭘 고르실 건가요?<span class="hint">힌트: 정답을 찍는 질문이 아니라 판단 기준을 보는 질문이다</span></summary><div class="a">
+  <p><b>정답을 하나 찍는 게 아니라 판단 기준을 말한다.</b></p>
+  <p>"<b>이벤트를 여러 소비자가 구독하고 재처리 가능성이 있으면 Kafka</b>, <b>단순 작업 분배와 메시지 단위 제어(지연·우선순위)가 핵심이면 RabbitMQ</b>를 고르겠다. 그리고 <b>이미 팀이 운영 경험을 가진 브로커가 있다면 그 운영 역량도 비용 항목에 넣겠다</b>"까지 말하면 <b>도입 결정의 양면을 보는 사람</b>으로 보인다.</p>
+  <p>한 걸음 더 — <b>둘을 같이 쓰는 것도 이상한 선택이 아니다.</b> 도메인 이벤트 스트림은 Kafka, 메일 발송·썸네일 생성 같은 작업 큐는 RabbitMQ로 두는 분리다. 다만 <b>브로커를 둘 운영하는 비용이 실제로 값을 하는지</b> 먼저 확인해야 한다.</p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>Kafka의 "컨슈머 그룹"에 대응하는 개념이 RabbitMQ에도 있나요?<span class="hint">힌트: "나눠 갖기"는 같고, "복제해서 갖기"가 다르다</span></summary><div class="a">
+  <p><b>절반만 대응한다.</b></p>
+  <p><b>나눠 갖기(경쟁 소비)는 같다.</b> RabbitMQ에서 <b>한 큐에 컨슈머 여러 대를 붙이면</b> 메시지가 그들에게 분배된다 — Kafka에서 <b>한 그룹 안의 컨슈머들이 파티션을 나눠 갖는 것</b>과 목적이 같다. 둘 다 "같은 일감을 여러 워커로 병렬 처리"다.</p>
+  <p><b>다른 것은 "그룹을 하나 더 만드는 비용"이다.</b> Kafka는 <code>group.id</code>만 다르게 주면 <b>새 그룹이 같은 토픽 전체를 처음부터 독립적으로</b> 읽는다. 브로커 설정을 건드릴 필요도, 데이터를 복제할 필요도 없다. RabbitMQ에서 같은 것을 하려면 <b>큐를 새로 만들고 바인딩해야 하고</b>, 그 큐는 <b>그 시점 이후 메시지만</b> 받으며, 저장도 큐마다 따로 차지한다.</p>
+  <div class="rule">Kafka의 그룹은 <b>"읽는 위치의 이름표"</b>이고, RabbitMQ의 큐는 <b>"메시지가 실제로 담긴 통"</b>이다</div>
+</div></details>
+
+<details class="q"><summary>병렬 처리를 늘리고 싶습니다. 두 시스템의 상한은 어디에 있나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 한쪽은 소비자를 늘려도 안 늘어나는 지점이 있다</span></summary><div class="a">
+  <p><b>Kafka의 병렬성 상한은 파티션 수다.</b> 한 파티션은 그룹 안에서 <b>최대 한 컨슈머</b>에게만 할당되므로, <b>컨슈머를 파티션 수보다 많이 띄우면 남는 컨슈머는 아무 파티션도 받지 못하고 논다.</b> 처리량을 더 내려면 <b>파티션을 늘려야</b> 하고, 파티션 증설은 <b>키-파티션 매핑이 바뀌어 순서 보장이 흔들리는 부작용</b>이 따른다(<code>32-partition-increase-side-effects.md</code>).</p>
+  <p><b>RabbitMQ는 그런 상한이 없다.</b> 한 큐에 컨슈머를 <b>몇 대든 더 붙이면</b> 그만큼 나눠 간다. 대신 <b>순서가 보장되지 않고</b>(여러 워커가 동시에 처리하므로), 처리량 조절은 <b>prefetch</b>(한 컨슈머가 미리 받아두는 개수) 튜닝의 문제가 된다.</p>
+  <div class="rule">Kafka: <b>순서를 얻는 대신 병렬성이 파티션 수에 묶인다</b> &nbsp;/&nbsp; RabbitMQ: <b>병렬성은 자유롭지만 순서를 잃는다</b></div>
+  <p style="margin-bottom:0" class="sub">이건 우연이 아니라 <b>같은 트레이드오프의 양면</b>이다 — "순서 단위"를 고정해야 병렬성 상한이 생긴다.</p>
+</div></details>
+
+<details class="q"><summary>Kafka를 작업 큐로 써도 되나요? 뭐가 불편해지나요?<span class="hint">힌트: 작업 큐가 요구하는 세 가지가 Kafka에 없다</span></summary><div class="a">
+  <p><b>가능하지만 없는 것을 직접 만들어야 한다.</b> 작업 큐가 흔히 요구하는 것들이 Kafka에는 구조적으로 없다.</p>
+  <p><b>① 실패 한 건 격리</b> — 8절의 poison pill. 재시도·DLQ·오프셋 전진을 <b>컨슈머 코드로</b> 구현해야 한다.<br>
+  <b>② 지연 실행과 우선순위</b> — "10분 뒤에 처리", "급한 것 먼저"는 로그의 <b>순서대로 읽는 모델과 정면으로 충돌</b>한다. 로그는 <b>쓰인 순서</b>가 곧 읽는 순서다. 지연을 만들려면 지연 토픽을 여러 단계로 두는 식의 <b>우회 설계</b>가 필요하다.<br>
+  <b>③ 워커 수를 자유롭게 늘리기</b> — 파티션 수가 상한이다. 작업이 몰릴 때 워커만 늘려 흡수하는 패턴이 막힌다.</p>
+  <p>거꾸로 <b>RabbitMQ를 이벤트 스트림으로 쓰면</b> — 새 소비자가 과거를 못 읽고, replay가 불가능하며, 소비자가 늘 때마다 <b>큐가 늘어 저장이 복제</b>되고, 적체 시 <b>브로커 메모리 압박</b>이 온다.</p>
+  <div class="rule">"할 수는 있지만 <b>구조가 원하지 않는 방향</b>이라 그 대가를 코드로 지불하게 된다"</div>
+</div></details>
+
+<details class="q"><summary>zero-copy는 TLS를 켜거나 압축을 써도 그대로 유효한가요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 커널이 바이트를 그대로 흘려보낼 수 있어야 성립한다</span></summary><div class="a">
+  <p><b>조건부다. "저장된 바이트를 손대지 않아도 되는가"가 성립 조건이다.</b></p>
+  <p><b>TLS를 켜면 그 경로를 쓸 수 없다.</b> 전송 전에 <b>암호화라는 가공</b>이 필요하고, 그건 파일 구간을 소켓으로 그대로 흘려보내는 것과 양립하지 않는다. <b>보안을 켜면 처리량 특성이 달라진다</b>는 것을 아는 것이 실무 감각이다.</p>
+  <p><b>압축은 대개 유효하다.</b> 프로듀서가 <b>배치 단위로 압축한 것을 브로커가 그대로 저장하고 그대로 내보내기</b> 때문이다. 브로커는 압축을 풀지 않는다. 다만 <b>브로커가 형식을 변환해야 하는 상황</b>(예: 토픽에 지정된 압축 방식이 달라 다시 압축해야 하거나, 오래된 클라이언트를 위해 메시지 포맷을 바꿔야 할 때)에는 <b>바이트를 열어야 하므로 그 이점이 사라진다.</b></p>
+  <div class="rule">"zero-copy는 <b>기능이 아니라 조건</b>이다 — 가공이 필요해지는 순간 사라진다"</div>
+</div></details>
+
+<details class="q"><summary>브로커가 메시지 단위 상태를 안 갖는다면, Kafka는 컨슈머가 죽은 걸 어떻게 아나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "상태가 없다"는 말의 범위를 정확히 잘라야 한다</span></summary><div class="a">
+  <p><b>"상태가 없다"는 말은 "메시지 단위 배달 상태가 없다"는 뜻이지, 아무 상태도 없다는 뜻이 아니다.</b> 이 구분을 정확히 말하는 것이 이 질문의 전부다.</p>
+  <p>Kafka는 <b>그룹 멤버십 수준의 상태</b>는 관리한다. 그룹마다 <b>코디네이터</b> 역할을 하는 브로커가 있고, 컨슈머는 주기적으로 <b>하트비트</b>를 보낸다. 하트비트가 정해진 시간 안에 오지 않거나 <b>poll 간격이 너무 길어지면</b> 그 컨슈머를 빠진 것으로 보고 <b>리밸런싱</b>으로 파티션을 남은 컨슈머에게 재배치한다.</p>
+  <p><b>결정적 차이는 단위다.</b> 이건 <b>"컨슈머 N이 살아 있는가"</b>라는 <b>멤버 하나당 상태</b>이지, <b>"메시지 m이 배달됐는가"</b>라는 <b>메시지 하나당 상태</b>가 아니다. 멤버 수는 수십이고 메시지 수는 초당 수만이다 — <b>7절의 최적화를 무너뜨리는 것은 후자뿐이다.</b></p>
+  <p style="margin-bottom:0" class="sub">RabbitMQ도 컨슈머가 끊기면 <b>ack 대기 중이던 메시지를 큐로 되돌린다</b> — 같은 목적(죽은 소비자 복구)을 <b>메시지 단위로</b> 처리하는 셈이다. 여기서도 단위 차이가 그대로 나타난다.</p>
+</div></details>
+
+<details class="q"><summary>RabbitMQ로 발행은 성공했는데 컨슈머에 아무것도 안 옵니다. 무엇부터 봅니까? <span class="badge trap">함정</span><span class="hint">힌트: Kafka 경험만으로는 떠올리기 어려운 실패 유형이다</span></summary><div class="a">
+  <p><b>라우팅 실패로 인한 조용한 유실을 먼저 의심한다.</b> <b>어느 바인딩에도 걸리지 않은 메시지는 예외 없이 사라진다</b>(2절). 발행은 성공으로 끝나기 때문에 <b>프로듀서 로그에는 아무 흔적이 없다.</b></p>
+  <p><b>점검 순서</b> — ① <b>라우팅 키 오타</b>(<code>payment.faild</code> 같은 것), ② <b>바인딩 키 패턴</b>(<code>order.*</code>로 <code>order.kr.created</code>를 잡으려 한 <code>*</code>/<code>#</code> 혼동), ③ <b>exchange 타입</b>(direct에 패턴을 넣었는가), ④ <b>큐가 실제로 그 exchange에 바인딩되어 있는가</b>(환경별 선언 누락), ⑤ 그 다음에야 컨슈머 코드.</p>
+  <p><b>재발 방지</b> — 발행 시 <code>mandatory</code>를 켜고 <b>반송 콜백</b>으로 "라우팅 실패"를 <b>에러 로그·지표로 남기거나</b>, exchange에 <b>대체 exchange(alternate exchange)</b>를 지정해 <b>미아 메시지를 한 큐로 모아 알람</b>을 건다.</p>
+  <div class="rule red">Kafka는 <b>토픽이 없으면 곧바로 드러나지만</b>, RabbitMQ는 <b>키가 안 맞아도 아무 일 없는 것처럼 보인다</b></div>
+</div></details>
+
+<details class="q"><summary>Kafka면 항상 되감을 수 있나요? replay의 한계는 어디입니까?<span class="hint">힌트: "보존 기간 동안"이라는 단서가 붙어 있었다</span></summary><div class="a">
+  <p><b>보존 기간 안에서만 가능하다.</b> Kafka의 재소비는 "영원히 남는다"가 아니라 <b>"보존 정책이 지울 때까지 남는다"</b>이다. 기간이나 크기 기준으로 오래된 세그먼트가 삭제되면 그 구간은 <b>되감을 수 없다.</b> "3일치를 재처리해야 하는데 보존이 1일"이면 <b>도구가 있어도 데이터가 없다.</b></p>
+  <p>그래서 <b>보존 기간은 성능 설정이 아니라 "복구 가능 범위"라는 요구사항</b>으로 정해야 한다. <b>장애를 인지하고 되감기까지 걸리는 최악의 시간</b>보다 넉넉해야 한다.</p>
+  <p><b>키별 최신 상태만 필요하다면</b> 기간으로 자르는 대신 <b>로그 컴팩션</b>을 쓰는 선택지도 있다 — 같은 키의 오래된 값은 지우고 <b>최신 값은 계속 남기는</b> 정책이라, 새 소비자가 <b>"현재 상태 전체"를 처음부터 복원</b>할 수 있다. (상세: <code>36-log-compaction-compacted-topic.md</code>)</p>
+  <p style="margin-bottom:0"><b>운영상 한 가지 더</b> — 되감기는 <b>그 컨슈머 그룹 전체를 과거로 되돌리는</b> 일이라, 잘못하면 <b>정상 처리까지 중복 실행</b>된다. 대량 재처리는 보통 <b>별도 그룹·별도 환경으로 격리</b>해서 돌린다(<code>33-bulk-replay-isolation.md</code>). 그리고 <b>재처리의 전제는 컨슈머 멱등성</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>"Kafka는 대용량, RabbitMQ는 소량"이라고 답해도 되나요?<span class="hint">힌트: 틀린 말은 아닌데, 그 답에는 무엇이 빠져 있나</span></summary><div class="a">
+  <p><b>틀린 말은 아니지만 면접에서는 약한 답이다.</b> 이유가 둘이다.</p>
+  <p><b>① 처리량은 대부분의 서비스에서 결정 요인이 아니다.</b> 두 브로커 모두 <b>웬만한 서비스의 트래픽은 충분히 감당</b>한다. 처리량 때문에 갈리는 경우보다 <b>재소비·다수 구독·라우팅·실패 격리</b> 때문에 갈리는 경우가 훨씬 많다. 처리량부터 꺼내면 <b>실제 판단 기준을 안 세워 본 사람</b>처럼 들린다.</p>
+  <p><b>② "왜 대용량인가"를 못 말하면 암기로 들린다.</b> 7절의 <b>4+1</b>을 근거로 대고, 그 넷이 <b>하나의 설계 결정에서 나온다</b>는 사슬까지 말해야 값이 나간다.</p>
+  <div class="rule">더 나은 첫 문장: <b>"처리량 차이보다 먼저, 소비 후 메시지가 남는지 사라지는지가 갈립니다"</b></div>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  Kafka는 <b>"소비해도 남는 로그"</b>라 재소비·다수 독립 구독·대용량 스트림에 강하고(브로커가 <b>메시지 단위 상태를 안 갖는 단순함</b>이 순차 쓰기·페이지 캐시·zero-copy·배치라는 처리량 근거로 이어진다), RabbitMQ는 <b>exchange·바인딩으로 라우팅</b>하고 <b>메시지 단위 ack으로 실패 한 건만 격리</b>할 수 있는 <b>"배달하면 사라지는 큐"</b>라 작업 분배에 강하다 — <b>"이 데이터를 다시 읽을 일이 있는가, 소비자가 늘어날 것인가"</b>라는 요구사항이 두 구조 중 하나를 가리킨다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/06-messaging/02-kafka-vs-rabbitmq.md</code> · 이어서 볼 문서: RabbitMQ 구성요소(10) · ack/nack·prefetch(12) · 재시도·DLX(14) · Kafka 구성요소(21) · 컨슈머 재시도·DLQ(25) · Kafka 이관(34)</p>
+</main>
+</body>
+</html>

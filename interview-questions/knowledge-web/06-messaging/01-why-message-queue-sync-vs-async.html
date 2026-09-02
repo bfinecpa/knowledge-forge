@@ -1,0 +1,1519 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>메시지 큐 도입 이유 — 동기 호출 대비 얻는 것과 잃는 것</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --text:#1f2937; --muted:#6b7280;
+    --accent:#2563eb; --accent-soft:#dbeafe; --warn:#dc2626; --warn-soft:#fee2e2;
+    --ok:#16a34a; --ok-soft:#dcfce7; --amber:#d97706; --amber-soft:#fef3c7;
+    --violet:#7c3aed; --violet-soft:#ede9fe;
+    --code-bg:#1e293b; --code-text:#e2e8f0; --line:#e5e7eb;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    font-size:16px;line-height:1.7;word-break:keep-all}
+  main{max-width:960px;margin:0 auto;padding:24px 16px 80px}
+  h1{font-size:1.6rem;line-height:1.35;margin:0 0 8px}
+  h2{font-size:1.3rem;margin:56px 0 16px;padding-top:8px;color:var(--accent);
+    border-top:3px solid var(--accent-soft)}
+  h3{font-size:1.08rem;margin:28px 0 10px}
+  h4{font-size:.98rem;margin:20px 0 8px;color:var(--muted)}
+  p{margin:0 0 14px}
+  a{color:var(--accent)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;
+    background:#e8ecf3;padding:1px 5px;border-radius:4px}
+  pre{background:var(--code-bg);color:var(--code-text);padding:16px;border-radius:10px;
+    overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.82rem;line-height:1.6;margin:0 0 16px}
+  pre code{background:none;padding:0;color:inherit;font-size:inherit}
+  .cmt{color:#94a3b8}
+  .hl-bad{background:rgba(220,38,38,.28);display:inline-block;width:100%}
+  .hl-good{background:rgba(22,163,74,.28);display:inline-block;width:100%}
+  .hl-warn{background:rgba(217,119,6,.30);display:inline-block;width:100%}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:0 0 16px}
+  .kicker{font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+  .small{font-size:.88rem;color:var(--muted)}
+
+  header.hero{background:var(--card);border:2px solid var(--accent);border-radius:16px;padding:24px 24px 20px;margin:18px 0 22px}
+  header.hero .q{font-size:1rem;font-weight:700;background:#f1f5fb;border:1px dashed var(--accent);
+    border-radius:10px;padding:10px 14px;margin:12px 0 16px}
+  .key .lbl{font-size:.78rem;font-weight:800;letter-spacing:.05em;color:var(--accent);margin-bottom:8px}
+  .key .blk{border-left:4px solid var(--accent-soft);padding:2px 0 2px 14px;margin:0 0 14px}
+  .key .blk:last-child{margin-bottom:0}
+  .key .blk .t{display:block;color:var(--accent);margin-bottom:2px}
+  .key .blk b{color:var(--text)}
+
+  .toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;list-style:none;padding:0;margin:18px 0 0}
+  .toc li a{display:block;background:#f8fafc;border:1px solid var(--line);border-radius:10px;
+    padding:9px 12px;text-decoration:none;color:var(--text);font-size:.9rem}
+  .toc li a:hover{border-color:var(--accent);background:var(--accent-soft)}
+  .toc .n{color:var(--accent);font-weight:700;margin-right:6px}
+
+  .callout{border-left:5px solid var(--accent);background:var(--card);padding:14px 18px;border-radius:0 10px 10px 0;margin:0 0 16px}
+  .callout.warn{border-color:var(--warn);background:#fff7f7}
+  .callout.ok{border-color:var(--ok);background:#f6fdf8}
+  .callout.amber{border-color:var(--amber);background:#fffbeb}
+  .callout .t{font-weight:700;margin-bottom:4px;display:block}
+  .callout ul,.callout ol{margin:6px 0 0;padding-left:20px}
+  .callout li{margin-bottom:4px}
+
+  .badge{display:inline-block;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;vertical-align:middle;margin-left:6px}
+  .badge.senior{background:var(--warn);color:#fff}
+  .badge.bonus{background:var(--ok);color:#fff}
+  .badge.extra{background:#6b7280;color:#fff}
+  .badge.blue{background:var(--accent);color:#fff}
+
+  .memo{background:var(--card);border:2px solid var(--accent);border-radius:14px;padding:18px 20px;margin:0 0 16px}
+  .memo.warn{border-color:var(--warn)} .memo.warn .kicker{color:var(--warn)}
+  .memo.ok{border-color:var(--ok)} .memo.ok .kicker{color:var(--ok)}
+  .memo.amber{border-color:var(--amber)} .memo.amber .kicker{color:var(--amber)}
+  .memo .big{font-size:1.14rem;font-weight:800;line-height:1.6;margin:2px 0 6px}
+  .memo p:last-child{margin-bottom:0}
+
+  .mnemo{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 10px}
+  .mnemo.c3{grid-template-columns:repeat(3,1fr)}
+  .mnemo.c2{grid-template-columns:repeat(2,1fr)}
+  .mnemo .c{background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:12px 10px;text-align:center}
+  .mnemo .c .syl{font-size:2rem;font-weight:900;line-height:1.15;color:var(--accent)}
+  .mnemo .c .w{font-size:.9rem;font-weight:700;margin-top:2px}
+  .mnemo .c .d{font-size:.8rem;color:var(--muted);margin-top:4px;line-height:1.45}
+  .mnemo.no .c .syl{color:var(--warn)}
+  .mnemo.ok2 .c .syl{color:var(--ok)}
+  .mnemo .c.veto{background:#fffbeb;border-color:var(--amber)}
+  .mnemo .c.veto .syl{color:var(--amber)}
+
+  .fig{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:0 0 16px}
+  .fig svg{display:block;width:100%;height:auto}
+  .fig .cap{font-size:.85rem;color:var(--muted);margin-top:8px;text-align:center}
+  .wide{width:min(1180px,calc(100vw - 40px));margin-left:50%;transform:translateX(-50%)}
+
+  .tbl{overflow-x:auto;margin:0 0 16px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:#f1f4f9;font-weight:700;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.y{color:var(--ok);font-weight:800;text-align:center}
+  td.n{color:var(--warn);font-weight:800;text-align:center}
+  td.m{color:var(--amber);font-weight:800;text-align:center}
+  tr.no td{background:#fff7f7}
+  tr.meh td{background:#fafafa}
+  .gain td:first-child{color:var(--ok);font-weight:700}
+  .lose td:first-child{color:var(--warn);font-weight:700}
+
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 16px}
+  .ba.single{grid-template-columns:1fr}
+  .ba .col{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+  .ba .head{padding:8px 14px;font-weight:700;font-size:.9rem;color:#fff}
+  .ba .head.bad{background:var(--warn)} .ba .head.good{background:var(--ok)}
+  .ba .head.blue{background:var(--accent)}
+  .ba pre{border-radius:0;margin:0;flex:1}
+
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin:0 0 16px}
+  .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:0 0 16px}
+  .mini{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .mini .h{font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mini .tag{font-size:.7rem;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--accent-soft);color:var(--accent)}
+  .mini .tag.warn{background:var(--warn-soft);color:var(--warn)}
+  .mini .tag.ok{background:var(--ok-soft);color:var(--ok)}
+  .mini .tag.amber{background:var(--amber-soft);color:var(--amber)}
+  .mini p{font-size:.93rem;margin:0 0 8px}
+  .mini p:last-child{margin-bottom:0}
+
+  .cond{display:flex;gap:14px;align-items:flex-start;background:var(--card);border:1px solid var(--line);
+    border-radius:12px;padding:14px 16px;margin-bottom:10px}
+  .cond .num{flex:0 0 40px;height:40px;border-radius:12px;background:var(--accent);color:#fff;font-weight:900;
+    display:flex;align-items:center;justify-content:center;font-size:1.1rem}
+  .cond.veto .num{background:var(--amber)}
+  .cond.no .num{background:var(--warn)}
+  .cond.ok .num{background:var(--ok)}
+  .cond .b h4{margin:0 0 4px;color:var(--text);font-size:1rem}
+  .cond .b p{margin:0 0 8px;font-size:.94rem}
+  .cond .b p:last-child{margin-bottom:0}
+
+  .vs{display:grid;grid-template-columns:1fr 56px 1fr;align-items:stretch;margin:0 0 16px}
+  .vs .side{background:var(--card);border:2px solid var(--ok);border-radius:14px;padding:16px 18px}
+  .vs .side.b{border-color:var(--warn)}
+  .vs .side .h{font-weight:800;font-size:1.02rem;margin-bottom:8px;color:var(--ok)}
+  .vs .side.b .h{color:var(--warn)}
+  .vs .side ul{margin:6px 0 0;padding-left:18px;font-size:.93rem}
+  .vs .side li{margin-bottom:4px}
+  .vs .mid{display:flex;align-items:center;justify-content:center;font-weight:900;color:var(--muted)}
+
+  .chk{counter-reset:c;list-style:none;padding:0;margin:0 0 16px}
+  .chk li{counter-increment:c;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:12px 16px 12px 58px;margin-bottom:8px;position:relative;font-size:.95rem}
+  .chk li::before{content:counter(c);position:absolute;left:14px;top:12px;width:30px;height:30px;border-radius:9px;
+    background:var(--accent);color:#fff;font-weight:800;font-size:.9rem;display:flex;align-items:center;justify-content:center}
+  .chk li b{display:block;margin-bottom:2px}
+  .chk li:last-child::before{background:var(--amber)}
+
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:0 0 12px}
+  details summary{cursor:pointer;padding:14px 46px 14px 18px;font-weight:700;list-style:none;position:relative}
+  details summary::-webkit-details-marker{display:none}
+  details summary::after{content:"+";position:absolute;right:16px;top:9px;font-size:1.4rem;color:var(--accent);font-weight:400}
+  details[open] summary::after{content:"\2212"}
+  details .ans{padding:12px 18px 16px;border-top:1px dashed var(--line);font-size:.95rem}
+  details .ans .key2{font-weight:700;color:var(--accent)}
+  details .ans ol,details .ans ul{margin:6px 0 8px;padding-left:20px}
+  details .ans li{margin-bottom:5px}
+  details .ans p:last-child{margin-bottom:0}
+
+  .banner{margin-top:56px;background:var(--accent);color:#fff;border-radius:16px;padding:24px 26px;font-size:1.05rem;line-height:1.85}
+  .banner .kicker{color:#bfdbfe}
+  .banner b{color:#fff;background:rgba(255,255,255,.18);padding:0 5px;border-radius:4px}
+
+  .sv-t{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+</style>
+</head>
+<body>
+<main>
+
+<div class="kicker">06 · 메시징 — 메시지 큐 도입 판단</div>
+<h1>메시지 큐 도입 이유 — 결합을 끊는 대가로 <span style="color:#dc2626">즉시성과 단순함을 파는 거래</span></h1>
+<p class="small">원본: <code>interview-questions/knowledge/06-messaging/01-why-message-queue-sync-vs-async.md</code></p>
+
+<header class="hero">
+  <div class="q">Q. "메시지 큐를 도입하는 이유는? 동기 호출 대비 장단점은?"</div>
+  <div class="key">
+    <div class="lbl">핵심 관전 포인트 — 면접 첫 답변으로 이 네 덩어리를 그대로 말한다</div>
+    <div class="blk">
+      <b class="t">① 프레임 — 큐는 "결합을 끊는" 장치다</b>
+      메시지 큐는 시스템 간 결합을 <b>시간 · 장애 · 처리량</b> 세 축에서 끊어준다. "비동기라 빠르다"가 아니라 <b>무엇과 무엇의 묶임을 푸는가</b>로 시작해야 한다.
+    </div>
+    <div class="blk">
+      <b class="t">② 얻는 것 — 세 축이 각각 이렇게 풀린다</b>
+      호출자는 응답을 기다리지 않고(<b>시간</b>), 수신자가 죽어 있어도 요청이 큐에 보관되며(<b>장애</b>), 트래픽 폭증을 큐가 버퍼로 흡수한다(<b>처리량</b>). 덤으로 발행-구독 구조가 되어 <b>확장</b>이 열린다.
+    </div>
+    <div class="blk">
+      <b class="t">③ 잃는 것 — 여기까지 말해야 합격 답변이다</b>
+      즉시 정합성을 포기하고 <b>최종 일관성</b>("지금은 어긋나 있어도 언젠가는 같아진다")을 받아들여야 하고, 요청 흐름이 <b>스택 트레이스에서 끊겨</b> 추적이 어려워지며, 동기에서는 공짜였던 <b>실패 처리(유실·중복·재시도·DLQ)</b>를 직접 설계해야 한다.
+    </div>
+    <div class="blk">
+      <b class="t">④ 결론 — 도입 여부를 가르는 질문은 딱 두 개</b> <span class="badge senior">시니어 변별</span>
+      <b>"이 작업을 버려도 되는가"</b>와 <b>"결과를 즉시 알아야 하는가"</b>. 버려도 되면 서킷 브레이커로 충분하고, 버리면 안 되는데 즉시 알 필요는 없을 때 <b>바로 그 자리가 큐의 자리</b>다. 결과가 응답 내용을 바꾸는 호출(결제 승인·재고 확인)은 동기로 남긴다.
+    </div>
+  </div>
+  <ul class="toc">
+    <li><a href="#s0"><span class="n">0</span>질문 + 출제 의도</a></li>
+    <li><a href="#s1"><span class="n">1</span>동기 호출의 세 한계</a></li>
+    <li><a href="#s2"><span class="n">2</span>큐가 끊어주는 것 4</a></li>
+    <li><a href="#s3"><span class="n">3</span>잃는 것 4 + 비교표</a></li>
+    <li><a href="#s4"><span class="n">4</span>도입 판단 프레임</a></li>
+    <li><a href="#s5"><span class="n">5</span>경계에서 꼭 설계할 2</a></li>
+    <li><a href="#s6"><span class="n">6</span>셀프 테스트</a></li>
+    <li><a href="#sum"><span class="n">★</span>한 줄 요약</a></li>
+  </ul>
+</header>
+
+<!-- ============================ 0 ============================ -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+
+<div class="callout">
+  <span class="t">출제 의도</span>
+  "비동기로 하면 좋다"가 아니라 <b>잃는 것(즉시 정합성, 흐름 추적 난이도, 실패 처리 복잡도)을 함께 말하는지</b>를 본다. 도입 결정의 양면을 보는 습관은 <b>모든 아키텍처 논의의 입장권</b>이다.
+</div>
+
+<div class="grid3">
+  <div class="mini">
+    <div class="h"><span class="tag">채점 ⑴</span> 프레임</div>
+    <p>"빨라진다"가 아니라 <b>"어떤 결합을 끊고 무엇을 대가로 내는가"</b>로 시작하는가.</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag warn">채점 ⑵</span> 대가</div>
+    <p>최종 일관성 · 추적 단절 · 실패 설계를 <b>구체적 증상</b>으로 말하는가.</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag ok">채점 ⑶</span> 한 걸음 더</div>
+    <p>"큐 좋다"에서 멈추지 않고 <b>도입하지 말아야 할 경우</b>까지 대는가.</p>
+  </div>
+</div>
+
+<div class="memo">
+  <div class="kicker">이 페이지를 관통하는 비유 — 전화 vs 문자</div>
+  <p class="big">전화(동기)는 <b>상대가 지금 받아야</b> 성립하고, 안 받으면 그 통화는 실패로 끝난다. 문자(비동기)는 <b>상대 휴대폰이 꺼져 있어도 보내지고</b>, 켜지는 순간 도착한다.</p>
+  <p>이 한 장면 안에 이 문서의 대부분이 들어 있다. 전화는 <b>둘이 동시에 살아 있어야</b> 하고(시간·가용성 결합), 문자는 <b>통신사 서버가 대신 들고 있다가</b> 전달한다(브로커). 대신 문자를 보낸 쪽은 <b>상대가 읽었는지 그 자리에서 알 수 없고</b>(최종 일관성·실패 인지 지연), 답이 없을 때 <b>안 봤는지 못 받았는지 스스로 추적해야</b> 한다(추적 난이도).</p>
+</div>
+
+<!-- ============================ 1 ============================ -->
+<h2 id="s1">1. 동기 호출의 세 가지 한계 — 왜 큐를 생각하게 되는가</h2>
+
+<h3>1-0. 전제 — "동기 호출"이 서버 안에서 실제로 하는 일</h3>
+
+<p>용어부터 못박자. <b>동기(synchronous) 호출</b>은 내가 상대를 부른 뒤 <b>응답이 돌아올 때까지 그 자리에서 기다리는</b> 방식이다. 어원 그대로 "같은 시간(syn-chronos)에 함께 있어야" 성립한다 — 부르는 쪽과 받는 쪽이 <b>동시에 살아 있어야</b> 한다.</p>
+
+<p>이 "기다린다"가 서버 안에서 무엇을 뜻하는지가 중요하다. Spring MVC로 만든 API는 요청 하나를 톰캣 스레드 하나가 잡고 처리한다. 그 스레드가 <code>restTemplate.postForObject(...)</code>를 호출하면, 스레드는 소켓에서 응답 바이트가 올 때까지 커널에 의해 재워진다. <b>CPU를 쓰지도 않고, 다른 요청을 처리하지도 못한 채 자리만 차지한다.</b></p>
+
+<div class="callout warn">
+  <span class="t">뒤에 나오는 세 한계의 공통 뿌리</span>
+  동기 호출에서 하위 시스템의 응답 시간은 단순히 "느린 것"이 아니라 <b>내 서버의 스레드를 그만큼 붙잡아 두는 비용</b>이다. 시간·가용성·처리량 결합은 전부 이 한 문장에서 갈라져 나온다.
+</div>
+
+<p>주문 완료 후 알림 발송 · 적립금 지급 · 통계 집계를 모두 동기로 호출하는 전형적인 코드를 보자.</p>
+
+<div class="ba single">
+  <div class="col">
+    <div class="head bad">Before — 전부 동기 호출. 세 가지 문제가 숨어 있다</div>
+<pre><code>@Transactional
+public void placeOrder(Order order) {
+    orderRepository.save(order);
+<span class="hl-bad">    notificationClient.send(order);   <span class="cmt">// 문제 1: 알림 서버가 느리면 주문도 느려짐 (지연 전파)</span></span>
+<span class="hl-bad">    pointClient.accumulate(order);    <span class="cmt">// 문제 2: 적립금 서버가 죽으면 주문 자체가 실패 (장애 전파)</span></span>
+<span class="hl-bad">    statsClient.record(order);        <span class="cmt">// 문제 3: 주문 스파이크가 그대로 하위를 강타 (부하 전파)</span></span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout">
+  <span class="t">이 코드가 나쁜 진짜 이유</span>
+  예외 처리가 없어서가 아니다. <b>주문의 성공 여부와 응답 속도가 알림·적립금·통계 세 시스템 전부의 건강 상태에 묶여 있다</b>는 구조 자체가 문제다. 이 묶임을 <b>결합(coupling)</b>이라 부르고, 축이 셋이다.
+</div>
+
+<div class="memo">
+  <div class="kicker">암기 카드 ① — 동기 호출이 만드는 세 가지 결합</div>
+  <div class="mnemo c3">
+    <div class="c"><div class="syl">시</div><div class="w">시간 결합</div><div class="d">내 응답 시간 = 하위 응답 시간의 <b>합</b></div></div>
+    <div class="c"><div class="syl">장</div><div class="w">가용성 결합</div><div class="d">수신자가 죽으면 <b>나도 죽는다</b></div></div>
+    <div class="c"><div class="syl">처</div><div class="w">처리량 결합</div><div class="d">내 트래픽 모양이 <b>그대로</b> 하위 트래픽</div></div>
+  </div>
+  <p class="small">면접에서는 이 세 글자만 꺼내면 §2의 "얻는 것"이 자동으로 따라 나온다. 큐는 정확히 이 셋을 하나씩 끊는 장치이기 때문이다.</p>
+</div>
+
+<h3>1-1. 한계 ① 시간 결합 — 지연이 합산되고, 스레드가 잠긴다</h3>
+
+<p><b>시간 결합</b>은 내 응답 시간이 하위 시스템들의 응답 시간을 그대로 더한 값이 된다는 뜻이다. 순서대로 기다리므로 산수 그대로 합이다. 주문 저장 30ms + 알림 200ms + 적립금 150ms + 통계 120ms = <b>사용자가 500ms를 기다린다.</b> 주문에 정말 필요한 일은 앞의 30ms뿐인데 나머지 470ms를 함께 기다리는 셈이다. (이 타임라인은 §2-1에서 큐 버전과 나란히 놓고 본다.)</p>
+
+<p>여기서 끝이 아니다. 하위 하나가 느려지면 <b>내 서버의 처리 용량 자체가 무너진다.</b> 이유는 1-0에서 본 스레드 점유다.</p>
+
+<div class="memo amber">
+  <div class="kicker">암기 카드 ② — 리틀의 법칙(Little's Law)</div>
+  <p class="big">동시에 시스템 안에 머무는 개수 <b>L</b> = 도착률 <b>λ</b> × 머무는 시간 <b>W</b></p>
+  <p>초당 1,000건이 들어오고(λ=1,000/s) 한 건이 0.2초 머문다면(W=0.2s) 동시에 살아 있는 요청은 <b>200개</b>다. 이 숫자가 톰캣 스레드 풀 크기를 넘는 순간 서비스가 무너진다. <b>"응답 시간을 줄이는 것 = 처리 용량을 늘리는 것"</b>이라는 등식이 여기서 나온다.</p>
+</div>
+
+<div class="fig">
+<svg viewBox="0 0 900 350" role="img" aria-label="알림 서버 응답 시간에 따라 톰캣 스레드가 얼마나 붙잡히는지 보여주는 막대 그래프">
+  <g class="sv-t" fill="#1f2937">
+    <text x="20" y="26" font-size="13.5" font-weight="800">유입 1,000건/s일 때 동시에 붙잡히는 톰캣 스레드 수 &#160;=&#160; 1,000 × 체류 시간</text>
+
+    <!-- capacity line -->
+    <line x1="540" y1="58" x2="540" y2="300" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="546" y="52" font-size="12" font-weight="800" fill="#dc2626">톰캣 스레드 풀 한계 200</text>
+
+    <!-- row 1 -->
+    <text x="20" y="94" font-size="12.5" font-weight="700">알림 정상</text>
+    <text x="20" y="112" font-size="11.5" fill="#6b7280">체류 0.05초</text>
+    <rect x="280" y="80" width="65" height="34" rx="5" fill="#16a34a"/>
+    <text x="355" y="102" font-size="12.5" font-weight="800" fill="#16a34a">50개 &#160;— 여유 있음</text>
+
+    <!-- row 2 -->
+    <text x="20" y="164" font-size="12.5" font-weight="700">조금 느려짐</text>
+    <text x="20" y="182" font-size="11.5" fill="#6b7280">체류 0.2초</text>
+    <rect x="280" y="150" width="260" height="34" rx="5" fill="#d97706"/>
+    <text x="550" y="172" font-size="12.5" font-weight="800" fill="#d97706">200개 — 풀이 정확히 가득 참</text>
+
+    <!-- row 3 -->
+    <text x="20" y="234" font-size="12.5" font-weight="700">많이 느려짐</text>
+    <text x="20" y="252" font-size="11.5" fill="#6b7280">체류 2초</text>
+    <rect x="280" y="220" width="410" height="34" rx="5" fill="#dc2626"/>
+    <polyline points="690,220 702,228 690,237 702,245 690,254" fill="none" stroke="#dc2626" stroke-width="2"/>
+    <text x="292" y="242" font-size="12.5" font-weight="800" fill="#fff">2,000개분의 요청 — 풀 200의 10배</text>
+    <text x="716" y="242" font-size="12" font-weight="700" fill="#dc2626">1,800개는 대기열행</text>
+
+    <!-- annotation -->
+    <rect x="280" y="276" width="590" height="52" rx="8" fill="#fff7f7" stroke="#dc2626" stroke-dasharray="4 3"/>
+    <text x="294" y="297" font-size="12.5" fill="#dc2626" font-weight="700">풀이 가득 차면 알림과 아무 상관 없는 "주문 조회" API도 스레드를 못 얻는다.</text>
+    <text x="294" y="317" font-size="12.5" fill="#1f2937">알림 서버 한 대의 지연이 <tspan font-weight="800">서비스 전면 지연</tspan>으로 번지는 경로가 바로 이것이다.</text>
+  </g>
+</svg>
+<div class="cap">체류 시간이 0.2초를 넘는 순간부터 스레드 풀이 포화된다 — 지연은 "느린 것"이 아니라 "용량을 갉아먹는 것"이다.</div>
+</div>
+
+<h3>1-2. 한계 ② 가용성 결합 — 장애가 호출 사슬을 거슬러 올라온다</h3>
+
+<p><b>가용성 결합</b>은 수신자가 죽으면 호출자도 함께 실패한다는 뜻이다. 주문의 성공이 "알림 서버의 생존"에 의존할 논리적 이유가 없는데도 코드 구조상 그렇게 된다. 더 무서운 것은 이 장애가 <b>한 단계에서 멈추지 않는다</b>는 점이다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 410" role="img" aria-label="A 주문 서버, B 적립금 서버, C 정산 서버 사슬에서 장애가 시간에 따라 거슬러 올라오는 과정">
+  <g class="sv-t" fill="#1f2937">
+    <text x="20" y="26" font-size="13.5" font-weight="800">연쇄 장애(cascading failure) — 호출은 A → B → C 방향, 장애는 그 반대로 올라온다</text>
+
+    <!-- time axis -->
+    <line x1="170" y1="62" x2="1085" y2="62" stroke="#9ca3af" stroke-width="1.2"/>
+    <g font-size="11.5" fill="#6b7280">
+      <line x1="170" y1="56" x2="170" y2="330" stroke="#e5e7eb"/><text x="170" y="50" text-anchor="middle">t0</text>
+      <line x1="320" y1="56" x2="320" y2="330" stroke="#e5e7eb"/><text x="320" y="50" text-anchor="middle">t1</text>
+      <line x1="470" y1="56" x2="470" y2="330" stroke="#e5e7eb"/><text x="470" y="50" text-anchor="middle">t2</text>
+      <line x1="620" y1="56" x2="620" y2="330" stroke="#e5e7eb"/><text x="620" y="50" text-anchor="middle">t3</text>
+      <line x1="770" y1="56" x2="770" y2="330" stroke="#e5e7eb"/><text x="770" y="50" text-anchor="middle">t4</text>
+      <line x1="920" y1="56" x2="920" y2="330" stroke="#e5e7eb"/><text x="920" y="50" text-anchor="middle">t5</text>
+    </g>
+
+    <!-- lane A -->
+    <rect x="20" y="88" width="140" height="46" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="90" y="108" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">A 주문 서버</text>
+    <text x="90" y="126" text-anchor="middle" font-size="11" fill="#6b7280">사용자 진입점</text>
+    <rect x="170" y="88" width="915" height="46" rx="6" fill="#f8fafc" stroke="#e5e7eb"/>
+    <rect x="620" y="88" width="150" height="46" rx="6" fill="#fef3c7"/>
+    <rect x="770" y="88" width="315" height="46" rx="6" fill="#fee2e2"/>
+    <text x="632" y="116" font-size="11.5" fill="#92400e">스레드 대기 시작</text>
+    <text x="784" y="110" font-size="11.5" font-weight="800" fill="#dc2626">풀 200/200 포화</text>
+    <text x="784" y="127" font-size="11.5" fill="#dc2626">주문 API 전체 응답 불가</text>
+
+    <!-- lane B -->
+    <rect x="20" y="178" width="140" height="46" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="90" y="198" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">B 적립금 서버</text>
+    <text x="90" y="216" text-anchor="middle" font-size="11" fill="#6b7280">중간 단계</text>
+    <rect x="170" y="178" width="915" height="46" rx="6" fill="#f8fafc" stroke="#e5e7eb"/>
+    <rect x="320" y="178" width="150" height="46" rx="6" fill="#fef3c7"/>
+    <rect x="470" y="178" width="615" height="46" rx="6" fill="#fee2e2"/>
+    <text x="332" y="206" font-size="11.5" fill="#92400e">스레드 하나씩 잠듦</text>
+    <text x="484" y="200" font-size="11.5" font-weight="800" fill="#dc2626">풀 200/200 포화</text>
+    <text x="484" y="217" font-size="11.5" fill="#dc2626">응답 시간이 10초를 넘어 무한정 증가</text>
+
+    <!-- lane C -->
+    <rect x="20" y="268" width="140" height="46" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="90" y="288" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">C 정산 서버</text>
+    <text x="90" y="306" text-anchor="middle" font-size="11" fill="#6b7280">최말단 · 장애 진원</text>
+    <rect x="170" y="268" width="915" height="46" rx="6" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="184" y="296" font-size="12" font-weight="800" fill="#dc2626">DB 슬로우 쿼리 발생 — 응답이 10초로 늘어난다 (여기서만 문제가 났다)</text>
+
+    <!-- propagation arrow -->
+    <defs>
+      <marker id="ah-red" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
+        <path d="M0,0 L9,4 L0,8 z" fill="#dc2626"/>
+      </marker>
+    </defs>
+    <path d="M250,264 C420,250 560,190 830,142" fill="none" stroke="#dc2626" stroke-width="3.5"
+          stroke-dasharray="9 6" marker-end="url(#ah-red)"/>
+    <rect x="470" y="150" width="300" height="26" rx="13" fill="#dc2626"/>
+    <text x="620" y="168" text-anchor="middle" font-size="12" font-weight="800" fill="#fff">장애 전파 방향 (호출의 반대)</text>
+
+    <!-- call direction -->
+    <path d="M90,140 L90,170" stroke="#2563eb" stroke-width="2" marker-end="url(#ah-blue)"/>
+    <path d="M90,230 L90,260" stroke="#2563eb" stroke-width="2" marker-end="url(#ah-blue)"/>
+    <defs>
+      <marker id="ah-blue" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto">
+        <path d="M0,0 L9,4 L0,8 z" fill="#2563eb"/>
+      </marker>
+    </defs>
+
+    <rect x="20" y="348" width="1065" height="46" rx="8" fill="#fff7f7" stroke="#dc2626" stroke-dasharray="4 3"/>
+    <text x="36" y="368" font-size="12.5" font-weight="800" fill="#dc2626">t5 결과: C 한 대의 슬로우 쿼리로 A의 모든 API가 죽는다. C와 전혀 무관한 "주문 조회"도 스레드를 못 얻어 실패한다.</text>
+    <text x="36" y="386" font-size="12.5" fill="#1f2937">진단이 어려운 이유 — <tspan font-weight="800">아직 아무도 예외를 던지지 않았다.</tspan> 전파의 매개는 에러가 아니라 <tspan font-weight="800">잠든 스레드</tspan>다.</text>
+  </g>
+</svg>
+<div class="cap">장애는 호출 방향(A→B→C)의 반대로 거슬러 올라온다. 각 단계에서 스레드 풀이 차는 데 걸리는 시간만큼 지연되어 도착할 뿐, 결국 진입점까지 도달한다.</div>
+</div>
+
+<h3>1-3. 한계 ③ 처리량 결합 — 가장 약한 고리가 전체 상한이 된다</h3>
+
+<p><b>처리량 결합</b>은 내가 받는 트래픽 모양이 그대로 하위 시스템의 트래픽 모양이 된다는 뜻이다. 동기 호출은 요청 하나가 들어오는 즉시 하위 호출 하나를 만들어 내므로 <b>중간에 완충 장치가 없다.</b></p>
+
+<div class="fig">
+<svg viewBox="0 0 900 250" role="img" aria-label="주문 서버, 알림 서버, 통계 서버의 처리 능력을 파이프 굵기로 표현해 가장 좁은 곳이 전체 상한이 됨을 보여주는 그림">
+  <g class="sv-t" fill="#1f2937">
+    <text x="20" y="26" font-size="13.5" font-weight="800">동기로 물려 있으면 &#160;— &#160;전체 처리량 = 사슬에서 가장 좁은 구간</text>
+    <!-- pipe -->
+    <path d="M120,60 L340,60 L560,92 L780,124 L780,166 L560,158 L340,150 L120,150 Z" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+    <path d="M780,124 L840,124 L840,166 L780,166 Z" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+    <!-- stage labels -->
+    <text x="230" y="100" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">주문 서버</text>
+    <text x="230" y="120" text-anchor="middle" font-size="12" fill="#1f2937">10,000건/s 가능</text>
+    <text x="450" y="112" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">알림 서버</text>
+    <text x="450" y="132" text-anchor="middle" font-size="12" fill="#1f2937">2,000건/s</text>
+    <text x="672" y="140" text-anchor="middle" font-size="12.5" font-weight="800" fill="#d97706">통계 서버</text>
+    <text x="672" y="158" text-anchor="middle" font-size="12" fill="#1f2937">300건/s</text>
+    <text x="810" y="150" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">출구</text>
+    <!-- inflow -->
+    <text x="20" y="100" font-size="12.5" font-weight="700">유입</text>
+    <text x="20" y="118" font-size="12" fill="#6b7280">피크 1,000/s</text>
+    <line x1="86" y1="105" x2="116" y2="105" stroke="#2563eb" stroke-width="3" marker-end="url(#ah-blue)"/>
+    <!-- verdict -->
+    <rect x="120" y="188" width="720" height="46" rx="8" fill="#fff7f7" stroke="#dc2626" stroke-dasharray="4 3"/>
+    <text x="136" y="208" font-size="12.5" font-weight="800" fill="#dc2626">주문 서버가 1만 건을 감당해도 전체 시스템은 300건/s 근처에서 무너진다.</text>
+    <text x="136" y="226" font-size="12.5" fill="#1f2937">초과분 700건/s는 타임아웃·에러가 되고, 그 실패가 §1-2의 경로로 <tspan font-weight="800">주문까지 역류</tspan>한다.</text>
+  </g>
+</svg>
+<div class="cap">완충 장치가 없으면 "가장 약한 시스템의 처리 한계"가 곧 전체의 상한이 된다.</div>
+</div>
+
+<div class="callout amber">
+  <span class="t">그럼 통계 서버를 증설하면 되지 않나</span>
+  낭비다. 하루 중 대부분은 100건/s만 들어오는데 <b>순간 피크 1,000건/s를 위해 상시 서버를 3배로 띄워야</b> 한다. 이 "피크에 맞춘 상시 증설"을 피하는 것이 §2-3에서 큐가 주는 비용 면의 실익이다.
+</div>
+
+<!-- ============================ 2 ============================ -->
+<h2 id="s2">2. 메시지 큐가 끊어주는 것 — 도입 이유 4가지</h2>
+
+<h3>2-0. 전제 — 메시지 큐가 무엇인가</h3>
+
+<p><b>메시지 큐(message queue)</b>는 보내는 쪽과 받는 쪽 사이에 끼어 <b>메시지를 대신 보관해 주는 중간 저장소</b>다. 등장인물이 셋이다.</p>
+
+<div class="grid3">
+  <div class="mini">
+    <div class="h"><span class="tag">등장인물 ①</span> 프로듀서 producer</div>
+    <p>메시지를 만들어 큐에 <b>넣는</b> 쪽. 위 예에서는 <b>주문 서비스</b>다.</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag">등장인물 ②</span> 브로커 broker</div>
+    <p>메시지를 받아 <b>저장하고 있다가</b> 요청이 오면 내주는 서버. Kafka, RabbitMQ가 여기 해당한다.</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag">등장인물 ③</span> 컨슈머 consumer</div>
+    <p>큐에서 메시지를 <b>꺼내 처리하는</b> 쪽. 알림·적립금·통계 서비스다.</p>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">구조상 바뀐 것은 딱 한 가지</span>
+  <b>프로듀서가 컨슈머를 직접 부르지 않고, 브로커에 메시지를 놓고 돌아선다.</b> 브로커에 넣는 순간 프로듀서의 일은 끝난다 — 이 한 줄의 변경으로 §1의 세 한계가 전부 풀린다.
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 360" role="img" aria-label="동기 직접 호출 구조와 브로커를 경유하는 큐 구조의 비교도">
+  <g class="sv-t" fill="#1f2937">
+    <defs>
+      <marker id="a-b" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 z" fill="#2563eb"/></marker>
+      <marker id="a-g" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 z" fill="#16a34a"/></marker>
+      <marker id="a-r" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="a-m" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0,0 L9,4 L0,8 z" fill="#9ca3af"/></marker>
+    </defs>
+
+    <line x1="558" y1="30" x2="558" y2="340" stroke="#e5e7eb" stroke-width="2"/>
+
+    <!-- LEFT: sync -->
+    <text x="20" y="30" font-size="13.5" font-weight="800" fill="#dc2626">Before — 직접 호출: 주문이 셋의 응답을 전부 기다린다</text>
+    <rect x="40" y="150" width="110" height="52" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="95" y="182" text-anchor="middle" font-size="13" font-weight="800" fill="#2563eb">주문</text>
+
+    <rect x="330" y="70" width="130" height="40" rx="8" fill="#fff" stroke="#9ca3af"/><text x="395" y="95" text-anchor="middle" font-size="12.5">알림 200ms</text>
+    <rect x="330" y="156" width="130" height="40" rx="8" fill="#fff" stroke="#9ca3af"/><text x="395" y="181" text-anchor="middle" font-size="12.5">적립금 150ms</text>
+    <rect x="330" y="242" width="130" height="40" rx="8" fill="#fff" stroke="#9ca3af"/><text x="395" y="267" text-anchor="middle" font-size="12.5">통계 120ms</text>
+
+    <path d="M150,166 L326,86" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#a-b)"/>
+    <path d="M150,176 L326,172" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#a-b)"/>
+    <path d="M150,190 L326,258" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#a-b)"/>
+    <path d="M326,100 L154,180" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#a-r)"/>
+    <path d="M326,186 L154,186" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#a-r)"/>
+    <path d="M326,272 L154,196" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#a-r)"/>
+    <text x="240" y="130" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dc2626">응답 대기</text>
+
+    <rect x="40" y="300" width="480" height="34" rx="8" fill="#fff7f7" stroke="#dc2626" stroke-dasharray="4 3"/>
+    <text x="54" y="322" font-size="12.5" fill="#dc2626" font-weight="700">주문의 성공·속도가 셋의 건강 상태에 묶여 있다</text>
+
+    <!-- RIGHT: queue -->
+    <text x="580" y="30" font-size="13.5" font-weight="800" fill="#16a34a">After — 브로커 경유: 주문은 브로커에만 의존한다</text>
+    <rect x="590" y="150" width="110" height="52" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="645" y="174" text-anchor="middle" font-size="13" font-weight="800" fill="#2563eb">주문</text>
+    <text x="645" y="192" text-anchor="middle" font-size="10.5" fill="#6b7280">프로듀서</text>
+
+    <rect x="758" y="132" width="132" height="88" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="824" y="156" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">브로커</text>
+    <g fill="#16a34a" opacity=".55">
+      <rect x="772" y="168" width="104" height="9" rx="2"/>
+      <rect x="772" y="182" width="104" height="9" rx="2"/>
+      <rect x="772" y="196" width="104" height="9" rx="2"/>
+    </g>
+    <text x="824" y="236" text-anchor="middle" font-size="11" fill="#6b7280">메시지를 보관한다</text>
+
+    <path d="M700,176 L754,176" fill="none" stroke="#16a34a" stroke-width="2.4" marker-end="url(#a-g)"/>
+    <text x="727" y="166" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">발행 5ms</text>
+
+    <rect x="950" y="66" width="130" height="38" rx="8" fill="#fff" stroke="#9ca3af"/><text x="1015" y="90" text-anchor="middle" font-size="12.5">알림</text>
+    <rect x="950" y="132" width="130" height="38" rx="8" fill="#fff" stroke="#9ca3af"/><text x="1015" y="156" text-anchor="middle" font-size="12.5">적립금</text>
+    <rect x="950" y="198" width="130" height="38" rx="8" fill="#fff" stroke="#9ca3af"/><text x="1015" y="222" text-anchor="middle" font-size="12.5">통계</text>
+    <rect x="950" y="264" width="130" height="38" rx="8" fill="#f8fafc" stroke="#7c3aed" stroke-dasharray="5 4"/>
+    <text x="1015" y="288" text-anchor="middle" font-size="12.5" fill="#7c3aed">추천 (나중에)</text>
+
+    <path d="M890,160 L946,85" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#a-g)"/>
+    <path d="M890,176 L946,151" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#a-g)"/>
+    <path d="M890,192 L946,217" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#a-g)"/>
+    <path d="M890,206 L946,283" fill="none" stroke="#7c3aed" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a-g)"/>
+    <text x="918" y="128" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">각자 꺼내 감</text>
+
+    <rect x="590" y="300" width="490" height="34" rx="8" fill="#f6fdf8" stroke="#16a34a" stroke-dasharray="4 3"/>
+    <text x="604" y="322" font-size="12.5" fill="#16a34a" font-weight="700">주문은 셋을 알 필요가 없다 — 컨슈머가 늘어도 주문 코드는 그대로</text>
+  </g>
+</svg>
+<div class="cap">화살표의 방향과 개수는 그대로인데, "응답을 기다리는 빨간 화살표"가 사라진 것이 전부다. 그 하나가 세 결합을 끊는다.</div>
+</div>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">Before — 동기 3연타</div>
+<pre><code>@Transactional
+public void placeOrder(Order order) {
+    orderRepository.save(order);
+<span class="hl-bad">    notificationClient.send(order);</span>
+<span class="hl-bad">    pointClient.accumulate(order);</span>
+<span class="hl-bad">    statsClient.record(order);</span>
+    <span class="cmt">// 응답 시간 = 30 + 200 + 150 + 120 = 500ms</span>
+}</code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">After — 이벤트 발행. 주문은 주문만 책임진다</div>
+<pre><code>@Transactional
+public void placeOrder(Order order) {
+    orderRepository.save(order);
+<span class="hl-good">    eventPublisher.publish(<span class="cmt">// 브로커에 넣기만 한다</span></span>
+<span class="hl-good">        new OrderPlacedEvent(order.getId()));</span>
+    <span class="cmt">// 알림·적립금·통계가 언제 처리하는지</span>
+    <span class="cmt">// 이 코드는 알지 못하고, 알 필요도 없다.</span>
+    <span class="cmt">// 응답 시간 = 30 + 5 = 35ms</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="memo ok">
+  <div class="kicker">암기 카드 ③ — 큐로 얻는 것 4가지 &#160;"응 · 격 · 흡 · 확"</div>
+  <div class="mnemo ok2">
+    <div class="c"><div class="syl">응</div><div class="w">응답 단축</div><div class="d">시간 결합을 끊는다<br>500ms → 35ms</div></div>
+    <div class="c"><div class="syl">격</div><div class="w">장애 격리</div><div class="d">가용성 결합을 끊는다<br>쌓였다가 나중에 처리</div></div>
+    <div class="c"><div class="syl">흡</div><div class="w">피크 흡수</div><div class="d">처리량 결합을 끊는다<br>부하 평탄화</div></div>
+    <div class="c"><div class="syl">확</div><div class="w">확장 개방</div><div class="d">발행-구독<br>컨슈머 추가에 무변경</div></div>
+  </div>
+  <p class="small">앞의 셋은 §1의 세 결합과 <b>1:1로 대응</b>한다(시→응, 장→격, 처→흡). 넷째 "확"만 결합 축이 아니라 <b>구조가 바뀌면서 덤으로 열리는 것</b>이다.</p>
+</div>
+
+<h3>2-1. 얻는 것 ① 비동기화 — 응답 시간이 핵심 작업만큼으로 줄어든다</h3>
+
+<p>핵심 작업(주문 저장)만 끝내고 즉시 응답하므로, 부가 작업의 지연이 <b>사용자 응답 시간에서 빠진다.</b></p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 300" role="img" aria-label="동기 500ms와 큐 35ms의 응답 시간 타임라인 비교">
+  <g class="sv-t" fill="#1f2937">
+    <text x="20" y="28" font-size="13.5" font-weight="800">같은 작업, 같은 총량 — 다른 것은 "사용자가 어디까지 기다리는가"뿐이다</text>
+
+    <!-- sync lane -->
+    <text x="20" y="106" font-size="12.5" font-weight="800" fill="#dc2626">동기</text>
+    <rect x="150" y="86" width="53" height="36" fill="#2563eb"/>
+    <rect x="203" y="86" width="352" height="36" fill="#dc2626"/>
+    <rect x="555" y="86" width="264" height="36" fill="#d97706"/>
+    <rect x="819" y="86" width="212" height="36" fill="#7c3aed"/>
+    <text x="379" y="110" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">알림 200ms</text>
+    <text x="687" y="110" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">적립금 150ms</text>
+    <text x="925" y="110" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">통계 120ms</text>
+    <text x="176" y="78" text-anchor="middle" font-size="11" fill="#2563eb" font-weight="700">주문 30</text>
+    <path d="M150,132 L150,142 M1031,132 L1031,142 M150,137 L1031,137" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="590" y="160" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">사용자가 기다리는 시간 500ms &#160;— &#160;정말 필요한 일은 앞의 30ms뿐이다</text>
+
+    <!-- queue lane -->
+    <text x="20" y="226" font-size="12.5" font-weight="800" fill="#16a34a">큐</text>
+    <rect x="150" y="206" width="53" height="36" fill="#2563eb"/>
+    <rect x="203" y="206" width="9" height="36" fill="#16a34a"/>
+    <text x="176" y="198" text-anchor="middle" font-size="11" fill="#2563eb" font-weight="700">주문 30</text>
+    <text x="222" y="198" font-size="11" fill="#16a34a" font-weight="700">발행 5</text>
+    <rect x="252" y="206" width="779" height="36" rx="6" fill="#f8fafc" stroke="#9ca3af" stroke-dasharray="6 4"/>
+    <text x="268" y="230" font-size="12.5" fill="#6b7280">이후 알림·적립금·통계가 각자 자기 속도로 처리 &#160;— &#160;<tspan font-weight="800" fill="#1f2937">사용자 응답 시간 밖에서 일어난다</tspan></text>
+    <path d="M150,252 L150,262 M212,252 L212,262 M150,257 L212,257" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="230" y="262" font-size="12.5" font-weight="800" fill="#16a34a">사용자가 기다리는 시간 35ms</text>
+  </g>
+</svg>
+<div class="cap">총 작업량은 줄지 않았다. "사용자 응답"과 "전체 완료" 사이에 경계선이 생겼을 뿐이다.</div>
+</div>
+
+<div class="callout ok">
+  <span class="t">응답 시간 단축은 곧 처리 용량 증대다</span>
+  §1-1의 리틀의 법칙을 다시 적용해 보자. 체류 시간이 <b>0.5초 → 0.035초</b>로 줄었으므로, 같은 초당 1,000건 유입에서 동시 점유 스레드가 <b>500개 → 35개</b>로 떨어진다. 서버를 늘리지 않고 처리 용량이 십수 배가 된 것이다.
+</div>
+
+<h3>2-2. 얻는 것 ② 장애 격리 — 요청이 사라지지 않고 기다린다</h3>
+
+<p>알림 서버가 10분 죽어 있어도 메시지는 브로커에 쌓여 있다가 복구 후 처리된다. <b>요청이 "사라지지 않고 기다리는" 것이 큐의 본질이다.</b> 히어로의 전화/문자 비유가 정확히 이 지점이다 — 상대 휴대폰이 꺼져 있어도 문자는 보내지고, 켜지는 순간 도착한다.</p>
+
+<div class="callout ok">
+  <span class="t">§1-2의 연쇄 장애가 원천에서 끊긴다</span>
+  주문 서버의 스레드는 브로커에 넣는 <b>5ms만 쓰고 즉시 반환</b>되므로, 알림 서버가 아무리 느려도 <b>주문 서버의 스레드는 단 한 개도 그 때문에 묶이지 않는다.</b> 전파의 매개였던 <b>스레드 점유가 사라진 것</b>이 핵심이다 — 에러 처리를 잘해서가 아니다.
+</div>
+
+<h3>2-3. 얻는 것 ③ 피크 흡수 — 큐가 완충 탱크가 된다</h3>
+
+<p>이 항목은 수치로 봐야 감이 온다. §1-3의 상황을 그대로 가져오자. 주문 이벤트가 피크에 <b>초당 1,000건</b> 발생하고, 통계 컨슈머의 처리 능력은 <b>초당 300건</b>이며, 피크는 <b>10분</b> 지속된다.</p>
+
+<div class="memo amber">
+  <div class="kicker">직접 계산해 보는 큐 길이</div>
+  <p><b>① 쌓이는 속도</b> = 유입 1,000/s − 처리 300/s = <b>순증 700/s</b></p>
+  <p><b>② 피크 10분(600초) 누적</b> = 700 × 600 = <b>420,000건</b></p>
+  <p><b>③ 소진</b> — 평상시 유입 100/s로 돌아오면 소진 속도 = 300 − 100 = 200/s → 420,000 ÷ 200 = 2,100초 = <b>35분</b></p>
+  <p><b>④ 결과</b> — 큐 길이가 42만까지 부풀었다가 35분에 걸쳐 0으로 돌아온다. 그동안 <b>통계 서버는 내내 자기 속도 300/s만 처리했다. 한 번도 과부하가 아니었다.</b></p>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 440" role="img" aria-label="동기에서 스파이크가 그대로 통과하는 그래프와 큐에서 부하가 평탄화되고 큐 길이로 저장되는 그래프의 비교">
+  <g class="sv-t" fill="#1f2937">
+    <!-- LEFT -->
+    <text x="24" y="30" font-size="13.5" font-weight="800" fill="#dc2626">동기 — 완충이 없어 스파이크가 그대로 통과한다</text>
+    <line x1="90" y1="350" x2="520" y2="350" stroke="#9ca3af"/>
+    <line x1="90" y1="100" x2="90" y2="350" stroke="#9ca3af"/>
+    <text x="52" y="112" font-size="11" fill="#6b7280">건/s</text>
+    <text x="60" y="137" font-size="11" fill="#6b7280">1,000</text>
+    <text x="66" y="289" font-size="11" fill="#6b7280">300</text>
+    <text x="66" y="332" font-size="11" fill="#6b7280">100</text>
+    <line x1="90" y1="285" x2="520" y2="285" stroke="#16a34a" stroke-width="2" stroke-dasharray="7 5"/>
+    <rect x="151" y="133" width="62" height="152" fill="#dc2626" opacity=".22"/>
+    <polyline points="90,328 151,328 151,133 213,133 213,328 520,328" fill="none" stroke="#dc2626" stroke-width="2.6"/>
+    <text x="224" y="152" font-size="12" font-weight="800" fill="#dc2626">초과 700건/s</text>
+    <text x="224" y="170" font-size="12" fill="#dc2626">→ 타임아웃·에러 → §1-2 경로로 주문까지 역류</text>
+    <text x="96" y="303" font-size="11.5" font-weight="700" fill="#16a34a">통계 서버 처리 한계 300/s</text>
+    <g font-size="11" fill="#6b7280">
+      <text x="151" y="368" text-anchor="middle">10분</text>
+      <text x="213" y="368" text-anchor="middle">20분</text>
+      <text x="336" y="368" text-anchor="middle">40분</text>
+      <text x="458" y="368" text-anchor="middle">60분</text>
+    </g>
+    <rect x="90" y="386" width="430" height="38" rx="8" fill="#fff7f7" stroke="#dc2626" stroke-dasharray="4 3"/>
+    <text x="104" y="410" font-size="12" fill="#dc2626" font-weight="700">피크를 견디려면 상시 3배 증설 — 하루 대부분은 놀린다</text>
+
+    <line x1="552" y1="20" x2="552" y2="424" stroke="#e5e7eb" stroke-width="2"/>
+
+    <!-- RIGHT -->
+    <text x="578" y="30" font-size="13.5" font-weight="800" fill="#16a34a">큐 — 봉우리가 사라진 게 아니라 가로로 눕는다 (부하 평탄화)</text>
+    <line x1="645" y1="350" x2="1075" y2="350" stroke="#9ca3af"/>
+    <line x1="645" y1="100" x2="645" y2="350" stroke="#9ca3af"/>
+    <text x="607" y="112" font-size="11" fill="#6b7280">건/s</text>
+    <polyline points="645,328 706,328 706,133 768,133 768,328 1075,328" fill="none" stroke="#9ca3af" stroke-width="1.8" stroke-dasharray="6 4"/>
+    <text x="776" y="128" font-size="11.5" fill="#6b7280">유입은 똑같이 1,000/s로 폭증</text>
+    <polygon points="706,350 768,160 983,350" fill="#7c3aed" opacity=".18"/>
+    <polyline points="706,350 768,160 983,350" fill="none" stroke="#7c3aed" stroke-width="2.4"/>
+    <text x="772" y="186" font-size="12" font-weight="800" fill="#7c3aed">큐 길이 최대 42만</text>
+    <text x="856" y="252" font-size="11.5" fill="#7c3aed">35분에 걸쳐 소진</text>
+    <polyline points="645,328 706,328 706,285 983,285 983,328 1075,328" fill="none" stroke="#16a34a" stroke-width="3"/>
+    <text x="736" y="303" font-size="11.5" font-weight="800" fill="#16a34a">컨슈머는 내내 300/s — 한 번도 과부하가 아니다</text>
+    <g font-size="11" fill="#6b7280">
+      <text x="706" y="368" text-anchor="middle">10분</text>
+      <text x="768" y="368" text-anchor="middle">20분</text>
+      <text x="983" y="368" text-anchor="middle">55분</text>
+    </g>
+    <rect x="645" y="386" width="430" height="38" rx="8" fill="#f6fdf8" stroke="#16a34a" stroke-dasharray="4 3"/>
+    <text x="659" y="410" font-size="12" fill="#16a34a" font-weight="700">용량 산정 기준이 "피크"에서 "평균 + 허용 지연"으로 바뀐다</text>
+  </g>
+</svg>
+<div class="cap">보라색 삼각형의 넓이(42만 건 × 시간)가 곧 "저장된 시간차"다. 스파이크는 사라진 게 아니라 큐 길이라는 숫자로 옮겨 적혔다.</div>
+</div>
+
+<h4>왜 동기 호출로는 이게 불가능한가</h4>
+
+<p>답은 한 줄이다. <b>요청은 기다려 주지 않기 때문이다.</b> 동기 호출에서 초과분 700건/s를 "일단 붙잡아 두려면" 그 700건에 해당하는 <b>스레드와 커넥션을 계속 살려 둬야</b> 하고, 그 700건을 보낸 사용자들은 <b>브라우저 앞에서 응답을 기다리고 있어야</b> 한다. 30초쯤 지나면 타임아웃이 나거나 사용자가 새로고침을 누른다.</p>
+
+<div class="vs">
+  <div class="side b">
+    <div class="h">동기 — 기다림의 비용을 "살아 있는 자원"으로 낸다</div>
+    <ul>
+      <li>스레드 · 커넥션 · 소켓을 계속 점유</li>
+      <li>사용자의 인내심(30초 타임아웃)</li>
+      <li>이 자원들은 <b>42만 건 규모로는 존재하지 않는다</b></li>
+    </ul>
+  </div>
+  <div class="mid">vs</div>
+  <div class="side">
+    <div class="h">큐 — 기다림을 "디스크에 적힌 데이터"로 바꾼다</div>
+    <ul>
+      <li>42만 건은 그냥 디스크에 누운 바이트</li>
+      <li>스레드를 하나도 쓰지 않는다</li>
+      <li>아무도 초조해하지 않는다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout">
+  <span class="t">큐의 진짜 기여는 "자원의 성격을 바꾼 것"</span>
+  기다림의 비용을 <b>살아 있는 자원(스레드·커넥션·인내심)에서 죽은 자원(디스크 바이트)으로</b> 전환한 것 — 이 한 문장이 피크 흡수의 원리 전체다.
+</div>
+
+<h3>2-4. 얻는 것 ④ 결합도 감소 — 발행-구독으로 확장이 열린다</h3>
+
+<p>주문 서비스는 "누가 이 이벤트를 쓰는지" 모른다. 알 필요도 없다. 이 구조를 <b>발행-구독(publish-subscribe, pub/sub)</b>이라 부른다 — 발행하는 쪽은 주제(토픽)에 대고 던지고, 관심 있는 쪽이 각자 구독해 가져간다.</p>
+
+<p>여기서 오는 실익은 <b>변경의 범위</b>다. 나중에 추천 시스템이 "주문이 일어나면 취향 프로필을 갱신하고 싶다"고 요청해 왔다고 하자.</p>
+
+<div class="grid2">
+  <div class="mini">
+    <div class="h"><span class="tag warn">동기 구조</span> 주문 코드를 연다</div>
+    <p><code>recommendClient.update(order)</code> 한 줄을 추가하고, 테스트하고, 배포한다. <b>주문이라는 가장 위험한 코드를 부가 기능 때문에 건드리는 것</b>이다.</p>
+    <p class="small">하위 시스템이 10개면 새 시스템이 붙을 때마다 결제 흐름에 회귀 위험이 쌓인다.</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag ok">큐 구조</span> 주문 코드를 열지 않는다</div>
+    <p>추천 팀이 컨슈머를 하나 띄우고 <code>order-events</code>를 구독하면 끝난다. <b>주문 코드는 한 줄도 바뀌지 않는다.</b></p>
+    <p class="small">앞 도식의 보라색 점선 박스가 바로 이 "나중에 붙는 컨슈머"다.</p>
+  </div>
+</div>
+
+<!-- ============================ 3 ============================ -->
+<h2 id="s3">3. 잃는 것 — 이걸 말해야 합격 답변이 된다</h2>
+
+<div class="callout warn">
+  <span class="t">§2까지만 말하면 탈락 구간</span>
+  "비동기 좋다"에서 멈춘 답변이다. <b>면접이 실제로 보려는 것은 여기부터다.</b>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">암기 카드 ④ — 큐로 잃는 것 4가지 &#160;"정 · 추 · 실 · 운"</div>
+  <div class="mnemo no">
+    <div class="c"><div class="syl">정</div><div class="w">즉시 정합성</div><div class="d">최종 일관성으로<br>한 단계 내려간다</div></div>
+    <div class="c"><div class="syl">추</div><div class="w">흐름 추적</div><div class="d">스택 트레이스가<br>발행 지점에서 끊긴다</div></div>
+    <div class="c"><div class="syl">실</div><div class="w">실패 처리</div><div class="d">유실·중복·재시도·DLQ를<br>직접 설계</div></div>
+    <div class="c"><div class="syl">운</div><div class="w">운영 부담</div><div class="d">브로커라는<br>새 인프라와 새 업무</div></div>
+  </div>
+  <p class="small">§1의 "시·장·처"와 §2의 "응·격·흡·확", 그리고 이 "정·추·실·운" — 세 묶음이면 이 질문의 답변 골격이 전부 선다.</p>
+</div>
+
+<h3>3-1. 잃는 것 ① 즉시 정합성이 최종 일관성으로 내려간다</h3>
+
+<div class="grid2">
+  <div class="mini">
+    <div class="h"><span class="tag">용어</span> 즉시(강한) 정합성 strong consistency</div>
+    <p><b>쓰기가 성공한 순간부터 누가 어디서 읽어도 그 새 값이 보인다</b>는 보장. 단일 DB 트랜잭션이 커밋되면 그 다음 조회는 반드시 새 값을 본다 — 우리가 평소 당연하게 여기는 그 상태다.</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag amber">용어</span> 최종 일관성 eventual consistency</div>
+    <p>보장 수준을 한 단계 낮춘 것. <b>지금은 어긋나 있을 수 있지만, 새 변경이 더 들어오지 않는다면 결국은 같아진다</b>는 보장. 이름 그대로 "eventually(결국에는)"이지 <b>"always(언제나)"가 아니다.</b></p>
+  </div>
+</div>
+
+<div class="fig">
+<svg viewBox="0 0 900 280" role="img" aria-label="동기의 즉시 정합성 타임라인과 큐의 최종 일관성 타임라인 비교, 일관성 창 표시">
+  <g class="sv-t" fill="#1f2937">
+    <defs>
+      <marker id="a-k" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#9ca3af"/></marker>
+    </defs>
+
+    <!-- top: strong -->
+    <text x="20" y="36" font-size="12.5" font-weight="800" fill="#16a34a">즉시 정합성 — 동기 호출</text>
+    <line x1="140" y1="80" x2="850" y2="80" stroke="#9ca3af" stroke-width="1.4" marker-end="url(#a-k)"/>
+    <circle cx="230" cy="80" r="6" fill="#16a34a"/>
+    <text x="230" y="66" text-anchor="middle" font-size="11.5" font-weight="700">t0</text>
+    <text x="230" y="106" text-anchor="middle" font-size="11.5">주문 커밋 + 적립금 반영 커밋</text>
+    <text x="230" y="122" text-anchor="middle" font-size="11" fill="#6b7280">(같은 호출 안에서 끝났다)</text>
+    <circle cx="620" cy="80" r="6" fill="#16a34a"/>
+    <text x="620" y="66" text-anchor="middle" font-size="11.5" font-weight="700">t1</text>
+    <text x="620" y="106" text-anchor="middle" font-size="11.5">조회 → 반영된 값이 보인다</text>
+    <text x="620" y="122" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">어긋나는 구간이 없다</text>
+
+    <!-- bottom: eventual -->
+    <text x="20" y="176" font-size="12.5" font-weight="800" fill="#dc2626">최종 일관성 — 메시지 큐</text>
+    <rect x="230" y="196" width="330" height="44" fill="#fee2e2" opacity=".75"/>
+    <rect x="230" y="196" width="330" height="44" fill="none" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="395" y="188" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">일관성 창(inconsistency window) — 발행부터 반영까지</text>
+    <line x1="140" y1="218" x2="850" y2="218" stroke="#9ca3af" stroke-width="1.4" marker-end="url(#a-k)"/>
+    <circle cx="230" cy="218" r="6" fill="#2563eb"/>
+    <text x="230" y="262" text-anchor="middle" font-size="11.5">t0 주문 커밋 + 발행</text>
+    <text x="230" y="277" text-anchor="middle" font-size="11" fill="#6b7280">여기까지가 사용자 응답</text>
+    <circle cx="395" cy="218" r="6" fill="#dc2626"/>
+    <text x="395" y="262" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">t1 조회 → 아직 반영 전</text>
+    <text x="395" y="277" text-anchor="middle" font-size="11" fill="#dc2626">"적립금이 안 들어왔어요"</text>
+    <circle cx="560" cy="218" r="6" fill="#2563eb"/>
+    <text x="560" y="262" text-anchor="middle" font-size="11.5">t2 컨슈머가 반영</text>
+    <circle cx="720" cy="218" r="6" fill="#16a34a"/>
+    <text x="720" y="262" text-anchor="middle" font-size="11.5">t3 다시 조회 → 보인다</text>
+    <text x="720" y="277" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">결국 같아졌다</text>
+  </g>
+</svg>
+<div class="cap">최종 일관성을 받아들인다는 것은 곧 "이 빨간 구간의 존재를 제품이 허용한다"고 선언하는 일이다.</div>
+</div>
+
+<p><b>중요한 것은 이 어긋남이 사용자 눈에 구체적인 증상으로 나타난다</b>는 점이다. 추상적인 이론 문제가 아니다.</p>
+
+<div class="grid3">
+  <div class="mini">
+    <div class="h"><span class="tag warn">CS 문구</span> 목록 누락</div>
+    <p>"주문했는데 주문 목록에 아직 안 보여요"</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag warn">CS 문구</span> 권한 미발급</div>
+    <p>"결제는 됐다는데 이용권이 없어요"</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag warn">CS 문구</span> 지연 반영</div>
+    <p>"적립금이 안 들어왔어요" (10초 뒤 다시 보면 들어와 있다)</p>
+  </div>
+</div>
+
+<div class="callout warn">
+  <span class="t">그래서 이것은 결국 제품 문제가 된다</span>
+  <b>몇 초까지 어긋나 있어도 되는지를 기획과 협상</b>해야 하고, 그 시간 동안 화면에 무엇을 보여줄지("처리 중입니다")를 정해야 하며, CS가 이 문의를 어떻게 응대할지 사전에 합의해야 한다. <b>엔지니어링 선택이 CS 티켓 수로 청구되는 구조</b>다. 사용자 경험 설계는 같은 디렉토리의 <code>07-eventual-consistency-ux.md</code>가 따로 다룬다.
+</div>
+
+<h3>3-2. 잃는 것 ② 흐름 추적 난이도</h3>
+
+<p>동기 호출은 스택 트레이스 하나로 전 과정이 보인다. <code>placeOrder</code>가 <code>notificationClient.send</code>를 불렀고 거기서 예외가 났다는 사실이 한 화면에 다 나온다. <b>호출 관계가 "스택"이라는 자료구조에 그대로 기록되어 있기 때문</b>이다. 큐를 거치면 이 연결이 <b>물리적으로 끊긴다.</b></p>
+
+<div class="fig">
+<svg viewBox="0 0 900 330" role="img" aria-label="동기의 단일 스택 트레이스와 비동기에서 프로듀서 스택과 컨슈머 스택이 끊어진 모습, 상관관계 ID로 잇는 그림">
+  <g class="sv-t" fill="#1f2937">
+    <text x="20" y="28" font-size="12.5" font-weight="800" fill="#16a34a">동기 — 스택 하나에 전 과정이 담긴다</text>
+    <rect x="20" y="44" width="380" height="112" rx="10" fill="#1e293b"/>
+    <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" fill="#e2e8f0">
+      <text x="36" y="66">OrderController.placeOrder</text>
+      <text x="48" y="86">└ OrderService.placeOrder</text>
+      <text x="60" y="106">&#160;&#160;└ NotificationClient.send</text>
+      <text x="72" y="126">&#160;&#160;&#160;&#160;└ SocketTimeoutException</text>
+      <text x="36" y="146" fill="#4ade80">한 화면에서 원인까지 도달</text>
+    </g>
+
+    <text x="440" y="28" font-size="12.5" font-weight="800" fill="#dc2626">비동기 — 두 개의 스택, 그 사이엔 아무 연결이 없다</text>
+    <rect x="440" y="44" width="440" height="66" rx="10" fill="#1e293b"/>
+    <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" fill="#e2e8f0">
+      <text x="456" y="66">OrderService.placeOrder</text>
+      <text x="468" y="86">└ eventPublisher.publish  <tspan fill="#fca5a5">← 스택은 여기서 끝난다</tspan></text>
+      <text x="456" y="104" fill="#94a3b8">[order-api 서버 · 10:03:11]</text>
+    </g>
+    <rect x="440" y="146" width="440" height="66" rx="10" fill="#1e293b"/>
+    <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" fill="#e2e8f0">
+      <text x="456" y="168">KafkaListener.poll  <tspan fill="#fca5a5">← 스택은 여기서 시작한다</tspan></text>
+      <text x="468" y="188">└ PointService.accumulate → Exception</text>
+      <text x="456" y="206" fill="#94a3b8">[point-worker 서버 · 10:03:47]</text>
+    </g>
+    <line x1="440" y1="128" x2="880" y2="128" stroke="#dc2626" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="660" y="141" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">단절 — 서로 다른 서버 · 서로 다른 시각 · 코드 연결 없음</text>
+
+    <!-- correlation bridge -->
+    <rect x="20" y="240" width="860" height="72" rx="10" fill="#f6fdf8" stroke="#16a34a" stroke-dasharray="5 4"/>
+    <text x="36" y="264" font-size="12.5" font-weight="800" fill="#16a34a">대응 — 상관관계 ID(correlation ID)를 메시지 헤더에 실어 두 로그를 사람이 아닌 검색으로 잇는다</text>
+    <rect x="36" y="276" width="250" height="26" rx="13" fill="#16a34a"/>
+    <text x="161" y="294" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff" font-family="ui-monospace,Menlo,monospace">X-Correlation-Id: 9f3c...a1</text>
+    <path d="M292,289 L470,289" stroke="#16a34a" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="486" y="294" font-size="12">이 ID 하나로 검색하면 발행 로그와 소비 로그가 <tspan font-weight="800">한 줄로 이어진다</tspan></text>
+  </g>
+</svg>
+<div class="cap">동기에서는 언어와 런타임이 공짜로 주던 추적성을, 비동기에서는 인프라를 지어서 사야 한다.</div>
+</div>
+
+<div class="ba">
+  <div class="col">
+    <div class="head blue">발행 시 — 헤더에 ID를 싣는다</div>
+<pre><code>Message&lt;OrderPlacedEvent&gt; message = MessageBuilder
+    .withPayload(new OrderPlacedEvent(order.getId()))
+<span class="hl-good">    .setHeader("X-Correlation-Id", MDC.get("correlationId"))</span>
+    .setHeader(KafkaHeaders.TOPIC, "order-events")
+    .build();
+kafkaTemplate.send(message);
+
+<span class="cmt">// 페이로드가 아니라 헤더에 두는 이유:</span>
+<span class="cmt">// 비즈니스 데이터가 아닌 관측용 메타데이터이고,</span>
+<span class="cmt">// 컨슈머가 역직렬화하기 전에 읽어야 하기 때문이다.</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head blue">소비 시 — MDC에 넣어 모든 로그에 자동 부착</div>
+<pre><code>@KafkaListener(topics = "order-events")
+public void handle(OrderPlacedEvent event,
+        @Header("X-Correlation-Id") String correlationId) {
+<span class="hl-good">    MDC.put("correlationId", correlationId);</span>
+    try {
+        pointService.accumulate(event.orderId());
+    } finally {
+<span class="hl-warn">        MDC.clear();   <span class="cmt">// 반드시 지운다</span></span>
+    }
+}
+<span class="cmt">// 스레드가 풀로 반납되므로 안 지우면</span>
+<span class="cmt">// 다음 메시지의 로그에 남의 ID가 찍힌다.</span></code></pre>
+  </div>
+</div>
+
+<h3>3-3. 잃는 것 ③ 실패 처리 복잡도</h3>
+
+<p>동기 호출은 실패하면 즉시 예외가 올라오고 호출자가 그 자리에서 대응한다. 재시도할지, 사용자에게 에러를 보여줄지, 트랜잭션을 롤백할지를 <b>결정할 주체가 명확히 그 자리에 있다.</b> 비동기에서는 그 주체가 사라진다 — 프로듀서는 이미 응답하고 떠났고, 컨슈머가 실패했을 때 "누구에게 알릴 것인가"가 자명하지 않다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 250" role="img" aria-label="프로듀서, 브로커, 컨슈머 경로에서 메시지가 유실될 수 있는 세 지점">
+  <g class="sv-t" fill="#1f2937">
+    <text x="20" y="28" font-size="13.5" font-weight="800">메시지가 사라질 수 있는 지점 — 동기에는 없던 세 곳</text>
+    <rect x="40" y="80" width="150" height="70" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="115" y="112" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">프로듀서</text>
+    <text x="115" y="132" text-anchor="middle" font-size="11" fill="#6b7280">주문 서비스</text>
+
+    <rect x="450" y="70" width="220" height="90" rx="10" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="560" y="94" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">브로커</text>
+    <rect x="470" y="106" width="80" height="34" rx="6" fill="#fff" stroke="#16a34a"/><text x="510" y="128" text-anchor="middle" font-size="11">메모리</text>
+    <path d="M556,123 L578,123" stroke="#16a34a" stroke-width="2" marker-end="url(#a-g)"/>
+    <rect x="584" y="106" width="70" height="34" rx="6" fill="#fff" stroke="#16a34a"/><text x="619" y="128" text-anchor="middle" font-size="11">디스크</text>
+
+    <rect x="930" y="80" width="150" height="70" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="1005" y="112" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">컨슈머</text>
+    <text x="1005" y="132" text-anchor="middle" font-size="11" fill="#6b7280">적립금 워커</text>
+
+    <path d="M190,115 L444,115" stroke="#2563eb" stroke-width="2.4" marker-end="url(#a-b)"/>
+    <path d="M670,115 L924,115" stroke="#2563eb" stroke-width="2.4" marker-end="url(#a-b)"/>
+
+    <!-- failure points -->
+    <g font-size="11.5">
+      <circle cx="317" cy="115" r="13" fill="#dc2626"/><text x="317" y="120" text-anchor="middle" font-size="12" font-weight="800" fill="#fff">1</text>
+      <text x="317" y="162" text-anchor="middle" font-weight="800" fill="#dc2626">발행 실패</text>
+      <text x="317" y="180" text-anchor="middle">브로커 장애 · 네트워크 단절</text>
+      <text x="317" y="198" text-anchor="middle" fill="#6b7280">→ 27-producer-acks-durability</text>
+
+      <circle cx="567" cy="176" r="13" fill="#dc2626"/><text x="567" y="181" text-anchor="middle" font-size="12" font-weight="800" fill="#fff">2</text>
+      <text x="567" y="204" text-anchor="middle" font-weight="800" fill="#dc2626">디스크 쓰기 전 브로커 다운</text>
+      <text x="567" y="222" text-anchor="middle" fill="#6b7280">복제·acks 설정의 영역</text>
+
+      <circle cx="1005" cy="176" r="13" fill="#dc2626"/><text x="1005" y="181" text-anchor="middle" font-size="12" font-weight="800" fill="#fff">3</text>
+      <text x="1005" y="204" text-anchor="middle" font-weight="800" fill="#dc2626">처리 전에 "다 읽었다" 표시</text>
+      <text x="1000" y="222" text-anchor="middle" fill="#6b7280">→ 23-offset-commit-and-auto-commit</text>
+    </g>
+  </g>
+</svg>
+<div class="cap">③이 특히 위험하다 — 오프셋을 먼저 커밋하고 처리하다 죽으면 그 메시지는 <b>영원히 다시 오지 않는다.</b></div>
+</div>
+
+<div class="cond no">
+  <div class="num">1</div>
+  <div class="b">
+    <h4>유실 — 사라질 수 있는 지점이 여럿이다</h4>
+    <p>발행 자체가 실패할 수 있고(브로커 장애·네트워크), 브로커가 받았지만 디스크에 안전하게 쓰기 전에 죽을 수 있고, 컨슈머가 메시지를 받은 뒤 <b>처리 전에 오프셋을 커밋</b>해 버리면 그 메시지는 다시 오지 않는다.</p>
+  </div>
+</div>
+<div class="cond no">
+  <div class="num">2</div>
+  <div class="b">
+    <h4>중복 — 유실을 막으면 반드시 따라온다</h4>
+    <p>재시도를 켜면 이번엔 중복이 생긴다. 컨슈머가 처리를 끝내고 <b>오프셋 커밋 직전에 죽으면</b> 재시작 후 같은 메시지를 다시 받는다. 그래서 컨슈머는 <b>멱등(idempotent)</b>해야 한다 — 같은 작업을 여러 번 실행해도 결과가 한 번 실행한 것과 같은 성질이다. (<code>04-idempotent-consumer-implementation.md</code>)</p>
+  </div>
+</div>
+<div class="cond no">
+  <div class="num">3</div>
+  <div class="b">
+    <h4>재시도와 DLQ — poison pill이 뒤를 막는다</h4>
+    <p>특정 메시지가 계속 실패하면(형식이 깨졌거나 참조 데이터가 없거나) 그 메시지가 <b>뒤 메시지들을 막아 세운다.</b> 이런 메시지를 <b>poison pill(독이 든 알약)</b>이라 부른다 — 삼키면 컨슈머가 계속 쓰러진다. 몇 번 재시도한 뒤 <b>DLQ(Dead Letter Queue, 처리 실패 메시지를 따로 모아 두는 별도 큐)</b>로 옮겨 흐름을 막지 않게 해야 한다. (<code>25-consumer-retry-dlq-design.md</code>)</p>
+  </div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">한 문장으로 압축</div>
+  <p class="big">동기에서는 공짜였던 <b>"실패의 즉시 인지와 전파"</b>를 비동기에서는 직접 구현해야 한다.</p>
+</div>
+
+<h3>3-4. 잃는 것 ④ 운영 인프라 부담</h3>
+
+<p>브로커는 <b>새로운 인프라</b>다. 그리고 새 인프라에는 새 운영 업무가 따라온다.</p>
+
+<div class="grid3">
+  <div class="mini">
+    <div class="h"><span class="tag warn">운영 ①</span> 랙(lag) 감시</div>
+    <p><b>랙 = 브로커의 최신 오프셋 − 컨슈머가 처리한 오프셋</b>, 즉 <b>밀린 메시지 수</b>다.</p>
+    <p>이 숫자가 계속 늘고 있다면 컨슈머가 유입을 못 따라간다는 뜻이고, 방치하면 §3-1의 일관성 창이 <b>몇 초가 아니라 몇 시간</b>이 된다.</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag warn">운영 ②</span> 용량 관리</div>
+    <p>디스크가 차면 브로커가 <b>쓰기를 거부한다.</b> 보존 기간과 디스크 여유를 함께 봐야 한다.</p>
+  </div>
+  <div class="mini">
+    <div class="h"><span class="tag warn">운영 ③</span> 장애 대응</div>
+    <p>브로커 자체가 죽었을 때의 <b>복구 절차, 복제 설정, 리더 재선출</b> 상황을 이해하고 있어야 한다.</p>
+  </div>
+</div>
+
+<div class="callout amber">
+  <span class="t">그래서 도입 여부 질문의 진짜 답에 가까운 문장</span>
+  트래픽이 작고 호출 관계가 단순하면 <b>동기 호출 + 타임아웃이 더 싼 선택일 수 있다.</b> 큐가 주는 이익보다 브로커 운영 비용이 클 수 있다는 이 판단이 §4로 이어진다.
+</div>
+
+<h3>3-5. 요약 비교</h3>
+
+<div class="tbl">
+<table>
+  <thead><tr><th>축</th><th>동기 호출</th><th>메시지 큐</th></tr></thead>
+  <tbody>
+    <tr><td><b>정합성</b></td><td>즉시 (강한 일관성 쪽)</td><td>최종 일관성</td></tr>
+    <tr><td><b>응답 시간</b></td><td>하위 지연이 합산됨</td><td>핵심 작업만큼만</td></tr>
+    <tr><td><b>장애 영향</b></td><td>수신자 장애 = 내 장애</td><td>큐가 격리 (쌓였다 처리)</td></tr>
+    <tr><td><b>실패 인지</b></td><td>즉시 예외</td><td>지연 감지 — 직접 설계 필요</td></tr>
+    <tr><td><b>추적</b></td><td>스택 트레이스로 한눈에</td><td>상관관계 ID · 분산 추적 필요</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <span class="t">표 밖의 문장이 진짜 답변이다</span>
+  큐는 <b>"결합을 끊는 대가로 즉시성과 단순함을 판다"</b>는 거래이고, 그 거래가 유리한지는 <b>요구사항이 결정한다.</b>
+</div>
+
+<!-- ============================ 4 ============================ -->
+<h2 id="s4">4. 도입 판단 프레임 — 질문 두 개로 자리를 정한다</h2>
+
+<div class="memo">
+  <div class="kicker">암기 카드 ⑤ — 도입을 가르는 두 질문</div>
+  <div class="mnemo c2">
+    <div class="c"><div class="syl">버</div><div class="w">이 작업을 버려도 되는가?</div><div class="d">버려도 된다 → 서킷 브레이커로 충분<br>버리면 안 된다 → <b>보관해 줄 큐가 필요</b></div></div>
+    <div class="c"><div class="syl">즉</div><div class="w">결과를 즉시 알아야 하는가?</div><div class="d">즉시 알아야 한다 → <b>동기로 남긴다</b><br>나중에 알아도 된다 → 비동기 후보</div></div>
+  </div>
+  <p class="small">"버 · 즉" 두 글자만 기억하면 어떤 호출을 받아도 4분면 중 한 칸에 즉시 꽂아 넣을 수 있다.</p>
+</div>
+
+<div class="fig">
+<svg viewBox="0 0 900 470" role="img" aria-label="버려도 되는가와 결과를 즉시 알아야 하는가 두 축으로 만든 2x2 판단 매트릭스">
+  <g class="sv-t" fill="#1f2937">
+    <text x="450" y="34" text-anchor="middle" font-size="13.5" font-weight="800">축 ② 결과를 즉시 알아야 하는가?</text>
+    <text x="357" y="86" text-anchor="middle" font-size="12.5" font-weight="700" fill="#6b7280">아니오 — 나중에 알아도 된다</text>
+    <text x="692" y="86" text-anchor="middle" font-size="12.5" font-weight="700" fill="#6b7280">예 — 응답 내용이 그 결과에 달렸다</text>
+    <text x="30" y="263" font-size="13.5" font-weight="800" transform="rotate(-90 30 263)" text-anchor="middle">축 ① 이 작업을 버려도 되는가?</text>
+    <text x="62" y="180" font-size="12.5" font-weight="700" fill="#6b7280" transform="rotate(-90 62 180)" text-anchor="middle">예 — 버려도 된다</text>
+    <text x="62" y="346" font-size="12.5" font-weight="700" fill="#dc2626" transform="rotate(-90 62 346)" text-anchor="middle">아니오 — 버리면 안 된다</text>
+
+    <!-- Q1 top-left -->
+    <rect x="96" y="98" width="418" height="156" rx="12" fill="#f8fafc" stroke="#9ca3af"/>
+    <text x="114" y="124" font-size="12.5" font-weight="800" fill="#6b7280">가장 싼 수단으로 — 큐까지는 과할 수 있다</text>
+    <text x="114" y="150" font-size="12">로컬 비동기 실행이나 fire-and-forget으로 충분하다.</text>
+    <text x="114" y="170" font-size="12">브로커 운영 비용을 낼 이유가 약하다(§3-4).</text>
+    <text x="114" y="200" font-size="11.5" font-weight="700" fill="#6b7280">예시</text>
+    <text x="114" y="220" font-size="12">조회수 집계 일부 · 실시간 배지 카운트</text>
+
+    <!-- Q2 top-right -->
+    <rect x="526" y="98" width="330" height="156" rx="12" fill="#fffbeb" stroke="#d97706"/>
+    <text x="544" y="124" font-size="12.5" font-weight="800" fill="#d97706">동기 + 타임아웃 + 폴백</text>
+    <text x="544" y="150" font-size="12">결과가 지금 필요하지만 실패해도 괜찮으니,</text>
+    <text x="544" y="170" font-size="12">짧은 타임아웃과 서킷 브레이커로 빠르게 포기하고</text>
+    <text x="544" y="190" font-size="12">기본값을 보여 준다.</text>
+    <text x="544" y="216" font-size="11.5" font-weight="700" fill="#6b7280">예시</text>
+    <text x="544" y="236" font-size="12">추천 목록(실패 시 기본 목록) · 개인화 배너</text>
+
+    <!-- Q3 bottom-left : the sweet spot -->
+    <rect x="96" y="266" width="418" height="164" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2.4"/>
+    <text x="114" y="294" font-size="13.5" font-weight="900" fill="#16a34a">★ 여기가 메시지 큐의 자리</text>
+    <text x="114" y="320" font-size="12">반드시 처리돼야 하지만 지금 당장은 아니어도 되는 일.</text>
+    <text x="114" y="340" font-size="12">큐가 <tspan font-weight="800">보관</tspan>해 두었다가 컨슈머가 살아나면 처리한다.</text>
+    <text x="114" y="368" font-size="11.5" font-weight="700" fill="#6b7280">예시</text>
+    <text x="114" y="388" font-size="12">적립금 지급 · 정산 데이터 기록</text>
+    <text x="114" y="408" font-size="12">결제 완료 알림 · 이용권 발급</text>
+
+    <!-- Q4 bottom-right -->
+    <rect x="526" y="266" width="330" height="164" rx="12" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+    <text x="544" y="294" font-size="13" font-weight="900" fill="#dc2626">동기 필수 — 큐로 빼면 안 된다</text>
+    <text x="544" y="320" font-size="12">응답 결과가 다음 진행의 전제인 호출.</text>
+    <text x="544" y="340" font-size="12">비동기로 빼면 사용자에게</text>
+    <text x="544" y="360" font-size="12" font-weight="800">"아마 될 거예요"라고 답하는 셈이다.</text>
+    <text x="544" y="388" font-size="11.5" font-weight="700" fill="#6b7280">예시</text>
+    <text x="544" y="408" font-size="12">결제 승인 · 재고 확인 · 로그인 인증</text>
+  </g>
+</svg>
+<div class="cap">두 질문에 답하는 순간 칸이 정해진다. 큐는 만능 수단이 아니라 <b>4분면 중 한 칸의 정답</b>이다.</div>
+</div>
+
+<h3>4-1. "그럼 모든 호출을 비동기로 바꾸면 되지 않나요?"</h3>
+
+<p>아니다. <b>응답 결과가 다음 진행의 전제인 호출은 동기여야 한다.</b> 결제 승인이 대표적이다 — 승인 성공/실패를 알아야 주문을 확정할지가 갈리는데, 이것을 비동기로 빼면 사용자에게 "아마 될 거예요"라고 답하는 셈이 된다. 재고 확인도 마찬가지다. 재고가 없는데 주문을 받아 놓고 나중에 취소 안내를 보내는 것은 대부분의 비즈니스에서 받아들여지지 않는다.</p>
+
+<div class="callout">
+  <span class="t">판단 기준 한 문장</span>
+  <b>"이 작업의 결과 없이 사용자에게 응답해도 되는가?"</b> 알림·적립·집계처럼 <b>핵심 트랜잭션 밖의 부가 작업</b>이 비동기화의 대상이고, <b>결과가 응답 내용을 바꾸는 작업</b>은 동기로 남는다.
+</div>
+
+<h3>4-2. "타임아웃 + 서킷 브레이커로도 장애 전파는 막을 수 있지 않나요?" <span class="badge senior">시니어 변별</span></h3>
+
+<p>막는 건 맞다. 하지만 <b>막는 방식의 의미가 다르다.</b> 이 차이를 축으로 세울 수 있느냐가 변별 포인트다.</p>
+
+<p>먼저 용어를 정확히. <b>서킷 브레이커(circuit breaker, 회로 차단기)</b>는 하위 호출의 실패율을 세고 있다가 임계를 넘으면 <b>회로를 열어 이후 호출을 아예 시도하지 않고 즉시 실패시키는</b> 장치다. 전기 회로의 두꺼비집에서 온 이름이다 — 과전류가 흐르면 차단해 집 전체가 타는 것을 막는다.</p>
+
+<div class="fig">
+<svg viewBox="0 0 900 300" role="img" aria-label="서킷 브레이커는 요청을 버리고 큐는 요청을 보관한다는 차이를 보여주는 그림">
+  <g class="sv-t" fill="#1f2937">
+    <text x="20" y="28" font-size="13.5" font-weight="800">같은 상황(알림 서버 다운) — 갈리는 것은 "그 요청 자체를 어떻게 하느냐"</text>
+
+    <!-- row 1: CB -->
+    <text x="20" y="70" font-size="12.5" font-weight="800" fill="#d97706">서킷 브레이커 — 빠르게 실패시키기(fail fast)</text>
+    <rect x="20" y="84" width="96" height="46" rx="9" fill="#eff6ff" stroke="#2563eb"/><text x="68" y="112" text-anchor="middle" font-size="12" font-weight="700" fill="#2563eb">주문</text>
+    <path d="M116,107 L176,107" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a-b)"/>
+    <rect x="182" y="84" width="120" height="46" rx="9" fill="#fffbeb" stroke="#d97706"/>
+    <text x="242" y="104" text-anchor="middle" font-size="11.5" font-weight="800" fill="#d97706">회로 열림</text>
+    <text x="242" y="121" text-anchor="middle" font-size="10.5" fill="#92400e">호출 시도 안 함</text>
+    <path d="M302,107 L360,107" stroke="#dc2626" stroke-width="2.2" stroke-dasharray="5 4" marker-end="url(#a-r)"/>
+    <rect x="366" y="84" width="180" height="46" rx="9" fill="#fff7f7" stroke="#dc2626" stroke-dasharray="5 4"/>
+    <text x="456" y="104" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">그 알림 요청은 소멸</text>
+    <text x="456" y="121" text-anchor="middle" font-size="10.5" fill="#dc2626">이 세상에서 사라졌다</text>
+    <rect x="596" y="84" width="130" height="46" rx="9" fill="#f1f5f9" stroke="#9ca3af" stroke-dasharray="4 3"/>
+    <text x="661" y="112" text-anchor="middle" font-size="12" fill="#6b7280">알림 서버 (다운)</text>
+    <text x="746" y="100" font-size="11.5" fill="#6b7280">복구돼도</text>
+    <text x="746" y="118" font-size="11.5" font-weight="800" fill="#dc2626">그 알림은 영영 안 간다</text>
+
+    <!-- row 2: Queue -->
+    <text x="20" y="196" font-size="12.5" font-weight="800" fill="#16a34a">큐 — 나중에 처리하기(defer)</text>
+    <rect x="20" y="210" width="96" height="46" rx="9" fill="#eff6ff" stroke="#2563eb"/><text x="68" y="238" text-anchor="middle" font-size="12" font-weight="700" fill="#2563eb">주문</text>
+    <path d="M116,233 L176,233" stroke="#16a34a" stroke-width="2.2" marker-end="url(#a-g)"/>
+    <rect x="182" y="204" width="150" height="58" rx="9" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="257" y="222" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">브로커에 그대로 쌓임</text>
+    <g fill="#16a34a" opacity=".6"><rect x="200" y="230" width="114" height="8" rx="2"/><rect x="200" y="242" width="114" height="8" rx="2"/><rect x="200" y="254" width="114" height="6" rx="2"/></g>
+    <path d="M332,233 L590,233" stroke="#16a34a" stroke-width="2.2" stroke-dasharray="6 4" marker-end="url(#a-g)"/>
+    <text x="460" y="224" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">복구되는 순간 밀린 것부터 순서대로</text>
+    <rect x="596" y="210" width="130" height="46" rx="9" fill="#f1f5f9" stroke="#9ca3af" stroke-dasharray="4 3"/>
+    <text x="661" y="238" text-anchor="middle" font-size="12" fill="#6b7280">알림 서버 (다운)</text>
+    <text x="746" y="226" font-size="11.5" fill="#6b7280">주문도 살고</text>
+    <text x="746" y="244" font-size="11.5" font-weight="800" fill="#16a34a">알림 요청도 보존됐다</text>
+
+    <line x1="20" y1="158" x2="880" y2="158" stroke="#e5e7eb" stroke-width="1.5"/>
+    <text x="880" y="284" text-anchor="end" font-size="12" font-weight="800" fill="#2563eb">둘 다 "장애 전파"는 막는다 — 차이는 요청의 운명뿐이다</text>
+  </g>
+</svg>
+<div class="cap">서킷 브레이커는 <b>버리고</b>, 큐는 <b>보관한다.</b></div>
+</div>
+
+<div class="memo ok">
+  <div class="kicker">암기 카드 ⑥ — 선택 기준 한 줄</div>
+  <p class="big">그 작업을 <b>버려도 되면</b> 동기 + 서킷 브레이커로 충분하고, <b>버리면 안 되면</b> 큐가 필요하다.</p>
+</div>
+
+<div class="vs">
+  <div class="side b">
+    <div class="h">버려도 되는 것 → 서킷 브레이커</div>
+    <ul>
+      <li>추천 목록 조회 실패 시 기본 목록 보여주기</li>
+      <li>실시간 배지 카운트</li>
+      <li>조회수 집계 일부</li>
+    </ul>
+  </div>
+  <div class="mid">vs</div>
+  <div class="side">
+    <div class="h">버리면 안 되는 것 → 큐</div>
+    <ul>
+      <li>적립금 지급</li>
+      <li>정산 데이터 기록</li>
+      <li>결제 완료 알림 · 이용권 발급</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout amber">
+  <span class="t">그리고 둘은 배타적이지 않다 <span class="badge bonus">가산점</span></span>
+  실무에서는 <b>프로듀서가 브로커에 발행하는 그 호출 자체에도 타임아웃과 서킷 브레이커를 건다.</b> 브로커가 죽었을 때 발행에서 스레드가 묶이면 결국 §1-2의 연쇄 장애가 그대로 재현되기 때문이다. <b>"요구사항이 결정하는 것이지 어느 쪽이 우월한 게 아니다"</b>까지 답하면 균형 잡힌 인상을 준다.
+</div>
+
+<h3>4-3. 도입하지 말아야 할 때 — 세 가지, 이유가 각각 다르다</h3>
+
+<div class="cond no">
+  <div class="num">1</div>
+  <div class="b">
+    <h4>결과를 즉시 알아야 하는 호출</h4>
+    <p>조회, 결제 승인, 재고 확인처럼 <b>응답 내용이 그 결과에 달려 있는</b> 호출이다. 비동기로 빼면 사용자에게 확정을 줄 수 없다. (매트릭스 우하단)</p>
+  </div>
+</div>
+<div class="cond veto">
+  <div class="num">2</div>
+  <div class="b">
+    <h4>트래픽이 작고 호출 관계가 1:1로 단순한 경우</h4>
+    <p>큐가 주는 이익(피크 흡수, 다대다 확장)이 <b>애초에 필요 없는데</b> 브로커 운영 비용만 든다. 초당 몇 건짜리 내부 시스템 두 대 사이라면 <b>동기 호출 + 타임아웃 + 재시도가 훨씬 싸고 단순하다.</b></p>
+  </div>
+</div>
+<div class="cond veto">
+  <div class="num">3</div>
+  <div class="b">
+    <h4>팀에 비동기 실패 처리를 설계·운영할 여력이 없는 경우 <span class="badge senior">가장 실질적인 기준</span></h4>
+    <p>멱등 컨슈머, DLQ, 랙 모니터링을 갖추지 않고 큐만 도입하면 <b>유실이 나도 아무도 모르는 시스템</b>이 된다. 동기 호출은 실패하면 최소한 <b>에러 로그와 500 응답</b>이 남지만, 비동기는 <b>조용히 사라진다.</b></p>
+    <p><b>관측 체계 없는 비동기화는 장애를 없애는 게 아니라 보이지 않게 만드는 것이다.</b></p>
+  </div>
+</div>
+
+<!-- ============================ 5 ============================ -->
+<h2 id="s5">5. 큐를 쓰기로 했다면 반드시 설계할 두 가지</h2>
+
+<p>§3-3에서 "직접 설계해야 한다"고만 말한 것들 중, 면접에서 <b>이름과 원리까지 말해야 가산점이 되는</b> 두 가지를 짚는다. 하나는 발행 경계(프로듀서 쪽), 하나는 소비 경계(컨슈머 쪽)다.</p>
+
+<h3>5-1. 발행 경계 — "DB 커밋은 됐는데 이벤트 발행이 실패하면요?"</h3>
+
+<p><b>DB와 브로커는 서로 다른 시스템이라 하나의 트랜잭션으로 묶이지 않는다.</b> 이것을 <b>이중 쓰기(dual write) 문제</b>라고 부른다 — 한 논리적 작업을 위해 두 시스템에 각각 써야 하는데, 그 둘을 원자적으로 묶을 방법이 없는 상황이다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 340" role="img" aria-label="이중 쓰기 문제와 트랜잭셔널 아웃박스 패턴의 비교도">
+  <g class="sv-t" fill="#1f2937">
+    <line x1="558" y1="16" x2="558" y2="326" stroke="#e5e7eb" stroke-width="2"/>
+
+    <!-- LEFT: dual write -->
+    <text x="20" y="30" font-size="13.5" font-weight="800" fill="#dc2626">문제 — 이중 쓰기(dual write): 두 시스템, 하나의 원자성은 없다</text>
+    <rect x="40" y="110" width="110" height="52" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="95" y="142" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">주문 서비스</text>
+    <rect x="300" y="62" width="150" height="52" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="375" y="94" text-anchor="middle" font-size="12.5">주문 DB</text>
+    <rect x="300" y="164" width="150" height="52" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="375" y="196" text-anchor="middle" font-size="12.5">브로커</text>
+    <path d="M150,126 L294,92" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a-b)"/>
+    <path d="M150,150 L294,186" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a-b)"/>
+    <text x="196" y="104" font-size="11.5" font-weight="700" fill="#2563eb">① 커밋</text>
+    <text x="196" y="186" font-size="11.5" font-weight="700" fill="#2563eb">② 발행</text>
+    <path d="M470,68 L490,68 L490,210 L470,210" fill="none" stroke="#dc2626" stroke-width="2"/>
+    <text x="500" y="134" font-size="12" font-weight="800" fill="#dc2626">둘을 하나로</text>
+    <text x="500" y="152" font-size="12" font-weight="800" fill="#dc2626">묶을 수 없다</text>
+    <rect x="20" y="238" width="252" height="80" rx="9" fill="#fff7f7" stroke="#dc2626" stroke-dasharray="4 3"/>
+    <text x="34" y="260" font-size="12" font-weight="800" fill="#dc2626">방향 A — 커밋 성공 → 발행 실패</text>
+    <text x="34" y="280" font-size="11.5">주문은 저장됐는데 이벤트가 없다.</text>
+    <text x="34" y="300" font-size="11">적립금이 안 들어와도 <tspan font-weight="800">아무도 모른다.</tspan></text>
+    <rect x="286" y="238" width="252" height="80" rx="9" fill="#fff7f7" stroke="#dc2626" stroke-dasharray="4 3"/>
+    <text x="300" y="260" font-size="12" font-weight="800" fill="#dc2626">방향 B — 발행 성공 → 커밋 롤백</text>
+    <text x="300" y="280" font-size="11.5">적립금은 지급됐는데 주문이 없다.</text>
+    <text x="300" y="300" font-size="11.5"><tspan font-weight="800">존재하지 않는 주문</tspan>에 대한 지급.</text>
+
+    <!-- RIGHT: outbox -->
+    <text x="578" y="30" font-size="13.5" font-weight="800" fill="#16a34a">해법 — 트랜잭셔널 아웃박스: 이중 쓰기를 단일 쓰기로 바꾼다</text>
+    <rect x="590" y="98" width="104" height="52" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="642" y="130" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">주문 서비스</text>
+    <rect x="736" y="62" width="200" height="126" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2.2" stroke-dasharray="7 5"/>
+    <text x="836" y="84" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">같은 DB · 같은 트랜잭션</text>
+    <rect x="756" y="94" width="160" height="36" rx="7" fill="#fff" stroke="#16a34a"/>
+    <text x="836" y="117" text-anchor="middle" font-size="12">INSERT orders</text>
+    <rect x="756" y="138" width="160" height="36" rx="7" fill="#fff" stroke="#16a34a"/>
+    <text x="836" y="161" text-anchor="middle" font-size="12">INSERT outbox</text>
+    <path d="M694,124 L730,124" stroke="#16a34a" stroke-width="2.4" marker-end="url(#a-g)"/>
+    <path d="M836,188 L836,214" stroke="#16a34a" stroke-width="2.2" marker-end="url(#a-g)"/>
+    <rect x="716" y="220" width="240" height="42" rx="9" fill="#fff" stroke="#16a34a"/>
+    <text x="836" y="240" text-anchor="middle" font-size="12" font-weight="700">폴링 릴레이 또는 CDC</text>
+    <text x="836" y="256" text-anchor="middle" font-size="10.5" fill="#6b7280">복제 로그(WAL) 구독</text>
+    <path d="M956,241 L1000,241" stroke="#16a34a" stroke-width="2.2" marker-end="url(#a-g)"/>
+    <rect x="1004" y="218" width="96" height="46" rx="9" fill="#fff" stroke="#9ca3af"/>
+    <text x="1052" y="246" text-anchor="middle" font-size="12">브로커</text>
+    <rect x="590" y="286" width="510" height="32" rx="8" fill="#f6fdf8" stroke="#16a34a" stroke-dasharray="4 3"/>
+    <text x="604" y="307" font-size="12" font-weight="700" fill="#16a34a">두 INSERT가 함께 커밋되거나 함께 롤백된다 — 어긋날 구간이 없다</text>
+  </g>
+</svg>
+<div class="cap">발행을 트랜잭션 안에 넣든 밖에 넣든 A·B 중 하나의 위험은 남는다. <b>코드를 옮겨서 해결되는 문제가 아니라는 것</b>이 핵심이다.</div>
+</div>
+
+<div class="ba single">
+  <div class="col">
+    <div class="head good">아웃박스 — 브로커로 바로 쏘지 않고 같은 DB의 outbox 테이블에 INSERT한다</div>
+<pre><code>@Transactional
+public void placeOrder(Order order) {
+    orderRepository.save(order);
+<span class="hl-good">    outboxRepository.save(new OutboxMessage(          <span class="cmt">// 브로커 호출이 아니다.</span></span>
+<span class="hl-good">            UUID.randomUUID(),                        <span class="cmt">// 같은 DB에 대한 두 번째 INSERT일 뿐.</span></span>
+<span class="hl-good">            "order-events",</span>
+<span class="hl-good">            toJson(new OrderPlacedEvent(order.getId()))));</span>
+}   <span class="cmt">// 커밋 = 주문과 이벤트가 함께 확정. 롤백 = 둘 다 없던 일.</span>
+
+<span class="cmt">// 실제 발행은 별도 프로세스의 몫이다 —</span>
+<span class="cmt">//   (a) outbox 테이블을 주기적으로 폴링해 미발행 행을 보내거나</span>
+<span class="cmt">//   (b) DB 복제 로그(PostgreSQL이면 WAL)를 CDC로 구독해 보낸다.</span>
+<span class="cmt">// 어느 쪽이든 "발행에 실패하면 행이 남아 있으니 다시 보낸다" = 유실이 없다.</span></code></pre>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">면접에서는 여기까지면 충분 <span class="badge bonus">가산점</span></span>
+  <b>"이중 쓰기 문제이고, 아웃박스로 단일 쓰기로 바꿔 푼다"</b> — 이 한 문장이면 된다. 다만 아웃박스는 <b>재발행을 전제</b>하므로 반드시 §5-2의 멱등 컨슈머와 짝을 이룬다. 깊은 설계는 <code>28-transactional-outbox-cdc-kafka.md</code>가 다룬다.
+</div>
+
+<h3>5-2. 소비 경계 — "메시지가 중복 처리되면 어떻게 하나요?"</h3>
+
+<div class="memo amber">
+  <div class="kicker">암기 카드 ⑦ — 전달 보장의 현실</div>
+  <p class="big">대부분의 브로커 사용은 <b>at-least-once(최소 한 번)</b>다. "적어도 한 번은 도착한다"이지 <b>"정확히 한 번"이 아니다.</b></p>
+  <p>유실을 막으려면 확신이 없을 때 다시 보내야 하고, 다시 보내면 중복이 생긴다 — <b>유실과 중복은 맞바꾸는 관계</b>다. 그래서 <b>중복은 예외가 아니라 정상 동작</b>이라는 전제에서 출발한다.</p>
+</div>
+
+<p>대응은 <b>멱등 컨슈머</b>다. 이벤트에 고유 ID를 부여하고 처리 이력 테이블에 <b>유니크 제약</b>으로 기록해, 이미 처리한 ID면 건너뛴다.</p>
+
+<div class="ba">
+  <div class="col">
+    <div class="head good">처리 이력 테이블 — 방어선을 DB에 둔다</div>
+<pre><code>CREATE TABLE processed_event (
+<span class="hl-good">    event_id     uuid        PRIMARY KEY,</span>
+    processed_at timestamptz NOT NULL DEFAULT now()
+);
+
+<span class="cmt">-- event_id에 PK를 걸어 두 번째 INSERT가</span>
+<span class="cmt">-- DB 수준에서 막히게 한다.</span>
+<span class="cmt">-- 애플리케이션에서 "이미 있나?" 조회 후 INSERT는</span>
+<span class="cmt">-- 두 스레드가 조회를 나란히 통과할 수 있어</span>
+<span class="cmt">-- 안전하지 않다.</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">컨슈머 — INSERT로 선점한다(INSERT-first)</div>
+<pre><code>@KafkaListener(topics = "order-events")
+@Transactional
+public void handle(OrderPlacedEvent event) {
+<span class="hl-good">    int inserted = processedEventRepository</span>
+<span class="hl-good">            .insertIfAbsent(event.eventId());</span>
+    <span class="cmt">// ON CONFLICT (event_id) DO NOTHING</span>
+<span class="hl-warn">    if (inserted == 0) return;  <span class="cmt">// 이미 처리한 이벤트</span></span>
+    <span class="cmt">// 예외를 던지면 무한 재시도가 되므로 조용히 종료</span>
+
+    pointService.accumulate(event.orderId());
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout">
+  <span class="t">왜 "조회 후 INSERT"가 아니라 "INSERT 먼저"인가</span>
+  <b>확인과 선점이 DB 안에서 한 번에 원자적으로 일어나야 하기 때문</b>이다. 조회와 INSERT를 나누면 두 컨슈머 스레드가 조회를 나란히 통과한 뒤 둘 다 처리해 버릴 수 있다.
+</div>
+
+<div class="callout ok">
+  <span class="t">exactly-once는 공짜가 아니다 <span class="badge bonus">가산점</span></span>
+  <b>"실무는 at-least-once + 멱등 컨슈머로 푼다"</b>까지 말하면 좋다. Kafka에도 트랜잭션 기능이 있지만 그것은 <b>Kafka 안에서 읽고 쓰는 경로에 한정</b>되고, 외부 DB나 외부 API 호출까지 포함한 진짜 exactly-once는 아니다. 이 경계는 <code>03-delivery-semantics-and-exactly-once-reality.md</code>가 다룬다.
+</div>
+
+<!-- ============================ 6 ============================ -->
+<h2 id="s6">6. 셀프 테스트 — 먼저 스스로 답한 뒤 펼친다</h2>
+
+<p class="small">질문만 보고 소리 내어 답해 본 다음 펼쳐서 맞춰 본다. <span class="badge senior">시니어 변별</span>은 여기서 갈리는 문항, <span class="badge extra">추가</span>는 원본 문서에 없지만 실제로 자주 파고드는 갈래다.</p>
+
+<details>
+  <summary>Q1. "메시지 큐를 왜 도입하나요?"를 30초 안에 답해보세요</summary>
+  <div class="ans">
+    <p>골격은 <span class="key2">세 묶음</span>이다. 외운 순서대로 꺼내면 된다.</p>
+    <ol>
+      <li><b>프레임</b> — 큐는 시스템 간 결합을 <b>시간·장애·처리량</b> 세 축에서 끊는 장치다("시·장·처").</li>
+      <li><b>얻는 것</b> — 응답 단축, 장애 격리, 피크 흡수, 확장 개방("응·격·흡·확"). 앞 셋은 세 결합과 1:1 대응이다.</li>
+      <li><b>잃는 것</b> — 즉시 정합성이 최종 일관성으로 내려가고, 스택 트레이스가 끊기고, 실패 처리(유실·중복·재시도·DLQ)를 직접 설계해야 하고, 브로커 운영 부담이 는다("정·추·실·운").</li>
+      <li><b>결론</b> — 그래서 "비동기라 좋다"가 아니라 <b>"이 작업을 버려도 되는가, 결과를 즉시 알아야 하는가"</b> 두 질문으로 결정한다.</li>
+    </ol>
+    <p>여기서 <span class="key2">3번을 빼먹으면 그 답변은 반쪽</span>이다. 면접이 보려는 것이 정확히 3번이기 때문이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q2. 그럼 모든 호출을 비동기로 바꾸면 되지 않나요?</summary>
+  <div class="ans">
+    <p>아니다. <span class="key2">응답 결과가 다음 진행의 전제인 호출은 동기여야 한다.</span></p>
+    <ul>
+      <li><b>결제 승인</b> — 승인 성공/실패를 알아야 주문을 확정할지가 갈린다. 비동기로 빼면 사용자에게 <b>"아마 될 거예요"</b>라고 답하는 셈이다.</li>
+      <li><b>재고 확인</b> — 재고가 없는데 주문을 받아 놓고 나중에 취소 안내를 보내는 것은 대부분의 비즈니스에서 받아들여지지 않는다.</li>
+    </ul>
+    <p>판단 기준은 한 문장이다 — <b>"이 작업의 결과 없이 사용자에게 응답해도 되는가?"</b> 알림·적립·집계처럼 <b>핵심 트랜잭션 밖의 부가 작업</b>이 비동기화 대상이고, <b>결과가 응답 내용을 바꾸는 작업</b>은 동기로 남는다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q3. 타임아웃 + 서킷 브레이커로도 장애 전파는 막을 수 있지 않나요? <span class="badge senior">시니어 변별</span></summary>
+  <div class="ans">
+    <p>막는 건 맞다. 갈리는 지점은 <span class="key2">"그 요청 자체를 어떻게 하느냐"</span>다.</p>
+    <ul>
+      <li><b>서킷 브레이커 = 빠르게 실패시키기(fail fast)</b> — 회로를 열어 호출을 아예 시도하지 않는다. 주문 서버는 살지만 <b>그 알림 요청은 사라진다.</b> 나중에 알림 서버가 복구돼도 그 알림은 영영 안 간다.</li>
+      <li><b>큐 = 나중에 처리하기(defer)</b> — 메시지가 브로커에 쌓인다. 주문도 살고 <b>알림 요청도 보존</b>된다.</li>
+    </ul>
+    <p>따라서 선택 기준은 <b>"그 작업을 버려도 되는가"</b> 하나다. 버려도 되면(추천 목록, 배지 카운트, 조회수 일부) 서킷 브레이커로 충분하고, 버리면 안 되면(적립금, 정산 기록, 결제 완료 알림, 이용권 발급) 큐가 필요하다.</p>
+    <p>마무리로 <span class="key2">둘이 배타적이지 않다</span>는 점까지 말하면 좋다 — 실무에서는 <b>브로커에 발행하는 그 호출에도 타임아웃과 서킷 브레이커를 건다.</b> 발행에서 스레드가 묶이면 §1-2의 연쇄 장애가 그대로 재현되기 때문이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q4. DB 커밋은 됐는데 이벤트 발행이 실패하면요?</summary>
+  <div class="ans">
+    <p><span class="key2">이중 쓰기(dual write) 문제</span>다. DB와 브로커는 서로 다른 시스템이라 하나의 트랜잭션으로 묶이지 않는다. 어긋나는 방향이 둘이다.</p>
+    <ul>
+      <li><b>방향 A</b> 커밋 성공 → 발행 실패: 주문은 있는데 이벤트가 없다. 적립금이 영영 안 들어오고 <b>아무도 모른다.</b></li>
+      <li><b>방향 B</b> 발행 성공 → 롤백: <b>존재하지 않는 주문</b>에 대한 적립금이 나갔다.</li>
+    </ul>
+    <p>발행을 트랜잭션 안에 넣든 밖에 넣든 둘 중 하나의 위험은 남는다 — <b>코드를 옮겨서 해결되는 문제가 아니다.</b></p>
+    <p>표준 해법은 <b>트랜잭셔널 아웃박스</b>다. 이벤트를 브로커로 바로 쏘는 대신 <b>같은 DB의 <code>outbox</code> 테이블에 INSERT</b>하면, 주문 INSERT와 이벤트 INSERT가 <b>같은 트랜잭션 안의 두 쓰기</b>가 되어 함께 커밋되거나 함께 롤백된다. 실제 발행은 별도 프로세스가 폴링하거나 복제 로그(WAL)를 CDC로 구독해 처리한다. <b>이중 쓰기를 단일 쓰기로 바꾼 것</b>이 요점이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q5. 메시지가 중복 처리되면 어떻게 하나요?</summary>
+  <div class="ans">
+    <p>대부분의 브로커 사용은 <span class="key2">at-least-once(최소 한 번)</span>다. 유실을 막으려면 확신이 없을 때 다시 보내야 하고, 다시 보내면 중복이 생긴다 — <b>유실과 중복은 맞바꾸는 관계</b>다.</p>
+    <p>그래서 <b>중복은 예외가 아니라 정상 동작</b>이라는 전제에서 출발해 컨슈머를 <b>멱등(idempotent)</b>하게 만든다. 이벤트에 고유 ID를 부여하고 <code>processed_event</code> 테이블에 <b>PK/유니크 제약</b>으로 기록해, 이미 있으면 건너뛴다.</p>
+    <p>구현 포인트는 <b>INSERT-first</b>다 — "이미 있나?" 조회 후 INSERT는 두 스레드가 조회를 나란히 통과할 수 있어 안전하지 않다. <code>ON CONFLICT DO NOTHING</code>으로 <b>확인과 선점을 DB 안에서 한 번에</b> 끝낸다. 이미 처리한 경우 <b>예외를 던지지 않고 조용히 종료</b>해야 한다(던지면 무한 재시도가 된다).</p>
+    <p>마무리는 <b>"exactly-once는 공짜가 아니다"</b>. Kafka 트랜잭션도 <b>Kafka 안의 읽고 쓰기 경로에 한정</b>되며, 외부 DB·외부 API까지 포함한 진짜 exactly-once는 아니다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q6. 도입하지 말아야 할 때는 언제인가요?</summary>
+  <div class="ans">
+    <p>셋이고, <span class="key2">이유가 각각 다르다</span>는 점이 중요하다.</p>
+    <ol>
+      <li><b>결과를 즉시 알아야 하는 호출</b> — 조회·결제 승인·재고 확인. 응답 내용이 그 결과에 달려 있어 비동기로 빼면 확정을 줄 수 없다.</li>
+      <li><b>트래픽이 작고 호출 관계가 1:1로 단순한 경우</b> — 큐의 이익(피크 흡수, 다대다 확장)이 애초에 필요 없는데 브로커 운영 비용만 든다. 초당 몇 건짜리 내부 시스템 두 대라면 <b>동기 + 타임아웃 + 재시도가 훨씬 싸고 단순하다.</b></li>
+      <li><b>팀에 비동기 실패 처리를 설계·운영할 여력이 없는 경우</b> — 가장 실질적인 기준이다. 멱등 컨슈머·DLQ·랙 모니터링 없이 큐만 도입하면 <b>유실이 나도 아무도 모르는 시스템</b>이 된다.</li>
+    </ol>
+    <p>③을 이 문장으로 마무리하면 강하다 — 동기는 실패하면 최소한 에러 로그와 500이 남지만 비동기는 조용히 사라진다. <b>관측 체계 없는 비동기화는 장애를 없애는 게 아니라 보이지 않게 만드는 것이다.</b></p>
+  </div>
+</details>
+
+<details>
+  <summary>Q7. 응답이 500ms에서 35ms가 됐다면, 작업이 전부 끝나는 시간도 줄어든 건가요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>아니다. 줄어든 것은 <span class="key2">사용자가 기다리는 시간뿐</span>이고, <b>이벤트 발행부터 처리 완료까지의 전체 시간(end-to-end)은 오히려 늘어난다.</b> 브로커 왕복과 큐 대기 시간이 새로 붙기 때문이다. 큐가 밀리면 몇 분이 될 수도 있다.</p>
+    <p>그래서 비동기 시스템은 <b>지연 지표를 두 개로 나눠서</b> 봐야 한다.</p>
+    <ul>
+      <li><b>API 응답 지연</b> — 사용자가 체감하는 값. 35ms.</li>
+      <li><b>처리 완료 지연</b> — 발행 시각부터 컨슈머 처리 완료까지. §3-1의 <b>일관성 창의 실측값</b>이고, 랙과 함께 봐야 하는 값이다.</li>
+    </ul>
+    <p>한 문장으로 <b>"비동기는 총 작업량을 줄이는 게 아니라 기다리는 주체를 사용자에서 시스템으로 옮기는 것"</b>이라고 정리하면 좋다. 그리고 이 두 번째 지표에 <b>SLO를 걸어야</b> "적립금이 30분째 안 들어옴"을 사고로 인지할 수 있다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q8. 큐도 무한 버퍼는 아닐 텐데, 큐가 계속 차오르면 어떻게 되나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key2">큐는 "순간 피크"용 완충이지 "지속 초과"의 해법이 아니다.</span> §2-3의 계산이 성립한 전제는 <b>피크가 끝난 뒤 평상시 유입(100/s)이 처리 능력(300/s)보다 작다</b>는 것이었다. 이 전제가 깨져 유입이 처리량을 계속 웃돌면 큐 길이는 단조 증가한다.</p>
+    <p>그때 벌어지는 일은 순서대로 이렇다.</p>
+    <ol>
+      <li><b>랙이 계속 증가</b> → 일관성 창이 초 단위에서 시간 단위로 늘어난다. 기능적으로는 이미 장애다.</li>
+      <li><b>보존 한계 도달</b> → 디스크가 차거나 보존 기간을 넘긴다. 브로커 정책에 따라 <b>쓰기 거부</b>, <b>프로듀서 블로킹</b>, <b>오래된 메시지 삭제</b> 중 하나가 일어난다. 어느 쪽이든 유실 또는 발행 실패다.</li>
+      <li><b>발행 블로킹이면 §1-2가 재현</b>된다 — 프로듀서 스레드가 묶이면서 결국 앞단까지 밀려 올라간다.</li>
+    </ol>
+    <p>그래서 도입 시 반드시 <b>"평균 처리 능력 ≥ 평균 유입"을 먼저 확인</b>하고, 운영에서는 <b>큐 길이가 아니라 큐 길이의 기울기(증가 추세)를 경보 조건</b>으로 잡는다. 대응은 컨슈머 스케일 아웃(Kafka라면 파티션 수 범위 안에서), 처리 자체의 최적화, 그래도 안 되면 <b>유입 제한</b>이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q9. 논블로킹(WebFlux 등)으로 만들면 스레드가 안 묶이니 큐가 필요 없지 않나요? <span class="badge extra">추가</span> <span class="badge senior">시니어 변별</span></summary>
+  <div class="ans">
+    <p>논블로킹이 해결하는 것은 <span class="key2">§1-1의 "스레드 점유 비용" 하나뿐</span>이다. 나머지는 그대로 남는다.</p>
+    <ul>
+      <li><b>응답 시간 합산은 그대로</b> — 스레드를 안 잡을 뿐, 사용자는 여전히 하위 응답을 다 기다린다.</li>
+      <li><b>가용성 결합은 그대로</b> — 수신자가 죽으면 내 요청은 여전히 실패한다.</li>
+      <li><b>요청 보존은 없다</b> — 실패한 그 작업은 사라진다. 큐의 본질인 <b>"보관"</b>이 빠져 있다.</li>
+      <li><b>하위 처리량 상한도 그대로</b> — 완충 장치가 없으니 스파이크는 여전히 통과한다.</li>
+    </ul>
+    <p>정리하면 <b>논블로킹은 "내 서버가 버티는 힘"을 키우는 수단이고, 큐는 "요청을 잃지 않고 시간차를 두는" 수단</b>이라 층위가 다르다. 둘은 대체 관계가 아니라 함께 쓴다 — 동기로 남겨야 하는 호출(결제 승인 등)에 논블로킹과 서킷 브레이커를 걸고, 부가 작업은 큐로 뺀다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q10. 동기 호출은 호출한 순서대로 처리됐는데, 큐로 바꾸면 순서는 보장되나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key2">전역 순서는 보장되지 않는다.</span> 이것도 "잃는 것" 목록에 넣을 수 있는 항목이다. 동기 호출에서는 호출 순서가 곧 처리 순서였지만, 큐에서는 <b>컨슈머를 여러 개로 늘리는 순간 병렬 처리되어 순서가 섞인다.</b></p>
+    <p>브로커가 보장해 주는 범위는 <b>단위가 한정</b>된다 — Kafka는 <b>파티션 안에서만</b> 순서가 유지되고, RabbitMQ는 <b>하나의 큐를 한 컨슈머가 순차 처리할 때만</b> 유지된다.</p>
+    <p>그래서 실무 대응은 두 갈래다.</p>
+    <ol>
+      <li><b>순서가 필요한 단위를 키로 잡아 같은 파티션에 몰아넣는다</b> — 주문 ID를 파티션 키로 쓰면 "그 주문에 대한 이벤트들"끼리는 순서가 지켜진다. 전역 순서를 포기하고 <b>필요한 범위의 순서만</b> 사는 것이다.</li>
+      <li><b>애초에 순서 의존을 줄인다</b> — 이벤트에 버전이나 갱신 시각을 담아, 더 오래된 이벤트가 나중에 도착하면 무시하도록 만든다.</li>
+    </ol>
+    <p>깊은 설계는 <code>24-message-ordering-partition-key.md</code>가 다룬다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q11. 비동기로 뺐는데 사용자에게 결과를 알려야 하는 경우엔 어떻게 하나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>"결과를 즉시 알아야 하는가"에 <b>"즉시는 아니지만 언젠가는"</b>이라는 중간 답이 나오는 경우다. 세 층으로 푼다.</p>
+    <ol>
+      <li><b>응답을 "접수"로 바꾼다</b> — <code>202 Accepted</code>와 함께 <b>상태를 조회할 수 있는 리소스</b>를 돌려준다. 확정이 아니라 <b>추적 가능한 접수증</b>을 주는 것이다.</li>
+      <li><b>완료를 전달할 경로를 만든다</b> — 상태 폴링, SSE·WebSocket 푸시, 또는 완료 알림. 어느 쪽이든 <b>사용자가 새로고침으로 확인하게 두지 않는 것</b>이 핵심이다.</li>
+      <li><b>화면에 "처리 중" 상태를 1급 상태로 넣는다</b> — 성공/실패 두 가지만 있던 UI에 <b>대기 상태</b>가 추가되는 것이므로, 이것은 개발이 아니라 <b>기획과 합의할 사항</b>이다.</li>
+    </ol>
+    <p>여기서 §3-1의 결론이 다시 나온다 — <b>최종 일관성은 기술 선택이 아니라 제품 결정</b>이다. 사용자 경험 설계는 <code>07-eventual-consistency-ux.md</code>가 다룬다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Q12. 브로커가 죽으면 결국 발행도 실패인데, 단일 장애점만 하나 늘린 것 아닌가요? <span class="badge extra">추가</span> <span class="badge senior">시니어 변별</span></summary>
+  <div class="ans">
+    <p>정확한 지적이고, <span class="key2">"그렇다, 새 의존성이 생긴 것은 사실이다"</span>부터 인정하고 시작하는 게 좋다. 그 위에 세 가지를 얹는다.</p>
+    <ol>
+      <li><b>의존 대상의 개수가 줄었다</b> — 전에는 알림·적립금·통계 <b>세 시스템 각각의 가용성</b>에 주문이 묶여 있었다. 이제는 <b>브로커 하나</b>에만 묶인다. 의존이 사라진 게 아니라 <b>"가장 튼튼하게 만들 수 있는 하나"로 모인 것</b>이다.</li>
+      <li><b>브로커는 그렇게 만들도록 설계된 인프라다</b> — 복제와 클러스터 구성으로 노드 하나가 죽어도 서비스가 이어지게 설계할 수 있다. 반면 알림 서버 세 대를 전부 그 수준으로 만드는 것은 비용이 다르다.</li>
+      <li><b>그럼에도 발행 실패는 대비한다</b> — §5-1의 아웃박스가 정확히 이 답이다. 이벤트를 <b>자기 DB에 먼저 적재</b>하면 브로커가 죽어 있어도 주문 트랜잭션은 성공하고, 릴레이가 복구 후 밀린 것을 내보낸다. 발행 호출 자체에 <b>타임아웃과 서킷 브레이커</b>를 거는 것도 같은 맥락이다.</li>
+    </ol>
+    <p>마무리는 균형 잡힌 한 문장이 좋다 — <b>"장애점을 없앤 게 아니라, 여러 개의 약한 의존을 하나의 강화 가능한 의존으로 바꾼 것"</b>이고, 그 대가가 §3-4의 운영 부담이다.</p>
+  </div>
+</details>
+
+<!-- ============================ SUM ============================ -->
+<div class="banner" id="sum">
+  <div class="kicker">한 줄 요약</div>
+  메시지 큐는 <b>시간 · 장애 · 처리량</b>의 결합을 끊어
+  <b>응답 속도, 장애 격리, 피크 흡수, 확장성</b>을 얻는 대신,
+  <b>즉시 정합성 · 흐름 추적 · 단순한 실패 처리</b>를 내주는 거래다 —
+  <b>"작업을 버리면 안 되는가, 결과를 즉시 알아야 하는가"</b>라는 요구사항이 도입 여부를 결정한다.
+</div>
+
+
+</main>
+</body>
+</html>
