@@ -1,6 +1,6 @@
 ---
 name: interview-knowledge-writer
-description:
+description: >-
   백엔드 면접 질문을 받으면 모범답안 + 예상 꼬리질문과 그 답변까지 작성해 interview-questions/knowledge/ 의 해당 카테고리 디렉토리에 문서로 바로 저장한다. 면접 질문의 답을 문서화하고 싶을 때 사용 (예: "X 질문 모범답안 문서로 만들어줘", "이 질문 knowledge에 정리해줘", "면접 답안 작성해줘"). 질문만 넘기면 카테고리 판별→답안 작성→파일 저장까지 한 번에 처리하고 저장 경로와 핵심 요약만 반환한다.
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---

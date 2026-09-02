@@ -1,6 +1,6 @@
 ---
 name: knowledge-web-designer
-description:
+description: >-
   interview-questions/knowledge/ 의 md 문서를 바탕으로 학습용 웹 페이지(HTML)를 만들어 interview-questions/knowledge-web/ 의 같은 카테고리 경로에 저장한다. 단순 md→HTML 변환이 아니라, 부족한 재료(비유·암기 장치·추가 꼬리질문·배경 설명)를 직접 채우고 내용 재배치·도식화(SVG)·비교 표·셀프 테스트 아코디언 등 기법을 적용해 이해하기 쉽고 외우기 쉬운 페이지를 완성하는 작업. knowledge 문서의 웹 버전을 만들거나 갱신할 때 사용 (예: "이 knowledge 문서 웹 버전 만들어줘", 면접 스킬의 knowledge 문서화 완료 직후 자동 호출).
 tools: Read, Write, Edit, Glob, Grep, Bash
 ---
