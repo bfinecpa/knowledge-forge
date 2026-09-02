@@ -14,7 +14,7 @@
 | 07-traffic-performance | 23 | 23 | 완료 |
 | 08-network-http | 22 | 22 | 완료 |
 | 09-rest-api | 18 | 18 | 완료 |
-| 01-java-kotlin | 32 | 0 | 다음 차례 |
+| 01-java-kotlin | 32 | 32 | 완료 |
 | 02-spring | 35 | 0 | 대기 |
 | 03-jpa-orm | 27 | 0 | 대기 (이미 깊이 있음 — 조정 위주) |
 | 04-rdb-sql | 35 | 0 | 대기 (PostgreSQL 기준 유지) |
@@ -380,3 +380,46 @@ KST 23:59:59 = `14:59:59Z`.
 다음 차례는 01-java-kotlin(32건)이다. 05~09장은 작고 균질해 2~3건씩 5에이전트 병렬이 잘 맞았으나,
 01·02장은 건수가 많고(32·35) 03·04장은 이미 분량이 커서(48KB·58KB) 성격이 다르다.
 03·04는 "전면 재작성"이 아니라 **설명 방식 조정 + 하드랩 해제 위주**임을 잊지 말 것.
+
+## 01-java-kotlin (32/32) — 완료
+
+이 장의 사전 진단: 32건 전부 72자 하드랩. 11건은 섹션 번호가 `## 5.`~`## 9.`까지 뻗거나 `## 부록`이 붙어 있고, 그중 10건은 `## 4. 꼬리질문 대비 포인트`와 `## 한 줄 요약`이 아예 없다. 이모지는 8개 파일에 63건.
+
+| 파일 | 상태 | 비고 |
+|---|---|---|
+| 01-jvm-memory-structure.md | 완료 | 참조란 무엇인가를 1-1에 신설, `new` 한 줄의 스택·힙 배치 도식 |
+| 02-gc-basics-generational.md | 완료 | 순환 참조 코드, Eden→Survivor→Old 타임라인, Minor GC 비용 6단계 계산 |
+| 03-equals-hashcode-contract.md | 완료 | 조회 2단계를 규약보다 먼저 설명하도록 순서 반전 |
+| 04-string-immutability-stringbuilder.md | 완료 | 불변 정의부터, String pool을 원인이 아닌 결과로 재배치, O(n²) 합산식 |
+| 05-checked-vs-unchecked-exceptions.md | 완료 | 예외 계층도 선행, 예외 삼킴 장애 타임라인, 롤백 기본값의 근거 |
+| 06-interface-vs-abstract-class.md | 완료 | 공통점→갈리는 두 지점(상태·다중 부착) 순서로 재구성, 다이아몬드 도식, 템플릿/전략 코드 대비, 이모지 6건 제거 |
+| 07-final-keyword-semantics.md | 완료 | "final은 주소 칸을 잠근다" 그림 선행, effectively final 근거(스택 프레임 소멸), static final 인라이닝 실측, 이모지 4건 제거 |
+| 08-java8-features-in-practice.md | 완료 | 지연 평가를 각주에서 본문으로 승격, 실행 순서 추적 코드 |
+| 09-enum-strategy-and-state-transition.md | 완료 | javap로 "enum은 클래스" 실증, 상태 전이 다이어그램 선행, static 블록 근거 실측(컴파일 에러 2종 + ExceptionInInitializerError), ordinal 밀림 before/after 데이터 |
+| 10-g1gc-vs-zgc.md | 완료 | `## 8.`+부록 → 0~4 재편, 컬러 포인터·로드 배리어 정의, 이모지 26건 제거 |
+| 11-full-gc-troubleshooting.md | 완료 | 런북 결정 트리 도식, 판단 기준 용어 전부 정의 |
+| 12-hashmap-internals.md | 완료 | 비트 연산 3곳을 실제 비트 패턴 계산으로 전개 |
+| 13-concurrenthashmap-internals.md | 완료 | 구조 재편(선행 개념·부록 흡수), 복합 연산 원자성 신설 |
+| 14-volatile-visibility-vs-atomicity.md | 완료 | 캐시 계층 도식 + `count++` 인터리빙 타임라인 |
+| 15-jmm-happens-before.md | 완료 | "먼저 실행"이 아니라 "반드시 보인다" 오해 격파 중심 |
+| 16-threadlocal-thread-pool-risks.md | 완료 | ThreadLocalMap 저장 구조 도식 하나에서 세 결론을 유도 |
+| 17-parallelstream-pitfalls.md | 완료 | 공용 풀 크기의 근거, reduce 결합법칙 단계별 계산 |
+| 18-generics-type-erasure.md | 완료 | 질문에 있으나 본문에 없던 PECS 신설, `javap` 실물 출력, 깨진 코드블록 3곳 복구 |
+| 19-optional-usage-boundaries.md | 완료 | 3-상태 논거 도식화, `orElse`/`orElseGet` 평가 시점, 제목 이모지 제거 |
+| 20-try-with-resources-resource-leaks.md | 완료 | 예외 은폐를 1절 본체로 승격, suppressed 스택트레이스 대비 |
+| 21-defensive-copy-collection-exposure.md | 완료 | 참조 다이어그램 선행, 얕은 복사의 한계 신설, TOCTOU 두 스레드 타임라인 |
+| 22-static-simpledateformat-shared-mutable-state.md | 완료 | 내부 Calendar 2단계 분해, 싱글톤 빈으로 주제 확장 |
+| 23-jvm-heap-thread-dump.md | 완료 | 구조 전면 재편, 8GB 덤프 15초 STW 타임라인, `nid` 표기 오류 교정 |
+| 24-deadlock-analysis-prevention.md | 완료 | 4조건을 "깨면 왜 불가능해지는가"와 짝지음, 미탐지 케이스 상태표 |
+| 25-jit-compiler-performance.md | 완료 | "빨리 시작 vs 빨리 실행" 트레이드오프 선행, JMH dead code 제거 실증 |
+| 26-synchronization-tool-selection.md | 완료 | 선택의 축을 도구 나열보다 먼저, 판단 순서도 |
+| 27-longadder-false-sharing.md | 완료 | CAS 실패가 캐시 라인 소유권 왕복이라는 데까지 연결 |
+| 28-virtual-threads-pinning.md | 완료 | `## 9.` → 0~4 재편, Continuation freeze/thaw 도식, 커넥션 풀 상한 계산 |
+| 29-record-use-cases.md | 완료 | "상태는 컴포넌트가 전부"라는 의미 선언을 문법 설명보다 먼저 |
+| 30-integer-cache-boxed-equality.md | 완료 | `==`가 왜 컴파일 에러가 아닌지부터 전제로 |
+| 31-reference-types-weakhashmap.md | 완료 | 참조 강도의 존재 이유부터 선행, JDK 21 실측(Soft 압박 정리·expunge 시점·리터럴/박싱 캐시 키·Guava 동일성) 전면 반영 |
+| 32-bigdecimal-equals-compareto.md | 완료 | `## 4. 꼬리질문` 신설, unscaledValue/scale 표현부터 선행 |
+
+### 기계 검증 도구
+
+`verify.pl`(구조 6요소 / 섹션 번호 0~4 연속성 / 이모지 / 하드랩 잔존)과 `cmp.py`(질문·출제 의도 원문을 git HEAD 기준과 문자 단위 대조)로 배치마다 확인한다. 완료된 09-rest-api 18건에 돌려 18/18 통과로 캘리브레이션했다. ①②③이나 박스드로잉 문자는 이모지로 세지 않는다.

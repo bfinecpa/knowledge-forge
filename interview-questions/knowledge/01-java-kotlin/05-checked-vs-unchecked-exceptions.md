@@ -1,267 +1,492 @@
-# Checked vs Unchecked 예외 — 컴파일러 강제의 차이가 아니라 "예외 처리 설계"의 차이
+# Checked vs Unchecked 예외 — 컴파일러가 강제하느냐, 그리고 그 강제가 실무에서 무너진 이유
 
-> 핵심 관전 포인트: **Checked는 컴파일러가 처리(catch 또는 throws 선언)를
-> 강제하는 예외(`Exception` 하위 중 `RuntimeException` 제외), Unchecked는
-> 강제하지 않는 예외(`RuntimeException`과 그 하위 + `Error`)다.
-> 원래 설계 의도는 "호출자가 복구할 수 있는 상황 = Checked, 프로그래밍
-> 오류 = Unchecked"였지만, 실무에서는 Checked가 시그니처 오염·기계적
-> `catch` 삼키기를 유발해서 **대부분 Unchecked(도메인 예외) + 전역 예외
-> 핸들러에서 일괄 변환**하는 방향으로 수렴했다. 단, Spring의
-> `@Transactional`은 기본으로 Unchecked에서만 롤백한다는 함정까지 알고
-> 있어야 "선택 기준"을 안다고 말할 수 있다.**
+> 핵심 관전 포인트: **둘을 가르는 기준은 딱 하나, 컴파일러가 처리를 강제하느냐다. 예외 계층에서 `Error` 가지와 `RuntimeException` 가지는 강제하지 않고(unchecked), 그 둘을 뺀 나머지 `Exception` 전부가 강제된다(checked). 원래 설계 의도는 "호출자가 복구할 수 있는 외부 상황 = checked, 코드의 버그 = unchecked"였는데 실무에서 두 갈래로 무너졌다 — 저수준의 `SQLException`이 `throws`를 타고 컨트롤러까지 번져 계층을 결합시키는 시그니처 오염, 그리고 컴파일 에러만 없애려고 만든 빈 `catch`가 장애를 은폐하는 기계적 catch. 그래서 실무는 도메인 예외를 `RuntimeException`으로 통일하고 시스템 경계(전역 핸들러) 한 곳에서 일괄 변환하는 쪽으로 수렴했다. 여기서 반드시 챙겨야 할 함정이 `@Transactional`의 기본 롤백 규칙이다 — 기본값은 `RuntimeException`과 `Error`에서만 롤백이고 checked 예외에서는 그냥 커밋된다. 예외 선택이 문법 취향이 아니라 데이터 정합성 문제가 되는 지점이 정확히 여기다.**
 
 ---
 
 ## 0. 질문 + 의도
 
-**질문**: "Checked Exception과 Unchecked Exception의 차이는? 실무에서 어떤
-기준으로 선택하나요?"
+**질문**: "Checked Exception과 Unchecked Exception의 차이는? 실무에서 어떤 기준으로 선택하나요?"
 
-**출제 의도**: 팀의 예외 처리 컨벤션(어디서 잡고, 어디서 변환하고, 무엇을
-롤백시키는가)을 설계하거나 따를 때 필요한 판단을 본다. 실무에서
-`catch (Exception e) {}`로 삼켜진 예외가 장애 원인 은폐의 단골이라,
-예외를 문법이 아니라 **"설계의 일부"**로 보는 사람인지 확인한다.
+**출제 의도**: 팀의 예외 처리 컨벤션(어디서 잡고, 어디서 변환하고, 무엇을 롤백시키는가)을 설계하거나 따를 때 필요한 판단을 본다. 실무에서 `catch (Exception e) {}`로 삼켜진 예외가 장애 원인 은폐의 단골이라, 예외를 문법이 아니라 **"설계의 일부"**로 보는 사람인지 확인한다.
 
-## 1. 개념 — 예외 계층과 컴파일러의 개입 여부
+## 1. 구분 — 계층도 한 장에서 정의가 나온다
 
-```
-Throwable
-├── Error                  ← Unchecked. JVM 수준 심각한 문제 (OutOfMemoryError, StackOverflowError)
-│                             애플리케이션이 잡아서 복구할 대상이 아님
+### 1-1. 전제 지식 — 예외도 그냥 객체이고, 상속 계층을 이룬다
+
+`throw new IllegalArgumentException("...")`을 보면 알 수 있듯 예외는 특별한 문법 요소가 아니라 **우리가 `new`로 만드는 평범한 객체**다. 다른 객체와 다른 점은 단 하나, `Throwable`이라는 클래스를 상속했다는 것뿐이다. 자바는 `throw` 뒤에 `Throwable`의 후손만 올 수 있게 제한한다.
+
+그래서 "checked냐 unchecked냐"는 예외에 붙은 별도의 표식이나 어노테이션이 아니다. **그 예외 클래스가 상속 계층의 어느 가지에 속하는가**로 결정된다. 계층도를 먼저 보면 정의가 저절로 따라 나온다.
+
+### 1-2. 계층도 — 가지 두 개만 기억하면 된다
+
+```text
+Throwable                          ← throw 할 수 있는 모든 것의 최상위
+│
+├── Error                          ← unchecked. JVM 자체가 무너진 상황
+│   ├── OutOfMemoryError               힙이 가득 차서 객체를 못 만든다
+│   ├── StackOverflowError             호출 스택이 한도를 넘었다
+│   └── ...                            애플리케이션이 잡아서 복구할 대상이 아니다
+│
 └── Exception
-    ├── (그 외 전부)        ← Checked. IOException, SQLException, InterruptedException ...
-    │                         컴파일러가 catch 또는 throws 선언을 강제
-    └── RuntimeException   ← Unchecked. NullPointerException, IllegalArgumentException,
-        └── ...               IllegalStateException ... 강제 없음
+    │
+    ├── RuntimeException           ← unchecked. 코드의 버그
+    │   ├── NullPointerException
+    │   ├── IllegalArgumentException
+    │   ├── IllegalStateException
+    │   └── ...                        고쳐야 할 대상이지 처리할 대상이 아니다
+    │
+    └── (RuntimeException을 뺀 나머지 전부)  ← checked
+        ├── IOException                 파일이 없다, 네트워크가 끊겼다
+        ├── SQLException                DB가 거절했다
+        ├── InterruptedException        대기 중에 인터럽트를 받았다
+        └── ...
 ```
 
-- **Checked**: 메서드가 던질 수 있으면 반드시 시그니처에 `throws`로
-  선언하거나 내부에서 `catch`해야 한다. 안 하면 **컴파일 에러**.
-- **Unchecked**: 선언도 catch도 강제되지 않는다. 어디서든 터질 수 있고,
-  잡지 않으면 호출 스택을 타고 위로 전파된다.
+이 그림에서 읽어야 할 것은 하나다. **checked는 목록이 아니라 뺄셈으로 정의된다.**
 
-### 원래의 설계 의도 (Java 언어 설계자들의 구분)
+`Throwable` 전체에서 `Error` 가지를 빼고, `RuntimeException` 가지를 빼고 **남는 것이 전부 checked**다. "checked 예외 목록을 외운다"는 접근이 아니라 "unchecked인 두 가지를 알면 나머지는 자동으로 checked"라고 잡아야 새로운 예외 클래스를 만났을 때도 즉시 판정할 수 있다.
 
-| 구분 | 의도된 용도 | 예 |
-|---|---|---|
-| Checked | **호출자가 예상하고 복구할 수 있는** 외부 상황 | 파일 없음, 네트워크 단절 |
-| Unchecked | **코드의 버그** — 복구가 아니라 수정 대상 | null 참조, 잘못된 인자, 배열 범위 초과 |
+우리가 도메인 예외를 만들 때 `extends RuntimeException`이라고 쓰느냐 `extends Exception`이라고 쓰느냐가 이 판정을 그대로 결정한다는 것도 여기서 나온다. **`extends Exception`이라고 쓰는 순간 그 예외는 checked가 되고, 그 순간부터 컴파일러가 개입하기 시작한다.**
 
-"복구 가능하면 Checked"가 교과서 답이다 (Effective Java Item 70).
-그런데 **실무는 이 구분대로 흘러가지 않았다** — 그 이유가 이 질문의
-진짜 몸통이다.
+### 1-3. "컴파일러가 강제한다"가 실제로 무엇인가
 
-## 2. 실무에서 Checked가 외면당한 이유 — 그리고 선택 기준
-
-### 2-1. 시그니처 오염 (전파 비용)
-
-Checked 예외는 처리하지 않는 모든 중간 계층의 시그니처에 번져 나간다.
+말로만 들으면 추상적이니 코드로 보자. 강제의 실체는 **"잡거나(catch), 던진다고 선언하거나(throws), 둘 중 하나를 하지 않으면 컴파일이 안 된다"**는 것이다.
 
 ```java
-// Checked를 그대로 전파하면 — 예외와 무관한 중간 계층까지 전부 오염
-public Order findOrder(Long id) throws SQLException { ... }      // repository
-public OrderDto getOrder(Long id) throws SQLException { ... }     // service — DB 알 필요 없는데 SQLException을 앎
-public ResponseEntity<?> order(Long id) throws SQLException { ... } // controller까지
+// checked 예외 — 컴파일러가 개입한다
+public String read(Path path) {
+    return Files.readString(path);   // 컴파일 에러: unhandled exception IOException
+}
+
+// 통과시키는 방법은 두 가지뿐이다.
+// 방법 ①: 여기서 잡는다
+public String read(Path path) {
+    try {
+        return Files.readString(path);
+    } catch (IOException e) {
+        return "";
+    }
+}
+
+// 방법 ②: 시그니처에 "나는 이걸 던질 수 있다"고 적어 호출자에게 떠넘긴다
+public String read(Path path) throws IOException {
+    return Files.readString(path);
+}
 ```
 
-- 하위 구현 세부사항(DB를 쓴다는 사실)이 상위 계층 시그니처에 노출된다 —
-  **추상화 누수**. 나중에 저장소를 바꾸면 시그니처를 전부 고쳐야 한다.
-- 람다·Stream과의 궁합도 최악이다. `Function`, `Supplier` 등 표준 함수형
-  인터페이스는 Checked 예외를 던질 수 없어서, Stream 안에서 Checked를
-  만나면 매번 try-catch로 감싸는 장식 코드가 생긴다.
+```java
+// unchecked 예외 — 컴파일러가 아무 말도 하지 않는다
+public int parse(String s) {
+    return Integer.parseInt(s);   // NumberFormatException(RuntimeException 하위)을 던질 수 있지만
+}                                 // 잡으라고도, 선언하라고도 하지 않는다. 그냥 컴파일된다.
+```
 
-### 2-2. 기계적 catch → 예외 삼키기 (장애 은폐의 단골)
+두 코드의 차이는 예외가 얼마나 심각한지가 아니다. **컴파일러가 그 예외의 존재를 아는 척하느냐 모르는 척하느냐**의 차이다. unchecked 예외도 잡을 수 있고 `throws`에 적을 수도 있다 — 다만 강제되지 않을 뿐이다.
 
-컴파일러가 "처리하라"고 강제하면, 바쁜 개발자는 **"처리한 척"**을 한다.
+여기까지가 문법이다. 면접에서 이 정도만 답하면 "문법은 아는 사람"이 되고, 진짜 질문은 그다음부터다.
+
+### 1-4. 원래 설계 의도 — 복구 가능성으로 선을 그었다
+
+자바 설계자들이 이 구분을 만든 의도는 명확했다. **호출자가 그 상황을 예상하고 무언가 다른 조치를 취할 수 있으면 checked, 그냥 코드가 잘못된 것이면 unchecked.**
+
+| 구분 | 의도된 용도 | 예 | 호출자가 할 수 있는 일 |
+|---|---|---|---|
+| checked | 호출자가 예상하고 복구할 수 있는 **외부 상황** | 파일 없음, 네트워크 단절 | 다른 경로 시도, 재시도, 사용자에게 재입력 요청 |
+| unchecked | **코드의 버그** | null 참조, 잘못된 인자, 배열 범위 초과 | 없다. 코드를 고치는 것 말고는 |
+
+논리는 이렇다. 파일이 없는 것은 프로그램이 아무리 완벽해도 일어날 수 있는 일이다. 디스크에서 누가 지웠을 수도 있다. 이런 상황은 **정상적으로 예상해야 하는 갈림길**이므로 호출자가 대비하도록 컴파일러가 상기시켜 주는 것이 도움이 된다.
+
+반대로 `null`인 참조로 메서드를 부르는 것은 예상해야 할 상황이 아니라 **이미 잘못 짜인 코드**다. 여기에 대비 코드를 강제하면 모든 메서드 호출을 try-catch로 감싸야 하므로 의미가 없다. 고쳐야 할 것은 실행 시점의 대비가 아니라 코드 자체다.
+
+이 구분은 널리 인용되는 원칙으로 정리되어 있다 — "복구 가능한 상황에는 checked, 프로그래밍 오류에는 runtime 예외"(Effective Java Item 70). 교과서 답으로는 여기까지가 맞다.
+
+**그런데 실무는 이 구분대로 흘러가지 않았다.** 그 이유가 이 질문의 진짜 몸통이다.
+
+## 2. 의도가 무너진 두 갈래 — 그리고 실무의 선택 기준
+
+원래 의도가 무너진 이유는 checked 예외의 이론이 틀려서가 아니다. **"호출자가 복구할 수 있다"는 전제가 계층이 여러 겹 쌓인 실제 애플리케이션에서 거의 성립하지 않기 때문**이다. 무너지는 방식이 두 갈래인데, 두 갈래는 정반대 방향으로 문제를 만든다. 하나는 예외를 **처리하지 않고 위로 던져서** 생기고, 다른 하나는 예외를 **처리한 척 잡아서** 생긴다.
+
+### 2-1. 갈래 ① 시그니처 오염 — 저수준 예외가 컨트롤러까지 번진다
+
+전형적인 스프링 애플리케이션은 컨트롤러 → 서비스 → 저장소의 세 계층으로 나뉜다. 저장소가 JDBC를 직접 다루다 `SQLException`(checked)을 만나면 어떻게 되는지 따라가 보자.
 
 ```java
-// 최악의 패턴 — 컴파일 에러만 없앤 코드. 장애 원인 은폐의 단골
+// Before: checked 예외를 처리하지 않고 그대로 전파하면 이렇게 된다
+public Order findById(Long id) throws SQLException { ... }               // 저장소 — 여기까지는 자연스럽다
+public OrderDto getOrder(Long id) throws SQLException { ... }            // 서비스 — SQL을 한 줄도 안 쓰는데 SQLException을 안다
+public ResponseEntity<OrderDto> get(Long id) throws SQLException { ... }  // 컨트롤러 — HTTP만 다루는데 SQLException을 안다
+```
+
+왜 이렇게 되는지가 중요하다. 컴파일러의 요구는 단순하다 — 잡거나, 선언하라. 그런데 **중간 계층은 그 예외를 잡아서 할 수 있는 일이 없다.**
+
+서비스가 `SQLException`을 잡아서 무엇을 하겠는가. 재시도? 그건 저장소가 판단할 일이다. 사용자에게 보여줄 메시지로 바꾸기? 그건 HTTP 경계인 컨트롤러가 할 일이다. **할 일이 없으니 잡지 않고, 잡지 않으니 시그니처에 적는다.** 그렇게 예외가 계층을 타고 끝까지 올라간다.
+
+그 결과가 **계층 간 결합**이다. 컨트롤러의 시그니처가 "이 아래 어딘가에서 JDBC를 쓴다"는 구현 세부사항을 광고하게 된다. 컨트롤러는 그 사실을 알 필요도 없고 알아서도 안 되는데 말이다.
+
+비용은 저장소를 교체할 때 청구된다. JDBC를 걷어내고 다른 저장소로 바꾸면 `SQLException`은 더 이상 나오지 않으므로 시그니처를 고쳐야 하는데, 그 수정은 저장소 파일 하나에서 끝나지 않고 **그 예외가 지나간 모든 파일로 번진다.** 하위 구현의 결정이 상위 계층을 붙잡고 있는 이 상태를 **추상화 누수(leaky abstraction)**라고 부른다. 감춰야 할 세부사항이 위로 새어 나왔다는 뜻이다.
+
+여기에 자바 8 이후로 하나가 더 붙었다. **checked 예외는 람다·Stream과 궁합이 최악이다.**
+
+```java
+// 표준 함수형 인터페이스(Function, Supplier 등)는 checked 예외를 던지도록 선언돼 있지 않다
+List<String> contents = paths.stream()
+        .map(p -> Files.readString(p))   // 컴파일 에러: unhandled exception IOException
+        .toList();
+
+// 그래서 이렇게 감싸게 된다 — 정작 하려던 일보다 장식이 길어진다
+List<String> contents = paths.stream()
+        .map(p -> {
+            try {
+                return Files.readString(p);
+            } catch (IOException e) {
+                // 결국 unchecked로 바꿔서 내보낸다. JDK가 이 변환 전용으로
+                // UncheckedIOException을 따로 만들어 둔 것 자체가,
+                // "checked를 unchecked로 바꿔야 하는 자리"가 흔하다는 인정이다.
+                throw new UncheckedIOException(e);
+            }
+        })
+        .toList();
+```
+
+### 2-2. 갈래 ② 기계적 catch — 예외를 삼킨 코드가 장애를 키운다
+
+두 번째 갈래는 반대 방향이다. 컴파일러가 "처리하라"고 강제하면, 마감에 쫓기는 개발자는 **"처리한 척"**을 한다.
+
+```java
+// 최악의 패턴 — IDE가 만들어 준 catch 블록에 손을 대지 않은 코드
 try {
     reader.read();
 } catch (IOException e) {
     // TODO: 나중에 처리
 }
-// 파일을 못 읽었는데 아무 일 없다는 듯 다음 로직 진행 →
-// 한참 뒤 엉뚱한 곳에서 데이터가 비어있다는 오류 → 원인 추적 불가
+// 파일을 못 읽었는데 아무 일 없다는 듯 다음 로직이 진행된다.
 ```
 
+이 코드가 왜 이렇게 흔한지는 IDE의 동작을 보면 알 수 있다. 컴파일 에러 위에서 "빠른 수정"을 누르면 IDE가 **빈 catch 블록을 자동으로 만들어 준다.** 에러 표시가 사라지고 코드는 컴파일된다. 그 순간 개발자의 문제는 해결됐고, 시스템의 문제는 시작됐다.
+
+로그를 남기는 것도 본질은 같을 수 있다.
+
 ```java
-// e.printStackTrace()나 로그만 남기고 진행하는 것도 본질은 같다
 } catch (SQLException e) {
-    log.error("DB 오류", e);   // 기록은 남지만...
-    return null;               // 호출자는 실패를 모른 채 null을 받는다 → NPE 폭탄 돌리기
+    log.error("DB 오류", e);   // 기록은 남지만
+    return null;               // 호출자는 실패했다는 사실을 모른 채 null을 받는다
+}
+// 호출자는 "조회 결과가 없구나"로 해석하고 진행한다.
+// 실패와 "정상적으로 결과 없음"이 구분 불가능해졌다.
+```
+
+**삼켜진 예외의 진짜 비용은 "예외가 안 보인다"가 아니라 "장애를 인지하고 원인을 찾는 시간이 길어진다"는 것이다.** 이것을 타임라인으로 보면 체감이 다르다.
+
+실제로 자주 나오는 형태가 배치의 광범위 catch다. 건별 실패를 건너뛰려는 의도로 짠 코드다.
+
+```java
+for (Payment p : payments) {
+    try {
+        settle(p);
+    } catch (Exception e) {                        // 일시적 오류를 건너뛰려던 의도였지만
+        log.warn("정산 실패 skip: {}", p.getId());  // 예외 객체 e를 로그에 넘기지 않았다
+    }
 }
 ```
 
-Checked 예외의 강제가 오히려 "형식적 catch"를 양산해 **실패를 조용히
-성공처럼 보이게** 만든다는 것 — 이것이 Kotlin, C#이 Checked 예외를
-아예 언어에서 뺀 이유이고, Spring이 `SQLException`(Checked)을
-`DataAccessException`(Unchecked) 계층으로 전부 변환해서 제공하는 이유다.
+이 코드가 커넥션 풀 고갈과 만났을 때의 타임라인이다.
 
-### 2-3. 그래서 실무 선택 기준
+```text
+t0  02:00  정산 배치 시작. 5만 건을 건별로 처리한다.
 
-**기본값: Unchecked (RuntimeException 상속 도메인 예외) + 경계에서 일괄 처리.**
+t1  02:03  커넥션 풀이 고갈되기 시작. settle()이 커넥션을 못 얻어 예외를 던진다.
+           catch (Exception e) 가 그것을 잡고 "정산 실패 skip: 10231" 한 줄만 남긴다.
+           e를 로그에 넘기지 않았으므로 예외 타입도, 스택트레이스도 남지 않는다.
+
+t2  02:03~02:40  같은 일이 5만 번 반복된다. 배치는 예외 없이 "정상 종료"한다.
+           APM의 에러율 지표는 0이다 — 밖으로 던져진 예외가 하나도 없기 때문이다.
+           모니터링 알림도 울리지 않는다.
+
+t3  09:00  회계 팀이 "어제 정산 금액이 0원"이라고 문의한다.
+           ★ 여기서야 사람이 장애를 인지한다. t1로부터 7시간이 지났다.
+
+t4  09:10  로그를 연다. "정산 실패 skip: ..." 5만 줄.
+           무엇 때문에 실패했는지를 알려주는 정보가 한 글자도 없다.
+
+t5  09:10~12:00  DB 지표, 애플리케이션 로그, 네트워크를 하나씩 뒤진다.
+
+t6  12:00  커넥션 풀 지표 그래프에서 그 시간대의 고갈을 겨우 찾아낸다.
+```
+
+이 타임라인에서 catch 블록이 실제로 한 일은 두 가지다. **장애 발생(t1)과 인지(t3) 사이를 7시간으로 벌린 것**, 그리고 **인지 후 원인 확정까지를 3시간 더 늘린 것**이다.
+
+두 구간은 원인이 다르므로 대응도 다르다.
+
+**인지가 늦은 이유는 실패가 성공처럼 보였기 때문이다.** 예외를 잡아서 밖으로 안 던졌으니 에러율 지표가 오르지 않았고, 배치의 종료 코드도 정상이었다. 대응은 **"건너뛸 수 있는 실패"와 "중단해야 하는 실패"를 예외 타입으로 구분하고 후자는 전파하는 것**이다. 특정 결제 건의 데이터가 이상해서 나는 실패는 건너뛰어도 되지만, 커넥션을 못 얻는 인프라 장애는 건너뛸 대상이 아니라 즉시 배치를 세우고 알림을 울려야 하는 사건이다.
+
+**원인 확정이 늦은 이유는 스택트레이스가 없었기 때문이다.** 대응은 단순하다 — **광범위 catch를 쓰더라도 예외 객체를 반드시 로그에 포함한다.**
 
 ```java
-// 도메인 예외는 Unchecked로
+// After: 예외 객체를 로그에 넘기고, 중단해야 할 실패는 구분해 전파한다
+for (Payment p : payments) {
+    try {
+        settle(p);
+    } catch (DataAccessResourceFailureException e) {
+        // 커넥션을 못 얻는 등의 인프라 장애. 다음 건도 똑같이 실패할 것이므로
+        // 건너뛰는 것은 의미가 없고 5만 건을 헛돌게 만들 뿐이다. 즉시 중단한다.
+        throw e;
+    } catch (Exception e) {
+        // 두 번째 인자로 e를 넘기면 로거가 스택트레이스 전체를 함께 출력한다.
+        // t5의 3시간이 이 인자 하나로 몇 분이 된다.
+        log.warn("정산 실패 skip: {}", p.getId(), e);
+    }
+}
+```
+
+checked 예외의 강제가 이런 형식적 catch를 양산해 **실패를 조용히 성공처럼 보이게 만든다**는 것 — 이것이 Kotlin, C#이 checked 예외를 아예 언어에서 뺀 이유이고, 스프링이 JDBC의 `SQLException`(checked)을 `DataAccessException`(unchecked) 계층으로 전부 변환해서 넘겨주는 이유이기도 하다.
+
+### 2-3. 그래서 실무의 기본값 — unchecked 도메인 예외 + 경계에서 일괄 처리
+
+두 갈래의 원인을 정리하면 결론이 따라 나온다. 문제는 **"예외를 만난 계층"과 "예외를 처리할 수 있는 계층"이 다르다**는 데 있었다. checked는 그 둘이 같다고 가정하고 만든 장치다.
+
+그렇다면 처리를 **처리할 수 있는 한 곳으로 모으고**, 그때까지는 예외가 조용히 위로 흐르게 두면 된다. 그게 실무의 기본값이다.
+
+```java
+// ① 도메인 예외는 unchecked로 만든다 — extends RuntimeException
 public class OrderNotFoundException extends RuntimeException {
     public OrderNotFoundException(Long orderId) {
         super("주문을 찾을 수 없습니다: " + orderId);
     }
 }
 
-// 비즈니스 코드는 시그니처 오염 없이 던지기만
+// ② 비즈니스 코드는 시그니처를 더럽히지 않고 던지기만 한다
 public Order findOrder(Long id) {
     return orderRepository.findById(id)
             .orElseThrow(() -> new OrderNotFoundException(id));
 }
 
-// 처리는 시스템 경계 한 곳에서 — Spring이면 @RestControllerAdvice
+// ③ 처리는 시스템 경계 한 곳에서 — 스프링이면 @RestControllerAdvice
 @RestControllerAdvice
 public class GlobalExceptionHandler {
     @ExceptionHandler(OrderNotFoundException.class)
     public ResponseEntity<ErrorResponse> handle(OrderNotFoundException e) {
+        // 여기가 "예외를 HTTP 응답으로 번역할 수 있는" 유일한 계층이다.
+        // 중간 계층은 이 예외의 존재조차 몰라도 된다.
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ErrorResponse.of(e.getMessage()));
     }
 }
 ```
 
-**Checked를 (그래도) 고려할 좁은 경우**: 호출자가 **그 자리에서 반드시
-복구 분기를 타야 하고, 그걸 잊으면 안 되는** API를 설계할 때. 예:
-라이브러리 경계에서 "재시도 가능한 실패"를 호출자에게 강제로 인지시키고
-싶은 경우. 단, 요즘은 이것도 예외 대신 **결과 타입(Result/sealed 타입,
-Optional)**으로 표현하는 흐름이 강하다 — "실패가 정상 흐름의 일부"라면
-예외가 아니라 반환값으로 모델링하는 게 낫다. (가산점 포인트)
+여기서 자주 나오는 반문이 있다. **"컴파일러의 강제를 포기하면 처리를 잊어버리지 않나?"**
 
-**경계에서 만난 Checked는 즉시 Unchecked로 번역(translate)한다** — 이때
-반드시 원인(cause)을 보존한다:
+답은 **"잊어도 안전하도록 경계를 만들어 두었다"**는 것이다. 잡히지 않은 예외는 전역 핸들러까지 올라가고, 거기서 500 응답과 에러 로그가 남는다. 강제를 개별 호출 지점마다 거는 대신 **경계 한 곳에서 그물로 받는 구조**로 바꾼 것이다. 반대로 checked 방식은 강제는 하지만 그 강제가 빈 catch로 무력화될 수 있으므로, 실제 안전성은 오히려 경계 방식이 높다.
+
+**checked를 그래도 고려할 좁은 경우**는 남아 있다. 호출자가 **그 자리에서 반드시 복구 분기를 타야 하고, 그걸 잊으면 안 되는** API를 설계할 때다. 예를 들어 라이브러리 경계에서 "이 실패는 재시도하면 성공할 수 있다"는 사실을 호출자에게 강제로 인지시키고 싶은 경우다.
+
+다만 요즘은 이것도 예외 대신 **결과 타입**으로 표현하는 흐름이 강하다 (가산점 포인트). `Optional`, sealed 인터페이스로 만든 `Result` 타입 같은 것들이다. **"실패가 정상 흐름의 일부"라면 예외가 아니라 반환값으로 모델링하는 게 낫다.** 반환값이면 호출자가 분기를 빠뜨릴 수 없고(컴파일러가 검사한다), 예외 생성 비용도 없으며, 람다 안에서도 자연스럽게 흐른다. 컴파일러 강제라는 목표는 유지하되 그 수단을 예외에서 타입으로 옮긴 것이다.
+
+### 2-4. 경계에서 만난 checked는 즉시 번역한다 — cause를 반드시 넘겨서
+
+외부 라이브러리가 던지는 checked 예외는 우리가 없앨 수 없다. `Files.readString`은 `IOException`을 던지고, JDBC는 `SQLException`을 던진다. 그래서 실무 규칙은 **"만난 자리에서 즉시 우리 도메인의 unchecked 예외로 번역한다"**가 된다.
+
+이때 반드시 지켜야 할 것이 하나 있다. **원인 예외를 `cause`로 넘겨주는 것이다.**
 
 ```java
-// before — 원인 유실: 스택트레이스가 여기서 끊겨 근본 원인을 못 찾는다
+// Before: 원인 유실 — 스택트레이스가 여기서 끊긴다
 } catch (IOException e) {
-    throw new FileProcessingException("파일 처리 실패");   // e가 버려짐!
+    throw new FileProcessingException("파일 처리 실패");   // e를 버렸다
 }
+```
 
-// after — cause 체이닝: 로그에 Caused by: 로 원본 예외가 이어진다
+```java
+// After: cause 체이닝 — 로그에 "Caused by:"로 원본 예외가 이어진다
 } catch (IOException e) {
     throw new FileProcessingException("파일 처리 실패: " + path, e);
 }
 ```
 
-## 3. 실무 함정 — `@Transactional` 롤백 규칙과 예외 삼키기 사고
+한 글자 차이인데 로그에서는 결과가 전혀 다르다.
 
-### 3-1. Spring은 기본으로 Unchecked에서만 롤백한다
+```text
+[cause를 안 넘겼을 때]
+com.example.FileProcessingException: 파일 처리 실패
+    at com.example.FileService.process(FileService.java:42)
+    at ...
+    ← 여기서 끝. "왜" 실패했는지는 어디에도 없다.
+      권한 문제인지, 파일이 없는 건지, 디스크가 찬 건지 알 수 없다.
 
-Spring `@Transactional`의 기본 롤백 정책:
-**`RuntimeException`과 `Error`에서만 롤백, Checked 예외는 롤백하지 않고
-커밋한다.** (EJB 시절 관례를 계승 — "Checked = 복구 가능한 비즈니스
-상황이므로 트랜잭션은 유효하다"는 가정)
+[cause를 넘겼을 때]
+com.example.FileProcessingException: 파일 처리 실패: /data/settle/2026-09-01.csv
+    at com.example.FileService.process(FileService.java:42)
+    at ...
+Caused by: java.nio.file.NoSuchFileException: /data/settle/2026-09-01.csv
+    at sun.nio.fs.UnixException.translateToIOException(...)
+    at ...
+    ← 원인 예외의 타입과 스택트레이스가 그대로 이어져 나온다.
+```
+
+`Caused by:` 아래에 붙는 것이 원인 예외의 정보다. **cause를 빼먹으면 그 블록 전체가 사라진다.** 예외를 감싸는 이유는 상위 계층에 맞는 어휘로 바꾸기 위해서지 정보를 버리기 위해서가 아니므로, 감쌀 때는 항상 두 번째 인자로 원본을 넘긴다.
+
+## 3. 실무 함정 — `@Transactional`의 롤백 규칙
+
+이 절이 이 주제에서 가장 실무적인 부분이다. checked/unchecked 선택이 문법 취향이 아니라 **데이터가 깨지느냐 마느냐**의 문제가 되는 지점이기 때문이다.
+
+### 3-1. 전제 — 롤백을 결정하는 것은 DB가 아니라 스프링이다
+
+먼저 오해를 하나 풀어야 한다. **DB는 "예외가 났으니 롤백하라"는 것을 스스로 알지 못한다.** DB 입장에서 트랜잭션은 `COMMIT` 또는 `ROLLBACK` 명령을 받아야 끝나고, 애플리케이션에서 예외가 났다는 사실은 DB에 전달되지 않는다.
+
+그럼 누가 결정하는가. `@Transactional`이 붙은 메서드는 스프링이 만든 **프록시**로 감싸여 있다. 프록시는 대략 이런 일을 한다.
+
+```text
+[호출자] --> [프록시] --> [실제 메서드]
+
+프록시가 하는 일:
+  1. 트랜잭션 시작 (커넥션 확보, setAutoCommit(false))
+  2. 실제 메서드 호출
+  3. 정상 반환    -> COMMIT
+     예외 발생    -> ★ 예외 타입을 보고 COMMIT 할지 ROLLBACK 할지 결정한다
+```
+
+3번의 별표가 이 절의 전부다. **프록시는 예외가 났다는 사실만이 아니라 "어떤 예외인지"를 보고 판단한다.** 그리고 그 판단 규칙의 기본값이 우리 직관과 다르다.
+
+### 3-2. 기본 규칙 — checked 예외에서는 롤백하지 않고 커밋한다
+
+스프링 `@Transactional`의 기본 롤백 정책은 이렇다.
+
+**`RuntimeException`과 `Error`에서만 롤백하고, checked 예외에서는 롤백하지 않고 커밋한다.**
+
+읽고 넘어가면 안 되는 문장이다. 예외가 밖으로 던져졌는데도 **트랜잭션은 커밋된다.** 호출자는 예외를 받아 "실패했구나"라고 판단하는데, DB에는 그 실패 직전까지의 변경이 남아 있다.
 
 ```java
+// Before: 사고가 나는 코드
 @Transactional
-public void placeOrder(OrderRequest req) throws StockException {  // Checked
-    orderRepository.save(order);        // ① 저장됨
-    stockService.decrease(req);         // ② StockException(Checked) 발생
+public void placeOrder(OrderRequest req) throws StockException {   // StockException은 checked
+    orderRepository.save(order);   // ① 주문이 INSERT 된다
+    stockService.decrease(req);    // ② 재고가 부족해 StockException(checked)을 던진다
 }
-// ②에서 Checked 예외가 던져져도 ①은 롤백되지 않고 커밋된다!
-// → 재고 차감은 실패했는데 주문은 생성된 데이터 정합성 사고
 ```
 
+```text
+[실행 결과]
+  ① 주문 INSERT     -> 커밋된다   ★
+  ② 재고 차감 실패   -> 예외가 호출자에게 던져진다
+
+  결과: "재고가 없어 실패했다"는 응답을 받았는데 DB에는 주문이 남아 있다.
+        결제되지 않은 주문, 재고와 맞지 않는 주문이 쌓인다.
+```
+
+`@Transactional`을 붙였으니 당연히 묶여서 롤백될 것이라고 믿고 짠 코드가 정확히 반대로 동작한다. 그리고 **예외도 로그도 정상이다** — 예외는 제대로 던져졌고, 커밋도 정상적으로 성공했다. 이상 징후가 어디에도 없으므로 데이터가 어긋난 채 며칠이 지난 뒤 정산 대사에서 발견되는 것이 보통이다.
+
+해결은 두 가지인데, 어느 쪽을 고르느냐가 곧 이 문서의 결론과 이어진다.
+
 ```java
-// 해결 1 — 도메인 예외를 Unchecked로 설계 (권장, 위 2-3 기준과 일치)
+// 해결 ① 도메인 예외를 unchecked로 설계한다 (권장 — 2-3의 기본값과 일치)
 public class StockException extends RuntimeException { ... }
+// 이제 프록시가 RuntimeException으로 판정해 롤백한다.
+// 이후 이 예외를 던지는 모든 트랜잭션이 자동으로 안전해진다.
 
-// 해결 2 — Checked를 유지해야 한다면 롤백 대상을 명시
+// 해결 ② checked를 유지해야 한다면 롤백 대상을 명시한다
 @Transactional(rollbackFor = StockException.class)
+public void placeOrder(OrderRequest req) throws StockException { ... }
+// 이 방식의 약점: 이 메서드 하나만 안전해진다.
+// 같은 예외를 던지는 다른 트랜잭션 메서드에도 매번 붙여야 하고,
+// 새로 추가되는 메서드에서 빠뜨리면 같은 사고가 다시 난다.
 ```
 
-이 함정 하나가 "Checked/Unchecked 구분이 문법 지식이 아니라 데이터
-정합성 문제"임을 보여주는 대표 사례다. (가산점 포인트)
+반대 방향의 설정도 있다. 특정 unchecked 예외에서 **롤백을 막고 싶으면** `noRollbackFor`를 쓴다. "이 예외는 비즈니스적으로 정상 흐름이라 지금까지의 작업은 유지하고 싶다"는 드문 경우에 쓴다.
 
-### 3-2. `catch (Exception e) {}`가 장애를 은폐한 전형적 시나리오
+### 3-3. 왜 그런 기본값인가 — 우연이 아니라 일관성의 산물이다
 
-배치 작업에서 건별 실패를 "건너뛰기 위해" 광범위 catch를 걸어둔 코드:
+"기본값이 잘못됐다"고만 외우면 다른 프레임워크에서 다시 헷갈린다. **그 기본값이 왜 그렇게 정해졌는지**를 알면 규칙이 하나의 이야기로 붙는다.
+
+이유는 두 겹이다.
+
+**첫째, EJB 시절의 관례를 그대로 이어받았다.** 스프링 이전의 자바 엔터프라이즈 표준이었던 EJB의 컨테이너 관리 트랜잭션이 정확히 같은 규칙을 썼다 — 시스템 예외(unchecked)에서는 롤백, 애플리케이션 예외(checked)에서는 롤백하지 않음. 스프링은 EJB에서 넘어오는 개발자들이 같은 코드에서 다르게 동작하는 일을 겪지 않도록 이 관례를 유지했다.
+
+**둘째, 그 관례 자체가 1-4의 원래 의미에서는 일관적이다.** checked 예외의 원래 뜻이 "호출자가 예상하고 복구할 수 있는 상황"이라면, 그것은 **버그가 아니라 예상된 갈림길**이다. 예상된 갈림길에서 지금까지 한 일을 전부 무효화하는 것이 항상 옳지는 않다.
+
+예를 들어 "쿠폰이 이미 사용됨"이라는 checked 예외를 만든 설계자는 호출자가 그것을 잡아 다른 쿠폰으로 재시도하기를 기대했을 수 있다. 이때 이미 저장한 로그나 이력까지 함께 롤백되면 오히려 곤란하다. 반대로 `NullPointerException`은 그냥 버그이므로 지금까지 한 일을 신뢰할 수 없고, 전부 되돌리는 것이 안전하다.
+
+즉 **기본값은 "checked = 복구 가능한 비즈니스 상황"이라는 전제 위에서는 완전히 합리적이다.** 문제는 실무의 우리가 그 전제대로 checked를 쓰지 않는다는 것이다. 우리는 `StockException`을 "복구 가능한 갈림길"이 아니라 "주문을 무효화해야 하는 실패"로 쓴다. **전제가 어긋난 상태에서 기본값만 살아 있으니 사고가 난다.**
+
+여기서 이 문서 전체를 관통하는 결론이 나온다. 2-3에서 정한 "도메인 예외는 unchecked로 통일"이라는 원칙은 시그니처를 깨끗하게 하려는 취향 문제가 아니다. **그 원칙을 지키면 롤백 함정 자체가 생기지 않는다.** 규칙을 외워서 피하는 것보다 규칙이 필요 없는 설계로 가는 쪽이 안전하다.
+
+### 3-4. 예외를 삼키면 롤백은 아예 일어나지 않는다
+
+2절의 "예외 삼키기"와 이 절의 "롤백 규칙"이 만나면 더 조용한 사고가 된다.
 
 ```java
-for (Payment p : payments) {
+// Before: 트랜잭션 안에서 예외를 잡아 삼킨다
+@Transactional
+public void placeOrder(OrderRequest req) {
+    orderRepository.save(order);
     try {
-        settle(p);
-    } catch (Exception e) {   // 일시적 오류를 건너뛰려던 의도였지만...
-        log.warn("정산 실패 skip: {}", p.getId());   // 예외 객체 e를 로그에 안 남김
+        stockService.decrease(req);
+    } catch (Exception e) {
+        log.warn("재고 차감 실패, 주문은 그대로 진행");   // 예외를 밖으로 안 던진다
     }
 }
 ```
 
-- 어느 날 DB 커넥션 풀 고갈로 `settle()`이 **전건 실패**했는데, 로그에는
-  "skip" 라인만 수천 줄 — **무엇 때문에** 실패했는지(스택트레이스)가 없어
-  원인 추적에 반나절을 쓴다.
-- 교훈: ① 광범위 catch를 쓰더라도 **예외 객체를 반드시 로그에 포함**
-  (`log.warn("...", e)`), ② "건너뛸 수 있는 실패"와 "중단해야 하는
-  실패"(인프라 장애)를 예외 타입으로 구분해 후자는 전파한다.
+3-1에서 본 대로 롤백 판단은 **프록시가 예외를 봤을 때** 일어난다. 그런데 메서드 안에서 잡아 삼켜 버리면 프록시에게는 예외가 도달하지 않는다. 프록시 입장에서 이 메서드는 **아무 문제 없이 정상 반환**한 것이므로 커밋한다.
+
+checked냐 unchecked냐를 따질 것도 없다. **예외가 프록시까지 올라가지 않으면 롤백은 처음부터 후보에 없다.** "롤백하고 싶으면 예외를 밖으로 던지거나 명시적으로 롤백을 표시해야 한다"는 것이 이 구조의 결론이다.
+
+의도적으로 일부만 실패해도 진행하고 싶다면 그것대로 설계해야 한다 — 재고 차감을 별도 트랜잭션으로 분리하거나, 실패를 별도 테이블에 기록해 후처리하거나. **어느 쪽이든 "잡아서 로그만 남기고 넘어간다"는 코드가 데이터 정합성 결정을 내리고 있다는 사실을 인지한 상태여야 한다.**
 
 ## 4. 꼬리질문 대비 포인트
 
 ### "Spring `@Transactional`은 Checked 예외가 발생하면 롤백하나요?"
 
-기본 설정으로는 **롤백하지 않는다**. 기본 롤백 대상은 `RuntimeException`과
-`Error`뿐이다. Checked 예외로도 롤백하려면
-`@Transactional(rollbackFor = MyCheckedException.class)`를 명시해야 한다.
-반대로 특정 Unchecked 예외에서 롤백을 막으려면 `noRollbackFor`를 쓴다.
-실무에서는 도메인 예외를 처음부터 `RuntimeException` 기반으로 설계해
-이 함정 자체를 없애는 편이 안전하다.
+**기본 설정으로는 롤백하지 않고 커밋한다.** 기본 롤백 대상은 `RuntimeException`과 `Error`뿐이다.
+
+checked 예외로도 롤백하려면 `@Transactional(rollbackFor = MyCheckedException.class)`를 명시해야 한다. 반대로 특정 unchecked 예외에서 롤백을 막으려면 `noRollbackFor`를 쓴다.
+
+여기까지가 사실 관계이고, 그다음에 **"그래서 저는 이렇게 합니다"**를 붙이는 것이 좋다. 실무에서는 도메인 예외를 처음부터 `RuntimeException` 기반으로 설계해 이 함정 자체를 없애는 편이 안전하다. `rollbackFor`는 메서드마다 붙여야 하므로 새로 추가되는 메서드에서 빠뜨릴 여지가 계속 남지만, 예외 계층을 바꾸면 한 번에 전부 해결된다.
+
+여유가 있으면 기본값의 유래까지 짚으면 좋다 (가산점 포인트). EJB 시절 관례를 계승한 것이고, "checked = 복구 가능한 비즈니스 상황이므로 지금까지의 작업은 유효하다"는 원래 의미에서는 일관적인 규칙이다. 우리가 checked를 그 의미대로 쓰지 않기 때문에 함정이 되는 것이다.
 
 ### "왜 Kotlin이나 C# 같은 최신 언어는 Checked 예외를 없앴나요?" (시니어 변별 포인트)
 
-Checked 예외의 이론(복구 가능성을 타입으로 강제)은 좋았지만, 실제로는
-① 처리할 수 없는 중간 계층까지 시그니처가 오염되고(추상화 누수),
-② 강제된 catch가 "형식적 처리(삼키기)"를 양산했으며,
-③ 람다·고차함수와 조합이 안 돼 함수형 스타일을 막았기 때문이다.
-대규모 코드베이스에서 Checked의 강제가 안정성 향상보다 보일러플레이트와
-은폐 버그를 더 많이 낳았다는 경험적 결론이 쌓였고, Kotlin 설계진은 이를
-근거로 제외했다. 대신 "실패가 정상 흐름"인 경우는 sealed class나
-`Result` 같은 **반환 타입으로 모델링**하는 쪽으로 발전했다 — 컴파일러
-강제라는 목표는 유지하되, 예외가 아니라 값으로 강제하는 방식이다.
+이론은 좋았지만 대규모 코드베이스에서 얻는 것보다 잃는 것이 많다는 경험적 결론이 쌓였기 때문이다. 잃은 것이 셋이다.
+
+**① 처리할 수 없는 중간 계층까지 시그니처가 오염된다.** 저장소의 `SQLException`이 서비스와 컨트롤러의 시그니처에 번져 구현 세부사항이 위로 새어 나온다(추상화 누수). 저장소를 교체하면 그 예외가 지나간 모든 파일을 고쳐야 한다.
+
+**② 강제된 catch가 형식적 처리(삼키기)를 양산했다.** 컴파일 에러를 없애려고 만든 빈 catch 블록이 장애를 은폐한다. 강제의 목적은 안전이었는데 결과는 정반대가 됐다.
+
+**③ 람다·고차함수와 조합이 안 된다.** 표준 함수형 인터페이스가 checked를 던질 수 없어 Stream 안에서 매번 try-catch로 감싸야 하고, 그러면 결국 unchecked로 바꿔 던지게 된다.
+
+그렇다고 "복구 가능성을 타입으로 강제한다"는 목표까지 버린 것은 아니라는 점을 덧붙이면 답이 완성된다. 그 목표는 **예외가 아니라 반환 타입으로** 옮겨 갔다 — Kotlin의 sealed class나 `Result` 타입처럼 "실패가 정상 흐름의 일부"인 경우를 값으로 표현하는 방식이다. 반환값이면 호출자가 분기를 빠뜨릴 수 없고, 람다 안에서도 자연스럽게 흐르며, 예외 생성 비용도 들지 않는다.
 
 ### "예외를 감쌀 때(wrapping) 꼭 지켜야 할 것은?"
 
-**원인 예외를 cause로 반드시 전달**하는 것
-(`new DomainException(msg, e)`). cause를 빠뜨리면 스택트레이스 체인이
-끊겨서 로그에 최종 예외만 남고 근본 원인(어느 SQL, 어느 파일)이 유실된다.
-또 하나, **잡아서 다시 던질 거면 로그는 한 군데서만** — 잡는 곳마다
-로그를 찍으면 같은 예외가 3~4번 중복 기록돼 로그 노이즈로 실제 원인
-찾기가 더 어려워진다 ("log and rethrow" 안티패턴).
+**원인 예외를 `cause`로 반드시 전달하는 것**이다 (`new DomainException(msg, e)`).
 
-### "Error는 catch하면 안 되나요? OutOfMemoryError는요?"
+cause를 빼뜨리면 스택트레이스 체인이 끊겨 로그에 최종 예외만 남는다. "파일 처리 실패"라는 우리 메시지는 남지만 **어떤 파일이 왜 실패했는지**(권한인지, 없는 파일인지, 디스크가 찼는지)는 사라진다. cause를 넘기면 로그에 `Caused by:` 블록으로 원본 예외의 타입과 스택트레이스가 이어져 나온다.
 
-`Error`는 JVM 수준의 복구 불가능한 상태라 잡아서 처리할 대상이 아니다.
-특히 `OutOfMemoryError`를 catch하고 진행하면 이미 힙이 망가진 상태에서
-어떤 동작도 신뢰할 수 없다 — 잡더라도 로그 남기고 프로세스를 종료시키는
-용도까지만이다. 실무 대응은 catch가 아니라
-`-XX:+HeapDumpOnOutOfMemoryError`로 덤프를 남기고 재시작 후 원인을
-분석하는 것이다. 예외적으로 프레임워크 최상위 루프(스레드풀의 작업
-래퍼 등)가 `Throwable`을 잡는 경우가 있는데, 이는 "복구"가 아니라
-"기록 후 격리/종료"가 목적이다.
+여기에 하나 더 얹으면 좋다. **잡아서 다시 던질 거면 로그는 한 군데서만 남긴다.** 잡는 곳마다 로그를 찍으면 같은 예외가 세 번, 네 번 중복 기록돼 로그 노이즈가 되고, 정작 "이게 몇 건 발생한 사건인가"를 판단하기 어려워진다. 이것을 "log and rethrow" 안티패턴이라고 부른다. 원칙은 **던질 거면 로그는 남기지 말고, 로그를 남길 거면 거기서 처리를 끝낸다**는 것이다.
+
+### "`Error`는 catch하면 안 되나요? `OutOfMemoryError`는요?"
+
+`Error`는 **JVM 수준에서 이미 무너진 상태**를 알리는 것이라 애플리케이션이 잡아서 복구할 대상이 아니다. 잡아서 무엇을 하려 해도 그 코드가 정상 동작한다는 보장이 없다.
+
+`OutOfMemoryError`가 대표적이다. 이 예외가 나왔다는 것은 **힙에 새 객체를 만들 공간이 없다**는 뜻인데, catch 블록에서 하는 거의 모든 일(로그 문자열 만들기, 예외 객체 만들기, 컬렉션에 담기)이 새 객체를 필요로 한다. 잡아서 진행하면 어느 지점에서 다시 터질지 알 수 없고, 이미 다른 스레드가 같은 이유로 실패해 애플리케이션 상태가 부분적으로 깨져 있을 가능성도 높다.
+
+실무 대응은 catch가 아니라 **사후 분석 준비**다. `-XX:+HeapDumpOnOutOfMemoryError` 옵션을 걸어두면 OOM 발생 시점의 힙 덤프가 파일로 남고, 그 덤프를 열어 무엇이 힙을 채웠는지 분석한다. 프로세스는 재시작하는 것이 맞다.
+
+예외적으로 `Throwable`을 잡는 자리가 하나 있다 (가산점 포인트). **프레임워크의 최상위 루프** — 스레드풀의 작업 래퍼나 배치의 스텝 실행기 같은 곳이다. 여기서 `Throwable`을 잡는 목적은 "복구"가 아니라 **"기록하고 격리한다"**는 것이다. 작업 하나가 `Error`로 죽었을 때 그 사실을 로그로 남기고 워커 스레드는 살려 다음 작업으로 넘어가게 하려는 것이지, 그 `Error` 상황을 정상으로 되돌리려는 것이 아니다. 목적이 다르다는 점을 구분해 말하면 좋다.
 
 ### "예외를 흐름 제어(if 대용)로 쓰면 왜 안 되나요?"
 
-① 의미론 왜곡 — 예외는 "예외적 상황"의 신호인데 정상 분기에 쓰면 코드를
-읽는 사람과 모니터링 시스템(에러율 지표, APM) 모두를 속인다.
-② 비용 — 예외 생성 시 `fillInStackTrace()`가 호출 스택 전체를 캡처하는
-비싼 작업이라, 루프 안에서 예외로 분기하면 성능이 눈에 띄게 나빠진다.
-"없음이 정상"인 경우는 `Optional` 반환이나 boolean 검사 메서드로
-모델링하는 게 맞다. (가산점 포인트: 그래서 예외를 흐름 제어에 쓰는
-일부 라이브러리는 스택트레이스 캡처를 생략하는 생성자 옵션
-`writableStackTrace=false`를 쓴다)
+이유가 둘인데, 성능보다 첫 번째가 더 중요하다.
+
+**① 의미론이 왜곡된다.** 예외는 "예외적 상황"이라는 신호다. 정상 분기에 쓰면 코드를 읽는 사람이 "여기가 실패 경로구나"라고 오해하고, 모니터링 시스템도 함께 속는다. APM의 에러율 지표나 예외 발생 건수 알림이 정상 흐름 때문에 계속 올라가면, 진짜 장애가 났을 때 그 신호가 묻힌다. **관측 가능성이 망가지는 쪽이 실무에서는 더 아프다.**
+
+**② 비용이 든다.** 예외 객체를 만들 때 `fillInStackTrace()`가 호출되어 **그 시점의 호출 스택 전체를 캡처한다.** 스택이 깊을수록 비싸지므로, 루프 안에서 예외로 분기하면 성능이 눈에 띄게 나빠진다. 일반적인 `if` 분기와는 비교가 안 되는 비용이다.
+
+"없음이 정상"인 경우는 예외가 아니라 **`Optional` 반환이나 boolean을 돌려주는 검사 메서드**로 모델링하는 게 맞다. `findById`가 없는 id에 예외를 던지는 게 아니라 `Optional.empty()`를 돌려주는 이유가 이것이다.
+
+(가산점 포인트: 그래서 예외를 제어 흐름에 의도적으로 쓰는 일부 라이브러리는 `Throwable`의 생성자 옵션 `writableStackTrace=false`로 스택트레이스 캡처를 아예 생략한다. 비용의 대부분이 스택 캡처라는 것을 역으로 보여주는 사례다.)
 
 ---
 
 ## 한 줄 요약
 
-Checked는 컴파일러가 처리를 강제하는 "복구 가능 상황"용, Unchecked는
-강제 없는 "버그·도메인 실패"용으로 설계됐지만, 실무에서는 시그니처
-오염과 형식적 catch(예외 삼키기)의 폐해 때문에 **도메인 예외는
-Unchecked로 통일하고 시스템 경계(전역 핸들러)에서 일괄 변환·응답하며,
-Checked를 만나면 cause를 보존해 즉시 번역하고, `@Transactional`의
-"Unchecked만 롤백" 기본값까지 챙기는 것**이 예외를 설계의 일부로 다루는
-방식이다.
+checked와 unchecked를 가르는 것은 컴파일러의 강제 여부 하나이고 계층도에서 `Error`와 `RuntimeException` 가지를 뺀 나머지가 checked라는 정의가 전부지만, "복구 가능하면 checked"라는 원래 의도는 저수준 예외가 컨트롤러까지 번지는 시그니처 오염과 컴파일 에러만 없애려는 빈 catch의 장애 은폐라는 두 갈래로 무너졌기 때문에 실무는 **도메인 예외를 unchecked로 통일하고 시스템 경계에서 일괄 처리하며, 외부의 checked는 만난 자리에서 cause를 보존해 즉시 번역하고, `@Transactional`이 checked에서는 롤백하지 않고 커밋한다는 기본값까지 챙기는 것**으로 수렴했다 — 예외를 문법이 아니라 데이터 정합성과 장애 대응 시간을 좌우하는 설계 요소로 다루는 것이 이 질문의 본체다.
