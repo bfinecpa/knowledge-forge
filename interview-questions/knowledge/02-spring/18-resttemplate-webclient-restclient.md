@@ -1,14 +1,6 @@
 # RestTemplate vs WebClient vs RestClient — "최신이니까 WebClient"가 왜 틀린 판단인가
 
-> 핵심 관전 포인트: **세 클라이언트의 스펙 차이는 표 한 장이면 끝나지만,
-> 질문의 본체는 선택 기준이다. HTTP 클라이언트는 "최신순"이 아니라
-> "우리 앱의 실행 모델(스레드 모델)과 맞는가"로 고른다.
-> 톰캣 기반 MVC 앱에서 WebClient를 `.block()`으로 쓰면 논블로킹의
-> 이점은 하나도 못 얻고 리액터 의존성과 디버깅 복잡도만 떠안는다.
-> 평범한 MVC 신규 개발이면 RestClient가 기본값, 진짜 논블로킹이
-> 필요한 상황(WebFlux 스택, 대량 동시 외부 호출)이면 WebClient다.
-> 그리고 어떤 클라이언트를 고르든 타임아웃·커넥션 풀·에러 핸들링을
-> 명시하지 않으면 사고가 난다 — 기본 타임아웃은 사실상 무제한이다.**
+> 핵심 관전 포인트: **세 클라이언트의 스펙 차이는 표 한 장이면 끝나고, 질문의 본체는 선택 기준이다. HTTP 클라이언트는 "최신순"이 아니라 "우리 앱이 서 있는 스레드 모델과 맞는가"로 고른다. 톰캣 MVC 앱에서 WebClient를 `.block()`으로 쓰면 요청 스레드는 여전히 묶여 있고 리액터 스레드만 하나 더 늘어나므로, 논블로킹의 이점은 0인 채로 의존성과 디버깅 난도만 떠안는다. 그래서 평범한 MVC 신규 개발이면 RestClient가 기본값이고, WebClient는 `.block()` 없이 끝까지 논블로킹으로 흘려보낼 수 있을 때만 정당하며, 잘 돌고 있는 RestTemplate 코드는 굳이 갈아엎지 않는다 — RestTemplate은 deprecated가 아니라 유지보수 모드다. 그리고 무엇을 고르든 연결 타임아웃·읽기 타임아웃·커넥션 풀 상한을 명시하지 않으면 외부 API의 지연 하나가 톰캣 스레드풀 고갈로 번져 남의 장애가 내 장애가 된다 — 이 지점이 출제 의도의 본체다.**
 
 ---
 
@@ -16,224 +8,417 @@
 
 **질문**: "`RestTemplate`, `WebClient`, `RestClient`의 차이와 선택 기준은?"
 
-**출제 의도**: 단순 API 선택 같지만 실제로는 타임아웃·커넥션풀 설정이
-어디 있는지 아는가의 질문이다. 외부 호출 클라이언트의 기본 설정을
-방치한 채 운영에 가는 것이 연쇄 장애의 고전적 시작점이다.
+**출제 의도**: 단순 API 선택 같지만 실제로는 타임아웃·커넥션풀 설정이 어디 있는지 아는가의 질문이다. 외부 호출 클라이언트의 기본 설정을 방치한 채 운영에 가는 것이 연쇄 장애의 고전적 시작점이다.
 
-## 1. 3종 비교 — 스펙은 표 한 장
+## 1. 세 클라이언트가 각각 무엇인가
+
+### 1-1. 전제 지식 — "블로킹"과 "논블로킹"은 스레드가 묶여 있는가의 차이다
+
+비교표에 들어가기 전에 표에서 쓸 두 단어를 먼저 정의하고 가자. 이 두 단어를 정의 없이 표에 던지면 표를 읽어도 아무것도 못 고른다.
+
+**블로킹(blocking)은 "요청을 보낸 스레드가 응답이 올 때까지 그 자리에 멈춰 서 있는 것"이다.** 스레드는 CPU를 쓰지 않고 잠들어 있지만, 그 스레드는 다른 요청을 처리하러 갈 수 없다. 즉 **기다리는 동안에도 스레드 한 개를 계속 점유한다.**
+
+**논블로킹(non-blocking)은 "요청만 던져놓고 스레드는 곧바로 다른 일을 하러 가는 것"이다.** 응답이 도착하면 OS가 알려주고, 그때 아무 스레드나 하나가 이어서 처리한다. 대기 시간이 스레드를 잡아먹지 않으므로 **스레드 몇 개로 수천 개의 동시 대기를 감당할 수 있다.**
+
+식당으로 비유하면 이렇다. 블로킹은 주방에 주문을 넣은 종업원이 음식이 나올 때까지 주방 앞에 서 있는 것이고, 논블로킹은 주문만 넣고 홀로 돌아가 다른 테이블을 받다가 벨이 울리면 음식을 가지러 가는 것이다. 종업원(스레드) 수가 같아도 후자가 훨씬 많은 테이블을 본다.
+
+여기서 중요한 것은 **논블로킹은 클라이언트 혼자 성립하는 성질이 아니라는 점**이다. 서버 쪽도 "요청 하나에 스레드 하나를 붙이지 않는" 구조여야 한다. 톰캣은 정확히 그 반대 구조(요청 하나 = 스레드 하나)이고, 그래서 2절의 결론이 나온다. 서버 쪽 스레딩 모델 자체의 본론은 `27-webflux-vs-mvc-threading-model.md`에 있으니 여기서는 클라이언트를 고르는 데 필요한 만큼만 다룬다.
+
+### 1-2. 스펙 비교
 
 | | RestTemplate | WebClient | RestClient |
 |---|---|---|---|
 | 등장 시점 | 스프링 3.0 (2009) | 스프링 5.0 (2017) | 스프링 6.1 / 부트 3.2 (2023) |
-| 실행 모델 | **동기·블로킹** | **논블로킹·리액티브** | **동기·블로킹** |
-| 소속 스택 | spring-web (MVC) | spring-webflux (리액터) | spring-web (MVC) |
+| 실행 모델 | 동기·블로킹 | 논블로킹·리액티브 | 동기·블로킹 |
+| 소속 모듈 | spring-web (MVC) | spring-webflux (리액터) | spring-web (MVC) |
 | 반환 타입 | 일반 객체 | `Mono<T>` / `Flux<T>` | 일반 객체 |
-| API 스타일 | 메서드 나열형 (`getForObject`, `postForEntity`, `exchange`...) | fluent API (메서드 체이닝) | fluent API (WebClient와 거의 같은 모양) |
-| 현재 상태 | **유지보수 모드** (deprecated 아님 — 버그 수정은 계속, 신규 기능 없음) | 활발히 유지 | **RestTemplate의 실질적 후계자** |
+| API 스타일 | 메서드 나열형 (`getForObject`, `postForEntity`, `exchange` ...) | fluent API (메서드 체이닝) | fluent API (WebClient와 거의 같은 모양) |
+| 스트리밍 응답 | 비권장 | 지원 | 제한적 |
+| 현재 상태 | 유지보수 모드 (deprecated 아님 — 버그·보안 수정은 계속, 신규 기능 없음) | 활발히 유지 | RestTemplate의 실질적 후계자 |
 
-용어부터 풀면:
+### 1-3. 같은 GET 호출, 세 가지 코드
 
-- **동기·블로킹**: 응답이 올 때까지 그 요청을 처리하던 스레드가
-  **멈춰서 기다린다**. 코드는 위에서 아래로 읽히는 대로 흐르니 단순하다.
-- **논블로킹·리액티브**: 요청을 던져놓고 스레드는 다른 일을 하러 간다.
-  응답이 도착하면 콜백처럼 이어서 처리된다. 스레드를 적게 쓰고
-  동시 처리량이 높지만, 코드가 `Mono`/`Flux`라는 "미래에 올 값의
-  포장지"로 감싸져서 흐름을 따라가기 어려워진다.
-
-## 2. 같은 GET 호출, 3가지 코드
-
-외부 API에서 회원 하나를 가져오는 같은 작업이다.
+외부 API에서 회원 하나를 가져오는 완전히 같은 작업이다.
 
 ```java
-// ① RestTemplate — 메서드 나열형, 옛날 스타일
+// ① RestTemplate — 메서드 나열형. 무엇을 하는지는 메서드 이름에 다 들어 있다.
 RestTemplate restTemplate = new RestTemplate();
 Member member = restTemplate.getForObject(
         "https://api.example.com/members/{id}", Member.class, id);
 ```
 
 ```java
-// ② WebClient — 논블로킹, Mono로 반환
+// ② WebClient — 반환이 Mono<Member>다. Member가 아니다.
 WebClient webClient = WebClient.create("https://api.example.com");
 
 Mono<Member> memberMono = webClient.get()
         .uri("/members/{id}", id)
         .retrieve()
         .bodyToMono(Member.class);
-// 여기서 memberMono는 "아직 값이 아니다". 구독(subscribe)되어야 실행되고,
-// MVC 코드에서 당장 값이 필요하면 .block()으로 기다려야 한다 ← 함정의 시작
+// 이 시점에 HTTP 요청은 아직 나가지도 않았다. Mono는 "미래에 값이 하나 올 것"이라는
+// 계획서일 뿐이고, 누군가 구독(subscribe)해야 그때 실제로 실행된다.
+// MVC 컨트롤러에서 당장 Member 객체가 필요하면 .block()으로 기다리는 수밖에 없다 — 함정의 시작.
 ```
 
 ```java
-// ③ RestClient — 동기·블로킹인데 API는 모던 fluent
+// ③ RestClient — API 모양은 ②와 거의 같은데 반환이 그냥 Member다.
 RestClient restClient = RestClient.create("https://api.example.com");
 
 Member member = restClient.get()
         .uri("/members/{id}", id)
         .retrieve()
         .body(Member.class);
-// WebClient와 거의 같은 모양인데 반환이 그냥 Member — MVC 코드에 자연스럽다
+// 호출한 스레드가 여기서 멈춰 응답을 기다렸다가 값을 받아 돌아온다 — 즉 동기·블로킹이다.
 ```
 
-②와 ③을 나란히 보면 RestClient의 정체가 보인다: **WebClient의 좋은 API
-디자인을 가져오되, 실행 모델은 MVC에 맞는 동기·블로킹으로 만든 것.**
-"RestTemplate은 낡았고 WebClient는 우리 스택에 안 맞는다"는 오랜
-어정쩡함을 해소하려고 나온 물건이다.
+②와 ③을 나란히 놓고 보면 RestClient의 정체가 드러난다. **WebClient의 좋은 API 디자인만 가져오고, 실행 모델은 MVC에 맞는 동기·블로킹으로 되돌린 것**이다. "RestTemplate은 낡았는데 WebClient는 우리 스택에 안 맞는다"는 오랜 어정쩡함을 해소하려고 스프링 팀이 만든 물건이다.
 
-## 3. 선택 기준 — 이 질문의 본체
+### 1-4. 사실 확인 — RestTemplate은 deprecated가 아니다
 
-### 3-1. "최신이니까 WebClient"가 왜 틀렸나
+이 질문에서 가장 자주 나오는 오답이 "RestTemplate은 deprecated라서 못 쓴다"다. 정확한 사실은 이렇다.
 
-한동안 "RestTemplate은 유지보수 모드니까 WebClient로 가야 한다"는 말이
-널리 퍼졌고, 실제로 톰캣 기반 MVC 앱에 WebClient를 넣고 `.block()`으로
-쓰는 코드가 양산됐다. 이게 왜 나쁜 선택인가:
+`RestTemplate`은 **스프링 5.0부터 유지보수 모드(maintenance mode)**다. 유지보수 모드는 "버그와 보안 취약점은 계속 고치지만 새 기능은 넣지 않는다"는 뜻이다. `@Deprecated` 애너테이션은 붙어 있지 않고, 컴파일 경고도 나지 않으며, 제거 일정도 공지된 바 없다.
+
+두 상태를 구분해 두면 뒷 판단이 달라진다.
+
+| | deprecated | 유지보수 모드 |
+|---|---|---|
+| 컴파일 경고 | 난다 | 안 난다 |
+| 버그·보안 수정 | 보장 없음 | 계속됨 |
+| 제거 예고 | 있음 | 없음 |
+| 마이그레이션 압박 | 시한이 있음 | 시한 없음 — 손댈 일이 생겼을 때 |
+
+그래서 "deprecated니까 지금 다 갈아엎어야 한다"는 전제 자체가 틀렸고, 그 잘못된 전제 위에서 내려진 결정이 2절에서 볼 최악의 조합이다.
+
+## 2. 선택 기준 — 이 질문의 본체
+
+### 2-1. MVC 앱에서 `.block()`을 부르면 스레드에 무슨 일이 생기는가
+
+한동안 "RestTemplate은 유지보수 모드니까 WebClient로 가야 한다"는 말이 퍼졌고, 실제로 톰캣 기반 MVC 앱에 WebClient를 넣고 `.block()`으로 쓰는 코드가 대량으로 생산됐다.
 
 ```java
-// 톰캣 MVC 앱에서 흔히 보는 코드
+// 톰캣 MVC 앱에서 흔히 보이는 코드
 Member member = webClient.get()
         .uri("/members/{id}", id)
         .retrieve()
         .bodyToMono(Member.class)
-        .block();   // ← 결국 스레드를 세워놓고 기다린다
+        .block();   // 여기서 톰캣 요청 스레드가 멈춰 선다
 ```
 
-- **논블로킹의 이점이 0이다.** `.block()`을 부르는 순간 호출 스레드
-  (톰캣 요청 스레드)는 응답을 기다리며 멈춘다. RestTemplate과
-  실행 모델상 완전히 동일해진다. 톰캣의 "요청 하나 = 스레드 하나"
-  모델 위에서는 애초에 논블로킹이 성립할 자리가 없다.
-- **비용은 그대로 추가된다.** 리액터(reactor-core, reactor-netty)
-  의존성이 들어오고, 예외가 나면 스택트레이스가 리액터 내부 체인으로
-  도배되어 디버깅이 어려워지고, `.block()`을 리액티브 스레드 안에서
-  잘못 부르면 `IllegalStateException`(block()/blockFirst()/blockLast()
-  are blocking...) 같은 새로운 종류의 장애까지 생긴다.
+"논블로킹 클라이언트를 썼으니 조금이라도 낫지 않나"라고 생각하기 쉬운데, 스레드 단위로 그려 보면 정확히 반대다.
 
-즉 얻는 것 없이 잃기만 한다. 핵심 문장: **HTTP 클라이언트의 실행 모델은
-앱이 서 있는 스레드 모델과 맞아야 한다.** 도구의 최신 여부가 아니라
-우리 앱의 바닥이 판단 기준이다.
+```text
+[RestTemplate — 톰캣 스레드 하나가 처음부터 끝까지 들고 있다]
 
-### 3-2. 실무 결정 트리
+톰캣 #7 │ 요청 조립 │ 소켓 write │ ······ 200ms 대기 ······ │ 응답 파싱 │ 컨트롤러 반환
+        └──────────────── 이 구간 내내 톰캣 #7 점유 ────────────────┘
+동원된 스레드: 1개
 
-- **평범한 스프링 MVC 앱(톰캣, 부트 3.2+) 신규 개발** →
-  **RestClient가 기본값.** 동기 모델이라 앱과 맞고, API도 모던하다.
-- **WebFlux 스택이거나, 진짜 논블로킹이 필요** (외부 API 수십·수백 개를
-  동시에 호출해 조합, 스트리밍 응답, 스레드 수를 늘릴 수 없는
-  고동시성 게이트웨이) → **WebClient.** 이때는 `.block()` 없이
-  `Mono`/`Flux` 체인 그대로 끝까지 흘려보내야 이점이 산다.
-- **기존 RestTemplate 코드** → 잘 돌고 있으면 급하게 갈아탈 이유 없다
-  (deprecated가 아니다). 신규 코드부터 RestClient로 쓰고, 리팩토링
-  기회가 있을 때 옮기는 정도가 현실적이다. RestClient는 RestTemplate과
-  같은 기반(메시지 컨버터, 요청 팩토리)을 공유해서 마이그레이션 비용도 낮다.
 
-## 4. 어느 클라이언트든 반드시 챙기는 실무 공통 화두
+[WebClient + .block() — 스레드가 하나 늘었을 뿐, 묶이는 구조는 그대로]
 
-면접에서 "선택"만 답하고 끝내면 반쪽이다. 뭘 고르든 아래 세 가지를
-명시하지 않으면 사고가 난다.
+톰캣 #7 │ Mono 조립 │ subscribe │ ······ .block()에서 래치 대기 200ms ······ │ 값 수령 │ 반환
+        └──────────────── 이 구간 내내 톰캣 #7 점유 (RestTemplate과 동일) ────────────────┘
 
-### 4-1. 타임아웃 — 기본값은 사실상 무제한
-
-외부 API가 응답을 안 주는데 타임아웃이 없으면, 그 요청을 처리하던
-스레드는 **영원히 기다린다**. 이런 요청이 몇십 개 쌓이면:
-
-```
-외부 API 지연 → 우리 스레드들이 전부 대기 → 톰캣 스레드 풀 고갈
-→ 외부 API와 무관한 요청까지 전부 응답 불가 → 서비스 전체 장애
+reactor-http-nio-3                │ 소켓 I/O 처리 · 응답 도착 시 래치 해제 │
+                                  └─ 진짜 논블로킹 I/O는 여기서 일어난다 ─┘
+동원된 스레드: 2개 (대기하는 톰캣 #7 + 일하는 리액터 nio #3)
 ```
 
-남의 장애가 내 장애로 전이되는 고전적 연쇄다. 그래서 connect
-timeout(연결 수립까지)과 read timeout(응답 수신까지)을 **반드시 명시**한다.
+`.block()`이 내부에서 하는 일은 리액터 스트림을 구독한 뒤 **`CountDownLatch`류의 장치로 현재 스레드를 잠재우고 값이 도착하면 깨우는 것**이다. 즉 논블로킹으로 절약된 대기는 리액터 스레드 쪽에서만 일어나고, **정작 병목인 톰캣 요청 스레드는 200ms 내내 묶여 있다.**
+
+이 구조가 처리량 상한에 어떻게 나타나는지 숫자로 확인해 보자. 톰캣 최대 스레드가 200개(`server.tomcat.threads.max`의 스프링 부트 기본값)이고 외부 API 응답이 200ms라면, 한 스레드가 1초에 처리할 수 있는 요청은 `1초 ÷ 0.2초 = 5건`이다.
+
+```text
+RestTemplate      : 200 스레드 × 5건/초 = 1,000 rps
+WebClient+block() : 200 스레드 × 5건/초 = 1,000 rps   ← 완전히 동일
+진짜 논블로킹(WebFlux) : 톰캣 스레드라는 상한 자체가 없음
+                        (대기가 스레드를 점유하지 않으므로 상한이 스레드 수와 무관해진다)
+```
+
+**논블로킹의 이점은 "대기가 스레드를 점유하지 않는 것"인데, `.block()`은 그 대기를 다시 스레드 점유로 되돌린다.** 그러니 이점이 줄어드는 게 아니라 정확히 0이 된다.
+
+### 2-2. 그런데 비용은 전부 그대로 청구된다
+
+이점이 0이면 손해가 없는 게 아니라, 지불한 비용만큼 순손실이다. 무엇을 지불했는지 세 가지로 나눠 보자.
+
+**(1) 의존성이 늘어난다.** `spring-boot-starter-webflux`를 통해 reactor-core, reactor-netty가 들어온다. 클래스패스에 리액티브 스택이 얹히면서 자동 설정 판단이 바뀌기도 한다(부트는 클래스패스에 WebFlux만 있고 spring-webmvc가 없으면 아예 리액티브 웹 애플리케이션으로 기동한다).
+
+**(2) 스택트레이스가 리액터 프레임으로 덮인다.** 이게 실무에서 가장 뼈아프다. 외부 API가 500을 뱉었을 때 로그가 이런 모양이 된다.
+
+```text
+[RestTemplate에서 터졌을 때 — 원인 지점까지 몇 줄]
+HttpServerErrorException$InternalServerError: 500 ...
+  at DefaultResponseErrorHandler.handleError(...)
+  at RestTemplate.handleResponse(...)
+  at MemberClient.findMember(MemberClient.java:23)   ← 우리 코드
+  at MemberService.load(MemberService.java:41)       ← 우리 코드
+
+[WebClient + block()에서 터졌을 때 — 우리 코드를 찾아 내려가야 한다]
+WebClientResponseException$InternalServerError: 500 ...
+  at ...DefaultWebClient$DefaultResponseSpec.lambda$applyStatusHandlers$...
+  at reactor.core.publisher.MonoFlatMap$FlatMapMain.onNext(...)
+  at reactor.core.publisher.FluxOnAssembly$OnAssemblySubscriber.onError(...)
+  at reactor.core.publisher.MonoNext$NextSubscriber.onNext(...)
+  ... (리액터 내부 프레임 수십 줄) ...
+  at MemberClient.findMember(MemberClient.java:23)   ← 겨우 여기
+```
+
+리액티브 코드에서는 콜백이 실행되는 스레드가 호출한 스레드와 달라 자바가 원래의 호출 경로를 스택에 남겨주지 못한다. 그래서 `Hooks.onOperatorDebug()`나 `reactor-tools`의 `ReactorDebugAgent` 같은 별도 장치를 켜야 겨우 조립 지점을 복원할 수 있는데, **논블로킹의 이점을 하나도 안 쓰면서 이 비용만 내는 것**이 지금 상황이다.
+
+**(3) 새로운 장애 유형이 생긴다.** `.block()`을 리액터의 논블로킹 스레드(`reactor-http-nio-*`) 위에서 호출하면 `IllegalStateException: block()/blockFirst()/blockLast() are blocking, which is not supported in thread reactor-http-nio-3`가 터진다. 이벤트 루프 스레드가 멈추면 그 스레드가 담당하던 수백 개의 다른 커넥션까지 함께 멈추기 때문에 리액터가 아예 막아 둔 것이다. MVC 코드에서만 쓰다가 나중에 필터·핸들러 일부를 리액티브로 옮기는 순간 이 예외를 만난다.
+
+정리하면 한 문장이다. **HTTP 클라이언트의 실행 모델은 앱이 서 있는 스레드 모델과 맞아야 한다.** 판단 기준은 도구의 최신 여부가 아니라 우리 앱의 바닥이다.
+
+### 2-3. 판단 순서도
+
+말로 늘어놓으면 헷갈리니 순서대로 물어 내려가면 된다. 위에서부터 하나씩 답하면 끝난다.
+
+```text
+① 우리 앱이 WebFlux 스택인가? (spring-boot-starter-webflux 위에서 도는가)
+   │
+   ├─ 예 ──▶ WebClient
+   │         (RestClient·RestTemplate을 이벤트 루프에서 부르면 그 자체가 사고다)
+   │
+   └─ 아니오 (톰캣 MVC)
+       │
+       ② 새로 짜는 코드인가?
+       │
+       ├─ 예 ──▶ RestClient          ← 평범한 MVC 신규 개발의 기본값
+       │
+       └─ 아니오 (이미 RestTemplate으로 돌고 있다)
+           │
+           ③ 지금 이 코드를 어차피 손대는 중인가?
+           │
+           ├─ 예 ──▶ 이 참에 RestClient로 옮긴다
+           │         (메시지 컨버터·요청 팩토리를 공유하므로 교체 비용이 낮다)
+           │
+           └─ 아니오 ──▶ 그대로 둔다
+                        (deprecated가 아니다 — 갈아엎을 이유가 없다)
+```
+
+각 갈래의 근거를 한 줄씩 붙이면 이렇다.
+
+- **①이 결정적인 이유**: WebFlux 스택에서는 요청 처리 자체가 이벤트 루프 위에서 돌기 때문에 그 위에서 블로킹 클라이언트를 부르면 2-2의 (3)과 같은 사고가 난다. 이때만큼은 선택지가 하나뿐이다.
+- **②에서 RestClient가 기본값인 이유**: 실행 모델이 앱과 일치하고(동기), API는 WebClient와 같은 모던 fluent 스타일이며, 새 코드이므로 마이그레이션 비용이 아예 없다.
+- **③에서 "그대로 둔다"가 답인 이유**: 잘 돌아가는 코드를 트렌드 때문에 바꾸는 것 자체가 리스크다. 회귀 테스트 비용과 장애 확률을 지불하고 얻는 것이 "최신 API"뿐이라면 남는 장사가 아니다.
+
+### 2-4. 그래도 MVC에서 WebClient가 정당화되는 경우
+
+"MVC면 무조건 RestClient"로 외우면 반대편 함정에 빠진다. 정당성은 도구가 아니라 **사용 패턴**에서 나오고, 기준은 하나다 — **`.block()`으로 값을 즉시 뽑아내지 않는 사용인가.**
+
+- **SSE·스트리밍 응답을 받아 흘려보내는 경우.** 응답이 끝나기 전에 도착한 조각부터 처리해야 하므로 "다 받아서 객체 하나로 반환"하는 동기 클라이언트로는 자연스럽게 다룰 수 없다.
+- **여러 외부 API를 동시에 호출해 조합하되, 결과를 `DeferredResult`나 `CompletableFuture`로 반환해 톰캣 스레드를 반납하는 경우.** 이때는 톰캣 스레드가 대기하지 않으므로 2-1의 도식이 성립하지 않는다.
+- **조직이 WebFlux로 이전하는 중이라 클라이언트를 먼저 통일하는 과도기 전략.** 목적이 "지금의 성능"이 아니라 "이전 비용의 분할 납부"라면 합리적일 수 있다.
+
+반대로 "단건 호출하고 바로 `.block()`"이 코드의 전부라면 어떤 근거로도 정당화되지 않는다.
+
+### 2-5. 선택을 한 지점에 가두기 — HTTP Interface (`@HttpExchange`)
+
+스프링 6부터는 세 클라이언트 **위에** 얹는 선언적 추상화가 하나 더 있다. 인터페이스에 애너테이션만 달면 스프링이 구현체를 만들어 준다. OpenFeign과 같은 발상의 스프링 내장판이다.
 
 ```java
-// RestClient / RestTemplate — 요청 팩토리에 설정
-ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.defaults()
-        .withConnectTimeout(Duration.ofSeconds(3))
-        .withReadTimeout(Duration.ofSeconds(5));
+public interface MemberApi {
 
-RestClient restClient = RestClient.builder()
-        .baseUrl("https://api.example.com")
-        .requestFactory(ClientHttpRequestFactoryBuilder.detect().build(settings))
-        .build();
+    @GetExchange("/members/{id}")
+    Member getMember(@PathVariable Long id);
+}
 ```
 
 ```java
-// WebClient — 하부 HTTP 라이브러리(reactor-netty)에 설정
-HttpClient httpClient = HttpClient.create()
-        .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 3000)
-        .responseTimeout(Duration.ofSeconds(5));
+// 어댑터만 갈아끼우면 하부 클라이언트가 바뀐다 — 호출부는 그대로다.
+RestClient restClient = RestClient.create("https://api.example.com");
+MemberApi memberApi = HttpServiceProxyFactory
+        .builderFor(RestClientAdapter.create(restClient))   // WebClientAdapter로 바꾸면 WebClient
+        .build()
+        .createClient(MemberApi.class);
 
-WebClient webClient = WebClient.builder()
-        .baseUrl("https://api.example.com")
-        .clientConnector(new ReactorClientHttpConnector(httpClient))
-        .build();
+Member member = memberApi.getMember(1L);   // 평범한 메서드 호출처럼 보인다
 ```
 
-### 4-2. 커넥션 풀 — 재사용은 늘리고, 개수에는 상한을 건다
+이게 왜 선택 기준 논의와 이어지는지가 핵심이다. 호출부 수십 곳이 "어떤 HTTP 클라이언트를 쓰는가"를 알고 있으면 나중에 판단이 바뀌었을 때 수십 곳을 고쳐야 한다. HTTP Interface를 쓰면 **그 지식이 어댑터 한 줄에만 남는다.** 클라이언트 선택이라는 결정을 되돌릴 수 있는 형태로 가둬 두는 것이다.
 
-HTTP 연결을 매번 새로 맺으면(TCP 핸드셰이크 + TLS) 느리고, 무한정
-맺으면 소켓이 고갈된다. 이 한 문장이 커넥션 풀이 **양방향 장치**라는
-뜻이다 — 아래가 없으면 절반만 이해한 것이다.
+### 2-6. AI 시대 관점 — 스펙 나열은 AI의 몫, 스택 판단은 리뷰어의 몫
 
-| 방향 | 막는 것 | 수단 |
-|---|---|---|
-| **하한** | 매번 새로 맺는 낭비 | 연결 재사용 (핸드셰이크 0 RTT) |
-| **상한** | 무한정 늘어나는 자원 고갈 | 최대 커넥션 수 / 호스트당 커넥션 수 |
+세 클라이언트의 스펙 비교표는 AI에게 물으면 몇 초 만에 나온다. 그러나 AI는 **우리 앱이 톰캣 위 MVC인지 WebFlux인지, 스레드풀 사정이 어떤지라는 문맥을 모른 채** 제안한다.
 
-프로덕션에서는 Apache HttpClient나 reactor-netty의 커넥션 풀을 붙이고
-최대 커넥션 수, 호스트당 커넥션 수, 유휴 커넥션 정리 주기를 정한다.
-"기본 `SimpleClientHttpRequestFactory`는 풀이 없다"까지 알면 가산점
-(`HttpURLConnection`을 쓰는데 관리 주체가 없어 사실상 매번 새로 맺는다).
+실제로 AI가 생성한 코드에는 "비동기 처리가 필요해 보여서" WebClient + `.block()` 조합이 자주 들어 있다 — 2-1에서 본 최악의 조합이다. 요청 문구에 "비동기"라는 단어만 있어도 리액티브 스택을 꺼내 오는 경향이 있다.
 
-#### 오해 먼저 — 연결 ≠ 요청
+리뷰어가 할 일은 스펙 지식이 아니라 판단이다. "이 코드베이스는 톰캣 MVC다. `.block()`으로 쓸 거면 WebClient를 들일 이유가 없다. RestClient로 바꾸고 읽기 타임아웃을 명시하라." 이렇게 **실행 모델이라는 근거로 AI의 제안을 걸러내는 것**이 사람이 유지해야 할 역량이고, 이 질문이 여전히 면접에 나오는 이유다.
 
-"요청할 때마다 TCP 핸드셰이크를 하는 것 아닌가?"는 흔한 오해다.
-**연결은 관(pipe)이고 요청은 그 관으로 흘리는 물**이다. 관을 뚫는 데만
-비용이 들고, 이미 뚫린 관에는 그냥 흘리면 된다.
+## 3. 어느 클라이언트를 고르든 반드시 챙기는 것 — 출제 의도의 본체
 
+면접에서 "선택"만 답하고 끝내면 반쪽이다. 출제 의도가 지목한 곳은 여기다. **무엇을 고르든 타임아웃과 커넥션 풀을 명시하지 않으면 사고가 난다.**
+
+### 3-1. 타임아웃은 한 종류가 아니다 — 무엇을 재는 시계인지 구분한다
+
+"타임아웃 5초 걸었습니다"라고만 답하면 반은 틀린 답이다. HTTP 호출 한 번에는 성격이 다른 시계가 최소 둘, 커넥션 풀을 쓰면 셋 붙는다. 각각 **어느 구간을 재는지**를 요청의 생애 위에 그려 보자.
+
+```text
+요청 하나의 생애
+
+  풀에서 커넥션 얻기   TCP+TLS 연결 수립     요청 전송    서버가 생각하는 시간   응답 수신
+  ├───────────────┤  ├────────────────┤   ├───────┤   ├──────────────┤   ├───────┤
+  │                   │                                   │                        │
+  └ ③ 커넥션 요청      └ ① 연결 타임아웃                   └────── ② 읽기(응답) 타임아웃 ──┘
+    타임아웃              (connect timeout)                     (read / response timeout)
 ```
+
+**① 연결 타임아웃(connect timeout)은 "상대 서버와 TCP 연결을 맺는 데까지" 걸리는 시간을 잰다.** 상대가 죽어 있거나 방화벽에 막혀 SYN에 응답이 없을 때 걸린다. 값은 짧게 잡는다 — 같은 리전 안이면 수십 ms면 붙고, 안 붙는다면 대개 몇 초를 더 기다려도 안 붙는다. 실무에서 1~3초가 흔하다.
+
+**② 읽기 타임아웃(read timeout, 라이브러리에 따라 response/socket timeout)은 "연결은 됐는데 응답 데이터가 안 오는" 시간을 잰다.** 정확히는 대개 "바이트가 하나도 안 도착한 채 흐른 시간"을 재므로, 응답이 조금씩 계속 흘러오면 총 소요가 이 값을 넘어도 안 걸릴 수 있다. **장애 상황에서 실제로 우리를 살리는 것은 이쪽**이다. 외부 API는 대개 죽지 않고 **느려지기** 때문이다.
+
+**③ 커넥션 요청 타임아웃(connection request / pending acquire timeout)은 "풀에 빈 커넥션이 없어 기다린" 시간을 잰다.** 풀을 쓸 때만 존재한다. 이게 없으면 3-5에서 볼 풀 상한이 "빠른 실패"가 아니라 "조용한 무한 대기"로 바뀌어 버려서, 상한을 건 의미가 사라진다.
+
+셋을 헷갈리면 진단이 엇나간다. **연결 타임아웃 초과는 "상대가 안 받는다", 읽기 타임아웃 초과는 "상대가 받고 안 준다", 커넥션 요청 타임아웃 초과는 "우리 쪽 풀이 말랐다"** — 전혀 다른 세 가지 사실이다. 마지막 것은 상대가 아니라 **우리 문제**라는 신호다.
+
+### 3-2. 기본값을 방치하면 왜 연쇄 장애가 되는가 — 숫자로 따라가기
+
+"기본 타임아웃은 사실상 무제한"이라는 말을 자주 하는데, 조금 더 정확히 말하면 이렇다.
+
+- 스프링이 아무 설정 없이 쓰는 `SimpleClientHttpRequestFactory`는 JDK `HttpURLConnection` 기반인데, 타임아웃을 지정하지 않으면 `0`, 즉 **무한 대기**다.
+- reactor-netty는 연결 타임아웃에만 기본값(30초)이 있고, **응답 타임아웃(`responseTimeout`)에는 기본값이 없다** — 명시하지 않으면 무한이다.
+- Apache HttpClient 5처럼 분 단위(수 분급)의 기본값을 가진 라이브러리도 있는데, **초 단위 SLA를 지키는 API 입장에서는 3분이나 무한이나 같은 말**이다.
+
+즉 정확한 표현은 "전부 무제한"이 아니라 **"무한이거나, 우리 기준으로는 무한이나 다름없이 길다"**이다. 어느 쪽이든 결론은 같다 — 명시하지 않으면 사고가 난다.
+
+이제 그 사고가 어떻게 번지는지 숫자로 따라가 보자. 전제는 이렇다.
+
+```text
+톰캣 최대 스레드     : 200개   (server.tomcat.threads.max 부트 기본값)
+해당 엔드포인트 유입 : 초당 200건
+평소 외부 API 응답   : 100ms
+```
+
+동시에 몇 개의 스레드가 묶여 있는지는 **리틀의 법칙**으로 계산한다. 큐 이론의 결과로, "시스템 안에 평균적으로 머무는 개수 L = 도착률 λ × 머무는 시간 W"라는 식이다. 계산대에 1분에 10명이 오고 한 명당 2분이 걸리면 매장 안에는 평균 20명이 있다는, 직관적으로도 맞는 관계다.
+
+```text
+[평상시]
+  L = λ × W = 200건/초 × 0.1초 = 20개
+  → 200개 중 20개만 쓴다. 여유 있다.
+
+[외부 API가 죽지 않고 5초로 느려짐 — 타임아웃 없음]
+  필요한 스레드 L = 200건/초 × 5초 = 1,000개
+  가진 스레드          = 200개          ← 800개 부족
+
+  스레드가 전부 묶이기까지 걸리는 시간
+    아무도 반납하지 않는 상태에서 초당 200개가 새로 들어오므로
+    200개 ÷ 200개/초 = 1초
+
+  → 1초 뒤부터 이 외부 API와 아무 상관 없는 /health, /products 요청도
+    스레드를 못 받는다. 그다음은 accept 큐(기본 100)에 쌓이다가 연결 거부.
+```
+
+**남의 장애가 1초 만에 내 장애 전체로 번지는 경로**가 이것이다. 그리고 타임아웃이 아예 없으면 5초가 아니라 무한이므로, 그 스레드들은 영영 돌아오지 않는다.
+
+여기서 한 걸음 더 나아가야 시니어 답변이 된다. **타임아웃을 걸었다고 자동으로 살아남는 것이 아니다.** 같은 조건에서 타임아웃 값만 바꿔 보자.
+
+```text
+읽기 타임아웃 3초 → L = 200 × 3   = 600개  > 200개  ✗ 여전히 고갈된다
+읽기 타임아웃 1초 → L = 200 × 1   = 200개  = 200개  ✗ 아슬아슬하다 (여유 0)
+읽기 타임아웃 0.5초 → L = 200 × 0.5 = 100개 < 200개  ✓ 버틴다
+```
+
+**그래서 타임아웃 값은 "외부 API가 보통 얼마나 걸리나"가 아니라 "최악일 때 우리가 몇 개의 스레드를 내줄 수 있나"에서 역산한다.** 식을 뒤집으면 된다.
+
+```text
+허용 점유 스레드 예산 L_budget = 100개 (톰캣 200개의 절반만 이 API에 내준다)
+읽기 타임아웃 상한 W = L_budget ÷ λ = 100 ÷ 200건/초 = 0.5초
+```
+
+여기에 한 층 더 있다. 그 외부 호출이 `@Transactional` 안에 있으면 스레드만이 아니라 **DB 커넥션까지 쥔 채** 대기한다. HikariCP 기본 풀은 10개이므로,
+
+```text
+DB 커넥션 10개 ÷ 200건/초 = 0.05초
+```
+
+**0.05초 만에 DB 커넥션 풀이 먼저 마른다.** 톰캣 스레드가 마르기 1초 전에, 그것도 이 API와 전혀 무관한 모든 DB 작업을 함께 죽이면서. 이래서 "타임아웃 명시"와 "트랜잭션 안에서 외부 호출 금지"는 언제나 세트로 답한다. 자세한 것은 `22-external-api-call-inside-transaction.md`와 `25-thread-pool-connection-pool-sizing.md`로 이어진다.
+
+### 3-3. 재시도는 점유 시간을 곱한다 — 그리고 멱등성과 짝이다
+
+타임아웃을 걸고 나면 자연스럽게 "그럼 실패했을 때 재시도하면 되겠네"로 넘어가는데, 여기에 두 개의 함정이 있다.
+
+**첫 번째 함정은 재시도가 점유 시간을 곱한다는 것이다.** 3-2에서 어렵게 0.5초로 맞춘 예산이 재시도 3회를 붙이는 순간 이렇게 된다.
+
+```text
+1회 시도    : 점유 0.5초        → L = 200 × 0.5 = 100개   ✓
+3회까지 시도 : 점유 0.5 × 3 = 1.5초 → L = 200 × 1.5 = 300개   ✗ 고갈
+```
+
+게다가 외부가 느려진 상황이란 곧 **모든 요청이 재시도를 하는 상황**이므로, 상대에게 가는 부하도 3배가 된다. 이미 힘들어하는 시스템에 재시도 폭풍을 얹어 회복을 방해하는 것이다. 그래서 재시도에는 반드시 **지수 백오프(재시도 간격을 1초, 2초, 4초처럼 늘려 가는 방식)와 지터(간격에 무작위 오차를 섞어 모두가 동시에 재시도하지 않게 하는 장치)**를 붙이고, **재시도 횟수까지 포함한 총 점유 시간**으로 예산을 계산한다.
+
+**두 번째 함정이 더 위험하다. 멱등하지 않은 요청을 재시도하면 부작용이 두 번 일어난다.**
+
+```java
+// 문제: 결제 승인 POST에 재시도를 건다
+// 읽기 타임아웃 0.5초가 터졌다 = "응답을 못 받았다"이지 "처리가 안 됐다"가 아니다.
+// 결제사는 이미 승인 처리를 끝냈는데 응답만 늦었을 수 있다.
+// 이 상태에서 재시도하면 → 같은 카드로 승인이 두 번 → 이중 결제
+```
+
+```java
+// 고침: 재시도할 요청에는 멱등성 키를 실어 보낸다.
+// 서버는 같은 키의 두 번째 요청에 대해 "새로 처리"가 아니라
+// "첫 번째 처리 결과를 그대로 다시 응답"한다 — 그래야 재시도가 안전해진다.
+restClient.post()
+        .uri("/payments")
+        .header("Idempotency-Key", orderId.toString())   // 흐름의 시작점에서 만든 값
+        .body(request)
+        .retrieve()
+        .body(PaymentResult.class);
+```
+
+원칙 한 줄로 정리하면 이렇다. **재시도해도 되는 것은 멱등한 요청뿐이다.** GET·PUT·DELETE는 정의상 멱등하니 그냥 재시도해도 되지만, POST는 서버가 멱등성 키를 지원할 때만 재시도할 수 있다. 상대 API가 멱등성 키를 지원하지 않는다면, **재시도하지 않고 실패로 처리한 뒤 상태를 남겨 나중에 대사(reconciliation)하는 것**이 정답이다.
+
+### 3-4. 커넥션 풀 — 왜 필요한지부터
+
+타임아웃 다음으로 반드시 나오는 것이 커넥션 풀인데, 무엇을 하는 물건인지부터 세우고 가자.
+
+#### 오해 먼저 — 연결과 요청은 1:1이 아니다
+
+"요청할 때마다 TCP 핸드셰이크를 하는 것 아닌가?"는 흔한 오해다. **연결은 관(pipe)이고 요청은 그 관으로 흘리는 물이다.** 관을 뚫는 데만 비용이 들고, 이미 뚫린 관에는 그냥 흘려보내면 된다.
+
+```text
 [HTTP/1.0 — 요청 1개당 연결 1개]
 핸드셰이크 → 요청1 → 응답1 → 종료
 핸드셰이크 → 요청2 → 응답2 → 종료
 
 [HTTP/1.1 keep-alive(기본값) — 연결 하나를 재사용]
 핸드셰이크 → 요청1 → 응답1 → 요청2 → 응답2 → 요청3 → ... → 종료
-             └───────────── 같은 TCP 연결 ─────────────┘
+             └───────────────── 같은 TCP 연결 ─────────────────┘
 ```
 
-브라우저도 같은 방식이다. 호스트당 6개쯤만 열어두고 그 위로 이미지·
-CSS·JS 수십 개를 순차로 흘린다.
+브라우저도 같은 방식이다. 호스트당 여섯 개쯤만 열어 두고 그 위로 이미지·CSS·JS 수십 개를 순차로 흘린다.
 
 #### 재사용으로 아끼는 비용
 
-```
-새 HTTPS 연결 1개를 여는 비용
+```text
+새 HTTPS 연결 하나를 여는 비용
   TCP 3-way 핸드셰이크   : 1 RTT
-  TLS 핸드셰이크         : + 2 RTT (TLS 1.3이면 + 1 RTT)
-  ──────────────────────────────────────────────
-  합계                    : 2~3 RTT  ← 요청 첫 바이트를 보내기도 전에
+  TLS 핸드셰이크         : + 2 RTT  (TLS 1.3이면 + 1 RTT)
+  ─────────────────────────────────────────────────
+  합계                   : 2~3 RTT   ← 요청 첫 바이트를 보내기도 전에 든 비용
 ```
 
-RTT 30ms인 외부 API라면 **호출마다 60~90ms를 그냥 버린다.** 여기에 TLS
-키 교환의 비대칭 암호 연산 CPU 비용이 양쪽 모두에 붙는다. 재사용된
-연결이면 이 비용이 전부 0이다.
+RTT가 30ms인 외부 API라면 **호출마다 60~90ms를 그냥 버린다.** 여기에 TLS 키 교환의 비대칭 암호 연산 CPU 비용이 양쪽 모두에 붙는다. 재사용된 연결이면 이 비용이 전부 0이다.
 
-#### 그런데 keep-alive만으로는 왜 부족한가
+#### keep-alive만으로는 왜 부족한가
 
-keep-alive는 "연결 하나를 계속 쓴다"는 **프로토콜 차원의 약속**일 뿐이다.
-실제 앱에서는 스레드 수백 개가 동시에 같은 API를 부른다. 이때 누가 지금
-어떤 연결을 쓰는지 추적하고, 다 쓴 연결을 버리지 않고 회수하고, 남는
-연결이 없을 때 새로 열지 기다릴지 판단하고, 오래 논 연결을 정리하는
-**관리자**가 필요하다. 그게 커넥션 풀이다.
+keep-alive는 "연결 하나를 계속 쓰자"는 **프로토콜 차원의 약속**일 뿐이다. 실제 앱에서는 스레드 수백 개가 동시에 같은 API를 부른다.
+
+이때 누가 지금 어떤 연결을 쓰는지 추적하고, 다 쓴 연결을 버리지 않고 회수하고, 남는 연결이 없을 때 새로 열지 기다릴지 판단하고, 오래 논 연결을 정리하는 **관리자**가 필요하다. 그게 커넥션 풀이다.
 
 > 풀 = keep-alive 연결들을 여러 스레드가 안전하게 나눠 쓰게 하는 관리자.
 
-#### 무한정 열면 안 되는 이유 ① — fd 고갈
+### 3-5. 무한정 열면 안 되는 세 가지 이유
 
-**fd(파일 디스크립터)** 는 커널이 열어둔 무언가를 가리키는, 프로세스가
-들고 있는 작은 정수다. 물품보관소 번호표와 같다 — 실물(소켓·파일)은
-커널이 보관하고 프로세스는 번호만 들고 다닌다. 유닉스의 "everything is
-a file" 원칙에 따라 파일·**소켓**·파이프·터미널이 전부 fd로 표현되고,
-그래서 `read()`/`write()`/`close()`로 똑같이 다뤄진다. 자바의 `Socket`,
-`FileInputStream`도 내부에 `FileDescriptor`를 하나씩 안고 있다.
+풀에 상한이 필요한 이유는 "자원 아끼자"보다 훨씬 구체적이다.
 
-```
+#### 이유 ① — fd 고갈
+
+**fd(파일 디스크립터)는 커널이 열어 둔 무언가를 가리키는, 프로세스가 들고 있는 작은 정수다.** 물품보관소 번호표와 같다 — 실물(소켓·파일)은 커널이 보관하고 프로세스는 번호만 들고 다닌다. 유닉스의 "everything is a file" 원칙에 따라 파일·**소켓**·파이프·터미널이 전부 fd로 표현되고, 그래서 `read()`/`write()`/`close()`로 똑같이 다뤄진다. 자바의 `Socket`, `FileInputStream`도 내부에 `FileDescriptor`를 하나씩 안고 있다.
+
+```text
 프로세스                        커널
 ┌──────────────┐            ┌────────────────────────────┐
 │  fd 테이블    │            │  실제 객체                 │
@@ -242,36 +427,31 @@ a file" 원칙에 따라 파일·**소켓**·파이프·터미널이 전부 fd�
 │   7 ─────────┼───────────▶│  TCP 소켓 → 외부 API       │
 │  12 ─────────┼───────────▶│  TCP 소켓 → 인바운드 요청  │
 └──────────────┘            └────────────────────────────┘
-       ↑ 이 테이블의 상한이 `ulimit -n` (리눅스 기본 1024인 경우가 흔함)
+       ↑ 이 테이블의 상한이 `ulimit -n` (컨테이너 기본값이 1024인 경우가 흔하다)
 ```
 
-중요한 건 이 테이블이 **프로세스당 하나**라는 점이다. 아웃바운드용·
-인바운드용·파일용이 따로가 아니라 한 통장을 같이 쓴다.
+중요한 것은 이 테이블이 **프로세스당 하나**라는 점이다. 아웃바운드용·인바운드용·파일용이 따로가 아니라 한 통장을 같이 쓴다.
 
-```
+```text
 외부 API 호출로 fd를 다 써버림
-  → 새 인바운드 연결 수락(accept)도 fd가 필요한데 못 받음  ← 서비스 정지
+  → 새 인바운드 연결 수락(accept)도 fd가 필요한데 못 받음   ← 서비스 정지
   → 로그 파일 쓰기·설정 파일 읽기도 실패
   → 전부 "Too many open files"
 ```
 
-외부 호출 하나가 서버 전체를 마비시키는 경로가 이것이다.
-(`ls /proc/<PID>/fd | wc -l`로 현재 사용량을 볼 수 있다.)
+외부 호출 하나가 서버 전체를 마비시키는 경로가 이것이다. 현재 사용량은 `ls /proc/<PID>/fd | wc -l`로 볼 수 있다.
 
-#### 무한정 열면 안 되는 이유 ② — TIME_WAIT과 포트 고갈
+#### 이유 ② — TIME_WAIT과 로컬 포트 고갈
 
-"소켓 하나당 포트 하나"가 아니다. TCP 연결의 신분증은 **4-튜플**이고,
-이 묶음만 유일하면 된다.
+"소켓 하나당 포트 하나"가 아니다. TCP 연결의 신분증은 **4-튜플**이고, 이 묶음만 유일하면 된다.
 
-```
+```text
 (로컬 IP, 로컬 포트, 원격 IP, 원격 포트)
 ```
 
-응답 패킷이 도착했을 때 커널이 "이걸 어느 소켓에 넣지?"를 판단할 근거가
-이 튜플뿐이라서 연결마다 달라야 한다. **서버 쪽**을 보면 이게 명확하다 —
-동시 접속 1만 명이어도 서버가 쓰는 로컬 포트는 443 하나다.
+응답 패킷이 도착했을 때 커널이 "이걸 어느 소켓에 넣지?"를 판단할 근거가 이 튜플뿐이라서 연결마다 달라야 한다. **서버 쪽**을 보면 이게 명확하다 — 동시 접속 1만 명이어도 서버가 쓰는 로컬 포트는 443 하나다.
 
-```
+```text
 소켓 #1 : (10.0.0.5:443, 203.0.113.7:51234)
 소켓 #2 : (10.0.0.5:443, 203.0.113.7:51235)   ← 원격 포트로 구분
 소켓 #3 : (10.0.0.5:443, 198.51.100.2:40001)  ← 원격 IP로 구분
@@ -279,7 +459,7 @@ a file" 원칙에 따라 파일·**소켓**·파이프·터미널이 전부 fd�
 
 그런데 **클라이언트가 같은 대상 서버로 연결할 때**는 사정이 다르다.
 
-```
+```text
 소켓 #1 : (10.0.0.5:33001, 93.184.216.34:443)
 소켓 #2 : (10.0.0.5:33002, 93.184.216.34:443)
            ──────── ─────  ─────────────────
@@ -287,217 +467,289 @@ a file" 원칙에 따라 파일·**소켓**·파이프·터미널이 전부 fd�
                   ↑ 네 자리 중 유일하게 바꿀 수 있는 자리
 ```
 
-세 자리가 고정이라 **로컬 포트만이 구분자**가 된다. 결과적으로 연결
-하나가 로컬 포트 하나를 잡아먹는다. 여기에 TIME_WAIT이 겹친다 —
-연결을 끊어도 커널은 뒤늦게 도착한 옛 패킷이 새 연결에 섞이는 걸 막기
-위해 **그 튜플을 60초간(리눅스) 예약**해 둔다. fd는 즉시 반납되지만
-로컬 포트는 잠긴 채다.
+세 자리가 고정이라 **로컬 포트만이 구분자**가 된다. 결과적으로 연결 하나가 로컬 포트 하나를 잡아먹는다.
 
-```
+여기에 TIME_WAIT이 겹친다. 연결을 먼저 닫은 쪽은 뒤늦게 도착한 옛 패킷이 같은 튜플의 새 연결에 섞이는 것을 막기 위해 **그 튜플을 60초간(리눅스) 예약**해 둔다. fd는 즉시 반납되지만 로컬 포트는 잠긴 채다.
+
+```text
 임시 포트 범위(리눅스 기본 32768~60999) ≈ 28,000개
-28,000 ÷ 60초 ≈ 초당 470 연결이 물리적 상한
+28,000개 ÷ 60초 ≈ 초당 약 470개가 새 연결의 물리적 상한
 
-초과 → java.net.BindException: Cannot assign requested address
+초과하면 → java.net.BindException: Cannot assign requested address
 ```
 
-**CPU도 메모리도 멀쩡한데 연결만 실패**하므로 원인 파악이 어렵다.
-단 이 예산은 전역이 아니라 **(상대 IP:포트)마다 따로** 주어진다 —
-상대가 다르면 튜플이 달라지므로 같은 로컬 포트를 다시 쓸 수 있다.
+**CPU도 메모리도 멀쩡한데 연결만 실패**하므로 원인 파악이 어렵다. 단 이 예산은 전역이 아니라 **(상대 IP, 상대 포트)마다 따로** 주어진다 — 상대가 다르면 튜플이 달라지므로 같은 로컬 포트를 다시 쓸 수 있다.
 
-#### 무한정 열면 안 되는 이유 ③ — 상한은 제약이 아니라 백프레셔
+#### 이유 ③ — 상한은 제약이 아니라 백프레셔다
 
-설계 관점에서 가장 중요한 이유다. 외부 API가 느려졌을 때를 비교하면:
+설계 관점에서 가장 중요한 이유다. 외부 API가 느려졌을 때 두 경우를 비교해 보자.
 
-```
+```text
 [풀 없음 / 무제한]
-  응답 5초로 지연 → 연결이 계속 증가 → 500개 … 2000개 … 5000개
-  → fd·포트 고갈 → 서버 전체 사망 (느리고, 원인 불명확하고, 복구도 느림)
+  응답이 5초로 지연 → 연결이 계속 증가 → 500개 … 2,000개 … 5,000개
+  → fd·포트 고갈 → 서버 전체 사망
+  (느리게 죽고, 원인이 불명확하고, 복구도 느리다)
 
 [풀 있음 / 최대 50]
-  응답 5초로 지연 → 50개에서 멈춤
-  → 51번째 스레드는 풀에서 대기 → 지정 시간 내 못 얻으면 즉시 실패
+  응답이 5초로 지연 → 50개에서 멈춤
+  → 51번째 스레드는 풀에서 대기 → ③ 커넥션 요청 타임아웃 내에 못 얻으면 즉시 실패
   → 빠른 실패 + 지표에 "pool timeout"으로 명확히 기록
 ```
 
-상한은 압력을 **눈에 보이는 형태로 바꿔** 조용한 자원 고갈사를 빠르고
-진단 가능한 실패로 전환한다. 서킷 브레이커·벌크헤드와 같은 계열의
-발상이며, 4-1의 타임아웃과 짝을 이룬다.
+상한은 압력을 **눈에 보이는 형태로 바꿔서** 조용한 자원 고갈사를 빠르고 진단 가능한 실패로 전환한다. 3-1의 타임아웃과 짝을 이루고, 3-7의 서킷 브레이커·벌크헤드와 같은 계열의 발상이다.
 
-#### 설정
+### 3-6. 설정은 어디에 하는가 — 클라이언트별 코드
+
+여기가 출제 의도가 정면으로 묻는 지점이다. **"타임아웃과 커넥션 풀을 어디에 설정하나"에 즉답할 수 있어야 한다.**
+
+핵심 구조부터 잡으면 이렇다. `RestTemplate`과 `RestClient`는 HTTP를 직접 말하지 않고 **`ClientHttpRequestFactory`라는 부품에 위임**한다. 그래서 타임아웃과 풀은 클라이언트가 아니라 이 팩토리(그리고 그 아래 실제 HTTP 라이브러리)에 설정한다. `WebClient`는 대신 **`ClientHttpConnector`**를 통해 리액터 네티에 위임한다.
+
+```text
+RestTemplate ─┐                        WebClient
+RestClient   ─┴─▶ ClientHttpRequestFactory ─┐   └─▶ ClientHttpConnector
+                                            │           │
+     ┌──────────────────────────────────────┤           └─▶ reactor-netty HttpClient
+     │                        │             │                 └─▶ ConnectionProvider (풀)
+     ▼                        ▼             ▼
+ Simple...Factory     HttpComponents...   Jdk...Factory
+ (JDK HttpURLConnection)  (Apache HttpClient 5)  (java.net.http.HttpClient)
+   풀 없음 — 기본값             풀 있음               내부 풀 (설정 노출 빈약)
+```
+
+**기본값이 `SimpleClientHttpRequestFactory`라는 사실이 결정적이다.** `new RestTemplate()`이나 `RestClient.create()`를 그냥 쓰면 이 팩토리가 붙는데, `HttpURLConnection`을 쓰면서 커넥션 풀을 관리하는 주체가 없다. 3-4에서 본 재사용 이득도, 3-5에서 본 상한도 없는 상태다. 이걸 아는지가 갈림길이다.
 
 ```java
-// WebClient — reactor-netty ConnectionProvider
+// RestClient / RestTemplate — Apache HttpClient 5로 갈아끼우고 세 타임아웃 + 풀을 다 준다
+PoolingHttpClientConnectionManager cm = PoolingHttpClientConnectionManagerBuilder.create()
+        .setMaxConnTotal(100)     // 전체 상한 — fd·포트 예산의 방어선
+        .setMaxConnPerRoute(50)   // 호스트당 상한 — 느려진 한 대상이 풀을 독점하지 못하게
+        .setDefaultConnectionConfig(ConnectionConfig.custom()
+                .setConnectTimeout(Timeout.ofSeconds(2))          // ① 연결 타임아웃
+                .setValidateAfterInactivity(TimeValue.ofSeconds(5)) // 3-7 참고 — 오래 논 연결 검사
+                .build())
+        .build();
+
+CloseableHttpClient httpClient = HttpClients.custom()
+        .setConnectionManager(cm)
+        .setDefaultRequestConfig(RequestConfig.custom()
+                .setResponseTimeout(Timeout.ofMillis(500))          // ② 읽기 타임아웃
+                .setConnectionRequestTimeout(Timeout.ofSeconds(1))  // ③ 풀 대기 타임아웃
+                .build())
+        .build();
+
+RestClient restClient = RestClient.builder()
+        .baseUrl("https://api.example.com")
+        .requestFactory(new HttpComponentsClientHttpRequestFactory(httpClient))
+        .build();
+```
+
+`maxConnPerRoute`가 따로 있는 이유를 한 번 더 짚자. 이게 없으면 느려진 대상 하나가 전체 풀 100개를 독차지해 **정상적으로 돌고 있는 다른 API 호출까지 굶긴다.** 격벽(bulkhead)을 치는 것과 같은 발상이다.
+
+```java
+// JDK HttpClient 기반 (스프링 6.1+의 JdkClientHttpRequestFactory)
+// 별도 라이브러리 없이 쓸 수 있지만, 풀 상한을 세밀하게 조절하는 API가 없다.
+java.net.http.HttpClient jdkClient = java.net.http.HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(2))   // ① 연결 타임아웃
+        .build();
+
+JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(jdkClient);
+factory.setReadTimeout(Duration.ofMillis(500));  // ② 읽기 타임아웃
+```
+
+```java
+// WebClient — 리액터 네티의 ConnectionProvider가 풀이다
 ConnectionProvider provider = ConnectionProvider.builder("api-pool")
         .maxConnections(50)                             // 상한
-        .pendingAcquireTimeout(Duration.ofSeconds(3))   // 상한 도달 시 빠른 실패
-        .maxIdleTime(Duration.ofSeconds(20))            // 유휴 정리 (아래 참고)
+        .pendingAcquireTimeout(Duration.ofSeconds(1))   // ③ 상한 도달 시 빠른 실패
+        .maxIdleTime(Duration.ofSeconds(20))            // 유휴 정리 — 3-7 참고
         .build();
 
 HttpClient httpClient = HttpClient.create(provider)
-        .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 3000)
-        .responseTimeout(Duration.ofSeconds(5));
-```
+        .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 2000)  // ① 연결 타임아웃
+        .responseTimeout(Duration.ofMillis(500));            // ② 읽기 타임아웃
 
-```java
-// RestClient / RestTemplate — Apache HttpClient 5 풀
-PoolingHttpClientConnectionManager cm = PoolingHttpClientConnectionManagerBuilder.create()
-        .setMaxConnTotal(100)     // 전체 상한
-        .setMaxConnPerRoute(50)   // 호스트당 상한 — 한 대상이 풀을 독점하지 못하게
+WebClient webClient = WebClient.builder()
+        .baseUrl("https://api.example.com")
+        .clientConnector(new ReactorClientHttpConnector(httpClient))
         .build();
 ```
 
-`maxConnPerRoute`가 따로 있는 이유는, 느려진 대상 하나가 전체 풀을
-독차지해 **다른 정상 API 호출까지 굶기는 것**을 막기 위해서다.
-
-#### 왜 "유휴 커넥션 정리 주기"가 필요한가
-
-풀에 넣어둔 연결은 **내가 안 쓰는 동안 상대가 끊을 수 있다.** 서버의
-keep-alive 타임아웃, 중간 LB나 NAT의 유휴 타임아웃 때문이다. 내 쪽은
-살아있는 줄 알고 꺼내 쓰다가 첫 요청에서 connection reset이나
-`NoHttpResponseException`을 맞는다 — 재현이 안 되는 간헐적 오류의
-단골 원인이다.
-
-그래서 **내 쪽 유휴 정리 시간을 상대 서버의 keep-alive 타임아웃보다
-짧게** 잡는다(상대가 60초면 나는 20초). 죽은 연결을 잡기 전에 내가 먼저
-버리는 것이다.
-
-> **정리**: 요청은 초당 5,000개여도 연결은 50개로 고정 — 풀의 본질은
-> **유한 자원(fd·포트)의 소모량을 요청량에서 분리하는 것**이다.
-
-### 4-3. 에러 핸들링 — 4xx/5xx 처리 방식이 서로 다르다
-
-- **RestTemplate / RestClient**: 4xx/5xx 응답이면 기본적으로
-  `HttpClientErrorException` / `HttpServerErrorException`을 **던진다**.
-  RestClient는 `onStatus()`로 상태별 핸들러를 fluent하게 등록할 수 있다.
-- **WebClient**: `retrieve()`는 4xx/5xx에서 `WebClientResponseException`을
-  담은 **에러 시그널**을 Mono에 흘린다(try-catch가 아니라 `onErrorResume`
-  같은 리액티브 연산자로 처리). 상태코드와 무관하게 응답을 직접 다루려면
-  `exchangeToMono()`를 쓴다.
+스프링 부트가 팩토리 조립을 대신해 주는 헬퍼도 있다. 다만 이 API는 부트 버전에 따라 이름이 바뀌었으니 어느 버전 기준인지 밝히고 말하는 편이 안전하다.
 
 ```java
-// RestClient의 상태별 핸들링
+// 스프링 부트 3.4+ — 부트가 클래스패스를 보고 적절한 팩토리를 골라 준다
+ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.defaults()
+        .withConnectTimeout(Duration.ofSeconds(2))
+        .withReadTimeout(Duration.ofMillis(500));
+
+RestClient restClient = RestClient.builder()
+        .requestFactory(ClientHttpRequestFactoryBuilder.detect().build(settings))
+        .build();
+
+// 부트 3.0~3.3에서는 같은 일을 이렇게 했다:
+//   ClientHttpRequestFactorySettings.DEFAULTS.withConnectTimeout(...).withReadTimeout(...)
+//   + ClientHttpRequestFactories.get(settings)
+// 헬퍼는 타임아웃만 얹어 준다 — 풀 상한은 여전히 위처럼 직접 조립해야 한다.
+```
+
+부트를 쓴다면 `RestClient.Builder`/`WebClient.Builder`를 **빈으로 주입받아** 쓰는 편이 낫다. 부트가 등록해 둔 자동 설정(관측 지표, 로드밸런서 연동 등)을 함께 얻을 수 있기 때문이다. `RestClient.create()`로 새로 만들면 그 설정들이 전부 빠진다.
+
+### 3-7. 유휴 커넥션 정리 — 간헐적 오류의 단골 원인
+
+풀에 넣어 둔 연결은 **내가 안 쓰는 동안 상대가 끊을 수 있다.** 서버의 keep-alive 타임아웃, 중간 로드밸런서나 NAT의 유휴 타임아웃 때문이다. 문제는 상대가 끊었다는 사실을 내가 즉시 알 수 없다는 것이다.
+
+```text
+t0   요청 처리 후 연결을 풀에 반납 (내 쪽에서는 "살아 있는 연결")
+t0+60s  상대 서버가 keep-alive 타임아웃으로 조용히 끊음
+        (FIN이 오더라도 풀에 놀고 있는 소켓이라 아무도 읽지 않는다)
+t0+61s  새 요청이 그 연결을 풀에서 꺼내 씀
+        → 첫 write에서 connection reset / NoHttpResponseException
+```
+
+재현이 안 되는 간헐적 오류는 대개 이 모양이다. 트래픽이 뜸한 새벽에만 나거나, 배포 직후 잠깐 나다가 사라진다.
+
+대응은 두 가지를 함께 쓴다.
+
+- **내 쪽 유휴 정리 시간을 상대 서버의 keep-alive 타임아웃보다 짧게** 잡는다(상대가 60초면 나는 20초). 죽은 연결을 잡기 전에 내가 먼저 버리는 것이다. 위 예제의 `maxIdleTime`이 그 값이다.
+- **꺼내 쓰기 직전에 검사**한다. Apache HttpClient 5의 `validateAfterInactivity`가 "이만큼 놀았던 연결은 꺼낼 때 살아 있는지 확인하라"는 설정이다.
+
+> 정리: 요청은 초당 5,000개여도 연결은 50개로 고정 — **풀의 본질은 유한 자원(fd·포트)의 소모량을 요청량에서 분리하는 것**이다.
+
+### 3-8. 에러 핸들링 — 4xx/5xx를 다루는 방식이 셋 다 다르다
+
+- **RestTemplate / RestClient**: 4xx/5xx 응답이면 기본적으로 `HttpClientErrorException` / `HttpServerErrorException`을 **던진다**. RestClient는 `onStatus()`로 상태별 핸들러를 fluent하게 등록할 수 있다.
+- **WebClient**: `retrieve()`는 4xx/5xx에서 예외를 던지는 게 아니라 `WebClientResponseException`을 담은 **에러 시그널**을 `Mono`에 흘린다. try-catch가 아니라 `onErrorResume` 같은 리액티브 연산자로 처리해야 하고, 상태 코드와 무관하게 응답을 직접 다루려면 `exchangeToMono()`를 쓴다.
+
+```java
+// RestClient의 상태별 핸들링 — 외부의 HTTP 세부사항을 우리 도메인 예외로 번역한다
 Member member = restClient.get()
         .uri("/members/{id}", id)
         .retrieve()
         .onStatus(HttpStatusCode::is4xxClientError, (request, response) -> {
+            // 여기서 번역하지 않으면 HttpClientErrorException이 서비스 계층까지 올라간다.
+            // 그러면 상위 코드가 "외부 API를 HTTP로 부른다"는 사실을 알게 되어
+            // 나중에 그 API를 gRPC나 내부 호출로 바꿀 때 상위 코드까지 함께 바뀐다.
             throw new MemberNotFoundException(id);
         })
         .body(Member.class);
 ```
 
-"외부 API의 404를 우리 도메인 예외로 번역해서 경계 안쪽에 HTTP
-세부사항이 새지 않게 한다"는 관점까지 붙이면 설계 감각을 보여줄 수 있다.
+"외부 API의 404를 우리 도메인 예외로 번역해 경계 안쪽에 HTTP 세부사항이 새지 않게 한다"는 관점까지 붙이면 설계 감각을 보여줄 수 있다.
 
-## 5. 가산점 — HTTP Interface (@HttpExchange)
+### 3-9. 가산점 — 서킷 브레이커로 한 층 더
 
-스프링 6부터는 세 클라이언트 위에 얹는 **선언적 추상화**가 있다.
-인터페이스에 어노테이션만 달면 스프링이 구현체를 만들어준다
-(Feign과 같은 발상, 스프링 내장판).
+3-2에서 확인한 것이 있다. **타임아웃과 풀 상한을 잘 잡아도, 외부가 계속 느린 동안은 매 요청이 그 타임아웃만큼 기다렸다 실패한다.** 초당 200건이 전부 0.5초씩 헛되이 기다리는 셈이다. 상대에게도 계속 부하를 주므로 회복을 방해한다.
 
-```java
-public interface MemberApi {
+**서킷 브레이커(circuit breaker, 회로 차단기)는 "실패율이 임계치를 넘으면 아예 호출을 시도조차 하지 않고 즉시 실패시키는" 장치다.** 두꺼비집이 과전류를 감지하면 회로를 끊어 집 전체를 지키는 것과 같아서 이 이름이 붙었다.
 
-    @GetExchange("/members/{id}")
-    Member getMember(@PathVariable Long id);
-}
-
-// 어댑터만 갈아끼우면 하부 클라이언트 교체 가능
-RestClient restClient = RestClient.create("https://api.example.com");
-MemberApi memberApi = HttpServiceProxyFactory
-        .builderFor(RestClientAdapter.create(restClient))
-        .build()
-        .createClient(MemberApi.class);
-
-Member member = memberApi.getMember(1L);  // 그냥 메서드 호출처럼
+```text
+CLOSED (정상)  ──실패율 50% 초과──▶  OPEN (차단)
+   ▲                                    │
+   │                                    │ 대기 시간(예: 30초) 경과
+   │ 성공                                ▼
+   └──────────────────────── HALF_OPEN (탐색)
+                              소수의 요청만 통과시켜 상대가 회복됐는지 본다
+                              실패하면 다시 OPEN
 ```
 
-호출부 코드가 "어떤 HTTP 클라이언트를 쓰는가"에서 분리되므로,
-나중에 RestClient → WebClient로 바꿔도 호출부는 안 바뀐다.
-"클라이언트 선택을 어댑터 한 줄에 가두는 구조"라고 말하면
-이 질문의 선택 기준 논의와 자연스럽게 연결된다.
+OPEN 상태에서는 호출 자체를 안 하므로 **점유 시간이 0.5초에서 0으로 떨어진다.** 3-2의 리틀의 법칙 식에서 W가 0에 수렴하니 스레드가 아예 묶이지 않는다. 동시에 상대에게 가는 부하도 끊겨 회복할 시간을 준다.
 
-## 6. AI 시대 관점 — 스펙 나열은 AI의 몫, 스택 판단은 리뷰어의 몫
+자바에서는 Resilience4j가 표준적인 선택이고, 서킷 브레이커·재시도·벌크헤드·레이트 리미터를 함께 제공한다. 이때 **적용 순서가 중요하다** — 재시도가 서킷 브레이커 바깥에 있으면 차단된 회로를 향해 재시도를 반복하게 되므로, 보통 재시도가 바깥, 서킷 브레이커가 안쪽에 오도록 조합한다.
 
-세 클라이언트의 스펙 비교표는 AI에게 물으면 몇 초 만에 나온다.
-하지만 AI는 "우리 앱이 톰캣 위 MVC인지, WebFlux인지, 스레드 풀
-사정이 어떤지"라는 **컨텍스트를 모른 채** 제안한다. 실제로 AI가
-생성한 코드에는 "비동기 처리가 필요해 보여서" WebClient +
-`.block()` 조합이 자주 들어 있다 — 3-1에서 본 최악의 조합이다.
+정리하면 방어는 3단이다. **타임아웃(한 건의 점유 시간을 자른다) → 풀 상한(동시 점유 개수를 자른다) → 서킷 브레이커(아예 시도하지 않는다).** 세 개가 각각 다른 축을 자르므로 하나가 다른 하나를 대체하지 않는다.
 
-리뷰어가 할 일은 스펙 지식이 아니라 판단이다:
-"이 코드베이스는 톰캣 MVC다. `.block()`으로 쓸 거면 WebClient를
-들일 이유가 없다. RestClient로 바꾸고 타임아웃을 명시하라."
-— 이렇게 실행 모델에 근거해 AI의 제안을 걸러내는 것이
-사람이 유지해야 할 역량이고, 이 질문이 여전히 면접에 나오는 이유다.
+## 4. 꼬리질문 대비 포인트
 
----
+### "MVC 앱에서 WebClient를 `.block()`으로 쓰면 구체적으로 뭐가 문제인가요?"
 
-## 7. 꼬리질문 대비 포인트
+스레드 관점으로 답하는 것이 정답 골격이다.
 
-### "MVC 앱에서 WebClient를 .block()으로 쓰면 구체적으로 뭐가 문제인가?"
+`.block()`을 부르는 순간 톰캣 요청 스레드는 내부 래치에서 잠들어 응답을 기다린다. 즉 **실행 모델이 RestTemplate과 완전히 같아진다.** 오히려 리액터 nio 스레드가 실제 I/O를 처리하느라 하나 더 동원되므로 스레드는 늘고 처리량 상한은 그대로다. 200 스레드 × 200ms 응답이면 어느 쪽이든 1,000 rps로 동일하다.
 
-`.block()`을 부르는 순간 톰캣 요청 스레드가 응답을 기다리며 멈추므로
-실행 모델은 RestTemplate과 완전히 같아진다 — 논블로킹의 이점이 0이다.
-반면 비용은 다 낸다: 리액터 의존성 추가, 리액터 체인으로 도배된
-스택트레이스 때문에 디버깅 난도 상승, 리액티브 스레드 위에서
-`.block()`이 호출되면 `IllegalStateException`이 터지는 새로운 장애
-유형까지. "얻는 것 없이 복잡도만 산 것"이라고 요약하면 된다.
+이점이 0인데 비용은 다 낸다 — 리액터 의존성 추가, 리액터 프레임으로 도배돼 우리 코드를 찾기 어려워진 스택트레이스, 그리고 나중에 코드 일부가 리액티브 스레드 위로 올라가면 터지는 `IllegalStateException: block() ... are blocking`이라는 새로운 장애 유형.
 
-### "RestTemplate은 deprecated인가? 기존 코드를 다 갈아타야 하나?"
+"얻는 것 없이 복잡도만 산 것"으로 요약하면 된다.
 
-deprecated가 아니다. **유지보수 모드** — 버그와 보안 수정은 계속되지만
-새 기능은 안 들어간다는 뜻이고, 당장 못 쓰게 된다는 뜻이 아니다.
-따라서 잘 돌아가는 기존 코드를 갈아타는 것 자체가 목적이 되면 안 되고,
-"신규 코드는 RestClient, 기존 코드는 손댈 일이 생길 때 함께 이전"이
-현실적 판단이다. RestClient가 RestTemplate과 같은 기반(메시지 컨버터,
-ClientHttpRequestFactory)을 공유해 점진 이전 비용이 낮다는 점,
-그리고 "돌아가는 코드를 트렌드 때문에 바꾸는 것도 리스크"라는
-비용-편익 관점을 함께 말하면 시니어다운 답이 된다.
+### "RestTemplate은 deprecated인가요? 기존 코드를 다 갈아타야 하나요?"
 
-### "외부 API 호출에 타임아웃을 안 정하면 무슨 일이 벌어지나?"
+**deprecated가 아니라 유지보수 모드**다. 버그와 보안 수정은 계속되지만 새 기능은 안 들어간다는 뜻이고, 컴파일 경고도 없고 제거 예고도 없다. 이 구분을 정확히 말하는 것부터가 답의 절반이다.
 
-기본값이 사실상 무제한이라, 외부 API가 응답을 안 주면 우리 스레드가
-영원히 대기한다. 이런 요청이 쌓이면 톰캣 스레드 풀이 고갈되어
-그 API와 무관한 요청까지 전부 죽는다 — **남의 장애가 내 장애로
-전이**되는 연쇄다. 한 단계 더: 그 외부 호출이 `@Transactional` 안에
-있으면 스레드만이 아니라 **DB 커넥션까지 쥔 채** 대기하므로,
-톰캣 풀보다 훨씬 작은 DB 커넥션 풀(기본 10개 수준)이 먼저 고갈되어
-장애가 더 빨리, 더 넓게 퍼진다. 그래서 "타임아웃 명시 + 트랜잭션
-안에서 외부 호출 하지 않기"가 세트 결론이다.
+따라서 잘 돌아가는 코드를 갈아타는 것 자체가 목적이 되면 안 된다. **"신규 코드는 RestClient, 기존 코드는 어차피 손댈 일이 생겼을 때 함께 이전"**이 현실적 판단이고, RestClient가 RestTemplate과 같은 기반(메시지 컨버터, `ClientHttpRequestFactory`)을 공유하므로 점진 이전 비용이 낮다는 점을 덧붙이면 좋다.
 
-### "외부 API를 대량으로 동시에 호출해야 하면 어떻게 하나?"
+여기에 "돌아가는 코드를 트렌드 때문에 바꾸는 것도 리스크"라는 비용-편익 관점까지 얹으면 시니어다운 답이 된다. 교체가 만드는 것은 회귀 테스트 비용과 장애 확률이고, 얻는 것이 "최신 API"뿐이라면 남는 장사가 아니다.
 
-전통적 답: 동기 클라이언트로 100개를 순차 호출하면 지연이 합산되니
-(100 × 응답시간), WebClient로 논블로킹 병렬 호출한다 —
-`Flux.fromIterable(ids).flatMap(id -> webClient.get()...)` 식으로
-적은 스레드로 동시에 흘려보내고 결과를 조합한다.
+### "외부 API 호출에 타임아웃을 안 정하면 무슨 일이 벌어지나요?"
 
-다만 **자바 21 가상 스레드 이후 판도가 바뀌었다**: 블로킹 호출이라도
-가상 스레드에서는 스레드가 대기하는 비용이 거의 0이라, RestClient
-같은 동기 클라이언트를 가상 스레드 + ExecutorService로 병렬 실행해도
-동시성 목표를 달성할 수 있다. 코드는 순차 코드처럼 읽히면서 동시성은
-확보되므로, "대량 동시 호출 = 무조건 WebClient"라는 공식도 약해졌다.
-이 판도 변화까지 언급하면 최신 지형을 아는 답변이 된다.
+**숫자로 답하는 것이 이 질문의 정답 형태다.**
 
-### "그럼 MVC에서 WebClient를 쓰는 게 정당화되는 경우는 없나?"
+톰캣 200 스레드, 초당 200건 유입, 외부 API가 죽지 않고 5초로 느려진 상황을 가정하자. 리틀의 법칙으로 필요한 스레드는 `200건/초 × 5초 = 1,000개`인데 가진 것은 200개다. 아무도 반납하지 않으므로 `200 ÷ 200 = 1초` 만에 톰캣 스레드가 전부 묶이고, 그 시점부터 그 API와 무관한 `/health`, `/products` 요청까지 전부 죽는다. 타임아웃이 없으면 5초가 아니라 무한이므로 스레드는 영영 안 돌아온다.
 
-있다. 핵심은 `.block()`으로 즉시 값을 뽑지 않는 사용일 때다.
-(1) SSE·스트리밍 응답을 받아 흘려보내는 경우 — 동기 클라이언트로는
-자연스럽게 다루기 어렵다. (2) 여러 외부 API를 동시 호출해 조합하되
-결과를 `DeferredResult`/`CompletableFuture`로 이어 톰캣 스레드를
-잡아두지 않는 경우. (3) 조직이 WebFlux로의 이전을 진행 중이라
-클라이언트를 먼저 통일하는 과도기 전략. 반대로 "단건 호출하고 바로
-`.block()`"이 코드의 전부라면 정당화되지 않는다 — 정당성은 도구가
-아니라 **사용 패턴**에서 나온다고 정리하면 된다.
+한 단계 더 들어가면 시니어 답변이 된다. 그 외부 호출이 `@Transactional` 안에 있으면 스레드만이 아니라 **DB 커넥션까지 쥔 채** 대기한다. HikariCP 기본 풀은 10개이므로 `10 ÷ 200 = 0.05초` 만에 DB 커넥션이 먼저 마른다 — 톰캣이 마르기 1초 전에, 그것도 DB를 쓰는 모든 기능을 함께 죽이면서.
+
+그래서 결론은 언제나 세트다. **타임아웃 명시 + 트랜잭션 안에서 외부 호출 금지.**
+
+### "그럼 타임아웃 값은 몇 초로 잡나요?" (시니어 변별 포인트)
+
+"3초쯤"이라고 답하면 근거가 없는 것이고, "외부 API의 p99가 800ms니까 1초"라고 답하면 절반이다. **정답은 우리 쪽 자원 예산에서 역산하는 것**이다.
+
+리틀의 법칙을 뒤집는다. 이 API에 내줄 수 있는 스레드 예산을 `L_budget`, 유입을 `λ`라고 하면 허용 가능한 점유 시간은 `W = L_budget ÷ λ`다. 톰캣 200개 중 절반인 100개까지만 이 API에 내주기로 하고 유입이 초당 200건이면 `100 ÷ 200 = 0.5초`가 상한이다. 외부 API의 p99가 800ms라서 1초를 잡고 싶어도, 우리 예산이 0.5초라면 1초는 못 준다 — **그 경우 답은 타임아웃을 늘리는 게 아니라 스레드 예산을 늘리거나(스레드풀 확대) 호출 자체를 줄이는 것(캐싱, 비동기화)이다.**
+
+세 가지를 함께 말하면 완성된다.
+
+1. **재시도까지 포함해서 계산한다.** 타임아웃 0.5초에 재시도 3회면 실제 점유는 1.5초이고 필요한 스레드는 300개로 뛴다. 재시도는 점유 시간을 곱한다.
+2. **연결 타임아웃과 읽기 타임아웃은 다른 근거로 정한다.** 연결은 네트워크 왕복 특성(1~3초면 충분), 읽기는 위의 자원 예산.
+3. **타임아웃만으로는 못 막는 구간이 있다.** 외부가 계속 느린 동안은 매 요청이 0.5초씩 헛되이 대기하므로, 그 위에 서킷 브레이커를 얹어야 점유 시간이 0으로 떨어진다.
+
+### "커넥션 풀은 왜 상한을 두나요? 크게 잡으면 좋은 것 아닌가요?"
+
+세 가지 이유를 층위별로 답한다.
+
+**(1) fd 고갈.** 소켓은 fd를 하나씩 소비하고, fd 테이블은 프로세스당 하나뿐이라 아웃바운드와 인바운드가 같은 통장을 쓴다. 외부 호출로 fd를 다 쓰면 새 인바운드 연결 수락도, 로그 파일 쓰기도 실패한다 — 전부 "Too many open files"다.
+
+**(2) TIME_WAIT과 로컬 포트 고갈.** 같은 대상 서버로 나가는 연결은 4-튜플 중 로컬 포트만 다르므로 연결 하나가 포트 하나를 잡는다. 연결을 닫아도 그 튜플은 60초간(리눅스) 예약되므로, 임시 포트 28,000개 기준 초당 약 470개가 새 연결의 물리적 상한이다. 초과하면 `BindException: Cannot assign requested address` — CPU도 메모리도 멀쩡한데 연결만 실패해 원인 파악이 어렵다.
+
+**(3) 상한은 제약이 아니라 백프레셔다 — 이게 설계상 가장 중요한 답이다.** 상한이 없으면 외부 지연이 곧 무한한 연결 증가로 이어져 서버가 조용히 죽는다. 상한이 있으면 51번째 요청이 커넥션 요청 타임아웃으로 **빠르게, 그리고 "pool timeout"이라는 명확한 이름으로** 실패한다. 상한은 압력을 눈에 보이는 형태로 바꾸는 장치다.
+
+여기에 `maxConnPerRoute`까지 언급하면 좋다. 전체 상한만 있으면 **느려진 대상 하나가 풀 전체를 독점해 정상적인 다른 API 호출까지 굶긴다.** 호스트당 상한이 그 격벽 역할을 한다.
+
+### "재시도를 넣으면 안정성이 올라가는 것 아닌가요?" (시니어 변별 포인트)
+
+조건부로만 맞다. 두 가지를 반드시 짚어야 한다.
+
+**첫째, 재시도는 안정성과 함께 부하도 곱한다.** 3회 재시도는 우리 쪽 스레드 점유 시간을 3배로, 상대에게 가는 요청도 3배로 만든다. 그런데 재시도가 발동하는 상황이란 곧 외부가 힘들어하는 상황이므로, 재시도 폭풍이 상대의 회복을 방해한다. 그래서 지수 백오프와 지터가 필수이고, **자원 계산은 재시도 횟수를 곱한 총 점유 시간으로** 해야 한다.
+
+**둘째, 멱등하지 않은 요청은 재시도하면 안 된다.** 읽기 타임아웃이 터졌다는 것은 "응답을 못 받았다"이지 "처리가 안 됐다"가 아니다. 결제 승인 POST를 재시도하면 결제사 입장에서는 승인 요청이 두 번 온 것이고, 그대로 이중 결제가 된다.
+
+원칙은 **"재시도와 멱등성은 짝"**이다. GET·PUT·DELETE는 정의상 멱등하니 그냥 재시도해도 되고, POST는 `Idempotency-Key` 같은 멱등성 키를 상대가 지원할 때만 재시도할 수 있다. 지원하지 않는다면 재시도하지 않고 실패로 처리한 뒤 상태를 남겨 대사하는 것이 정답이다.
+
+### "외부 API를 대량으로 동시에 호출해야 하면 어떻게 하나요?"
+
+전통적인 답은 이렇다. 동기 클라이언트로 100개를 순차 호출하면 지연이 합산되므로(100 × 응답시간), WebClient로 논블로킹 병렬 호출한다 — `Flux.fromIterable(ids).flatMap(id -> webClient.get()...)` 식으로 적은 스레드로 동시에 흘려보내고 결과를 조합한다. 이때 `flatMap`의 동시성 인자로 상대에게 가는 부하에 상한을 거는 것까지 말하면 좋다.
+
+다만 **자바 21의 가상 스레드 이후 판도가 바뀌었다는 점**을 덧붙여야 최신 지형을 아는 답이 된다. 가상 스레드는 블로킹 호출에서 대기할 때 OS 스레드를 반납하고 JVM 힙으로 물러나므로, 대기 비용이 사실상 0이다. 그래서 RestClient 같은 동기 클라이언트를 가상 스레드 기반 `ExecutorService`로 병렬 실행해도 같은 동시성 목표를 달성할 수 있다.
+
+```java
+// 자바 21 — 코드는 순차 코드처럼 읽히는데 동시성은 확보된다
+try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+    List<Future<Member>> futures = ids.stream()
+            .map(id -> executor.submit(() -> memberApi.getMember(id)))  // 블로킹 호출 그대로
+            .toList();
+    // 각 가상 스레드는 응답을 기다리는 동안 OS 스레드를 점유하지 않는다
+}
+```
+
+"대량 동시 호출 = 무조건 WebClient"라는 공식이 약해졌다는 것, 그리고 **가상 스레드에서도 커넥션 풀 상한은 여전히 필요하다**는 것(스레드는 싸졌지만 fd와 포트는 그대로 유한하다)까지 말하면 정확한 답이 된다.
+
+### "그럼 MVC에서 WebClient를 쓰는 게 정당화되는 경우는 없나요?"
+
+있다. 판단 기준은 도구가 아니라 **사용 패턴**이고, 한 줄로는 "`.block()`으로 값을 즉시 뽑아내지 않는 사용인가"다.
+
+세 가지가 대표적이다. (1) SSE·스트리밍 응답을 받아 흘려보내는 경우 — 응답이 끝나기 전에 도착한 조각부터 처리해야 하므로 동기 클라이언트로는 자연스럽게 다룰 수 없다. (2) 여러 외부 API를 동시 호출해 조합하되 결과를 `DeferredResult`나 `CompletableFuture`로 이어 톰캣 스레드를 반납하는 경우 — 이때는 요청 스레드가 대기하지 않으므로 논블로킹이 실제로 값을 한다. (3) 조직이 WebFlux로 이전 중이라 클라이언트를 먼저 통일하는 과도기 전략.
+
+반대로 "단건 호출하고 바로 `.block()`"이 코드의 전부라면 정당화되지 않는다.
 
 ---
 
 ## 한 줄 요약
 
-RestTemplate(동기·유지보수 모드), WebClient(논블로킹·리액티브),
-RestClient(동기 + 모던 API, RestTemplate의 후계자)의 스펙 차이보다
-중요한 것은 선택 기준이다 — HTTP 클라이언트는 최신순이 아니라
-앱의 스레드 모델과 맞는 실행 모델로 골라야 하므로, 톰캣 MVC라면
-RestClient가 기본값이고 WebClient는 `.block()` 없이 논블로킹을
-끝까지 살릴 수 있을 때만 정당하며, 무엇을 고르든 타임아웃·커넥션 풀·
-에러 핸들링을 명시하지 않으면 남의 장애가 내 장애가 된다.
+RestTemplate(동기·유지보수 모드, deprecated 아님), WebClient(논블로킹·리액티브), RestClient(동기 + 모던 API, 스프링 6.1/부트 3.2 등장, RestTemplate의 후계자)의 스펙 차이보다 중요한 것은 선택 기준이다 — HTTP 클라이언트는 최신순이 아니라 앱의 스레드 모델과 맞는 실행 모델로 고르는 것이고, 톰캣 MVC에서 `.block()`을 부르면 요청 스레드는 그대로 묶인 채 리액터 스레드만 하나 늘어 처리량 상한(200 스레드 × 200ms = 1,000 rps)이 RestTemplate과 완전히 같아지므로 이점 0에 비용만 남는다. 그래서 MVC 신규 개발은 RestClient가 기본값이고, 무엇을 고르든 연결·읽기·풀 대기 타임아웃과 커넥션 풀 상한을 "우리가 내줄 수 있는 스레드 예산"에서 역산해 명시해야 외부 API의 지연 하나가 1초 만에 톰캣 스레드풀 고갈로 번지는 연쇄를 끊을 수 있다.

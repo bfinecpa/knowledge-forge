@@ -15,9 +15,9 @@
 | 08-network-http | 22 | 22 | 완료 |
 | 09-rest-api | 18 | 18 | 완료 |
 | 01-java-kotlin | 32 | 32 | 완료 |
-| 02-spring | 35 | 0 | 대기 |
+| 02-spring | 35 | 35 | 완료 |
 | 03-jpa-orm | 27 | 0 | 대기 (이미 깊이 있음 — 조정 위주) |
-| 04-rdb-sql | 35 | 0 | 대기 (PostgreSQL 기준 유지) |
+| 04-rdb-sql | 35 | — | **디렉토리가 비었다** (커밋 `8deef26`에서 35건 삭제) |
 
 ## 작업 규약 (세션이 끊겨도 동일하게 이어간다)
 
@@ -26,7 +26,7 @@
 - 하드랩(72자 고정 줄바꿈)을 푼다. 한 문단은 한 줄로 이어 쓰고 문단을 짧게 끊는다.
 - 이모지 금지. 분량 목표 없음.
 - DB 예시는 PostgreSQL 기준(커밋 `ae54d88`의 전환을 되돌리지 않는다).
-- 서브에이전트는 최대 5개까지 병렬로 돌린다. 한 에이전트에 2~3건씩 맡긴다.
+- 서브에이전트는 항상 5개가 돌아가게 유지한다. 한 에이전트에 2~3건씩 맡기고, 하나가 끝나면 곧바로 다음 하나를 투입한다(다섯이 모두 끝나기를 기다리지 않는다). 동시 실행 수만 5를 넘지 않으면 된다.
 
 ## 05-redis-caching (27/27) — 완료
 
@@ -423,3 +423,102 @@ KST 23:59:59 = `14:59:59Z`.
 ### 기계 검증 도구
 
 `verify.pl`(구조 6요소 / 섹션 번호 0~4 연속성 / 이모지 / 하드랩 잔존)과 `cmp.py`(질문·출제 의도 원문을 git HEAD 기준과 문자 단위 대조)로 배치마다 확인한다. 완료된 09-rest-api 18건에 돌려 18/18 통과로 캘리브레이션했다. ①②③이나 박스드로잉 문자는 이모지로 세지 않는다.
+
+## 02-spring (35/35) — 완료
+
+### 장 사전 진단
+
+`verify.pl` 기준 35건 전부 구조 위반이다. 파일이 두 부류로 갈린다.
+
+- **01~23·35번 (24건)**: 72자 하드랩. 문단이 인위적으로 끊겨 있고, `> 핵심 관전 포인트:` 블록이 5~8줄짜리 개념 압축 덩어리다. 본문에서 한 문단씩 풀 것을 미리 압축해 던지는 구조라서, 관전 포인트만 읽으면 아는 사람에게만 말이 된다.
+- **24~34번 (11건)**: 하드랩은 없으나 `---` 구분선이 빠져 있고 불릿 압축이 심하다. 24·25·26·29·30·31·32·34번은 5.8~10.4KB로 이 장에서 가장 얇다 — 깊이가 아니라 설명이 없어서 얇다.
+
+그 밖에: 21건이 `## 5.`~`## 8.`까지 섹션이 뻗어 있어 0~4 재편 대상. 13번은 `## 답변의 축`, 29·34번은 `## 꼬리질문 대비 포인트`가 번호 없는 h2. 24~34번은 관전 포인트가 굵은 글씨(`**`)가 아니다. 이모지는 21개 파일에 총 249건(08번 44건, 18번 43건이 최다). **단 이 수치는 과대 집계였다** — 초기 조사 정규식이 화살표(`→`)를 이모지로 셌다. 교정 후 실제 값은 26번 0건(화살표 9건), 27번 2건(화살표 12건)이다. 파일별 진단서에 잘못된 수치가 그대로 전달됐으나, 에이전트들이 `verify.pl`로 실제 잔존을 확인하며 작업해 결과에는 영향이 없었다.
+
+14번 문서가 `04-rdb-sql/transaction-isolation-levels.md`를 "저기서 다룬다"며 미루는데, **04-rdb-sql은 커밋 `8deef26`에서 35건 전부 삭제되어 현재 비어 있다.** 해당 참조를 지우고 DB 내부 동작을 14번 안에서 자족적으로 설명하도록 지시했다.
+
+### 배치 편성 (관련 주제를 한 에이전트에 묶는다)
+
+| 배치 | 파일 | 묶은 이유 |
+|---|---|---|
+| B1 | 01, 02, 03 | 컨테이너 기초 — IoC/DI → 빈 생명주기 → 주입 방식 |
+| B2 | 04, 05, 06 | 웹 계층 — 스테레오타입, MVC 파이프라인, Filter/Interceptor |
+| B3 | 07, 10, 11 | 프록시 3부작 — 역할 분담 후 상호 참조 |
+| B4 | 12, 13, 14 | 트랜잭션 속성 3부작 — 전파·readOnly·격리 수준 |
+| B5 | 08, 09, 29 | 설정 계열 — 자동 구성, 프로파일, @Value/@ConfigurationProperties |
+| B6 | 15, 16, 34 | 비동기·스케줄 — @Async, 이벤트, @Scheduled |
+| B7 | 17, 19, 21 | 순환 참조, 전역 예외, 검증 |
+| B8 | 18, 20, 33 | HTTP 클라이언트, @Cacheable, ArgumentResolver |
+| B9 | 22, 23, 24 | 트랜잭션 경계 — 외부 호출, 아웃박스, 커넥션 바인딩 |
+| B10 | 25, 26, 27 | 풀·스레드 모델 — 사이징, 고갈, WebFlux |
+| B11 | 28, 30, 32 | 운영 — 무중단 배포, actuator, 기동 지연 |
+| B12 | 31, 35 | 시큐리티 필터 체인, AI 코드 리뷰 체크리스트 |
+
+### 기계 검증 도구 (이번 세션에서 재작성)
+
+`verify.pl`과 `cmp.py`가 이전 세션 스크래치패드와 함께 사라져 다시 만들었다.
+완료된 6개 디렉토리(01·05·07·08·09·10장, 140건)에 돌려 전부 `0 fail`로 캘리브레이션했다.
+
+- `verify.pl`: 구조 6요소 / 관전 포인트 굵은 글씨 / 섹션 번호 0~4 연속성 / 이모지 / 하드랩 잔존
+- 이모지 판정에서 `★ ☆ ✓ ✗ ①②③` 과 박스드로잉은 제외한다 — 완료된 장들이 도식 마커로 쓰고 있다.
+- `cmp.py`: 질문·출제 의도 문구를 git HEAD 기준과 공백 정규화 후 문자 단위 대조
+
+### 장 밖에서 발견한 것
+
+- **04-rdb-sql이 비었다.** 커밋 `8deef26`("4장 knowledge 문서 35건 삭제")로 디렉토리가 비어 있다. 재작성 대상 243건 중 35건이 사라진 셈이라 남은 범위는 02-spring 35건 + 03-jpa-orm 27건이다.
+- **06-kafka-messaging에 12건이 기준 미달이다.** 24건 완료로 기록돼 있으나 현재 36건이 있다. 25~36번(RabbitMQ 12건)이 나중에 추가됐고, 이 중 11건은 꼬리질문이 `## 5.`에 있어 0~4 규약에서 벗어난다. 04번(kafka-vs-rabbitmq)에는 번호 없는 h2가 하나 있다. 내용 자체는 새 기준으로 쓰인 것으로 보이므로 구조 정리만 필요하다.
+
+### 파일별 현황
+
+| 파일 | 상태 | 비고 |
+|---|---|---|
+| 01-ioc-di-fundamentals.md | 완료 | 컨테이너를 `Map<빈 이름, 완성된 객체>`로 실체화 + 기동 4단계 도식 신설, 결합도를 "PG 교체 시 고칠 파일 수 7건 → 1건"으로 수치화, 목 주입 테스트 코드 신설(예외 경로 생성이 진짜 차이), DI 3방식은 03번으로 넘겨 중복 제거 |
+| 02-bean-lifecycle-singleton-scope.md | 완료 | 두 스레드가 싱글턴 필드를 밟는 t1~t5 타임라인 신설(주문#1 미결제 + 주문#2 이중 결제 + 응답 혼선), `BeanPostProcessor`가 `Object`를 반환해 빈을 바꿔치기한다는 점으로 AOP 프록시 시점 연결, "상태가 필요하면 프로토타입?" 함정을 시점 도식으로 정면 답변, 이모지 15건 제거 |
+| 03-constructor-injection-over-field-injection.md | 완료 | **원문 사실 오류 정정** — "필드 주입은 주입 누락이 런타임 NPE로 늦게 드러난다"는 서술이 틀렸다. `@Autowired`는 기본 `required=true`라 필드 주입도 기동 시 `UnsatisfiedDependencyException`으로 죽는다. 진짜 차이는 컨테이너 **밖**에서 반제품 객체가 만들어지는 경로라는 축으로 재작성. javac 21 실제 에러 메시지 2종 인용, Boot 2.6 순환 참조 기본 금지, `@RequiredArgsConstructor`의 `@Qualifier` 미복사 함정 추가 |
+| 04-stereotype-annotations.md | 완료 | 메타 애너테이션 2단 탐색 트리 도식, `@Repository` 예외 변환을 JPA/MyBatis 같은 유니크 위반의 예외 타입 대비로 실증. **원문 사실 오류 2건 정정** — ① after 예제가 JPA 경로에 `DuplicateKeyException`을 잡고 있었으나 Hibernate 경로는 `DataIntegrityViolationException`이 온다(`DuplicateKeyException`은 JDBC/MyBatis SQLSTATE 23505 경로) ② "`SimpleJpaRepository`에 `@Repository`가 붙어서 변환된다"는 인과가 틀렸다 — 이 클래스는 컴포넌트 스캔 대상이 아니라 후처리기 시야 밖이고, 실제로는 리포지토리 프록시의 `PersistenceExceptionTranslationInterceptor`가 일한다 |
+| 05-spring-mvc-request-flow.md | 완료 | HandlerMapping/HandlerAdapter가 왜 둘로 갈리는지를 독립 절로 신설(`supports(handler)` + OCP), 메시지 컨버터 vs ViewResolver 두 갈래 도식, **실제 스택트레이스 3종**(필터/바인딩/컨트롤러)으로 판별 절차 신설 — `MethodArgumentNotValidException`은 컨트롤러 시그니처가 메시지 텍스트로만 있고 `at` 프레임엔 없다는 함정 포함. 이모지 25건 제거, `flow` 커스텀 블록 3개를 박스드로잉으로 교체 |
+| 06-filter-vs-interceptor.md | 완료 | 서블릿 컨테이너·스펙 정의 절 신설, `@ControllerAdvice`가 못 잡는 경계선을 `doDispatch()`의 try 블록으로 못 박음. **오케스트레이터 지시의 오류를 에이전트가 정정** — "톰캣 기본 HTML이 나간다"는 Boot 3.x 기본 설정에서 성립하지 않는다(톰캣이 `/error`로 ERROR 디스패치를 걸어 `BasicErrorController`가 Accept에 따라 Whitelabel HTML 또는 부트 기본 JSON을 낸다). 에러 페이지 처리가 없는 경우로 한정해 두 갈래로 기술. trace id 사각지대 t0~t5 타임라인, `OncePerRequestFilter.shouldNotFilterErrorDispatch()` 기본 true 함정 추가 |
+| 07-transactional-default-behavior-rollback.md | 완료 | "왜 checked는 롤백하지 않는가"에 근거 신설(자바가 예외를 둘로 나눈 기준 → 트랜잭션 규칙이 따라 나온다 → 그 전제가 "비즈니스 예외를 RuntimeException으로" 관행과 어긋나 사고가 난다). 예외 계층 도식에 롤백선, rollback-only를 t0~t15 호출 스택 타임라인으로. **원문 사실 오류 정정** — "public 메서드에만 적용된다"는 스프링 6.0 이후 틀렸다(class-based 프록시는 `protected`·패키지 프라이빗도 대상, 인터페이스 기반만 public 한정, `private`은 양쪽 불가). 오케스트레이터가 GitHub 이슈 #31057과 공식 레퍼런스로 재확인. 스프링 6.2 `@EnableTransactionManagement(rollbackOn = ALL_EXCEPTIONS)` 추가(기본값 `RUNTIME_EXCEPTIONS`) — 이것도 재확인 |
+| 10-aop-jdk-dynamic-proxy-vs-cglib.md | 완료 | AOP를 "객체는 명사로 자르는데 트랜잭션은 전부를 가로지르는 또 다른 절단면"으로 정의. JDK 프록시에 인터페이스가 필수인 인과를 `Proxy.newProxyInstance`가 인터페이스 배열을 유일한 타입 통로로 받는다는 점 + 이미 `java.lang.reflect.Proxy`를 상속해 단일 상속상 자리가 없다는 점으로 세움. `BeanNotOfRequiredTypeException` 함정 → 부트가 `proxyTargetClass=true`를 기본값으로 삼은 이유로 연결. `final` 함정을 "시끄럽게 죽는다 / 조용히 샌다"로 대비. 이모지 18건 제거 |
+| 11-transactional-self-invocation.md | 완료 | 트랜잭션 부재 시 실제 증상 5종 신설 — 특히 **OSIV로 영속성 컨텍스트는 열려 있으나 flush 시점이 없어 변경 감지 UPDATE가 아예 안 나가는** 경우가 원문에 빠져 있었다. D+0~D+12 발견 타임라인. "내 코드에 이 버그가 있는지 확인하는 절차" 신설 — 오케스트레이터가 지시한 `AopUtils.isAopProxy(this)`는 원본 메서드 안에서 항상 false라 탐지기가 아님을 에이전트가 바로잡고 `getCurrentTransactionName()`이 결정적이라고 정정. 해법 4종을 각각 대가 3개씩과 짝지음 |
+| 08-spring-boot-auto-configuration.md | 완료 | "자동 구성 = yml 안 써도 되는 것"이라는 오해를 걷는 설정값 vs 설정 클래스 구분표를 문서 맨 앞으로. 조건 평가 시점(런타임 아님, 빈 정의 등록 단계)과 순서(`DeferredImportSelector` → 사용자 설정이 끝난 뒤 마지막)를 도식화 — "내 DataSource 빈이 자동 구성을 이기는" 메커니즘의 전부. spring-boot 3.5 소스 직접 확인: imports 경로 `META-INF/spring/%s.imports` 확정, **원문의 "150개 남짓"을 실측 156줄로 교정**, `CONDITIONS EVALUATION REPORT` 실제 출력 형태로 교체. 이모지 44건 제거 |
+| 09-application-yml-profile.md | 완료 | **인과 오류 교정** — "프로파일을 쓰면 저절로 fail-fast가 된다"로 읽히던 것을, 원인은 "기동 필수 설정을 공통 yml에서 비워 두는 설계 결정"이고 프로파일은 수단이라고 분리(안티패턴 구성도 프로파일을 쓰고 있었다는 반례를 앞에 배치). 우선순위 표에 **시스템 프로퍼티(`-D`)가 환경변수보다 위**라는 층 추가(원문은 뭉뚱그림). **오케스트레이터 지시 교정** — 부트 2.4+에서 옛 키 `spring.profiles`는 조용히 무시되지 않고 `InvalidConfigDataPropertyException`으로 기동 실패한다. 오케스트레이터가 spring-boot 3.3.5 바이트코드에서 ERRORS 맵 등록을 직접 확인 |
+| 29-value-vs-configuration-properties.md | 완료 | 5.8KB → 36KB. 2절을 "차이 → 그것이 없어서 난 사고" 5건으로 재구성(기본값 붙은 키의 침묵을 t0~t5 타임라인으로). relaxed binding 정의 → 환경변수에 점·하이픈을 못 쓰는 셸 제약 → k8s `env:`가 곧 설정 오버라이드가 되는 경로로 연결. **흔한 오해 정정** — `@Value`도 `SystemEnvironmentPropertySource`의 밑줄 치환 덕에 환경변수 오버라이드가 동작한다(없는 것은 yml 키 표기 사이의 유연함). `@Validated` 실패 시 실제 출력 4줄 수록 |
+| 12-transaction-propagation-required-vs-requires-new.md | 완료 | 전파를 "바깥 트랜잭션을 물려받을 것인가의 규칙"으로 정의하고 전제(트랜잭션은 커넥션 위에 산다)를 선행. 합류의 물리적 의미를 커넥션 관점 도식으로, 안쪽 커밋이 "주인 여부 분기 → 아무 일도 안 함"임을 흐름도로. 풀 데드락을 t0~t3로 검산하고 회피식 `Tn × (Cm-1) + 1` 유도(사례 11, 톰캣 200이면 201). **사실 정정 2건** — ① "전원이 영원히 교착"이 아니라 HikariCP `connectionTimeout` 30초 후 전원 실패 → "간헐적 30초 정지"로 관측된다 ② NESTED가 JPA에서 안 되는 근거(`nestedTransactionAllowed` 기본 꺼짐 → `NestedTransactionNotSupportedException`, 켜도 세이브포인트는 JDBC만 되감아 영속성 컨텍스트가 어긋남) |
+| 13-transactional-readonly-optimization.md | 완료 | `## 답변의 축` 번호 없는 h2를 `### 2-1.`로 흡수. `## 1.` 전체를 전제 지식(영속성 컨텍스트 → 스냅샷/더티 체킹 → 플러시)으로 신설. **사실 정정 3건** — ① "메모리 2배/절반"은 부정확(스냅샷은 `Object[필드수]` + 박싱이라 엔티티보다 클 수도 있다). 필드 20개 기준 약 300B/건 → 10만 건 ≈ 30MB로 계산 근거 제시(오케스트레이터 검산: 28.6MB) ② 스냅샷 생략은 **스프링 5.1(부트 2.1)부터** — 그 이전은 FlushMode만 MANUAL ③ MANUAL에서 JPQL 실행 전 자동 플러시는 일어나지 않으며, `IDENTITY` 채번·`@Modifying` 벌크는 SQL이 DB에 도달해 PostgreSQL에서 `25006`으로 거부된다. `LazyConnectionDataSourceProxy`가 없으면 왜 전부 리더로 가는지(커넥션 획득이 readOnly 설정보다 앞선다)를 순서 도식으로 |
+| 14-transaction-isolation-levels.md | 완료 | 세 이상 현상을 전부 두 트랜잭션 × 시간축 타임라인으로. non-repeatable vs phantom을 "같은 행의 값 vs 같은 조건의 행 수 / UPDATE vs INSERT·DELETE" 두 축으로 분리. **비어 있는 `04-rdb-sql` 참조를 지우고 `## 2.`를 자족적 메커니즘 절로 신설** — MVCC xmin/xmax, 스냅샷 가시성 판정, READ COMMITTED=문장마다 새 스냅샷, REPEATABLE READ=첫 문장 스냅샷 고정(BEGIN 아님), SERIALIZABLE=SSI 사후 감지 + `40001` 재시도 필수. PostgreSQL RR이 표준과 달리 phantom까지 막고 write skew만 남는다는 것, MySQL InnoDB는 대비표로만. **스프링 함정 정정** — 조용히 무시되는 경우는 합류 하나뿐이고 나머지는 `InvalidIsolationLevelException`. 재고 차감 네 갈래 비교표. 이모지 22건 제거 |
+| 15-async-annotation.md | 완료 | "큐가 가득 차야 max까지 늘어난다"를 **분기 흐름도**로 도식화 — 부트 기본 큐가 `Integer.MAX_VALUE`라 max 분기에 영영 도달하지 않는다는 인과가 그림 하나로 끝난다. 큐 용량 판단 기준을 계산으로(200ms × core 8 = 40건/초 → 큐 100 = 최악 대기 2.5초). 컨텍스트 미전파 3종을 `ThreadLocal` 저장소 도식으로 **하나의 원인**으로 묶음. Java 21 실행으로 `get()` → `ExecutionException` / `join()` → `CompletionException` 확인. 이모지 13건 제거 |
+| 16-spring-event-transactional-event-listener.md | 완료 | "기본은 동기"의 증거를 스레드 이름 로그 + 리스너 예외가 발행자 트랜잭션을 롤백시키는 코드로 제시. phase 4종을 트랜잭션 타임라인 도식 위에 배치. **원문 사실 오류 정정** — `AFTER_COMMIT` 리스너의 DB 쓰기가 사라지는 이유가 "트랜잭션 동기화가 아직 살아 있어서"라고 돼 있었으나 정반대다. `triggerAfterCompletion`이 `clearSynchronization()`을 **먼저** 부르므로 동기화 목록은 이미 비어 있고, 남은 것은 `cleanupAfterCompletion` 전이라 스레드에 묶인 커넥션/EntityManager 리소스다 — `REQUIRED`인 `save()`가 이미 커밋된 트랜잭션에 참여자로 합류해 스스로 커밋하지 않는 것이 실제 메커니즘. **신규 사실** — `AFTER_COMMIT` 리스너의 예외는 호출자에게 전파되지 않는다(`invokeAfterCompletion`이 `Throwable`을 잡아 로그만 남김 → 컨트롤러는 200 OK) |
+| 17-bean-circular-dependency.md | 완료 | **3단계 캐시**로 필드 주입 순환이 성립하는 11단계 타임라인 신설 + "왜 굳이 3단계인가"(3차가 팩토리인 이유는 AOP 프록시를 조기 참조 시점에만 앞당겨 만들기 위함). 실제 기동 실패 메시지(`┌─────┐` 사이클 박스) 수록. 리팩터링 4종 before/after + 판단 순서도. **정밀화** — "Boot 2.6부터 기본 금지"는 맞으나 소유 주체가 부정확했다. 프레임워크 코어의 `allowCircularReferences` 기본값은 여전히 `true`이고 부트가 뒤집는 것. 이모지 20건 제거 |
+| 19-global-exception-handling-error-response.md | 완료 | 핸들러 선택 3단계 규칙 신설(컨트롤러 로컬 우선 → Advice 순서로 첫 매칭 종료 → 예외 상속 거리 최소) — "순서가 앞선 Advice의 넓은 핸들러가 뒤쪽 구체 핸들러를 통째로 가린다"는 함정을 before/after로. 로그 정책 근거를 계산으로(하루 100만 요청·4xx 2% → error 20,020건 중 조사 대상 20건 = 0.1% → 알람 피로). 공통 `ErrorResponseWriter`를 4곳이 함께 쓰는 통일 방법. Spring 6 `ProblemDetail`/RFC 9457 추가 |
+| 21-bean-validation-vs-domain-validation.md | 완료 | `@Valid`/`@Validated` 4행 비교표(그룹은 `@Validated`만, 중첩 cascade는 `@Valid`만). 불변식 정의, `String email` vs `Email` VO before/after. **원문 사실 오류 정정** — "`@RequestParam` 검증은 클래스에 `@Validated`가 필요하고 `ConstraintViolationException`이 난다"는 **스프링 6.1부터 틀리다**. 내장 메서드 검증이 도입돼 `@Validated` 없이도 돌고 `HandlerMethodValidationException`(400)이 난다. 반대로 클래스에 `@Validated`가 붙으면 내장 검증이 꺼지고 AOP로 넘어간다 — 오케스트레이터가 공식 레퍼런스로 재확인. `@ModelAttribute` 실패도 6.1부터 `MethodArgumentNotValidException`(단 `extends BindException`), `ConstraintViolationException`은 `ResponseEntityExceptionHandler` 기본 목록에 없어 빠뜨리면 500이 나간다 |
+| 34-scheduled-tasks-threading.md | 완료 | 7KB → 38.2KB. 정산 배치 40분 블록을 시간축 도식으로(토큰 정리 8회·통계 4회 미실행 수치화). `fixedDelay`/`fixedRate`/`cron`을 "끝난 시점 vs 예정 시각" 축으로 도식화. ShedLock 세 속성을 "무엇을 막는가"로 풀고 `lockAtMostFor` 만료 중 미완료 시 두 인스턴스 동시 실행 실패 모드를 타임라인으로. **오케스트레이터 지시 교정** — "예외를 던지면 스케줄 등록이 취소된다"는 스프링 `@Scheduled`에서는 틀리다. `ThreadPoolTaskScheduler`가 `errorHandlingTask(task, true)`로 감싸고 기본 핸들러가 로그 후 삼키므로 다음 회차가 계속 돈다(영구 정지는 순수 JDK `ScheduledExecutorService`의 동작). Java 21 실측으로 `fixedRate` 따라잡기(밀린 5회차가 t=551~553ms에 연달아 실행, 동시 실행은 아님)도 수록 |
+| 18-resttemplate-webclient-restclient.md | 완료 | 26KB → 58KB. `.block()`의 스레드 도식으로 "톰캣 스레드는 그대로 묶이고 리액터 스레드만 하나 더 는다"를 보이고 처리량 상한 `200 ÷ 0.2s = 1,000 rps`로 RestTemplate과 동일함을 증명(오케스트레이터 검산 일치). 타임아웃을 연결/읽기/**풀 대기** 세 시계로 구분하고 리틀의 법칙으로 고갈 시점 계산. **사실 정정 2건** — ① "기본 타임아웃은 사실상 무제한"은 부정확(JDK `SimpleClientHttpRequestFactory`·reactor-netty `responseTimeout`은 무한이나 Apache HttpClient 5는 분 단위 기본값이 있다) ② `RestTemplate`은 deprecated가 아니라 유지보수 모드. `ClientHttpRequestFactorySettings` API가 부트 3.4에서 바뀐 점 반영 |
+| 20-spring-cache-cacheable.md | 완료 | 세 애너테이션을 "원본 메서드를 실행하는가" 한 축으로 선행 정리. **키 충돌의 핵심 사실 — 키에 클래스도 메서드도 안 들어간다** — 를 세우고 충돌 3종 시연(같은 클래스의 다른 메서드 → 반환 타입이 같으면 예외조차 없음 / 다른 클래스의 같은 이름 → 관리자용 조회가 마스킹 해제 값을 캐시에 올림 / `find(long)`·`find(Long)`은 프록시에 도달할 땐 둘 다 `Long`). `condition`(실행 전) vs `unless`(실행 후)를 타임라인으로 분리하고 `@CachePut`의 `condition`은 실행 후 평가라는 예외 추가. TTL이 없는 이유를 `Cache` SPI 설계로 답함. `sync=true`의 로컬 한계를 "4대면 4번"으로 수치화 |
+| 33-custom-argument-resolver-auth-user.md | 완료 | **낡은 참조 정정** — `5장` 2건을 `06-filter-vs-interceptor.md`로, `2장`을 절 번호로 교정(`N장` 형식 잔존 0건). `supportsParameter` 결과가 `MethodParameter` 키로 캐싱되어 **사실상 첫 요청에만 불린다** → 요청 내용에 따라 판정을 바꾸면 "가끔만 동작하는" 버그가 된다는 것을 before/after로. **설계 논점 신설** — 검증을 리졸버에 두면 `@AuthUser` 파라미터가 없는 메서드는 리졸버가 호출조차 안 돼 무인증 통과한다는 구멍을 같은 컨트롤러의 두 메서드로 시연(`GET → 401` / `DELETE → 200`). ThreadLocal 오염 t0~t5 타임라인 |
+| 22-external-api-call-inside-transaction.md | 완료 | **시나리오 값 불일치 정정** — 본문은 외부 300ms → 10초로 계산했는데 같은 문서의 관전 포인트("3초")·출제 의도("3초짜리 외부 호출")와 어긋났다. 200ms → 3,000ms 기준으로 전 단계 재계산: W 0.21s → 3.01s, L 10.5개 → 150.5개, 풀 30개 처리 상한 9.97 TPS(초과 40 TPS), 고갈 t=0.6초, 톰캣 포화까지 +4.25초 → **총 약 4.9초**(오케스트레이터 검산 일치). 원문에 없던 시간 축을 전부 신설. 장애 전파 마지막 고리(헬스체크 실패 → 인스턴스 제외 → λ 50→75로 재분배 → 붕괴 가속)를 도식화. 네 가지 실패 조합 표 + 타임아웃을 (A)미도달/(B)처리 중/(C)승인 완료·응답만 유실로 분해. 상태 전이도에 **`UNKNOWN` 신설**(재시도 가능성이 PENDING과 다르다). 이모지 23건 제거 |
+| 23-transactional-outbox-pattern.md | 완료 | 같은 주제 문서가 셋(10장·06-12·06-35) 있어 자리 표를 서두에 넣고 "스프링 구현"으로 초점을 좁힘. **2PC 절 신설** — 가용성이 곱으로 떨어짐(99.9%² = 99.8%, 연간 8.76h → 17.51h, 오케스트레이터 검산 일치), Kafka 트랜잭션과 RabbitMQ 채널 트랜잭션은 브로커 내부 원자성이지 XA가 아니라 참여 자격이 없다. DDL을 PostgreSQL로 재작성(`bigserial`/`jsonb`/`timestamptz`, `WHERE processed_at IS NULL` 부분 인덱스). **중요한 함정 신설** — 릴레이를 "마지막 처리 id 이후"(고수위) 기준으로 만들면 이벤트를 건너뛴다(시퀀스는 INSERT 시점에 할당되나 커밋 순서는 다를 수 있다). CDC를 MySQL binlog → PostgreSQL WAL 논리 디코딩으로 교체. 폴링 릴레이를 CTE + `FOR UPDATE SKIP LOCKED`로, **선점(트랜잭션 안)/발행(트랜잭션 밖)** 분리해 22번 원칙과 충돌 제거(원문 코드는 트랜잭션 안에서 발행했다). RabbitMQ `ConfirmType.CORRELATED` 경로 신설 |
+| 24-transaction-synchronization-connection-binding.md | 완료 | 8.2KB → 43.6KB. `ThreadLocal`을 그 자리에서 정의(값은 `Thread`의 `ThreadLocalMap`에 있고 `ThreadLocal`은 키다)하고 "동기화"라는 이름의 오해까지 풀었다. `dataSource.getConnection()` 직접 호출 함정을 before/after로 — 방금 쓴 값이 안 보임, 커넥션 2개 점유 → 자기 교착, 같은 스레드가 만든 두 트랜잭션의 락 대기는 **데드락 탐지에도 안 걸린다**. 두 스레드의 ThreadLocalMap을 나란히 그린 도식으로 `@Async` 미전파 설명. `registerSynchronization` 콜백 순서 도식 신설 — **언바인딩이 콜백 이후**라는 사실이 `afterCommit`의 JPA 쓰기가 사라지는 이유의 구조적 근거(16번과 정합). **잘못된 링크 정정** — "Outbox는 `16-spring-event-...md` 참고"가 엉뚱한 파일을 가리켜 `23-transactional-outbox-pattern.md`로 수정 |
+| 25-thread-pool-connection-pool-sizing.md | 완료 | Little's law를 식보다 직관 먼저(초당 10명 × 3초 = 30명), 단위 환산을 "실제 시간 1초마다 스레드-시간 50초어치"로 전개. 여유 계수를 **c = L/ρ**로 유도(ρ=0.7 → 1.43배, ρ=0.8 → 1.25배 — 흔히 쓰는 "×1.5"의 정체는 ρ≈0.67). 병목 연쇄 절 신설 — 톰캣 200 + Hikari 10 = 200 TPS 천장, 인스턴스 수 × 풀 크기 vs PostgreSQL `max_connections` 100. HikariCP 공식의 `core_count`가 **DB 서버 코어**임을 별도 강조. **사실 오류 정정** — 원문(27번 포함)의 "DB 대기 중 스레드는 BLOCKED"는 틀렸다. 자바의 `Thread.State.BLOCKED`는 `synchronized` 락 경쟁만 뜻하고 소켓 대기는 `RUNNABLE`로 보인다(장애 중 오진을 부르는 지점). 원문 예제 수치(500 TPS → 톰캣 50 / Hikari 25, CPU 상한 4×1000/8 = 500)는 검산 결과 전부 맞아 유지 |
+| 26-hikaricp-connection-pool-exhaustion.md | 완료 | 6.8KB → 52KB. 표 안에 갇혀 있던 설명을 `###`로 펴고, 고갈의 물리를 `L = λW > c` 하나로 통일해 "원인이 왜 넷뿐인가"를 유도. 예외 로그의 `(total=10, active=10, idle=0, waiting=27)` 괄호 읽는 법 신설. 오래 점유 vs 미반환을 **시계열 그래프 도식 2장**으로 분리. DB 어휘를 PostgreSQL로 전면 정리(`pg_stat_activity` state별 집계, `state_change` 기준 `idle in transaction` 탐지, `pg_blocking_pids()` 역추적, `idle_in_transaction_session_timeout`). **처방 절 신설**(원문은 진단만 하고 끝났다) — 풀 확대가 오답인 이유를 계산으로: W가 50ms→3초면 500 TPS에 커넥션 1,500개 필요(`max_connections` 기본 100). `leakDetectionThreshold` 비용을 "오버헤드 0"이 아니라 "대여마다 예외 객체 1개 + 스케줄 태스크 1개"로 정확히 |
+| 27-webflux-vs-mvc-threading-model.md | 완료 | `## 1.`을 전제 지식 절로 신설 — 블로킹 `read`가 커널 대기 큐에서 스레드를 재우는 그림 → 논블로킹 단독은 폴링이라 더 나쁨 → `epoll`이 준비된 것만 돌려줌 → 이벤트 루프 뼈대 코드. **"CPU를 놓아준 것과 스레드를 놓아준 것은 다르다"**를 문서 전체의 축으로. **핵심 수치 신설(검산 완료)** — 50ms 블로킹 감당량이 이벤트 루프 4개 = 80 TPS vs 톰캣 200스레드 = 4,000 TPS로 **50배** 차이라, "이점이 사라진다"가 아니라 "80 TPS만 흘러도 선다"로 격상. 우회로 `boundedElastic`(40) = 800 TPS라 **MVC보다 5배 좁다**는 대비 추가. **오케스트레이터 지시 교정** — 블로킹 소스 격리는 `publishOn`이 아니라 `subscribeOn`이어야 맞다(원문이 옳았다). **깨진 링크 수정** — `17-parallelstream-pitfalls.md`가 02-spring을 가리키고 있어 `01-java-kotlin/`으로 |
+| 31-spring-security-filter-chain-authentication.md | 완료 | 7.9KB → 54KB. 인증("누구인가")과 인가("이걸 해도 되는가")를 먼저 깔고 그것이 그대로 필터 배치가 된다는 인과를 세움. 3층의 존재 이유를 각각 밝힘 — `DelegatingFilterProxy`는 "컨테이너가 만드는 필터가 스프링 빈을 못 쓴다"는 간극의 다리, `FilterChainProxy`는 "경로마다 인증 방식이 다른 것이 정상"이라 체인을 고르는 물건. "첫 체인 하나만 실행"을 본문으로 올려 `/api/**`가 `/api/admin/**`를 가려 관리자 API가 열리는 사고를 before/after로. **원문 보강** — `SecurityContextHolderFilter`는 **6.0부터 자동 저장을 하지 않는다**(`saveContext` 명시 호출 필요). 5.x→6.x 마이그레이션에서 인증이 다음 요청에 사라지는 회귀의 원인인데 원문에 없었다. 6의 `AuthorizationFilter`가 ERROR 디스패치에서도 인가를 재수행해 401 대신 403이 나가는 함정도 신설. 커스텀 필터 예외가 `ExceptionTranslationFilter`를 못 만나고 톰캣 `/error`로 새는 함정 추가. 오케스트레이터가 `DEFAULT_FILTER_ORDER = -100`을 바이트코드로 확인 |
+| 35-ai-code-transaction-review-checklist.md | 완료 | 각 항목을 **찾는 대상(ripgrep 명령까지) → AI 결함 코드 → 고침 → 테스트가 못 잡는 이유** 4단으로 재편. **가장 중요한 신설** — `@Transactional` 롤백 테스트가 4항목을 전부 덮는다는 것을 "테스트가 물리 트랜잭션을 먼저 열면 서비스 선언은 합류가 된다"는 한 원인으로 통합 설명(자기 호출은 `isActualTransactionActive()`가 `true`로 나오고, `UnexpectedRollbackException`은 커밋 시도가 없어 발생 불가, `readOnly=true`는 합류하며 무시). 자동화 가능(ArchUnit, 테스트 프로파일 `ClientHttpRequestInterceptor`로 트랜잭션 안 외부 호출 런타임 탐지) vs 사람 판단 분리. 07·11번의 신규 사실 반영 — 6.2 `rollbackOn = ALL_EXCEPTIONS`가 켜져 있으면 항목별 `rollbackFor` 점검이 프로젝트 설정 확인 한 번으로 대체된다는 절차 변화, OSIV로 변경 감지 UPDATE가 증발하면 부분 커밋조차 안 남아 대사 배치로도 못 잡는다는 대비. 이모지 17건 제거 |
+| 28-graceful-shutdown-zero-downtime-deploy.md | 완료 | 경로 A(kubelet→SIGTERM)와 경로 B(EndpointSlice→kube-proxy→인그레스→LB)가 갈리는 **초 단위 타임라인 도식** 신설 — t=0.06s~6.0s 사이 약 3,000건 실패까지 계산. preStop sleep을 "정리 시간이 아니라 멀쩡한 채 기다려주는 시간"으로 명확화(sleep 유/무 대비). 시간 예산을 기본값 그대로 뒀을 때 SIGKILL이 먼저 오는 과정까지 계산. **사실 정정(중요)** — 원문의 "기본값은 `immediate`"는 **부트 3.4부터 틀리다**(3.4 릴리스 노트가 graceful shutdown 기본 활성화를 명시, 3.3 이하는 `immediate`). 오케스트레이터가 릴리스 노트로 재확인. 쿠버네티스 문서 검증 2건 추가 — 유예 기간 카운트다운은 preStop **실행 전에** 시작되고(preStop 시간이 예산에서 차감됨), 초과 시 2초 일회성 연장 뒤 SIGKILL. 이모지 18건 제거 |
+| 30-actuator-endpoints-security.md | 완료 | 넓게 터진 표를 엔드포인트 + 한 줄 용도만 남기고 `###`로 폄. **활성화(enabled)와 노출(exposure) 구분**을 선행. `/heapdump` 위험을 5단계 공격 시나리오(스캐너 → 300MB 다운로드 → 문자열 검색 → 세션 토큰 → 인증 우회)로 — "애플리케이션 취약점이 하나도 필요 없다". `/actuator/loggers`가 POST 쓰기 엔드포인트임을 별도로 세움. **사실 정정(중요)** — "부트가 `password`/`secret` 류를 마스킹하지만 규약 밖 키는 노출"은 **부트 2.x 이야기다**. 3.0부터 `/env`·`/configprops`는 `show-values` 기본 `never`로 값 전부 마스킹이고, 3.x에서 남는 위험은 값이 아니라 프로퍼티 이름·소스 구조가 새는 정찰 정보다. **함정 2건 신설** — ① `management.server.port` 분리 시 관리 포트가 자식 컨텍스트라 메인 시큐리티 필터 체인이 자동 적용되지 않는다 ② `ManagementWebSecurityAutoConfiguration`은 `@ConditionalOnDefaultWebSecurity`라 **내 `SecurityFilterChain`을 하나라도 정의하면 물러난다** — 실무 앱 대부분에서 "시큐리티 붙였으니 actuator는 보호됨"이 거짓. 섹션 순서 뒤집힘(꼬리질문 뒤에 `## 5.`) 정상화 |
+| 32-slow-application-startup-diagnosis.md | 완료 | 7.5KB → 50.7KB. 운영 맥락을 계산으로 선행(10파드 × 30초 = 5분 vs 90초 = 15분, 롤백도 같은 시간, **startupProbe 예산 초과 시 무한 재시작 루프**). 진단을 3층(로그 → `/actuator/startup` → 스레드 덤프)으로 세우고 `ApplicationStartup`을 스레드 덤프 **앞자리**로 승격(원문은 얇게만 언급). GET(스냅샷) vs POST(드레인) 구분 추가. 기동 중 스레드 덤프 뜨는 법을 급할 때 쓰는 순서로 구체화(`kill -3` → stdout → `kubectl logs` 회수 / jdk 베이스 이미지 / `jattach` / `kubectl debug --target`). **통념 정정** — HikariCP는 기동 시 `minimumIdle`만큼 미리 만들지 않는다. `checkFailFast`가 동기적으로 **1개만** 만들고 나머지는 하우스키퍼가 비동기로 채운다(기동을 붙잡는 것은 개수가 아니라 첫 한 개의 확보 시간). `initialSize`만큼 미리 만드는 것은 Tomcat JDBC/DBCP2 쪽 이야기 |
+
+### 02-spring 마감 검증
+
+35건 전부 `verify.pl [OK]` / `cmp.py 0 diff`. 이모지 0건, 섹션 전부 `## 0.`~`## 4.` + `## 한 줄 요약`, 하드랩 전부 해제.
+마크다운 링크 57건과 백틱 파일 참조 149건 전부 실재 확인(깨진 링크 0건). `04-rdb-sql` 참조 0건.
+
+에이전트가 원문에서 잡아 고친 사실 오류가 누적 20여 건이고, 그중 **오케스트레이터 지시가 틀렸던 것이 5건**이다
+(`@Transactional` public 한정 / `spring.profiles` 조용한 무시 / `@Scheduled` 예외 시 스케줄 취소 / 블로킹 소스 격리 `publishOn` / 이모지 집계).
+버전 의존 사실은 스프링 프레임워크 6.x·부트 3.x 기준임을 각 문서에 명시했다.
+
+### 다음 세션 인수인계
+
+남은 것은 **03-jpa-orm 27건**뿐이다(04-rdb-sql은 비어 있다). 이 장은 평균 48KB로 이미 깊이가 있으므로
+"전면 재작성"이 아니라 **설명 방식 조정 + 하드랩 해제 + 섹션 0~4 재편** 위주다. 착수 전 `verify.pl`로 사전 진단을 뜰 것.
+02-spring의 트랜잭션 문서들(07·11·12·13·22·24)이 JPA 내용을 상당히 참조하므로 상호 링크를 맞춰야 한다.
