@@ -70,7 +70,13 @@ ack을 보내려면 "어느 메시지"인지 지목해야 한다. 그 지목에 
 
 **단조 증가한다.** 그래서 `multiple=true` 옵션으로 "이 태그까지 전부 ack"이라는 일괄 확인이 가능하다. 배치 처리에서 왕복을 줄이는 수단이지만, 중간에 실패한 건이 섞여 있으면 그것까지 완료로 처리해버리므로 주의해야 한다.
 
-## 2. ack의 세 가지 모드와 그 대가
+## 2. ack/nack의 모드와 그 대가
+
+1절에서 본 상태 전이에는 갈래가 둘이었다. **ack은 "지워도 된다"이고 nack/reject는 "지우지 말라"다.** 그런데 "지우지 말라" 쪽은 한 갈래가 더 있다 — 큐로 되돌릴 것인가(requeue), 아니면 버리거나 DLX로 넘길 것인가.
+
+이 절은 그 선택지 전체를 훑는다. 먼저 ack을 어떤 모드로 보낼 것인가(2-1 auto-ack, 2-2 manual ack), 그 모드가 Spring AMQP에서 어떤 이름으로 나타나는가(2-3), 그리고 **nack의 requeue 여부를 잘못 골랐을 때 시스템이 통째로 멈춘 실제 사고(2-4)**다.
+
+마지막 것이 여기에 붙는 이유를 짚어두자. 3절의 prefetch는 "몇 개나 미리 받을 것인가"의 문제이고 무한 루프와 무관하다. 무한 루프는 **`basic.nack(requeue=true)`이라는 ack/nack 선택 하나에서 나오는 사고**이므로, 그 선택지를 설명한 바로 다음 자리가 제 위치다.
 
 ### 2-1. auto-ack — 보내는 순간 지운다
 
@@ -107,7 +113,7 @@ public void handle(Message msg, Channel channel,
         settlementService.settle(parse(msg)); // DB 커밋까지 완료
         channel.basicAck(tag, false);         // 그 다음에 완료 신고
     } catch (RetryableException e) {
-        // 일시적 실패: 큐로 되돌려 재시도 (단, 무한 루프 주의 — 3-2 참고)
+        // 일시적 실패: 큐로 되돌려 재시도 (단, 무한 루프 주의 — 2-4 참고)
         channel.basicNack(tag, false, true);
     } catch (Exception e) {
         // 영구적 실패: 되돌리지 말고 DLX로 보낸다
@@ -131,6 +137,75 @@ Spring AMQP에는 모드가 셋 있고, 이름 때문에 가장 많이 오해받
 즉 **Spring의 `AUTO`는 AMQP의 auto-ack이 아니라 "프레임워크가 대신 눌러주는 manual ack"**이다. 안전한 기본값이며, 대부분의 경우 이걸 쓰면 된다.
 
 `MANUAL`이 필요한 경우는 제한적이다. 여러 메시지를 모아 한 번에 ack하고 싶거나(`multiple=true`), 리스너 메서드 밖(비동기 콜백 등)에서 완료 시점이 결정될 때다. 필요 없는데 `MANUAL`로 두면 **ack을 빠뜨리는 실수**가 생기고, 그 메시지는 컨슈머가 살아 있는 한 영원히 Unacked에 남아 큐를 막는다.
+
+### 2-4. 실무 사고 — requeue 무한 루프
+
+2-2의 코드에는 `basicNack(tag, false, true)`라는 줄이 있었다. 세 번째 인자가 requeue 여부이고, `true`는 "이 메시지를 큐로 되돌려라"다. 이 한 개의 불리언이 잘못 켜져 있을 때 무슨 일이 벌어지는지가 이 항목이다.
+
+#### 증상
+
+배포 직후 CPU가 100%로 튀었는데 처리량은 0이다. 큐 깊이는 그대로이고, 컨슈머 로그에는 같은 에러가 초당 수천 줄씩 쏟아진다.
+
+#### 원인
+
+컨슈머가 처리에 실패해 메시지를 큐로 되돌리고(requeue), 큐가 곧바로 다시 배달하고, 또 실패하고, 또 되돌리는 순환이다. **실패 원인이 그 메시지 자체에 있으므로(파싱 불가, 필수 필드 누락) 몇 번을 재시도해도 결과가 같다.**
+
+```
+[컨슈머] 수신 -> 파싱 실패 -> nack(requeue=true)
+    ^                                |
+    +--------- 즉시 재배달 -----------+
+   지연 없음. 초당 수천 회 반복. CPU 100%.
+```
+
+여기서 결정적인 함정은 **Spring AMQP의 기본값이 requeue=true**라는 것이다(`spring.rabbitmq.listener.simple.default-requeue-rejected`의 기본값이 true). 리스너에서 예외를 던지면 프레임워크가 자동으로 requeue하므로, **아무 설정도 하지 않은 상태에서 파싱 불가 메시지 하나가 들어오면 즉시 이 루프에 빠진다.**
+
+#### 대응
+
+```yaml
+# 1) 되돌리지 않도록 기본값을 바꾼다 — 실패 시 DLX로 넘어간다
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        default-requeue-rejected: false
+        retry:
+          enabled: true          # 컨슈머 내부에서 제한된 횟수만 재시도
+          max-attempts: 3
+          initial-interval: 1s
+          multiplier: 2          # 재시도 간격이 1s -> 2s로 늘어난다
+                                 # (max-attempts 3 = 첫 시도 + 재시도 2회이므로 대기는 두 번)
+```
+
+```java
+// 2) 예외 종류로 갈라 판단한다 — 되돌릴 가치가 있는 실패인가
+try {
+    handler.handle(event);
+    channel.basicAck(tag, false);
+} catch (TransientException e) {
+    // DB 커넥션 끊김, 외부 API 타임아웃 -> 시간이 지나면 성공할 수 있다
+    channel.basicNack(tag, false, true);
+} catch (Exception e) {
+    // 파싱 실패, 유효성 위반 -> 몇 번을 해도 같다. 즉시 격리한다
+    channel.basicNack(tag, false, false); // DLX로 이동
+}
+```
+
+`AmqpRejectAndDontRequeueException`을 던지면 Spring이 requeue 없이 거부하므로, 예외 타입만으로 같은 분기를 표현할 수도 있다.
+
+**핵심 원칙은 "즉시 무한 재시도는 재시도가 아니라 장애"**라는 것이다. 재시도에는 반드시 **횟수 상한**과 **지연(백오프)**이 있어야 하고, 상한을 넘으면 **DLQ로 격리**해야 한다. 이 설계는 `14-rabbitmq-retry-dlx-dlq.md`에서 전개한다.
+
+#### 같은 상황이 Kafka에서는 어떻게 보이는가
+
+이 사고는 RabbitMQ의 모델에서만 이런 모습으로 나타난다. Kafka 컨슈머는 실패한 메시지를 브로커로 **되돌릴 수단 자체가 없다** — 오프셋을 커밋하지 않고 같은 자리를 다시 읽을 뿐이다.
+
+그래서 증상이 정반대가 된다. CPU가 타는 대신 **그 파티션의 진도가 멈춰 뒤의 메시지가 전부 밀린다.** 1-2에서 본 poison pill이 이것이다.
+
+```
+RabbitMQ:  실패한 1건이 큐 앞으로 돌아와 초당 수천 번 재배달  -> 시스템을 태운다
+Kafka   :  실패한 1건에서 오프셋이 멈춤                        -> 뒤를 전부 세운다
+```
+
+대응도 이 차이를 따라 갈린다. RabbitMQ는 **requeue를 끄고 그 한 건만 DLX로 빼내면** 나머지는 그대로 흘러가지만, Kafka는 진도를 전진시켜야 하므로 **문제 메시지를 재시도 토픽으로 옮겨 담고 오프셋을 넘긴다**(`23-offset-commit-and-auto-commit-risk.md`, `25-consumer-retry-dlq-design.md`). 1절에서 본 "메시지 단위 추적 vs 연속 진도"의 차이가 장애 대응 절차로까지 이어지는 것이다.
 
 ## 3. prefetch(QoS) — 미리 받아두는 양
 
@@ -195,60 +270,7 @@ prefetch를 키우면 **재시도 시 순서가 더 크게 흐트러진다.**
 
 **"prefetch를 키우면 처리량이 오르지만, 실패가 섞이는 순간 순서가 무너진다"**는 인과를 아는 것이 시니어 신호다. (가산점 포인트) 순서가 중요한 큐라면 prefetch를 1로 두고 컨슈머도 하나만 두어야 한다. 자세한 내용은 `15-rabbitmq-message-ordering.md`에서 다룬다.
 
-## 4. 실무 사고 — requeue 무한 루프
-
-### 4-1. 증상
-
-배포 직후 CPU가 100%로 튀었는데 처리량은 0이다. 큐 깊이는 그대로이고, 컨슈머 로그에는 같은 에러가 초당 수천 줄씩 쏟아진다.
-
-### 4-2. 원인
-
-컨슈머가 처리에 실패해 메시지를 큐로 되돌리고(requeue), 큐가 곧바로 다시 배달하고, 또 실패하고, 또 되돌리는 순환이다. **실패 원인이 그 메시지 자체에 있으므로(파싱 불가, 필수 필드 누락) 몇 번을 재시도해도 결과가 같다.**
-
-```
-[컨슈머] 수신 -> 파싱 실패 -> nack(requeue=true)
-    ^                                |
-    +--------- 즉시 재배달 -----------+
-   지연 없음. 초당 수천 회 반복. CPU 100%.
-```
-
-여기서 결정적인 함정은 **Spring AMQP의 기본값이 requeue=true**라는 것이다(`spring.rabbitmq.listener.simple.default-requeue-rejected`의 기본값이 true). 리스너에서 예외를 던지면 프레임워크가 자동으로 requeue하므로, **아무 설정도 하지 않은 상태에서 파싱 불가 메시지 하나가 들어오면 즉시 이 루프에 빠진다.**
-
-### 4-3. 대응
-
-```yaml
-# 1) 되돌리지 않도록 기본값을 바꾼다 — 실패 시 DLX로 넘어간다
-spring:
-  rabbitmq:
-    listener:
-      simple:
-        default-requeue-rejected: false
-        retry:
-          enabled: true          # 컨슈머 내부에서 제한된 횟수만 재시도
-          max-attempts: 3
-          initial-interval: 1s
-          multiplier: 2          # 1s -> 2s -> 4s 백오프
-```
-
-```java
-// 2) 예외 종류로 갈라 판단한다 — 되돌릴 가치가 있는 실패인가
-try {
-    handler.handle(event);
-    channel.basicAck(tag, false);
-} catch (TransientException e) {
-    // DB 커넥션 끊김, 외부 API 타임아웃 -> 시간이 지나면 성공할 수 있다
-    channel.basicNack(tag, false, true);
-} catch (Exception e) {
-    // 파싱 실패, 유효성 위반 -> 몇 번을 해도 같다. 즉시 격리한다
-    channel.basicNack(tag, false, false); // DLX로 이동
-}
-```
-
-`AmqpRejectAndDontRequeueException`을 던지면 Spring이 requeue 없이 거부하므로, 예외 타입만으로 같은 분기를 표현할 수도 있다.
-
-**핵심 원칙은 "즉시 무한 재시도는 재시도가 아니라 장애"**라는 것이다. 재시도에는 반드시 **횟수 상한**과 **지연(백오프)**이 있어야 하고, 상한을 넘으면 **DLQ로 격리**해야 한다. 이 설계는 `14-rabbitmq-retry-dlx-dlq.md`에서 전개한다.
-
-## 5. 꼬리질문 대비 포인트
+## 4. 꼬리질문 대비 포인트
 
 ### "ack을 보내기 전에 컨슈머가 죽으면 메시지는 어떻게 되나요?"
 

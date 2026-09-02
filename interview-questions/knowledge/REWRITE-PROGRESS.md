@@ -10,14 +10,14 @@
 | 디렉토리 | 건수 | 완료 | 상태 |
 |---|---|---|---|
 | 05-redis-caching | 27 | 27 | 완료 |
-| 06-messaging | 36 | 24 | 부분 (RabbitMQ 12건 구조 미달) |
+| 06-messaging | 36 | 36 | 완료 |
 | 07-traffic-performance | 23 | 23 | 완료 |
 | 08-network-http | 22 | 22 | 완료 |
 | 09-rest-api | 18 | 18 | 완료 |
 | 01-java-kotlin | 32 | 32 | 완료 |
 | 02-spring | 35 | 35 | 완료 |
 | 03-jpa-orm | 27 | 0 | 대기 (이미 깊이 있음 — 조정 위주) |
-| 04-rdb-sql | 35 | — | **디렉토리가 비었다** (커밋 `8deef26`에서 35건 삭제) |
+| 04-rdb-sql | 35 | 0 | 대기 (이미 깊이 있음 — 조정 위주). `8deef26`의 삭제는 `f1b2a4f`로 revert되어 35건 복구됨 |
 
 ## 작업 규약 (세션이 끊겨도 동일하게 이어간다)
 
@@ -60,9 +60,11 @@
 | 26-cold-cache-and-cache-warming.md | 완료 |
 | 27-multi-exec-watch-vs-lua.md | 완료 |
 
-## 06-messaging (24/36 — RabbitMQ 12건 구조 미달)
+## 06-messaging (36/36 — 완료)
 
 > 2026-09-02 질문지 재편(MQ 공통 → RabbitMQ → Kafka)에 맞춰 파일 번호를 01~36으로 재부여했다. 아래 표는 **새 번호** 기준이다.
+>
+> 같은 날 RabbitMQ 12건(10~20·34)의 구조를 정리해 36건 전부 `0 → 1 → 2 → 3 → 4 → 한 줄 요약` 규약에 맞췄다. 본문 섹션이 4~7개이던 것을 셋으로 합치면서, 헤딩만 강등해 이어붙이지 않고 새 부모 섹션의 도입 문단으로 "왜 이 둘이 한 섹션인가"를 밝히는 방식을 썼다. 02번의 번호 없는 h2(RabbitMQ 문서 지도)는 `### 3-3.`으로 강등했다.
 
 | 파일 | 상태 |
 |---|---|
@@ -75,17 +77,17 @@
 | 07-eventual-consistency-ux.md | 완료 |
 | 08-saga-choreography-orchestration-compensation.md | 완료 |
 | 09-large-payload-claim-check.md | 완료 |
-| 10-rabbitmq-core-components.md | 구조 미달 |
-| 11-rabbitmq-exchange-types-routing.md | 구조 미달 |
-| 12-rabbitmq-ack-nack-prefetch.md | 구조 미달 |
-| 13-rabbitmq-durability-publisher-confirms.md | 구조 미달 |
-| 14-rabbitmq-retry-dlx-dlq.md | 구조 미달 |
-| 15-rabbitmq-message-ordering.md | 구조 미달 |
-| 16-rabbitmq-consumer-throughput-prefetch.md | 구조 미달 |
-| 17-classic-vs-quorum-queue.md | 구조 미달 |
-| 18-rabbitmq-queue-backlog-diagnosis.md | 구조 미달 |
-| 19-rabbitmq-delayed-message-scheduling.md | 구조 미달 |
-| 20-rabbitmq-outbox-polling-publisher.md | 구조 미달 |
+| 10-rabbitmq-core-components.md | 완료 |
+| 11-rabbitmq-exchange-types-routing.md | 완료 |
+| 12-rabbitmq-ack-nack-prefetch.md | 완료 |
+| 13-rabbitmq-durability-publisher-confirms.md | 완료 |
+| 14-rabbitmq-retry-dlx-dlq.md | 완료 |
+| 15-rabbitmq-message-ordering.md | 완료 |
+| 16-rabbitmq-consumer-throughput-prefetch.md | 완료 |
+| 17-classic-vs-quorum-queue.md | 완료 |
+| 18-rabbitmq-queue-backlog-diagnosis.md | 완료 |
+| 19-rabbitmq-delayed-message-scheduling.md | 완료 |
+| 20-rabbitmq-outbox-polling-publisher.md | 완료 |
 | 21-kafka-core-components.md | 완료 |
 | 22-partition-vs-consumer-count.md | 완료 |
 | 23-offset-commit-and-auto-commit-risk.md | 완료 |
@@ -99,7 +101,7 @@
 | 31-consumer-lag-diagnosis-and-resolution.md | 완료 |
 | 32-partition-increase-side-effects.md | 완료 |
 | 33-bulk-replay-isolation.md | 완료 |
-| 34-rabbitmq-to-kafka-migration.md | 구조 미달 |
+| 34-rabbitmq-to-kafka-migration.md | 완료 |
 | 35-max-poll-interval-vs-session-timeout.md | 완료 |
 | 36-log-compaction-compacted-topic.md | 완료 |
 
@@ -168,7 +170,7 @@
 ## 기계 검증
 
 `/private/tmp/.../scratchpad/verify.py` 로 구조 6요소·섹션 번호 연속성·이모지·하드랩 해제·꼬리질문 표기를 확인한다.
-06-messaging의 공통·Kafka 24건(새 번호 01~09·21~33·35~36)은 전부 통과한다(기준선). RabbitMQ 12건(새 번호 10~20·34, 커밋 `3ff7425`)은 `## 5.`~`## 7.`까지 쓰는 다른 관례라 이 검증에서는 실패로 나온다 — 별도 판단 사항.
+06-messaging은 36건 전부 통과한다. RabbitMQ 12건(새 번호 10~20·34)이 `## 5.`~`## 7.`까지 쓰던 것을 2026-09-02에 정리해 해소했다.
 
 ## 08-network-http (22/22) — 완료
 
@@ -479,8 +481,8 @@ KST 23:59:59 = `14:59:59Z`.
 
 ### 장 밖에서 발견한 것
 
-- **04-rdb-sql이 비었다.** 커밋 `8deef26`("4장 knowledge 문서 35건 삭제")로 디렉토리가 비어 있다. 재작성 대상 243건 중 35건이 사라진 셈이라 남은 범위는 02-spring 35건 + 03-jpa-orm 27건이다.
-- **06-messaging에 12건이 기준 미달이다.** 24건 완료로 기록돼 있으나 현재 36건이 있다. RabbitMQ 12건(새 번호 10~20·34)이 나중에 추가됐고, 이 중 11건은 꼬리질문이 `## 5.`에 있어 0~4 규약에서 벗어난다. 02번(kafka-vs-rabbitmq)에는 번호 없는 h2가 하나 있다. 내용 자체는 새 기준으로 쓰인 것으로 보이므로 구조 정리만 필요하다.
+- ~~**04-rdb-sql이 비었다.**~~ 커밋 `8deef26`("4장 knowledge 문서 35건 삭제")로 비었다고 기록했으나, 이후 `f1b2a4f`로 revert되어 **35건이 복구돼 있다**(2026-09-02 실측). 이 항목은 해소됐다.
+- ~~**06-messaging에 12건이 기준 미달이다.**~~ 2026-09-02에 해소했다. RabbitMQ 12건(10~20·34)의 본문 섹션을 셋으로 합치고 꼬리질문을 `## 4.`로 내렸으며, 02번의 번호 없는 h2도 `### 3-3.`으로 강등했다. 진단대로 내용 자체는 새 기준으로 쓰여 있어 구조 정리와 합치는 과정의 서술 보강만 했다.
 
 ### 파일별 현황
 

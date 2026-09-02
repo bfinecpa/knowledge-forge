@@ -45,7 +45,7 @@
 |---|---|---|
 | (A) 발행 자체가 안 됨 | **Outbox 패턴** (브로커 설정으로 불가) | `20-rabbitmq-outbox-polling-publisher.md` |
 | (B) 도달 여부 모름 | **publisher confirms** | 이 문서 3절 |
-| (C) 라우팅 실패 | **mandatory + return** 또는 alternate exchange | 이 문서 4절 |
+| (C) 라우팅 실패 | **mandatory + return** 또는 alternate exchange | 이 문서 3-5 |
 | (D) 메시지 소멸 | **persistent message** | 이 문서 2-2 |
 | (E) 큐 소멸 | **durable queue** | 이 문서 2-1 |
 | (F) 처리 중 사망 | **manual ack** | `12-rabbitmq-ack-nack-prefetch.md` |
@@ -127,7 +127,11 @@ durable 큐 + transient 메시지   -> 큐는 복원, 메시지는 소멸
 
 **"단일 노드에서는 persistent가 최선이고, 그 이상을 원하면 복제로 가야 한다"**는 계단을 말할 수 있으면 내구성의 층위를 이해하고 있는 것이다. (가산점 포인트)
 
-## 3. publisher confirms — 프로듀서 쪽의 눈
+## 3. publisher confirms — 프로듀서 쪽의 눈, 그리고 셋을 다 켜도 남는 구멍
+
+1절에서 나눈 여섯 구간 중 2절이 막은 것은 (D)와 (E) 둘이다. 브로커에 **이미 도착한** 메시지를 재시작 너머까지 살려두는 이야기였다. 남은 것은 도착 이전과 도착 이후다.
+
+이 절은 먼저 구간 (B) — "보내긴 했는데 브로커에 닿았는지 프로듀서가 모른다"는 문제를 publisher confirms로 막고, 그다음 durable·persistent·confirms 셋이 다 갖춰진 뒤에도 남는 구멍 둘을 이어서 본다. 순서가 이렇게 되는 데는 이유가 있다. 셋 중 하나라도 꺼져 있으면 유실의 원인이 전부 그쪽으로 설명되어 버려서, 라우팅 실패 (C)나 DB 커밋과 발행 사이의 공백 (A) 같은 잔여 위험은 아예 시야에 들어오지 않는다. **잔여 위험은 기본을 다 켠 뒤에야 보인다** — 그래서 셋째 장치와 그 뒤에 남는 것을 한 절에 묶었다.
 
 ### 3-1. 왜 필요한가
 
@@ -151,7 +155,7 @@ confirm이 돌아오는 시점은 브로커가 **책임을 넘겨받았다고 �
 spring:
   rabbitmq:
     publisher-confirm-type: correlated  # 어떤 발행에 대한 응답인지 식별자로 연결
-    publisher-returns: true             # 라우팅 실패 메시지를 되돌려받는다 (4절)
+    publisher-returns: true             # 라우팅 실패 메시지를 되돌려받는다 (3-5)
 ```
 
 ```java
@@ -208,11 +212,9 @@ AMQP에는 `tx.select` / `tx.commit`이라는 트랜잭션 기능도 있다. 발
 
 **"확실성을 얻는 방법이 둘인데, 동기 방식은 느려서 비동기 방식(confirms)이 사실상 표준이 되었다"**로 정리하면 된다.
 
-## 4. 셋을 다 켜도 남는 구멍 둘
+### 3-5. confirm은 "라우팅됐다"는 뜻이 아니다
 
-### 4-1. confirm은 "라우팅됐다"는 뜻이 아니다
-
-가장 중요한 함정이다. **라우팅 대상 큐가 0개여도 브로커는 정상 confirm(ack)을 돌려준다.**
+여기서부터가 durable·persistent·confirms를 전부 켠 뒤에도 남는 구멍이다. 둘 중 첫째이자 가장 중요한 함정은 이것이다. **라우팅 대상 큐가 0개여도 브로커는 정상 confirm(ack)을 돌려준다.**
 
 브로커 입장에서는 라우팅 규칙을 적용했고 결과가 "대상 없음"이었을 뿐, 오류가 아니다. 그래서 프로듀서는 "성공적으로 발행했다"고 기록하지만 **메시지는 어디에도 없다.**
 
@@ -227,9 +229,9 @@ AMQP에는 `tx.select` / `tx.commit`이라는 트랜잭션 기능도 있다. 발
 
 브로커 쪽 대안은 **alternate exchange**다. 라우팅에 실패한 메시지를 지정한 대체 exchange로 흘려보내 별도 큐에 모으는 방식이며, 프로듀서 코드 없이 동작하고 프로듀서가 죽어도 메시지가 남는다는 장점이 있다. 자세한 내용은 `10-rabbitmq-core-components.md`에 있다.
 
-### 4-2. DB 커밋과 발행 사이의 구간
+### 3-6. DB 커밋과 발행 사이의 구간
 
-마지막 구멍은 브로커 설정으로 **절대** 못 막는다.
+둘째이자 마지막 구멍은 브로커 설정으로 **절대** 못 막는다. 구간 (A) — 프로듀서 앱 안에서 DB 커밋과 발행 사이가 벌어지는 자리다.
 
 ```java
 @Transactional
@@ -247,7 +249,7 @@ public void completePayment(Long orderId) {
 
 **면접에서 이 구간을 스스로 꺼내는 것이 중요하다.** "durable, persistent, confirms를 다 켜도 DB와 브로커 사이의 원자성은 남습니다"라고 덧붙이면, 설정 나열이 아니라 문제의 경계를 아는 답이 된다.
 
-## 5. 꼬리질문 대비 포인트
+## 4. 꼬리질문 대비 포인트
 
 ### "persistent를 켜면 성능이 얼마나 떨어지나요?"
 
