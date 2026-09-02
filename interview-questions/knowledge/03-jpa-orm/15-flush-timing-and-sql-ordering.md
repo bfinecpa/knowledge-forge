@@ -1,6 +1,6 @@
 # flush 시점과 쓰기 지연 SQL 실행 순서 — 코드 순서는 실행 순서가 아니다
 
-> 핵심 관전 포인트: flush가 일어나는 시점은 **세 가지**다 — ① **트랜잭션 커밋 직전**(자동) ② **JPQL·Criteria·네이티브 쿼리를 실행하기 직전**(auto-flush, 아직 DB에 안 보낸 변경분 때문에 쿼리 결과가 틀리는 것을 막으려고) ③ **`em.flush()` 명시 호출**. 여기서 사람들이 놓치는 **비대칭**이 하나 있다 — **`findById`는 flush를 유발하지 않는다.** auto-flush는 "이 쿼리가 건드리는 테이블(**query space**)에 미반영 변경이 있는가"를 판정해서 결정하는데, `em.find()`는 PK 조회라 **그 판정 경로 자체를 타지 않는다. 1차 캐시에 있든 없든 마찬가지다.** 그래서 같은 트랜잭션에서 `findByName`은 flush를 부르고 `findById`는 안 부른다. 그리고 flush가 실제로 SQL을 내보낼 때, **순서는 내가 코드에 쓴 순서가 아니라 Hibernate가 `ActionQueue`에 고정해 둔 타입별 순서**다 — `orphanRemoval → INSERT → UPDATE → 컬렉션 삭제 → 컬렉션 갱신 → 컬렉션 생성 → **DELETE**`. **DELETE가 항상 맨 마지막**이고, 이유는 ① FK 제약 위반을 줄이려는 의도 ② **같은 종류의 SQL을 몰아야 JDBC 배치가 먹히기** 때문이다. 그래서 "지우고 넣기"가 실제로는 "넣고 지우기"가 되어 유니크 제약을 위반한다. 최선의 처방은 `flush()`를 끼워 넣는 것이 아니라 **애초에 DELETE+INSERT를 UPDATE로 바꾸는 것**이다. 같은 원리의 더 나쁜 얼굴이 **데드락**인데, 이건 **Hibernate가 순서를 지켜주지 않으므로 반드시 PK 정렬로 코드에 고정**해야 한다. 마지막으로 이 유형은 **배포 전에 기계로 잡을 수 있다** — **p6spy로 실제 SQL 순서 관측** + **`@DataJpaTest`의 롤백이 커밋 시점 문제를 숨기므로 `@Commit`/`TestTransaction`으로 실제 커밋** + **H2 대신 Testcontainers로 실제 DB**.
+> 핵심 관전 포인트: flush가 일어나는 시점은 **세 가지**다 — ① **트랜잭션 커밋 직전**(자동) ② **JPQL·Criteria·네이티브 쿼리를 실행하기 직전**(auto-flush, 아직 DB에 안 보낸 변경분 때문에 쿼리 결과가 틀리는 것을 막으려고) ③ **`em.flush()` 명시 호출**. 여기서 사람들이 놓치는 **비대칭**이 하나 있다 — **`findById`는 flush를 유발하지 않는다.** auto-flush는 "이 쿼리가 건드리는 테이블 집합(**query space**)에 미반영 변경이 있는가"를 판정해서 결정하는데, `em.find()`는 PK 조회라 **그 판정 경로 자체를 타지 않는다. 1차 캐시에 있든 없든 마찬가지다.** 그래서 같은 트랜잭션에서 `findByName`은 flush를 부르고 `findById`는 안 부른다. 그리고 flush가 실제로 SQL을 내보낼 때, **순서는 내가 코드에 쓴 순서가 아니라 Hibernate가 `ActionQueue`에 고정해 둔 타입별 순서**다 — `고아 컬렉션 제거 → 고아 객체 제거 → INSERT → UPDATE → 컬렉션 지연 연산 → 컬렉션 삭제 → 컬렉션 갱신 → 컬렉션 생성 → **DELETE**`. **DELETE가 항상 맨 마지막**이고, 이유는 ① FK 제약 위반을 줄이려는 의도 ② **같은 종류의 SQL을 몰아야 JDBC 배치가 먹히기** 때문이다. 그래서 "지우고 넣기"가 실제로는 "넣고 지우기"가 되어 유니크 제약을 위반한다. 최선의 처방은 `flush()`를 끼워 넣는 것이 아니라 **애초에 DELETE+INSERT를 UPDATE로 바꾸는 것**이다. 같은 원리의 더 나쁜 얼굴이 **데드락**인데, 이건 **Hibernate가 순서를 지켜주지 않으므로 반드시 PK 정렬로 코드에 고정**해야 한다. 마지막으로 이 유형은 **배포 전에 기계로 잡을 수 있다** — **p6spy로 실제 SQL 순서 관측** + **`@DataJpaTest`의 롤백이 커밋 시점 문제를 숨기므로 `@Commit`/`TestTransaction`으로 실제 커밋** + **H2 대신 Testcontainers로 실제 DB**.
 
 ---
 
@@ -17,12 +17,16 @@
 
 **함정 세 개**:
 - **"flush는 커밋할 때 일어난다"에서 멈추는 것.** 이 답은 틀리지 않았지만, 커밋 시점만 알면 **트랜잭션 중간에 일어나는 auto-flush를 설명할 수 없고**, 그래서 "저장했는데 조회에 왜 나오지?" 또는 반대로 "왜 유니크 위반이 커밋도 안 했는데 나지?"를 못 푼다.
-- **"조회하면 flush된다"로 일반화하는 것.** 조회에도 두 종류가 있고 **정반대로 동작한다**(§2). 이 비대칭을 모르면 `findById`로 후속 검증을 하는 테스트가 왜 통과하는지 설명할 수 없다.
-- **`flush()`를 끼워 넣는 것을 정답이라고 믿는 것.** 동작은 한다. 그러나 그건 **증상 대응**이고, 애초에 DELETE+INSERT를 하지 않는 설계가 훨씬 낫다(§4).
+- **"조회하면 flush된다"로 일반화하는 것.** 조회에도 두 종류가 있고 **정반대로 동작한다**(§1-6~§1-8). 이 비대칭을 모르면 `findById`로 후속 검증을 하는 테스트가 왜 통과하는지 설명할 수 없다.
+- **`flush()`를 끼워 넣는 것을 정답이라고 믿는 것.** 동작은 한다. 그러나 그건 **증상 대응**이고, 애초에 DELETE+INSERT를 하지 않는 설계가 훨씬 낫다(§3-1).
+
+**이 문서의 지도**: 본문은 축 세 개로 되어 있다. **§1은 "언제 나가는가"** — flush의 세 시점과, 왜 `findByName`은 flush를 부르고 `findById`는 안 부르는지. **§2는 "어떤 순서로 나가는가"** — `ActionQueue`의 고정 순서, 그것이 만드는 유니크 위반, 그리고 같은 원리의 더 나쁜 얼굴인 데드락. **§3은 "그래서 무엇을 하는가"** — 코드를 어떻게 고치고, 그 수정이 다시 무너지지 않게 어떤 기계 장치를 붙일 것인가.
+
+버전에 의존하는 서술은 **Hibernate ORM 6.6 / Spring Boot 3.x 기준**으로 쓴다. 내부 동작을 설명할 때는 실제 클래스 이름을 함께 적었으니, 의심스러우면 소스에서 직접 확인하면 된다.
 
 ---
 
-## 1. flush란 무엇인가 — 그리고 세 개의 시점
+## 1. 언제 나가는가 — flush의 세 시점, 그리고 `findById`의 비대칭
 
 ### 1-1. 먼저 못 하나: flush는 커밋이 아니다
 
@@ -30,7 +34,7 @@
 
 flush는 **영속성 컨텍스트에 쌓인 변경분을 SQL로 만들어 DB로 보내는 행위**다. 커밋은 **DB에게 "지금까지 보낸 걸 확정하라"고 말하는 행위**다. 둘은 완전히 다르다.
 
-```
+```text
 [애플리케이션 메모리]                 [DB]
 영속성 컨텍스트                       트랜잭션(아직 미확정)
   - 1차 캐시                            ↑
@@ -59,7 +63,7 @@ public void changeName(Long id, String name) {
 
 ### 1-3. 시점 ② — JPQL·Criteria·네이티브 쿼리 실행 직전 (auto-flush)
 
-**후보자가 유도 후 정확히 설명한 부분이라 짧게 정리한다.** JPQL 같은 쿼리는 **DB에 직접 나가서 DB의 데이터를 읽는다.** 그런데 내가 방금 저장한 데이터가 아직 메모리에만 있고 DB에는 없다면, 쿼리 결과가 **틀린다.**
+JPQL 같은 쿼리는 **DB에 직접 나가서 DB의 데이터를 읽는다.** 그런데 내가 방금 저장한 데이터가 아직 메모리에만 있고 DB에는 없다면, 쿼리 결과가 **틀린다.**
 
 ```java
 @Transactional
@@ -74,11 +78,13 @@ public void demo() {
 
 > 정리하면 auto-flush의 존재 이유는 **"내 트랜잭션 안에서의 읽기 일관성"** 한 가지다. 내가 방금 한 변경은 내가 조회할 때 보여야 한다(read-your-own-writes).
 
+이 판정이 정확히 어떤 기준으로 이루어지는지가 §1-6의 주제이고, 그 기준을 알아야 `findById`가 왜 예외인지(§1-7)가 풀린다.
+
 ### 1-4. 시점 ③ — `em.flush()` 명시 호출
 
 개발자가 직접 부른다. Spring Data JPA에서는 `repository.flush()`, `saveAndFlush()`도 같은 일을 한다.
 
-필요한 경우는 셋이다. ① **실행 순서를 강제**해야 할 때(§4-2) ② DB가 만들어 주는 값(시퀀스/트리거/기본값)을 **트랜잭션 도중에 읽어야** 할 때 ③ 대량 처리에서 `clear()`와 짝지어 컨텍스트 비대를 막을 때.
+필요한 경우는 셋이다. ① **실행 순서를 강제**해야 할 때(§3-2) ② DB가 만들어 주는 값(시퀀스/트리거/기본값)을 **트랜잭션 도중에 읽어야** 할 때 ③ 대량 처리에서 `clear()`와 짝지어 컨텍스트 비대를 막을 때.
 
 대가도 분명하다. **flush로 UPDATE/DELETE를 보내는 순간부터 커밋까지 그 행의 쓰기 락을 쥐고 있게 된다.** 트랜잭션 앞쪽에서 flush하고 뒤에서 외부 API를 호출하는 코드는 락 보유 시간을 수백 ms 단위로 늘려 경합을 만든다. 그래서 원칙은 **"필요할 때만 최소로, 가능하면 커밋 직전으로 미룬다"**.
 
@@ -116,27 +122,37 @@ public void safe() {
 
 **면접에서는 "끌 수 있지만 그 순간 읽기 일관성을 잃으므로 안 쓴다"까지 말하는 것이 정답**이다. 존재를 모르는 것과, 알면서 안 쓰는 것은 다르다.
 
----
+### 1-6. auto-flush의 판정 기준 — "query space"란 무엇인가
 
-## 2. `findById`는 왜 flush를 유발하지 않는가 — auto-flush의 판정 기준
+여기서부터가 **이 문항에서 가장 많이 틀리는 지점**이다. "1차 캐시에 있으면 flush를 안 하고, 없으면 DB에 가야 하니까 flush하겠지"라는 추론은 자연스럽지만 **틀렸다.** 왜 틀렸는지 이해하려면 Hibernate가 무엇을 보고 판정하는지부터 알아야 한다.
 
-여기가 **이 문항에서 가장 많이 틀리는 지점**이다. "1차 캐시에 있으면 안 하고, 없으면 DB에 가야 하니까 flush하겠지"라는 추론은 자연스럽지만 **틀렸다.** **1차 캐시에 있든 없든 `findById`는 flush를 유발하지 않는다.**
+**용어부터 정의한다. query space란 "이 쿼리가 손대는 테이블들의 이름 집합"이다.** 직역하면 "쿼리 공간"인데, 하나의 쿼리가 읽거나 쓰는 테이블들을 그 쿼리가 차지하는 영역으로 보고 붙인 이름이다. 어려운 개념이 아니라 그냥 **테이블 이름 목록**이라고 생각하면 된다.
 
-### 2-1. auto-flush의 판정 기준은 "query space"다
-
-Hibernate는 JPQL을 실행하기 전에 이렇게 판정한다.
-
-```
-1. 이 쿼리가 읽을 테이블 집합을 구한다  →  이것을 query space 라고 부른다
-   (예: "select m from Member m"  →  query space = { member })
-2. 지금 쓰기 지연 저장소에 쌓인 작업들이 건드리는 테이블 집합을 구한다
-   (예: Member INSERT 대기 중  →  { member })
-3. 두 집합이 겹치는가?
-     겹친다  → flush 한다 (안 하면 쿼리 결과가 틀리니까)
-     안 겹친다 → flush 하지 않는다
+```text
+select m from Member m where m.name = ?      →  query space = { member }
+select o from Order o join o.member m        →  query space = { orders, member }
 ```
 
-`query space`는 어려운 말이 아니라 **"이 쿼리가 손대는 테이블 이름 목록"**이다. 겹칠 때만 flush하므로, `Member`를 저장해 두고 `Order`를 JPQL로 조회하면 **flush가 일어나지 않는다.**
+**왜 하필 "테이블 집합"으로 판정하는가.** 질문을 뒤집으면 답이 나온다. Hibernate가 flush를 해야 하는 유일한 이유는 **"아직 DB에 못 보낸 내 변경분 때문에 이 쿼리의 결과가 틀리는 것"**을 막기 위해서다. 그런데 내 변경분이 이 쿼리 결과를 틀리게 만들 수 있으려면, 그 변경분이 **이 쿼리가 실제로 읽는 바로 그 테이블**에 있어야 한다.
+
+`member` 테이블에 INSERT가 대기 중인데 `orders`만 읽는 쿼리를 날린다면, 그 대기 중인 INSERT는 이 쿼리 결과에 **영향을 줄 수 없다.** 그러니 flush할 이유도 없다. 반대로 `member`를 읽는 쿼리라면 대기 중인 그 INSERT가 결과를 바꾸므로 반드시 먼저 내보내야 한다. 즉 **테이블 집합이 겹치는가**는 **"미반영 변경이 이 쿼리 결과를 틀리게 만들 수 있는가"를 값싸게 근사하는 방법**이다.
+
+판정 절차를 그림으로 옮기면 이렇다.
+
+```text
+JPQL 실행 요청
+      │
+      ├─ ① 이 쿼리가 읽을 테이블 집합을 구한다      → query space         = { member }
+      │
+      ├─ ② 쓰기 지연 저장소에 쌓인 작업들이          → 대기 작업의 space   = { member }
+      │     건드리는 테이블 집합을 구한다
+      │
+      └─ ③ 두 집합이 겹치는가?
+              겹친다   → flush 한다 (안 하면 쿼리 결과가 틀리니까)
+              안 겹친다 → flush 하지 않는다 (틀릴 수가 없으니까)
+```
+
+Hibernate 소스에서도 그대로 확인된다. `DefaultAutoFlushEventListener`가 `actionQueue.areTablesToBeUpdated(event.getQuerySpaces())`를 호출하고, `ActionQueue.areTablesToBeUpdated`는 대기 중인 액션들의 query space와 쿼리의 query space가 하나라도 겹치는지만 검사한다.
 
 ```java
 @Transactional
@@ -148,13 +164,13 @@ public void spaceDemo() {
 }
 ```
 
-> **(가산점 포인트) 네이티브 쿼리는 이 판정을 못 한다.** SQL 문자열을 Hibernate가 파싱해 테이블을 알아내지는 않기 때문에, 네이티브 쿼리는 **"어느 테이블을 건드리는지 모른다"고 보고 보수적으로 전체를 flush**한다. 이걸 좁히려면 `NativeQuery.addSynchronizedEntityClass(...)`로 관련 엔티티를 알려줘야 한다. "네이티브 쿼리 하나 때문에 트랜잭션 중간에 예상 못 한 UPDATE 폭탄이 나갔다"는 사고의 정체가 이것이다.
+> **(가산점 포인트) 네이티브 쿼리는 이 판정을 못 한다.** SQL 문자열을 Hibernate가 파싱해 테이블을 알아내지는 않기 때문에, 네이티브 쿼리는 **"어느 테이블을 건드리는지 모른다"고 보고 보수적으로 전체를 flush**한다. 실제로 `NativeQueryImpl.prepareForExecution()`은 동기화 대상 query space가 지정돼 있으면 부분 flush로 끝내고, 지정돼 있지 않으면 `session.flush()`를 그냥 호출한다. 이걸 좁히려면 `NativeQuery.addSynchronizedEntityClass(...)`(또는 `addSynchronizedQuerySpace`)로 관련 엔티티를 알려줘야 한다. "네이티브 쿼리 하나 때문에 트랜잭션 중간에 예상 못 한 UPDATE 폭탄이 나갔다"는 사고의 정체가 이것이다.
 
-### 2-2. `em.find()`는 그 판정 경로 자체를 타지 않는다
+### 1-7. `em.find()`는 그 판정 경로 자체를 타지 않는다
 
-`findById`(내부적으로 `EntityManager.find()`)는 **쿼리가 아니다.** 이것은 **"PK가 이것인 엔티티 하나를 달라"는 조회(lookup)** 이고, Hibernate의 처리 경로는 이렇다.
+이제 비대칭의 이유를 말할 수 있다. `findById`(내부적으로 `EntityManager.find()`)는 **쿼리가 아니다.** 이것은 **"PK가 이것인 엔티티 하나를 달라"는 조회(lookup)** 이고, 애초에 §1-6의 판정 절차에 진입하지 않는다.
 
-```
+```text
 findById(1L)
   → 1차 캐시에 (Member, 1) 있나?
        있다  → 그대로 반환 (SQL 없음)
@@ -162,14 +178,19 @@ findById(1L)
                 ↑ 이 경로 어디에도 "query space 비교 → auto-flush" 단계가 없다
 ```
 
-**왜 없어도 되는가**를 이해하면 외울 필요가 없다. auto-flush의 목적은 **"내 변경분이 빠진 결과가 나오는 것"을 막는 것**인데,
+**왜 없어도 되는가**를 이해하면 외울 필요가 없다. auto-flush의 목적은 **"내 변경분이 빠진 결과가 나오는 것"을 막는 것**인데, PK 조회에서는 그런 일이 애초에 벌어지지 않는다. 경우를 둘로 나눠 보면 분명하다.
 
-- **아직 INSERT 안 된 새 엔티티**: 어차피 영속성 컨텍스트에 있으므로 `find()`는 **1차 캐시에서 찾아 반환한다.** DB에 갈 필요가 없다.
-- **수정만 하고 아직 UPDATE 안 된 엔티티**: 이것도 1차 캐시에 있고, **JPA는 "같은 트랜잭션·같은 PK면 항상 같은 인스턴스"(동일성 보장)** 를 지키므로, DB에서 옛날 값을 읽어와도 **캐시에 있는 인스턴스를 그대로 돌려준다.** 즉 **내가 바꾼 값이 그대로 보인다.**
+**아직 INSERT 안 된 새 엔티티.** 어차피 영속성 컨텍스트에 있으므로 `find()`는 **1차 캐시에서 찾아 반환한다.** DB에 갈 필요가 없다.
+
+**수정만 하고 아직 UPDATE 안 된 엔티티.** 이것도 1차 캐시에 있고, **JPA는 "같은 트랜잭션·같은 PK면 항상 같은 인스턴스"(동일성 보장)** 를 지키므로, DB에서 옛날 값을 읽어와도 **캐시에 있는 인스턴스를 그대로 돌려준다.** 즉 **내가 바꾼 값이 그대로 보인다.**
 
 **PK 조회는 flush 없이도 읽기 일관성이 이미 보장되므로, Hibernate가 flush할 이유가 없는 것이다.** 반면 JPQL은 조건(`where name = 'kim'`)을 **DB가** 평가하므로, 미반영 변경이 DB에 없으면 **애초에 결과 집합에서 빠져버린다** — 그래서 flush가 필수다.
 
-### 2-3. 비대칭을 코드로 확인하기
+여기서 한 가지를 분명히 해 두자. **"1차 캐시에 없으면 DB에 가니까 그때는 flush하겠지"는 틀렸다.** 캐시에 없어서 `select ... where id = ?`가 나가더라도, 그 SELECT는 여전히 PK 하나를 집어오는 lookup이지 조건을 평가하는 쿼리가 아니다. **아직 DB에 안 간 내 변경분이 "id로 찾는 행 하나"의 존재 여부를 바꿀 수 있는 경우란, 그 행을 내가 이 트랜잭션에서 방금 만든 경우뿐인데 그건 이미 1차 캐시에 있다.** 그래서 판정 경로가 필요 없다.
+
+### 1-8. 비대칭을 코드로 확인하기 — 나란히 놓고 SQL을 비교한다
+
+같은 상황(엔티티 하나를 수정해 둔 상태)에서 다음 줄만 바꿔 두 코드를 나란히 놓는다. **왼쪽은 flush를 부르지 않고, 오른쪽은 부른다.**
 
 ```java
 // before — 흔한 오해: "조회하면 flush된다"
@@ -178,8 +199,8 @@ public void misunderstanding() {
     Member m = memberRepository.findById(1L).orElseThrow();
     m.setName("changed");                 // UPDATE 예약 (아직 SQL 없음)
 
-    memberRepository.findById(1L);        // ❌ flush 안 일어난다. SQL도 안 나간다(1차 캐시 히트)
-    memberRepository.findById(999L);      // ❌ flush 안 일어난다. select 999 만 나간다
+    memberRepository.findById(1L);        // flush 안 일어난다. SQL도 안 나간다(1차 캐시 히트)
+    memberRepository.findById(999L);      // flush 안 일어난다. select 999 만 나간다
                                           //    ← "캐시에 없으면 flush하겠지"가 틀리는 지점
     // 이 시점까지 DB에는 UPDATE 가 단 한 건도 도착하지 않았다.
 }
@@ -193,43 +214,82 @@ public void reality() {
     m.setName("changed");                 // UPDATE 예약
 
     memberRepository.findByName("changed");
-    // ✅ JPQL → query space {member} 겹침 → auto-flush
-    //    실제 SQL 순서:  update member set ... where id=1     ← flush
-    //                    select ... from member where name=?  ← 쿼리
+    // JPQL → query space {member} 겹침 → auto-flush
 }
 ```
 
+두 코드에서 실제로 나가는 SQL을 순서대로 늘어놓으면 차이가 한눈에 보인다.
+
+```text
+misunderstanding()                        reality()
+──────────────────────────────────        ──────────────────────────────────
+select ... from member where id=1         select ... from member where id=1
+   (findById(1L) — 최초 로딩)                 (findById(1L) — 최초 로딩)
+
+(findById(1L) 재호출)                     ── auto-flush 발동 ──
+   SQL 없음. 1차 캐시 히트                update member set name='changed'
+                                                        where id=1
+select ... from member where id=999
+   (findById(999L) — lookup 1건)          select ... from member
+   ↑ 이 SELECT가 나가도 UPDATE는                  where name='changed'
+     여전히 대기 중이다
+
+── 메서드 종료, 커밋 직전 flush ──         ── 메서드 종료, 커밋 ──
+update member set name='changed'             (UPDATE는 이미 나갔다)
+                where id=1
+```
+
+**핵심은 UPDATE가 나가는 시점이 다르다는 것**이다. `findById`만 부른 쪽은 UPDATE가 **커밋 직전까지 밀린다.** `findByName`을 부른 쪽은 UPDATE가 **그 줄에서 나가고**, 그 순간부터 커밋까지 1번 행의 쓰기 락을 쥔다. §2에서 다룰 데드락이 바로 이 "락을 언제부터 쥐느냐"의 문제다.
+
 **면접에서 이 비대칭을 한 문장으로 말한다면**: "`findById`는 쿼리가 아니라 PK 조회라 auto-flush 판정 경로를 타지 않습니다. 1차 캐시 히트 여부와 무관하고, PK 조회는 동일성 보장 덕분에 flush 없이도 내 변경분이 보이기 때문에 flush할 이유가 없습니다."
 
-> **(가산점 포인트) 실무에서 이 비대칭이 물리는 순간**: 저장 로직 테스트에서 `saveAndAssert`를 `findById`로 검증하면, **flush가 한 번도 일어나지 않은 채로 1차 캐시에 있는 그 객체를 그대로 돌려받으므로 무조건 통과한다.** DB에 정말 들어갔는지는 전혀 검증되지 않는다. 이것이 §6-2에서 다룰 "테스트가 통과하는데 운영에서 터지는" 첫 번째 이유다.
+> **(가산점 포인트) 실무에서 이 비대칭이 물리는 순간**: 저장 로직 테스트에서 `saveAndAssert`를 `findById`로 검증하면, **flush가 한 번도 일어나지 않은 채로 1차 캐시에 있는 그 객체를 그대로 돌려받으므로 무조건 통과한다.** DB에 정말 들어갔는지는 전혀 검증되지 않는다. 이것이 §3-5에서 다룰 "테스트가 통과하는데 운영에서 터지는" 첫 번째 이유다.
 
 ---
 
-## 3. 실행 순서는 코드 순서가 아니다 — `ActionQueue`의 고정 순서
+## 2. 어떤 순서로 나가는가 — `ActionQueue`의 고정 순서와 데드락
 
-### 3-1. Hibernate가 미리 정해둔 순서
+### 2-1. Hibernate가 미리 정해둔 순서
 
-flush가 일어나면 Hibernate는 쌓인 작업들을 **내가 호출한 순서가 아니라, 작업 종류별로 미리 정해진 순서**로 실행한다. 이 대기열이 `ActionQueue`이고 순서는 다음과 같이 **고정**되어 있다.
+flush가 일어나면 Hibernate는 쌓인 작업들을 **내가 호출한 순서가 아니라, 작업 종류별로 미리 정해진 순서**로 실행한다. 이 대기열이 `ActionQueue`이고, 순서는 소스의 `ActionQueue.OrderedActions` 열거형에 **박혀 있다.** 그 열거형 바로 위에 달린 주석이 "The order of these operations is very important"인데, 말 그대로 열거 순서 자체가 실행 순서다.
 
+| 순서 | 액션 (Hibernate 내부 이름) | 무슨 SQL인가 |
+|---|---|---|
+| 1 | `OrphanCollectionRemoveAction` | 고아가 된 컬렉션 통째 삭제 |
+| 2 | `OrphanRemovalAction` | `orphanRemoval = true`로 끊긴 자식 엔티티 DELETE |
+| 3 | **`EntityInsertAction`** | **엔티티 INSERT** |
+| 4 | **`EntityUpdateAction`** | **엔티티 UPDATE** |
+| 5 | `QueuedOperationCollectionAction` | 컬렉션에 미뤄 둔 개별 연산 |
+| 6 | `CollectionRemoveAction` | 컬렉션 삭제 |
+| 7 | `CollectionUpdateAction` | 컬렉션 갱신 |
+| 8 | `CollectionRecreateAction` | 컬렉션 재생성 |
+| 9 | **`EntityDeleteAction`** | **엔티티 DELETE — 항상 맨 마지막** |
+
+같은 내용을 흐름으로 보면 이렇다.
+
+```text
+flush 발생
+   │
+   ├─ 1. 고아 컬렉션 제거
+   ├─ 2. 고아 객체 제거 (orphanRemoval)
+   ├─ 3. 엔티티 INSERT          ◀── 내가 코드 뒤쪽에 썼어도 여기서 나간다
+   ├─ 4. 엔티티 UPDATE
+   ├─ 5. 컬렉션 지연 연산
+   ├─ 6. 컬렉션 삭제
+   ├─ 7. 컬렉션 갱신
+   ├─ 8. 컬렉션 재생성
+   └─ 9. 엔티티 DELETE          ◀── 내가 코드 앞쪽에 썼어도 여기까지 밀린다
 ```
-① 고아 객체 제거 (orphanRemoval)
-② 엔티티 INSERT
-③ 엔티티 UPDATE
-④ 컬렉션 삭제 (collection remove)
-⑤ 컬렉션 갱신 (collection update)
-⑥ 컬렉션 생성 (collection recreate)
-⑦ 엔티티 DELETE      ← 항상 맨 마지막
-```
 
-**중요한 것은 "DELETE가 항상 맨 마지막"이라는 사실 하나**다. 이건 설정으로 바꿀 수 있는 값이 아니라 Hibernate의 구현에 박혀 있는 규칙이다.
+**중요한 것은 "INSERT가 항상 DELETE보다 먼저"라는 사실 하나**다. 나머지 여섯 단계는 컬렉션 매핑을 쓸 때만 등장하지만, 3번과 9번의 관계는 거의 모든 프로젝트에 해당한다. 그리고 이건 설정으로 바꿀 수 있는 값이 아니라 **Hibernate의 구현에 박혀 있는 규칙**이다.
 
-### 3-2. 왜 하필 DELETE가 뒤인가 — 이유 두 가지
+### 2-2. 왜 하필 DELETE가 뒤인가 — 이유 두 가지
 
 **이유 ① FK(외래 키) 제약 위반을 줄이려는 의도.** 부모-자식 관계에서 자식이 부모를 참조할 때, 부모를 먼저 지우면 FK 위반이 난다. INSERT를 앞에 두고 DELETE를 뒤에 두면 **"필요한 행은 먼저 만들어 두고, 참조가 끊긴 행을 나중에 지우는"** 순서가 되어 일반적인 경우에 안전하다.
 
 **이유 ② 같은 종류의 SQL을 몰아야 JDBC 배치가 먹히기 때문.** JDBC 배치는 **같은 형태의 SQL을 하나로 묶어 한 번에 보내는 최적화**다.
 
-```
+```text
 섞여 있으면 (코드 순서대로 실행한다면):
   insert / delete / insert / delete / insert  →  묶을 수 없다. 네트워크 왕복 5회
 
@@ -240,9 +300,9 @@ flush가 일어나면 Hibernate는 쌓인 작업들을 **내가 호출한 순서
 
 **즉 순서 고정은 버그가 아니라 성능을 위한 의도적 설계**다. 이걸 알면 "왜 안 고쳐주냐"가 아니라 "이 규칙 위에서 어떻게 코드를 쓸 것인가"로 사고가 바뀐다.
 
-> **(가산점 포인트) `IDENTITY` 전략에서는 INSERT가 지연되지 않는다.** PK를 DB의 auto_increment에 맡기면(`GenerationType.IDENTITY`), Hibernate는 **엔티티를 영속 상태로 만들려면 id가 필요한데 그 id를 DB만 알기 때문에** `persist()` 시점에 **INSERT를 즉시 실행**한다. 그래서 IDENTITY 환경에서는 §3-3의 문제가 **더 확실하게** 터진다 — DELETE는 flush까지 대기하는데 INSERT는 이미 나가버렸기 때문이다. 덤으로 **IDENTITY는 INSERT 배치도 사실상 불가능**하다.
+> **(가산점 포인트) `IDENTITY` 전략에서는 INSERT가 지연되지 않는다.** PK를 DB의 auto_increment에 맡기면(`GenerationType.IDENTITY`), Hibernate는 **엔티티를 영속 상태로 만들려면 id가 필요한데 그 id를 DB만 알기 때문에** `persist()` 시점에 **INSERT를 즉시 실행**한다. 소스에서는 이 INSERT를 "early insert"라고 부르고, `ActionQueue.addInsertAction()`이 `insert.isEarlyInsert()`인 경우 큐에 쌓지 않고 그 자리에서 `executeInserts()`를 부른다. 그래서 IDENTITY 환경에서는 §2-3의 문제가 **더 확실하게** 터진다 — DELETE는 flush까지 대기하는데 INSERT는 이미 나가버렸기 때문이다. 덤으로 **IDENTITY는 INSERT 배치도 사실상 불가능**하다.
 
-### 3-3. 재현 — "지우고 넣었는데 유니크 위반"
+### 2-3. 재현 — "지우고 넣었는데 유니크 위반"
 
 `member` 테이블의 `email`에 유니크 제약이 있다고 하자.
 
@@ -265,13 +325,26 @@ public void replaceMember(String email, String newName) {
 }   // ← 커밋 직전 flush. ActionQueue 규칙에 따라 INSERT가 먼저, DELETE가 나중.
 ```
 
+**코드 순서가 어떻게 뒤집히는지**를 세 단계로 늘어놓으면 이렇다.
+
+```text
+① 내가 쓴 코드 순서            ② ActionQueue에 쌓인 모습        ③ flush가 실제로 내보내는 순서
+────────────────────────       ─────────────────────────        ──────────────────────────────
+delete(old)          ──────▶   deletions  = [ Member#1 ]        3번 칸: EntityInsertAction
+save(new Member(...)) ─────▶   insertions = [ Member(new) ]        → insert into member ...
+                                                                        ↑ 여기서 터진다
+                               (타입별로 다른 리스트에               9번 칸: EntityDeleteAction
+                                따로 쌓인다. 호출 순서는              → delete from member where id=1
+                                리스트 안에서만 유지된다)                ↑ 도달하지 못한다
+```
+
 실제로 나가는 SQL 로그(p6spy 기준, 바인딩값 포함):
 
-```
+```text
 -- ① 커밋 직전 flush 시작
 insert into member (email, name) values ('kim@example.com', 'kim2')
    ↑ 여기서 터진다:
-     Duplicate entry 'kim@example.com' for key 'uk_member_email'   (MySQL)
+     Duplicate entry 'kim@example.com' for key 'member.uk_member_email'   (MySQL 8.0)
      → org.hibernate.exception.ConstraintViolationException
      → org.springframework.dao.DataIntegrityViolationException
 
@@ -280,15 +353,105 @@ insert into member (email, name) values ('kim@example.com', 'kim2')
 
 **"분명 지우고 넣었는데 중복 오류"의 정체가 이것**이다. 원인을 한 문장으로 말하면: **DELETE는 항상 맨 마지막에 실행되므로, DELETE로 자리를 비운 뒤 INSERT를 넣는다는 전제가 성립하지 않는다.**
 
-> 로컬 테스트에서 통과하는 이유도 여기서 설명된다. **테스트가 롤백되면 커밋 직전 flush가 아예 실행되지 않아** 이 예외를 만날 기회 자체가 없기 때문이다(§6-2).
+> 로컬 테스트에서 통과하는 이유도 여기서 설명된다. **테스트가 롤백되면 커밋 직전 flush가 아예 실행되지 않아** 이 예외를 만날 기회 자체가 없기 때문이다(§3-5).
+
+### 2-4. 같은 원리의 더 나쁜 얼굴 — 데드락
+
+여기서 축을 하나 옮긴다. 지금까지는 **"제약 검사가 언제 되느냐"**의 이야기였고, 지금부터는 **"락이 언제 잡히느냐"**의 이야기다. 둘 다 뿌리는 같다 — **flush가 SQL을 DB로 보내는 그 순간**에 벌어지는 일이라는 것.
+
+먼저 데드락이 무엇인지 짧게 짚는다. **데드락(교착 상태)은 두 트랜잭션이 서로가 쥔 락을 기다리며 영원히 멈추는 상황**이다. DB는 이를 감지하면 한쪽을 희생자로 골라 강제로 롤백시킨다.
+
+유니크 위반은 **예외 하나로 끝나고 원인도 로그에 찍힌다.** 데드락은 **재현이 안 되고, 부하가 높을 때만 나고, 로그에는 "Deadlock found when trying to get lock"이라는 문장만 남는다.** 같은 원리인데 훨씬 잡기 어렵다.
+
+**flush로 UPDATE가 나가는 순간, 그 행에 쓰기 락이 걸리고 커밋까지 유지된다**(§1-1). 그래서 한 트랜잭션에서 여러 행을 UPDATE하면 **락을 여러 개 순차적으로 쥐게 된다.** 두 트랜잭션이 **서로 반대 순서로** 쥐면 교착이다.
+
+```text
+시각   트랜잭션 A                        트랜잭션 B
+ t1    id=1 락 획득
+ t2                                      id=2 락 획득
+ t3    id=2 락 요청 → B가 쥠, 대기
+ t4                                      id=1 락 요청 → A가 쥠, 대기
+       ────────────── 서로 영원히 기다림 = 데드락 ──────────────
+       DB가 한쪽을 희생자로 골라 강제 롤백시킨다
+```
+
+### 2-5. 그 "순서"는 어디서 오는가
+
+여기가 핵심이다. **flush 안의 UPDATE들이 어떤 순서로 나가는지는 내가 엔티티를 다룬 순서(정확히는 영속성 컨텍스트에 올라온 순서)에 좌우된다.** 그리고 그 순서는 **요청마다 얼마든지 달라진다.**
+
+```java
+// before — 요청이 준 순서를 그대로 따른다 → 트랜잭션마다 락 순서가 달라진다
+@Transactional
+public void addPoints(List<Long> memberIds, int amount) {
+    for (Long id : memberIds) {                       // 클라이언트가 준 순서 그대로
+        Member m = memberRepository.findById(id).orElseThrow();
+        m.addPoint(amount);
+    }
+}
+// 요청 A: [1, 2, 3]  → 락을 1 → 2 → 3 순으로
+// 요청 B: [3, 2, 1]  → 락을 3 → 2 → 1 순으로   ← 서로 반대. 데드락 성립.
+```
+
+순서가 흔들리는 경로는 이 밖에도 많다. **`HashSet`/`HashMap` 순회 순서**(해시값에 따라 달라짐), **`ORDER BY` 없는 SELECT의 반환 순서**(DB가 보장하지 않음), **컬렉션을 `Set`으로 매핑한 연관관계**, **여러 서비스가 각자 다른 순서로 같은 테이블들을 건드리는 경우**.
+
+### 2-6. 처방 — PK로 정렬한 뒤 처리한다
+
+```java
+// after — 항상 같은 기준(PK 오름차순)으로 정렬한 뒤 처리한다
+@Transactional
+public void addPoints(List<Long> memberIds, int amount) {
+    List<Long> ordered = memberIds.stream().distinct().sorted().toList();
+    //                                      ↑ 중복 제거    ↑ 항상 같은 순서로 고정
+
+    for (Long id : ordered) {
+        Member m = memberRepository.findById(id).orElseThrow();
+        m.addPoint(amount);
+    }
+}
+// 요청 A: [1,2,3] → 정렬 후 1,2,3
+// 요청 B: [3,2,1] → 정렬 후 1,2,3   ← 두 트랜잭션의 락 획득 순서가 같아졌다.
+//                                     뒤에 온 쪽은 그냥 "대기"할 뿐 교착이 없다.
+```
+
+한 번에 여러 엔티티를 조회해 처리할 때도 마찬가지다.
+
+```java
+// before — ORDER BY 가 없어 반환 순서가 보장되지 않는다
+List<Member> members = memberRepository.findAllByIdIn(ids);
+
+// after — 조회 단계에서 순서를 고정한다
+List<Member> members = memberRepository.findAllByIdInOrderByIdAsc(ids);
+```
+
+비관적 락을 쓸 때도 같은 원칙이다.
+
+```java
+// after — 락을 명시적으로 잡을 때도 PK 오름차순으로
+for (Long id : ids.stream().sorted().toList()) {
+    accountRepository.findByIdForUpdate(id);   // @Lock(PESSIMISTIC_WRITE)
+}
+```
+
+### 2-7. 이건 Hibernate가 지켜주지 않는다 — 이 문항의 핵심 대비
+
+**flush의 타입별 순서(§2-1)는 Hibernate가 고정해 준다. 그러나 같은 타입 안에서 어떤 행을 먼저 처리할지는 기본적으로 보장하지 않는다.** 즉,
+
+- **"DELETE가 INSERT보다 뒤"** → **Hibernate의 규칙.** 내가 바꿀 수 없고, 알고 피해야 한다.
+- **"1번 행 락 → 2번 행 락"** → **내 코드의 책임.** Hibernate는 관여하지 않으니 **정렬로 직접 고정해야 한다.**
+
+**면접에서 이 대비를 명시적으로 말하면 이해도가 확실히 드러난다.**
+
+> **(가산점 포인트) 부분적인 도움은 있다 — `hibernate.order_updates`.** 이 옵션을 켜면 Hibernate가 flush 시점에 UPDATE들을 **엔티티 타입과 PK 기준으로 정렬**해 실행한다(소스에서는 `ExecutableList`를 정렬 가능한 형태로 만드는 `isOrderUpdatesEnabled()` 플래그로 나타난다). 배치 효율을 위한 옵션인데 부수 효과로 데드락 확률도 낮아진다(`hibernate.order_inserts`도 INSERT에 대해 같은 일을 한다). **다만 기본값이 꺼져 있고, 한계가 분명하다** — ① **한 번의 flush 안에서만** 유효하다(중간에 flush가 여러 번 일어나면 소용없다) ② **비관적 락(`SELECT ... FOR UPDATE`)이나 벌크 JPQL처럼 Hibernate의 UPDATE 액션을 거치지 않는 락 획득 순서는 전혀 덮지 못한다.** 그래서 **"옵션은 보험이고, 정렬은 코드로 고정한다"**가 결론이다.
 
 ---
 
-## 4. 처방 세 가지 — 좋은 순서대로
+## 3. 처방과 안전망 — 코드로 고치고 기계로 지킨다
 
-### 4-1. 최선 — 애초에 DELETE + INSERT를 하지 않는다
+앞의 두 절이 "무엇이 왜 일어나는가"였다면 이 절은 "그래서 무엇을 하는가"다. 순서는 **좋은 처방부터** 놓았다 — §3-1~§3-3이 코드와 스키마를 고치는 쪽이고, §3-4~§3-8이 그 수정이 다시 무너지지 않도록 **기계가 지키게 만드는** 쪽이다.
 
-**§3-3의 상황은 사실 UPDATE 한 줄로 끝나는 일**이다. 이메일 주인의 이름을 바꾸는 것이라면 행을 지웠다 새로 만들 이유가 없다.
+### 3-1. 최선 — 애초에 DELETE + INSERT를 하지 않는다
+
+**§2-3의 상황은 사실 UPDATE 한 줄로 끝나는 일**이다. 이메일 주인의 이름을 바꾸는 것이라면 행을 지웠다 새로 만들 이유가 없다.
 
 ```java
 // after (최선) — 지웠다 넣는 대신, 있는 행을 고친다
@@ -333,7 +496,7 @@ public void replaceTags(Long postId, List<String> names) {
 }
 ```
 
-### 4-2. 차선 — 구조상 불가피하면 `em.flush()`로 경계를 명시
+### 3-2. 차선 — 구조상 불가피하면 `em.flush()`로 경계를 명시
 
 **"delete 후 flush를 끼운다"는 처방 자체는 맞다.** 다만 최선이 아니라 차선이라는 위치를 알고 쓰는 것이 중요하다.
 
@@ -347,11 +510,13 @@ public void replaceMember(String email, String newName) {
 }
 ```
 
+**왜 이게 통하는가**를 §2-1의 규칙으로 설명할 수 있어야 한다. `ActionQueue`의 순서는 **한 번의 flush 안에서만** 적용된다. `flush()`를 중간에 부르면 그 시점의 큐에는 DELETE밖에 없으므로 DELETE가 먼저 나가고, 그 다음에 예약된 INSERT는 **다음 flush(커밋 직전)**에서 나간다. 즉 개발자가 순서에 개입하는 유일한 수단은 **flush 경계를 하나 더 만드는 것**이다.
+
 **언제 정말 불가피한가**: ① 행 전체를 새 스키마로 재구성해야 해서 필드 매핑이 1:1이 아닐 때 ② 상속 매핑에서 **타입이 바뀌는** 경우(엔티티 타입 자체가 달라지면 UPDATE로 표현 불가) ③ 이력 테이블처럼 **행 교체가 도메인 의미 자체**일 때.
 
 주의점 둘. **첫째, 이 `flush()`에는 반드시 주석으로 이유를 남긴다.** 이유 없는 `flush()`는 다음 사람이 "불필요해 보이는데?" 하며 지우고, 그러면 버그가 조용히 부활한다. **둘째, flush로 DELETE를 먼저 보내면 그 행의 락을 커밋까지 쥔다.** 이 사이에 외부 API 호출 같은 긴 작업을 넣으면 안 된다.
 
-### 4-3. soft delete 환경이면 — 유니크 제약 자체를 분리한다
+### 3-3. soft delete 환경이면 — 유니크 제약 자체를 분리한다
 
 물리 삭제 대신 `deleted_at` 플래그로 지우는 방식(soft delete)을 쓴다면, **"지운 행"이 테이블에 그대로 남아 있으므로 순서와 무관하게 유니크 제약이 계속 충돌**한다. 이 경우 처방은 코드가 아니라 **제약의 정의를 바꾸는 것**이다.
 
@@ -373,101 +538,9 @@ create unique index uk_member_email_alive
 
 > **(가산점 포인트) MySQL에서 `unique (email, deleted_at)`으로 두고 `deleted_at`을 NULL로 쓰면 제약이 사실상 무력화된다.** SQL 표준에서 NULL은 서로 같지 않다고 보므로, `(kim@x.com, NULL)` 행이 **여러 개 들어간다.** 그래서 sentinel 값이나 PostgreSQL 부분 인덱스를 쓴다.
 
----
+### 3-4. 실제 SQL 순서를 눈으로 본다 — p6spy / datasource-proxy
 
-## 5. 데드락 — 같은 원리의 더 나쁜 얼굴
-
-### 5-1. 원리: 락을 잡는 순서가 트랜잭션마다 다르면 데드락
-
-유니크 위반은 **예외 하나로 끝나고 원인도 로그에 찍힌다.** 데드락은 **재현이 안 되고, 부하가 높을 때만 나고, 로그에는 "Deadlock found when trying to get lock"이라는 문장만 남는다.** 같은 원리인데 훨씬 잡기 어렵다.
-
-**flush로 UPDATE가 나가는 순간, 그 행에 쓰기 락이 걸리고 커밋까지 유지된다**(§1-1). 그래서 한 트랜잭션에서 여러 행을 UPDATE하면 **락을 여러 개 순차적으로 쥐게 된다.** 두 트랜잭션이 **서로 반대 순서로** 쥐면 교착이다.
-
-```
-시각   트랜잭션 A                        트랜잭션 B
- t1    id=1 락 획득
- t2                                      id=2 락 획득
- t3    id=2 락 요청 → B가 쥠, 대기
- t4                                      id=1 락 요청 → A가 쥠, 대기
-       ────────────── 서로 영원히 기다림 = 데드락 ──────────────
-       DB가 한쪽을 희생자로 골라 강제 롤백시킨다
-```
-
-### 5-2. 그 "순서"는 어디서 오는가
-
-여기가 핵심이다. **flush 안의 UPDATE들이 어떤 순서로 나가는지는 내가 엔티티를 다룬 순서(정확히는 영속성 컨텍스트에 올라온 순서)에 좌우된다.** 그리고 그 순서는 **요청마다 얼마든지 달라진다.**
-
-```java
-// before — 요청이 준 순서를 그대로 따른다 → 트랜잭션마다 락 순서가 달라진다
-@Transactional
-public void addPoints(List<Long> memberIds, int amount) {
-    for (Long id : memberIds) {                       // 클라이언트가 준 순서 그대로
-        Member m = memberRepository.findById(id).orElseThrow();
-        m.addPoint(amount);
-    }
-}
-// 요청 A: [1, 2, 3]  → 락을 1 → 2 → 3 순으로
-// 요청 B: [3, 2, 1]  → 락을 3 → 2 → 1 순으로   ← 서로 반대. 데드락 성립.
-```
-
-순서가 흔들리는 경로는 이 밖에도 많다. **`HashSet`/`HashMap` 순회 순서**(해시값에 따라 달라짐), **`ORDER BY` 없는 SELECT의 반환 순서**(DB가 보장하지 않음), **컬렉션을 `Set`으로 매핑한 연관관계**, **여러 서비스가 각자 다른 순서로 같은 테이블들을 건드리는 경우**.
-
-### 5-3. 처방 — PK로 정렬한 뒤 처리한다
-
-```java
-// after — 항상 같은 기준(PK 오름차순)으로 정렬한 뒤 처리한다
-@Transactional
-public void addPoints(List<Long> memberIds, int amount) {
-    List<Long> ordered = memberIds.stream().distinct().sorted().toList();
-    //                                      ↑ 중복 제거    ↑ 항상 같은 순서로 고정
-
-    for (Long id : ordered) {
-        Member m = memberRepository.findById(id).orElseThrow();
-        m.addPoint(amount);
-    }
-}
-// 요청 A: [1,2,3] → 정렬 후 1,2,3
-// 요청 B: [3,2,1] → 정렬 후 1,2,3   ← 두 트랜잭션의 락 획득 순서가 같아졌다.
-//                                     뒤에 온 쪽은 그냥 "대기"할 뿐 교착이 없다.
-```
-
-한 번에 여러 엔티티를 조회해 처리할 때도 마찬가지다.
-
-```java
-// before — ORDER BY 가 없어 반환 순서가 보장되지 않는다
-List<Member> members = memberRepository.findAllByIdIn(ids);
-
-// after — 조회 단계에서 순서를 고정한다
-List<Member> members = memberRepository.findAllByIdInOrderByIdAsc(ids);
-```
-
-비관적 락을 쓸 때도 같은 원칙이다.
-
-```java
-// after — 락을 명시적으로 잡을 때도 PK 오름차순으로
-for (Long id : ids.stream().sorted().toList()) {
-    accountRepository.findByIdForUpdate(id);   // @Lock(PESSIMISTIC_WRITE)
-}
-```
-
-### 5-4. **이건 Hibernate가 지켜주지 않는다** — 이 문항의 핵심 대비
-
-**flush의 타입별 순서(§3-1)는 Hibernate가 고정해 준다. 그러나 같은 타입 안에서 어떤 행을 먼저 처리할지는 기본적으로 보장하지 않는다.** 즉,
-
-- **"DELETE가 INSERT보다 뒤"** → **Hibernate의 규칙.** 내가 바꿀 수 없고, 알고 피해야 한다.
-- **"1번 행 락 → 2번 행 락"** → **내 코드의 책임.** Hibernate는 관여하지 않으니 **정렬로 직접 고정해야 한다.**
-
-**면접에서 이 대비를 명시적으로 말하면 이해도가 확실히 드러난다.**
-
-> **(가산점 포인트) 부분적인 도움은 있다 — `hibernate.order_updates`.** 이 옵션을 켜면 Hibernate가 flush 시점에 UPDATE들을 **엔티티 타입과 PK 기준으로 정렬**해 실행한다. 배치 효율을 위한 옵션인데 부수 효과로 데드락 확률도 낮아진다(`hibernate.order_inserts`도 INSERT에 대해 같은 일을 한다). **다만 기본값이 꺼져 있고, 한계가 분명하다** — ① **한 번의 flush 안에서만** 유효하다(중간에 flush가 여러 번 일어나면 소용없다) ② **비관적 락(`SELECT ... FOR UPDATE`)이나 벌크 JPQL처럼 Hibernate의 UPDATE 액션을 거치지 않는 락 획득 순서는 전혀 덮지 못한다.** 그래서 **"옵션은 보험이고, 정렬은 코드로 고정한다"**가 결론이다.
-
----
-
-## 6. 배포 전에 잡는 방법 — 사람 눈 말고 기계로
-
-여기가 이 문항에서 가장 중요한 대목이다. **"코드 리뷰로 잡는다"는 답은 답이 아니다.** 이 유형의 버그는 **소스 코드만 봐서는 안 보인다** — `delete()` 다음에 `save()`가 있는 것은 지극히 자연스러워 보이고, 문제는 **실행 시점에 순서가 뒤집힌다**는 데 있기 때문이다. 그래서 **실행을 관측하는 장치**가 필요하다.
-
-### 6-1. 실제 SQL 순서를 눈으로 본다 — p6spy / datasource-proxy
+여기서부터가 이 문항에서 가장 중요한 대목이다. **"코드 리뷰로 잡는다"는 답은 답이 아니다.** 이 유형의 버그는 **소스 코드만 봐서는 안 보인다** — `delete()` 다음에 `save()`가 있는 것은 지극히 자연스러워 보이고, 문제는 **실행 시점에 순서가 뒤집힌다**는 데 있기 때문이다. 그래서 **실행을 관측하는 장치**가 필요하다.
 
 **`show-sql: true`나 Hibernate 로거로는 부족하다.** 바인딩 값이 `?`로 찍혀 어떤 행이 지워지고 어떤 행이 들어갔는지 알 수 없고, 여러 스레드가 섞이면 순서도 흐려진다.
 
@@ -486,14 +559,14 @@ spring:
 testImplementation 'com.github.gavlyukovskiy:p6spy-spring-boot-starter:<버전>'
 ```
 
-```
+```text
 -- p6spy 출력 (실제 순서와 실제 값이 보인다)
 1ms | insert into member (email, name) values ('kim@example.com', 'kim2')
 0ms | delete from member where id=1
      ↑ 코드는 delete 가 먼저였는데 로그는 insert 가 먼저다 — 이걸 봐야 알 수 있다
 ```
 
-**습관으로 만들 것**: **쓰기 로직(특히 삭제·교체·다건 수정)을 건드린 PR에서는 테스트 로그의 SQL 순서를 한 번 눈으로 확인한다.** 이것만으로도 §3-3 유형은 배포 전에 걸러진다.
+**습관으로 만들 것**: **쓰기 로직(특히 삭제·교체·다건 수정)을 건드린 PR에서는 테스트 로그의 SQL 순서를 한 번 눈으로 확인한다.** 이것만으로도 §2-3 유형은 배포 전에 걸러진다.
 
 한 걸음 더 가면 **순서를 테스트로 단정**할 수 있다. `datasource-proxy`는 실행된 쿼리를 프로그램으로 수집할 수 있어서 이렇게 쓴다.
 
@@ -514,11 +587,11 @@ void delete가_insert보다_먼저_나가야_한다() {
 
 이렇게 해두면 나중에 누가 `flush()`를 "불필요해 보인다"며 지웠을 때 **테스트가 막아준다.** 주석보다 강한 방어다.
 
-### 6-2. **`@DataJpaTest`로는 못 잡는다** — 롤백이 커밋 시점 문제를 숨긴다
+### 3-5. `@DataJpaTest`로는 못 잡는다 — 롤백이 커밋 시점 문제를 숨긴다
 
 **이 함정 하나가 "테스트는 초록불인데 운영에서 터진다"의 절반을 설명한다.**
 
-Spring의 테스트는 **기본적으로 각 테스트 종료 시 트랜잭션을 롤백**한다(`@DataJpaTest`, `@SpringBootTest` + `@Transactional` 모두). 그런데 §3-3의 예외는 **커밋 직전 flush에서** 난다. **롤백되면 그 flush가 아예 실행되지 않으므로 예외를 만날 기회 자체가 없다.**
+Spring의 테스트는 **기본적으로 각 테스트 종료 시 트랜잭션을 롤백**한다(`@DataJpaTest`, `@SpringBootTest` + `@Transactional` 모두). 그런데 §2-3의 예외는 **커밋 직전 flush에서** 난다. **롤백되면 그 flush가 아예 실행되지 않으므로 예외를 만날 기회 자체가 없다.**
 
 ```java
 // before — 초록불인데 운영에서 터지는 테스트
@@ -530,7 +603,7 @@ class MemberServiceTest {
         service.replaceMember("kim@example.com", "kim2");
         // 테스트 메서드가 끝난다 → 커밋이 아니라 롤백
         // → 커밋 직전 flush 가 실행되지 않음 → INSERT/DELETE 가 DB에 도달조차 안 함
-        // → 유니크 위반이 발생할 기회가 없다 → ✅ 통과
+        // → 유니크 위반이 발생할 기회가 없다 → 그냥 통과한다
     }
 }
 ```
@@ -544,8 +617,8 @@ class MemberServiceTest {
     @Commit                                   // ← 롤백하지 않고 진짜 커밋한다
     void 이메일_교체() {
         service.replaceMember("kim@example.com", "kim2");
-        // 커밋 직전 flush 발생 → insert 가 먼저 나감 → 🔴 DataIntegrityViolationException
-        //   = 배포 전에 잡혔다
+        // 커밋 직전 flush 발생 → insert 가 먼저 나감
+        //   → DataIntegrityViolationException 으로 실패 = 배포 전에 잡혔다
     }
 }
 ```
@@ -586,7 +659,7 @@ class MemberServiceIntegrationTest {
 
 > **한 줄로 기억할 것**: **"롤백되는 테스트는 커밋 시점에 나는 문제를 구조적으로 통과시킨다."** 유니크 위반, FK 위반, 데드락, `UnexpectedRollbackException` — 이 문항이 다루는 종류의 사고는 전부 여기에 해당한다.
 
-### 6-3. H2가 아니라 Testcontainers로 실제 DB에서 돌린다
+### 3-6. H2가 아니라 Testcontainers로 실제 DB에서 돌린다
 
 **유니크 제약과 데드락의 동작은 DB 벤더마다 다르다.** 그래서 "H2에서 통과하고 MySQL에서 터지는" 대표 유형이 바로 이 문항이다. 구체적으로 갈리는 지점들:
 
@@ -622,7 +695,7 @@ class MemberServiceIntegrationTest {
 
 **속도 걱정에 대한 답**: 컨테이너를 `static`으로 두면 **클래스 간 재사용**되고, Testcontainers의 **reusable 모드**를 켜면 로컬에서 컨테이너가 살아 있어 재기동 비용도 사라진다. 전략은 **"단위 테스트는 H2로 빠르게, DB 의존 동작(제약·락·네이티브 쿼리·마이그레이션)은 Testcontainers로"** 나누는 것이다.
 
-### 6-4. 데드락은 재현 테스트로 고정한다
+### 3-7. 데드락은 재현 테스트로 고정한다
 
 데드락은 "부하가 있어야 난다"고 포기하기 쉽지만, **두 스레드와 `CountDownLatch`만 있으면 결정론적으로 재현**할 수 있다.
 
@@ -653,7 +726,7 @@ void 정렬하면_데드락이_나지_않는다() throws Exception {
 
 이 테스트를 **정렬 코드를 넣기 전에 먼저 작성해 빨간불을 확인**하는 것이 중요하다. 빨간불을 못 봤다면 그 테스트는 아무것도 지키지 못한다.
 
-### 6-5. 안전망 체크리스트
+### 3-8. 안전망 체크리스트
 
 이 문항 하나만이 아니라 **"운영에서만 터지는 JPA 사고" 전반에 공통으로 적용되는 도구 상자**다.
 
@@ -670,7 +743,7 @@ void 정렬하면_데드락이_나지_않는다() throws Exception {
 
 ---
 
-## 7. 꼬리질문 대비 포인트
+## 4. 꼬리질문 대비 포인트
 
 ### "`save()` 직후 `findByName()`의 결과는 0인가 1인가? 그럼 `findById()`는?"
 
@@ -680,9 +753,9 @@ void 정렬하면_데드락이_나지_않는다() throws Exception {
 
 ### "`ActionQueue`의 순서를 바꿀 수 있나? DELETE를 먼저 보내고 싶다면?"
 
-**타입별 순서는 바꿀 수 없다.** Hibernate 구현에 박혀 있고, 이유가 **FK 위반 회피 + JDBC 배치 효율**이라는 설계 의도이기 때문이다. 개발자가 순서에 개입할 수 있는 유일한 수단은 **`flush()`로 실행 경계를 하나 더 만드는 것**이다 — DELETE만 쌓아두고 flush하면 그 flush에는 DELETE밖에 없으므로 DELETE가 먼저 나간다.
+**타입별 순서는 바꿀 수 없다.** Hibernate 구현에 박혀 있고(`ActionQueue.OrderedActions` 열거형의 선언 순서가 곧 실행 순서다), 이유가 **FK 위반 회피 + JDBC 배치 효율**이라는 설계 의도이기 때문이다. 개발자가 순서에 개입할 수 있는 유일한 수단은 **`flush()`로 실행 경계를 하나 더 만드는 것**이다 — DELETE만 쌓아두고 flush하면 그 flush에는 DELETE밖에 없으므로 DELETE가 먼저 나간다.
 
-다만 **순서를 강제하려 든다는 것 자체가 설계 신호**다. "지웠다 다시 넣는" 모델을 "고친다"로 바꿀 수 있는지를 먼저 검토하는 편이 낫다(§4-1). 참고로 **같은 타입 안의 순서**는 `hibernate.order_inserts` / `hibernate.order_updates`로 PK 정렬을 켤 수 있는데, 이건 배치 효율을 위한 옵션이고 **기본값은 꺼져 있으며 한 번의 flush 안에서만 유효**하다. **(가산점 포인트)**
+다만 **순서를 강제하려 든다는 것 자체가 설계 신호**다. "지웠다 다시 넣는" 모델을 "고친다"로 바꿀 수 있는지를 먼저 검토하는 편이 낫다(§3-1). 참고로 **같은 타입 안의 순서**는 `hibernate.order_inserts` / `hibernate.order_updates`로 PK 정렬을 켤 수 있는데, 이건 배치 효율을 위한 옵션이고 **기본값은 꺼져 있으며 한 번의 flush 안에서만 유효**하다. **(가산점 포인트)**
 
 ### "커밋도 안 했는데 왜 유니크 제약 위반이 나나?"
 
