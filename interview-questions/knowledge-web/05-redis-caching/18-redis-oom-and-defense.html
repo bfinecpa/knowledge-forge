@@ -1,0 +1,1372 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis 메모리 포화(OOM) — 가득 차면 무슨 일이 벌어지고, 어떻게 막는가</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.warn .k{color:var(--warn)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.er{color:#fca5a5}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+.tools{display:flex;gap:8px;margin:10px 0}
+.tools button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:.85rem;cursor:pointer;color:var(--text)}
+.tools button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">05 Redis · 캐싱 &nbsp;|&nbsp; 운영⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>Redis 메모리 포화(OOM)<br><span class="sub">가득 차면 무슨 일이 벌어지고, 어떻게 막는가</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"Redis 메모리가 가득 찼을 때(OOM) 서비스에 어떤 일이 벌어지나요? 사전 방어책은?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 가득 찼을 때 벌어지는 일은 <b>설정이 결정한다.</b> <code>noeviction</code>이면 <b>메모리를 더 쓰는 명령만 골라</b> 에러로 실패하고 읽기는 멀쩡한 <b>반쪽 장애</b>가 되고, eviction 정책이면 기존 키를 지워 자리를 만드는데 세션·락·발급 카운터처럼 <b>"지워지면 안 되는 데이터"</b>가 섞여 있으면 <b>에러 한 줄 없는 조용한 유실</b>이 된다. <code>maxmemory</code>를 아예 안 잡으면 더 나쁘다 — 스왑으로 지연이 폭발하거나(싱글 스레드라 <b>한 명령의 디스크 대기가 뒤에 줄 선 전부의 지연</b>이 된다) 커널의 <b>OOM killer</b>가 프로세스를 통째로 죽인다. 게다가 <code>maxmemory</code> 안에서도 터진다 — <b>fork의 copy-on-write·클라이언트 버퍼·복제 버퍼·단편화</b>가 데이터 바깥에서 메모리를 더 먹기 때문이다. 그래서 방어는 사후가 아니라 <b>사전</b>이다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>증상은 설정이 정한다</b> — <code>noeviction</code>은 <b>쓰기만 실패하는 반쪽 장애</b>(로그인 불가), eviction 정책은 <b>에러 없는 조용한 유실</b>(무작위 로그아웃), <code>maxmemory</code> 미설정은 <b>스왑·OOM killer로 인스턴스 통째 사망</b>이다.</div></li>
+    <li><span class="n">2</span><div><b><code>maxmemory</code> 안에서도 터진다</b> — 그 값이 통제하는 것은 <b>데이터에 쓰는 몫뿐</b>이고, <b>fork CoW·클라이언트 버퍼·복제 버퍼·단편화</b>가 그 바깥에서 물리 메모리를 밀어낸다. 그래서 <b>물리보다 충분히 낮게</b> 잡는다.</div></li>
+    <li><span class="n">3</span><div><b>방어는 네 겹</b> — <b>용도별 인스턴스 분리</b>, <b>전 키 TTL 규율</b>, <b>사용률·<code>evicted_keys</code>·단편화 비율 알람</b>, <b>캐시 실패를 삼키는 애플리케이션 코드</b>. 목록이 아니라 <b>"사고의 어느 단계를 어느 방어선이 끊는가"</b>로 말한다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">전제 — 두 설정이 결과를 가른다</a></li>
+    <li><a href="#s2">갈래 ① <code>noeviction</code> — 반쪽 장애</a></li>
+    <li><a href="#s3">갈래 ② eviction — 조용한 유실</a></li>
+    <li><a href="#s4">갈래 ③ 미설정 — 스왑과 OOM killer</a></li>
+    <li><a href="#s5"><code>maxmemory</code> 바깥의 네 몫</a></li>
+    <li><a href="#s6">방어선 1 — 용도별 인스턴스 분리</a></li>
+    <li><a href="#s7">방어선 2 — TTL 규율</a></li>
+    <li><a href="#s8">방어선 3 — 관측과 알람</a></li>
+    <li><a href="#s9">방어선 4 — 애플리케이션 방어</a></li>
+    <li><a href="#s10">실무 시나리오 — "로그인이 안 돼요"</a></li>
+    <li><a href="#s11">이미 섞여 있다면 (시니어 변별)</a></li>
+    <li><a href="#s12">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "Redis 메모리가 가득 찼을 때(OOM) 서비스에 어떤 일이 벌어지나요? 사전 방어책은?"</p>
+  <p><b>출제 의도</b>: <b>"캐시가 죽으면 서비스가 어떻게 되는가"</b>를 미리 그려보고 방어(메모리 알람, eviction 정책, 키 TTL 규율)를 깔아두는 <b>운영 성숙도</b>를 확인한다. 증상 나열이 아니라 <b>"우리 설정에서는 이렇게 되고, 그래서 이런 방어를 깔아뒀다"</b>는 구체적인 시나리오를 그릴 수 있는지 본다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"메모리가 차면 에러가 난다"</b>는 뭉뚱그린 답 → 1~4절에서 <b>설정에 따라 갈리는 세 갈래</b>로 쪼갠다. 갈래마다 <b>누가 판단하고, 프로세스가 사는지, 데이터가 남는지</b>가 전부 다르다.<br>
+    ② <b><code>maxmemory</code>만 잡으면 안전하다</b>는 착각 → 5절에서 <b>데이터 바깥에서 메모리를 먹는 네 가지</b>를 도식으로 분리한다.<br>
+    ③ <b>방어책을 목록으로 나열</b>하는 답 → 10절에서 실제 사고 타임라인 위에 <b>네 방어선이 각각 어느 단계를 끊는지</b> 매핑한다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 전제 — 같은 "가득 참"이 세 갈래로 갈린다</h2>
+
+<p>같은 메모리 포화라도 결과가 완전히 달라진다. 그 결과를 정하는 설정이 <b>두 개</b>다.</p>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k">maxmemory</div>
+    <div class="d"><b>Redis가 스스로에게 거는 상한선.</b> "데이터가 이만큼을 넘으면 더 자라지 않겠다"고 자기 자신에게 선언하는 값이다. 물리 메모리가 얼마든 상관없이 <b>이 값에 닿으면 행동이 바뀐다.</b></div>
+  </div>
+  <div class="tile">
+    <div class="k">maxmemory-policy</div>
+    <div class="d"><b>그 상한선에 닿았을 때 무엇을 할지 정하는 규칙.</b> eviction은 "쫓아냄"이라는 뜻으로, 자리를 만들기 위해 <b>기존 키를 골라 지우는</b> 동작이다.</div>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>기본값 조합이 이미 함정이다 — 둘의 기본값이 서로 다른 방향을 가리킨다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">maxmemory-policy</div><div class="d">기본값 <code>noeviction</code> — <b>"아무것도 안 지운다"</b></div></div>
+    <div class="tile red"><div class="k">maxmemory</div><div class="d">기본값 <b>0 = 상한 없음</b> — 그래서 <b>정책이 발동할 계기 자체가 없다</b></div></div>
+  </div>
+  <p style="margin:10px 0 0">그래서 <b>아무것도 설정하지 않고 띄운 Redis는 갈래 ③(스왑·OOM killer)</b>에 놓여 있다. 뒤에 나올 최악의 갈래가 사실은 <b>"손대지 않은 기본 상태"</b>라는 뜻이다. 이 한 줄을 면접에서 짚으면 "설정을 실제로 열어본 사람"으로 들린다.</p>
+</div>
+
+<p>정책 이름은 외울 필요가 없다. <b>앞부분이 축출 후보 범위, 뒷부분이 고르는 기준</b>이다. <code>allkeys-</code>는 모든 키, <code>volatile-</code>은 <b>TTL이 걸린 키만</b>을 대상으로 삼는다. LRU는 Least Recently Used(가장 오래 안 쓴 것), LFU는 Least Frequently Used(가장 적게 쓴 것)의 약자다.</p>
+
+<div class="scroll"><table>
+  <thead><tr><th>정책</th><th>축출 후보</th><th>고르는 기준</th><th>이 문서에서의 의미</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><code>noeviction</code></td><td>없음 (아무것도 안 지움)</td><td class="dash">—</td><td class="bad">갈래 ① — 쓰기만 실패</td></tr>
+    <tr><td><code>allkeys-lru</code></td><td>전체 키</td><td>가장 오래 안 쓴 것</td><td>갈래 ② — 지우며 버틴다</td></tr>
+    <tr><td><code>allkeys-lfu</code></td><td>전체 키</td><td>가장 적게 쓴 것</td><td>갈래 ② — 지우며 버틴다</td></tr>
+    <tr><td><code>allkeys-random</code></td><td>전체 키</td><td>무작위</td><td>갈래 ② — 지우며 버틴다</td></tr>
+    <tr><td><code>volatile-lru</code></td><td>TTL이 걸린 키만</td><td>가장 오래 안 쓴 것</td><td class="bad">② → 후보가 마르면 ①로 합류</td></tr>
+    <tr><td><code>volatile-ttl</code></td><td>TTL이 걸린 키만</td><td>만료가 가장 임박한 것</td><td class="bad">② → 후보가 마르면 ①로 합류</td></tr>
+  </tbody>
+</table></div>
+<p class="sub">정책 8종의 선택 기준과 LRU/LFU 내부 동작은 <b>04번(TTL·만료·eviction 정책)</b> 문서에서 다룬다. 여기서는 <b>"가득 찬 순간의 진단과 방어"</b>에 집중한다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 548" role="img" aria-label="메모리 포화가 maxmemory 설정과 정책에 따라 세 갈래로 갈라지는 분기 도식">
+    <defs>
+      <marker id="f1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+      <marker id="f1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <!-- regions -->
+    <rect x="14" y="140" width="716" height="352" rx="12" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="372" y="163" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">① · ② — Redis가 스스로 판단해 행동을 바꾼다 (프로세스는 살아 있다)</text>
+    <rect x="746" y="140" width="350" height="352" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="921" y="163" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">③ — 운영체제가 개입한다</text>
+
+    <!-- root -->
+    <rect x="400" y="14" width="320" height="46" rx="10" fill="#1d4ed8"/>
+    <text x="560" y="42" font-size="14" fill="#fff" text-anchor="middle" font-weight="700">Redis 메모리 사용량이 계속 자란다</text>
+    <line x1="560" y1="60" x2="560" y2="72" stroke="#6b7280" stroke-width="1.8"/>
+    <rect x="380" y="72" width="360" height="46" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="560" y="101" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">maxmemory가 설정돼 있는가?</text>
+
+    <path d="M560,118 V132 H300 V176" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#f1a)"/>
+    <path d="M560,118 V132 H921 V270" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f1r)"/>
+    <text x="416" y="127" font-size="12" fill="#374151" text-anchor="middle" font-weight="700">예 — 상한이 있다</text>
+    <text x="800" y="127" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">아니오 (기본값 0)</text>
+
+    <!-- policy decision -->
+    <rect x="130" y="176" width="340" height="44" rx="10" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="300" y="204" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">maxmemory-policy가 무엇인가?</text>
+    <path d="M300,220 V240 H190 V270" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#f1a)"/>
+    <path d="M300,220 V240 H548 V270" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#f1a)"/>
+
+    <!-- card 1 -->
+    <rect x="30" y="272" width="320" height="178" rx="10" fill="#fff" stroke="#dc2626" stroke-width="1.6"/>
+    <rect x="30" y="272" width="320" height="32" rx="10" fill="#fee2e2"/>
+    <text x="190" y="293" class="mono" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">maxmemory + noeviction</text>
+    <text x="190" y="326" font-size="13.5" fill="#b91c1c" text-anchor="middle" font-weight="700">갈래 ① 쓰기만 골라 실패</text>
+    <text x="190" y="350" font-size="11.5" fill="#374151" text-anchor="middle">SET · INCR · LPUSH → OOM 에러</text>
+    <text x="190" y="370" font-size="11.5" fill="#166534" text-anchor="middle">GET · DEL · TTL · PING → 정상</text>
+    <text x="190" y="396" font-size="11.5" fill="#374151" text-anchor="middle">신규 로그인 불가 · 분산 락 획득 실패</text>
+    <text x="190" y="416" font-size="11.5" fill="#6b7280" text-anchor="middle">프로세스는 살아 있고 데이터도 그대로</text>
+    <text x="190" y="440" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">= 시끄러운 반쪽 장애</text>
+
+    <!-- card 2 -->
+    <rect x="388" y="272" width="320" height="178" rx="10" fill="#fff" stroke="#d97706" stroke-width="1.6"/>
+    <rect x="388" y="272" width="320" height="32" rx="10" fill="#fef3c7"/>
+    <text x="548" y="293" class="mono" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">maxmemory + allkeys-lru 등</text>
+    <text x="548" y="326" font-size="13.5" fill="#92400e" text-anchor="middle" font-weight="700">갈래 ② 키를 지우며 버틴다</text>
+    <text x="548" y="350" font-size="11.5" fill="#166534" text-anchor="middle">캐시 전용 인스턴스라면 → 정상 동작</text>
+    <text x="548" y="374" font-size="11.5" fill="#374151" text-anchor="middle">세션·락·카운터가 섞여 있으면</text>
+    <text x="548" y="394" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 에러 없이 사라진다</text>
+    <text x="548" y="416" font-size="11.5" fill="#6b7280" text-anchor="middle">축출 CPU + DB 부하 상승이 따라온다</text>
+    <text x="548" y="440" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">= 조용한 데이터 유실</text>
+
+    <!-- card 3 -->
+    <rect x="766" y="272" width="310" height="178" rx="10" fill="#fff" stroke="#dc2626" stroke-width="1.6"/>
+    <rect x="766" y="272" width="310" height="32" rx="10" fill="#fee2e2"/>
+    <text x="921" y="293" class="mono" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">maxmemory 미설정 (0)</text>
+    <text x="921" y="326" font-size="13.5" fill="#b91c1c" text-anchor="middle" font-weight="700">갈래 ③ OS가 개입한다</text>
+    <text x="921" y="350" font-size="11.5" fill="#374151" text-anchor="middle">스왑 → 싱글 스레드가 디스크를 기다린다</text>
+    <text x="921" y="370" font-size="11.5" fill="#374151" text-anchor="middle">→ 뒤에 줄 선 요청 전부가 함께 밀린다</text>
+    <text x="921" y="396" font-size="11.5" fill="#374151" text-anchor="middle">OOM killer → 프로세스 강제 종료</text>
+    <text x="921" y="416" font-size="11.5" fill="#6b7280" text-anchor="middle">영속화가 없으면 데이터 전부 증발</text>
+    <text x="921" y="440" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">= 인스턴스 통째로 사망</text>
+
+    <!-- volatile trap arrow -->
+    <path d="M470,454 C470,478 260,478 200,460" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#f1r)"/>
+    <text x="360" y="488" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">함정: volatile-* 인데 TTL 걸린 키가 고갈되면 → 지울 후보가 없어 ①과 같은 증상이 된다</text>
+
+    <!-- bottom -->
+    <rect x="14" y="502" width="1082" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="555" y="524" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">그래서 장애 진단의 첫 두 질문은 언제나 이것이다 — "maxmemory 값이 얼마인가" 그리고 "maxmemory-policy가 무엇인가"</text>
+  </svg>
+  <figcaption>세 갈래를 가르는 축은 <b>"누가 판단하느냐"</b>다. 왼쪽 두 갈래는 Redis가 자기 규칙대로 행동을 바꾸는 것이고, 오른쪽은 <b>Redis가 손쓸 수 없는 곳에서 커널이 개입</b>하는 것이다. 그래서 대응의 성격도 완전히 달라진다 — 앞의 둘은 설정과 코드로 흡수하지만, ③은 <b>인스턴스를 다시 띄우고 데이터를 다시 채우는 복구 작업</b>이 된다.</figcaption>
+</figure>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 갈래 ① <code>noeviction</code> — 쓰기만 골라 실패하는 반쪽 장애</h2>
+
+<p>이 조합에서는 상한에 닿아도 Redis가 아무것도 지우지 않는다. 대신 <b>메모리를 더 쓰는 명령을 거부한다.</b></p>
+
+<div class="codehead plain"><span class="tag">redis-cli</span> 같은 인스턴스, 같은 키인데 결과가 갈린다</div>
+<pre><code>127.0.0.1:6379&gt; SET user:1001 "{...}"
+<span class="er">(error) OOM command not allowed when used memory &gt; 'maxmemory'.</span>
+
+127.0.0.1:6379&gt; GET user:1001
+"{...}"          <span class="cm">&lt;- 읽기는 정상 동작한다</span>
+
+127.0.0.1:6379&gt; PING
+PONG             <span class="cm">&lt;- 헬스체크도 통과한다. 대시보드는 초록불이다</span></code></pre>
+
+<h3>2-1. 왜 쓰기는 실패하고 읽기는 되는가</h3>
+
+<p>오류가 났으면 다 나야 자연스러워 보이는데 그렇지 않다. 이유는 Redis가 <b>명령마다 "이 명령은 메모리를 더 쓸 수 있는 명령인가"라는 표시를 미리 붙여두기</b> 때문이다. Redis 내부에는 모든 명령의 목록이 있고 각 명령에 성격을 나타내는 표식이 달려 있는데, 그중 하나가 <b>"메모리를 늘릴 수 있음"</b>이라는 표식이다. 메모리가 상한에 닿아 자리를 확보하지 못하면 Redis는 <b>그 표식이 붙은 명령만 골라 거부한다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="명령에 붙은 메모리 증가 표식에 따라 OOM 에러와 정상 실행으로 갈리는 판정 흐름도">
+    <defs>
+      <marker id="f2a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="f2g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="f2r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="13.5" fill="#1f2937" font-weight="700">Redis는 명령마다 성격 표식을 미리 붙여둔다 — 상한을 넘으면 그 표식만 보고 거른다</text>
+
+    <!-- group A -->
+    <rect x="24" y="52" width="252" height="116" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="150" y="76" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">● "메모리를 늘릴 수 있음" 표식</text>
+    <text x="150" y="104" class="mono" font-size="12.5" fill="#7f1d1d" text-anchor="middle">SET · SETEX · INCR</text>
+    <text x="150" y="128" class="mono" font-size="12.5" fill="#7f1d1d" text-anchor="middle">LPUSH · HSET · SADD</text>
+    <text x="150" y="152" class="mono" font-size="12.5" fill="#7f1d1d" text-anchor="middle">ZADD · APPEND · SETNX</text>
+
+    <!-- group B -->
+    <rect x="24" y="192" width="252" height="116" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="150" y="216" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">○ 표식 없음 (안 늘리거나 줄인다)</text>
+    <text x="150" y="244" class="mono" font-size="12.5" fill="#14532d" text-anchor="middle">GET · MGET · EXISTS</text>
+    <text x="150" y="268" class="mono" font-size="12.5" fill="#14532d" text-anchor="middle">DEL · UNLINK · TTL</text>
+    <text x="150" y="292" class="mono" font-size="12.5" fill="#14532d" text-anchor="middle">PING · INFO · SCAN</text>
+
+    <path d="M276,110 C306,110 306,160 330,176" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#f2a)"/>
+    <path d="M276,250 C306,250 306,210 330,196" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#f2a)"/>
+
+    <!-- stage 1 -->
+    <rect x="336" y="146" width="228" height="88" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="450" y="174" font-size="13" fill="#92400e" text-anchor="middle" font-weight="700">상한에 닿았는가?</text>
+    <text x="450" y="196" class="mono" font-size="11" fill="#92400e" text-anchor="middle">used_memory &gt; maxmemory</text>
+    <text x="450" y="216" font-size="11" fill="#92400e" text-anchor="middle">그리고 축출로도 자리 확보 실패</text>
+
+    <line x1="564" y1="190" x2="612" y2="190" stroke="#475569" stroke-width="1.8" marker-end="url(#f2a)"/>
+    <text x="588" y="180" font-size="11.5" fill="#374151" text-anchor="middle" font-weight="700">예</text>
+
+    <!-- stage 2 -->
+    <rect x="618" y="146" width="228" height="88" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="732" y="180" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">이 명령에 표식이 붙어 있는가?</text>
+    <text x="732" y="206" font-size="11" fill="#1d4ed8" text-anchor="middle">실행해 보고 판단하는 게 아니라</text>
+    <text x="732" y="222" font-size="11" fill="#1d4ed8" text-anchor="middle">명령 테이블에 미리 표시돼 있다</text>
+
+    <!-- outcomes -->
+    <path d="M846,172 C880,172 880,124 892,120" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f2r)"/>
+    <text x="874" y="142" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">예</text>
+    <rect x="900" y="86" width="196" height="72" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="998" y="114" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">OOM 에러 반환</text>
+    <text x="998" y="138" class="mono" font-size="9.5" fill="#b91c1c" text-anchor="middle">OOM command not allowed</text>
+
+    <path d="M846,208 C880,208 880,262 892,268" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f2g)"/>
+    <text x="874" y="244" font-size="11.5" fill="#16a34a" text-anchor="middle" font-weight="700">아니오</text>
+    <rect x="900" y="250" width="196" height="72" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="998" y="278" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">그대로 실행된다</text>
+    <text x="998" y="302" font-size="11" fill="#166534" text-anchor="middle">읽기·삭제는 멀쩡하다</text>
+
+    <!-- bypass -->
+    <path d="M450,234 V344 H998 V330" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#f2g)"/>
+    <text x="700" y="338" font-size="11" fill="#16a34a" text-anchor="middle" font-weight="700">아니오 — 상한에 안 닿았으면 표식과 무관하게 전부 실행</text>
+
+    <rect x="24" y="360" width="1072" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="382" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">이 비대칭이 "반쪽 장애"의 정체다 — 읽기만 확인하는 헬스체크는 이 상태를 원천적으로 감지하지 못한다</text>
+  </svg>
+  <figcaption><code>SET</code>·<code>LPUSH</code>·<code>INCR</code>·<code>HSET</code>은 값을 새로 넣거나 자료구조를 키우므로 표식이 붙어 있다. 반면 <code>GET</code>은 있는 값을 읽어 돌려줄 뿐이고 <b><code>DEL</code>은 오히려 메모리를 줄이므로</b> 표식이 없다. <b>가득 찬 Redis에서 <code>DEL</code>이 되는 것은 다행이 아니라 설계</b>다 — 그래야 사람이 들어가 정리할 수 있다.</figcaption>
+</figure>
+
+<h3>2-2. 서비스 관점에서 이 반쪽 장애가 어떻게 보이는가</h3>
+
+<div class="grid g3">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">캐시 put 실패</div>
+    <div class="d">코드가 예외를 감싸두지 않았다면 캐시에 저장하는 그 줄에서 예외가 터져 <b>조회 API 자체가 500</b>을 낸다. <b>DB에서 데이터를 이미 잘 읽어왔는데도</b> 응답을 못 준다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">세션 저장 실패</div>
+    <div class="d">로그인은 세션을 <b>쓰는</b> 동작이라 <b>신규 로그인이 전면 불가</b>가 된다. 이미 로그인한 사용자는 세션을 <b>읽기만</b> 하므로 멀쩡하다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">분산 락 획득 실패</div>
+    <div class="d">분산 락은 보통 <code>SET key value NX</code>로 잡는다. 이것도 쓰기이므로 실패하고, <b>락이 필요한 기능 전체가 정지</b>한다.</div>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>"캐시가 꽉 찼을 뿐인데 로그인이 안 되는" 장애의 정확한 경로</h4>
+  <div class="chain">
+    <span class="chip r">캐시 키가 메모리를 다 먹음</span><span class="arrow">→</span>
+    <span class="chip r">maxmemory 도달</span><span class="arrow">→</span>
+    <span class="chip r">세션 SET 거부</span><span class="arrow">→</span>
+    <span class="chip r">신규 로그인 불가</span>
+  </div>
+  <p style="margin:8px 0 0"><b>가장 헷갈리게 만드는 지점</b> — 사내에서 테스트하는 사람들은 대개 <b>이미 로그인 상태</b>라 "잘 되는데요?"라고 답한다. <b>증상을 겪는 집단과 확인하는 집단이 다르다</b>는 것이 이 장애의 추적을 어렵게 만든다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 갈래 ② eviction 정책 — 에러 없이 조용히 사라진다</h2>
+
+<p><code>allkeys-lru</code> 같은 정책이 걸려 있으면 Redis는 에러를 내는 대신 <b>기존 키를 지워 자리를 만들고 쓰기를 성공시킨다.</b> 캐시 전용 인스턴스라면 이것은 장애가 아니라 <b>정상 동작</b>이다. 캐시는 원래 지워져도 DB에서 다시 읽어오면 그만인 데이터니까.</p>
+
+<p>문제는 <b>세 가지 상황</b>에서 생긴다.</p>
+
+<h3>3-1. (1) 혼합 사용의 함정 — 로그에 아무것도 안 남는 장애</h3>
+
+<p>캐시와 세션·분산 락·쿠폰 발급 카운터가 한 인스턴스에 같이 있으면, <code>allkeys-lru</code>는 이 둘을 구분하지 못한다. LRU는 <b>"가장 오래 안 쓴 키"</b>를 지울 뿐이고, <b>한동안 활동이 없던 사용자의 세션이 딱 그 조건에 들어맞는다.</b></p>
+
+<div class="callout trap"><span class="t">왜 원인 추적이 지독하게 어려운가 — 아무도 실패하지 않았기 때문이다</span>
+  Redis 입장에서는 <b>설정대로 정상 동작</b>한 것이고, 애플리케이션 입장에서는 <b>"세션 키를 조회했더니 없더라 = 로그인 안 한 사용자"</b>로 해석될 뿐이다. 예외도, 에러 로그도, 실패 메트릭도 없다. <b>사용자만 무작위로 튕긴다.</b>
+</div>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">세션이 축출되면</div>
+    <div class="d">에러 한 줄 없이 <b>사용자가 무작위로 로그아웃</b>된다. 애플리케이션 로그에는 아무것도 안 남는다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">발급 카운터가 축출되면 — 더 나쁘다</div>
+    <div class="d">카운터가 사라지면 발급 수가 <b>0부터 다시 세지므로</b> 한정 수량을 <b>초과 발급</b>하게 된다. 데이터 유실이 <b>비즈니스 사고</b>로 바뀌는 지점이다.</div>
+  </div>
+</div>
+
+<h3>3-2. (2) <code>volatile-*</code> 정책의 축출 후보 고갈 <span class="badge trap">설정만 봐서는 안 보인다</span></h3>
+
+<p><code>volatile-lru</code>처럼 TTL이 걸린 키만 지우는 정책을 골랐는데, 정작 인스턴스 안에 <b>TTL 있는 키가 다 소진되면</b> 어떻게 될까. 지울 후보가 없으므로 Redis는 자리를 못 만들고, <b>결국 <code>noeviction</code>과 똑같이 쓰기 에러로 넘어간다.</b></p>
+
+<div class="memo red">
+  <h4>이것이 함정인 이유 — 설정 파일만 보면 안전해 보인다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">설정 파일에서 읽히는 것</div><div class="d"><code>volatile-lru</code>라고 적혀 있으니 <b>"가득 차면 알아서 지우겠지"</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">실제로 일어난 것</div><div class="d"><b>TTL 없는 키</b>가 메모리를 다 먹었고 그 키들은 <b>축출 대상이 아니라서</b> 갈래 ①의 증상이 그대로 나온다</div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>진단 신호</b>: 사용률이 100%인데 <code>evicted_keys</code>가 늘지 않는다면 이 상태이거나 <code>noeviction</code>이다. <b>"정책이 무엇인가"와 "그 정책이 실제로 지울 수 있는 키가 있는가"는 다른 질문</b>이다.</p>
+</div>
+
+<h3>3-3. (3) 축출 자체의 2차 효과 — Redis 문제가 DB 장애의 방아쇠가 된다</h3>
+
+<div class="chain">
+  <span class="chip w">eviction이 격하게 돈다</span><span class="arrow">→</span>
+  <span class="chip w">지우는 작업이 CPU를 먹어 응답 지연이 튄다</span>
+</div>
+<div class="chain">
+  <span class="chip w">지워진 캐시만큼 요청이 DB로 내려간다</span><span class="arrow">→</span>
+  <span class="chip r">DB 부하가 함께 오른다</span><span class="arrow">→</span>
+  <span class="chip r">DB 장애</span>
+</div>
+
+<p><b>즉 Redis 메모리 부족이 DB 장애의 방아쇠가 될 수 있다.</b> 이 연결은 <b>19번(캐시 무력화 방어)</b> 문서의 주제로 이어진다. 면접에서 "축출은 캐시니까 괜찮다"에서 멈추지 말고 <b>"축출된 만큼 DB로 흘러간다"</b>까지 붙이면 한 단계 위로 들린다.</p>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 갈래 ③ <code>maxmemory</code> 미설정 — 스왑과 OOM killer</h2>
+
+<p>상한이 없으면 Redis는 데이터가 들어오는 대로 계속 자란다. 그러다 <b>OS 수준에서</b> 터진다. 여기서 벌어지는 두 가지는 앞의 두 갈래와 성격이 완전히 다르다 — 앞의 둘은 <b>Redis가 스스로 판단해서 취하는 행동</b>이지만, 이번 둘은 <b>Redis가 아니라 운영체제가 개입하는 사건</b>이다.</p>
+
+<h3>4-1. 첫 번째 — 스왑(swap): 죽지도 살지도 않은 상태</h3>
+
+<p><b>스왑은 물리 메모리가 부족해질 때 당장 안 쓰는 메모리 페이지를 디스크로 밀어내 공간을 확보하는 OS의 기능이다.</b> 그 자체로는 고마운 기능이고, 일반적인 애플리케이션이라면 잠깐 느려지고 말 일이다. 그런데 Redis에게는 치명적이다. 이유가 <b>두 겹</b>이다.</p>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">① 메모리에 두는 것이 존재 이유다</div>
+    <div class="d">디스크로 밀려난 페이지에 접근하는 순간, <b>나노초 단위였던 메모리 접근이 밀리초 단위의 디스크 접근</b>으로 바뀐다. 메모리 DB의 장점이 통째로 사라진다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">② 명령을 하나의 스레드로 처리한다</div>
+    <div class="d">명령들이 <b>한 줄로 줄을 서 있고 앞사람이 끝나야 뒷사람 차례</b>가 온다. 스왑에 걸린 명령 하나가 디스크를 기다리는 동안 <b>뒤에 줄 선 모든 요청이 함께 기다린다.</b></div>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="싱글 스레드 처리에서 스왑에 걸린 한 요청이 뒤의 모든 요청 지연으로 번지는 것을 비교한 타임라인">
+    <defs>
+      <marker id="f3a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+      <pattern id="swp" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="8" height="8" fill="#fef2f2"/><line x1="0" y1="0" x2="0" y2="8" stroke="#f87171" stroke-width="3"/>
+      </pattern>
+    </defs>
+
+    <text x="24" y="28" font-size="13.5" fill="#1f2937" font-weight="700">Redis는 명령을 한 줄로 세워 하나씩 처리한다 — 그래서 한 명령의 디스크 대기가 곧 전체의 지연이 된다</text>
+
+    <!-- lane 1 -->
+    <text x="24" y="82" font-size="13" fill="#166534" font-weight="700">정상</text>
+    <text x="24" y="100" font-size="10.5" fill="#6b7280">전부 메모리에</text>
+    <rect x="130" y="60" width="120" height="46" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="190" y="80" font-size="12" fill="#14532d" text-anchor="middle" font-weight="700">요청 1</text>
+    <text x="190" y="98" class="mono" font-size="11" fill="#166534" text-anchor="middle">0.1ms</text>
+    <rect x="262" y="60" width="120" height="46" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="322" y="80" font-size="12" fill="#14532d" text-anchor="middle" font-weight="700">요청 2</text>
+    <text x="322" y="98" class="mono" font-size="11" fill="#166534" text-anchor="middle">0.1ms</text>
+    <rect x="394" y="60" width="120" height="46" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="454" y="80" font-size="12" fill="#14532d" text-anchor="middle" font-weight="700">요청 3</text>
+    <text x="454" y="98" class="mono" font-size="11" fill="#166534" text-anchor="middle">0.1ms</text>
+    <line x1="522" y1="83" x2="566" y2="83" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f3a)"/>
+    <text x="640" y="89" font-size="14" fill="#166534" font-weight="700">총 0.3ms</text>
+
+    <!-- lane 2 -->
+    <text x="24" y="192" font-size="13" fill="#b91c1c" font-weight="700">스왑 발생</text>
+    <text x="24" y="209" font-size="10.5" fill="#b91c1c">요청 2의 키가</text>
+    <text x="24" y="224" font-size="10.5" fill="#b91c1c">디스크로 밀려남</text>
+    <rect x="130" y="174" width="120" height="46" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="190" y="194" font-size="12" fill="#14532d" text-anchor="middle" font-weight="700">요청 1</text>
+    <text x="190" y="212" class="mono" font-size="11" fill="#166534" text-anchor="middle">0.1ms</text>
+    <rect x="262" y="174" width="430" height="46" rx="6" fill="url(#swp)" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="477" y="194" font-size="12.5" fill="#7f1d1d" text-anchor="middle" font-weight="700">요청 2 — 디스크에서 페이지를 다시 읽어오는 중</text>
+    <text x="477" y="212" class="mono" font-size="10.5" fill="#7f1d1d" text-anchor="middle">약 10ms (메모리 접근의 수만 배)</text>
+    <rect x="704" y="174" width="120" height="46" rx="6" fill="#fef3c7" stroke="#d97706"/>
+    <text x="764" y="194" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">요청 3</text>
+    <text x="764" y="212" class="mono" font-size="11" fill="#92400e" text-anchor="middle">0.1ms</text>
+    <text x="764" y="158" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">↑ 아무 잘못이 없는데 앞사람 뒤에서 10ms를 함께 기다렸다</text>
+    <line x1="832" y1="197" x2="876" y2="197" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f3a)"/>
+    <text x="950" y="203" font-size="14" fill="#b91c1c" font-weight="700">총 10.2ms</text>
+    <text x="1096" y="244" font-size="10" fill="#9ca3af" text-anchor="end">가로 폭은 실제 비율이 아니다</text>
+
+    <rect x="24" y="266" width="1072" height="38" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="560" y="290" font-size="13.5" fill="#b91c1c" text-anchor="middle" font-weight="700">PING은 이 줄에서도 결국 응답한다 → 모니터링은 초록불, 사용자는 타임아웃 — "느려진 Redis가 죽은 Redis보다 나쁘다"</text>
+  </svg>
+  <figcaption>이 상태를 <b>"죽지도 않고 살지도 않은" 상태</b>라고 부른다. 죽었다면 클라이언트가 <b>즉시 연결 실패를 받고 폴백 경로</b>로 갔을 텐데, 느려지면 <b>모두가 그 앞에 줄을 서서 기다린다.</b> 이 논점은 19번 문서에서 <b>애플리케이션 스레드 고갈</b> 이야기로 이어진다.</figcaption>
+</figure>
+
+<h3>4-2. 두 번째 — OOM killer: 왜 하필 Redis가 뽑히는가</h3>
+
+<p><b>OOM killer는 리눅스 커널이 시스템 전체 메모리가 바닥났을 때 프로세스 하나를 골라 강제 종료하는 기능이다.</b> 이름 그대로 "메모리 부족(Out Of Memory) 상황의 처형자"다. 커널 입장에서는 메모리를 확보할 방법이 더 없을 때, <b>시스템 전체가 멈추는 것보다 프로세스 하나를 죽이는 쪽이 낫다</b>고 판단하는 것이다.</p>
+
+<div class="memo">
+  <h4>선정 기준 한 줄 — 그래서 Redis는 항상 1순위 후보다</h4>
+  <div class="rule">커널은 <b>죽였을 때 확보되는 메모리가 큰 프로세스</b>에 높은 점수를 준다 → 그 서버의 <b>최대 메모리 소비자는 대체로 Redis</b>다</div>
+</div>
+
+<h3>4-3. 세 갈래를 한 표로 — 여기서 대응의 성격이 갈린다</h3>
+
+<div class="scroll"><table>
+  <thead><tr><th></th><th>갈래 ① <code>noeviction</code></th><th>갈래 ② eviction</th><th>갈래 ③ OOM killer</th></tr></thead>
+  <tbody>
+    <tr><th>누가 판단하나</th><td>Redis</td><td>Redis</td><td class="bad">리눅스 커널</td></tr>
+    <tr><th>프로세스</th><td>살아 있음</td><td>살아 있음</td><td class="bad"><b>사라짐</b></td></tr>
+    <tr><th>데이터</th><td class="good">그대로</td><td>일부 유실</td><td class="bad"><b>전부 증발</b> (영속화 없으면)</td></tr>
+    <tr><th>애플리케이션이 받는 것</th><td>OOM 에러</td><td class="bad">정상 응답 (값이 없을 뿐)</td><td>연결 거부</td></tr>
+    <tr class="hl"><th>대응의 성격</th><td colspan="2">설정과 코드로 <b>흡수</b>할 수 있다</td><td><b>인스턴스 재기동 + 데이터 재적재</b> — 복구 작업이다</td></tr>
+  </tbody>
+</table></div>
+
+<div class="memo green">
+  <h4>세 갈래를 한 줄씩으로 압축한 인출 카드</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 시끄러운 반쪽 장애</div><div class="d">쓰기만 실패 · 읽기는 정상 · <b>에러가 남는다</b></div></div>
+    <div class="tile warn"><div class="k" style="font-family:inherit">② 조용한 유실</div><div class="d">전부 성공하는데 <b>데이터만 사라진다</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ 통째로 사망</div><div class="d">느려지거나 <b>프로세스가 없어진다</b></div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>①·②는 "느려지거나 일부가 실패하는" 것이고, ③은 "프로세스가 통째로 사라지는" 것이다.</b> 이 구분을 먼저 말하고 시작하면 답 전체가 정리돼 들린다.</p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. <code>maxmemory</code> 안에서도 터진다 — 데이터 바깥의 네 몫 <span class="badge bonus">가산점</span></h2>
+
+<p>"그럼 <code>maxmemory</code>를 물리 메모리와 똑같이 잡으면 되는 것 아닌가?" 자연스러운 생각이지만 위험하다. 이유는 하나로 요약된다.</p>
+
+<div class="rule red"><code>maxmemory</code>가 통제하는 것은 Redis가 <b>"데이터"에 쓰는 메모리뿐</b>인데, Redis 프로세스는 <b>데이터 말고도 메모리를 쓴다</b></div>
+
+<p>그 바깥의 몫이 물리 메모리를 밀어내면 결국 <b>갈래 ③(스왑·OOM killer)</b>으로 떨어진다. 데이터 바깥에서 메모리를 먹는 것이 <b>네 가지</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 444" role="img" aria-label="물리 메모리 안에서 데이터와 클라이언트 버퍼 복제 버퍼 단편화가 차지하는 영역과 used_memory 및 used_memory_rss가 각각 재는 범위를 보여주는 도식">
+    <defs>
+      <marker id="f4r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <pattern id="frg" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="7" height="7" fill="#f1f5f9"/><line x1="0" y1="0" x2="0" y2="7" stroke="#cbd5e1" stroke-width="3"/>
+      </pattern>
+    </defs>
+
+    <!-- floating CoW -->
+    <rect x="700" y="26" width="306" height="56" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="853" y="50" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">fork + copy-on-write 사본</text>
+    <text x="853" y="70" font-size="11" fill="#b91c1c" text-anchor="middle">스냅샷·AOF rewrite가 도는 동안에만 나타난다</text>
+    <path d="M924,82 V104" stroke="#dc2626" stroke-width="2" marker-end="url(#f4r)"/>
+
+    <text x="24" y="60" font-size="13.5" fill="#1f2937" font-weight="700">물리 메모리 위에서 Redis 프로세스가</text>
+    <text x="24" y="80" font-size="13.5" fill="#1f2937" font-weight="700">실제로 차지하는 것들</text>
+
+    <!-- physical frame -->
+    <rect x="110" y="110" width="900" height="64" rx="6" fill="#f8fafc" stroke="#94a3b8"/>
+    <rect x="112" y="112" width="498" height="60" rx="4" fill="#93c5fd" stroke="#2563eb"/>
+    <text x="361" y="138" font-size="12.5" fill="#1e3a8a" text-anchor="middle" font-weight="700">데이터 (키·값) — maxmemory가 통제하는 유일한 영역</text>
+    <text x="361" y="158" class="mono" font-size="11" fill="#1e3a8a" text-anchor="middle">used_memory</text>
+    <rect x="610" y="112" width="88" height="60" rx="4" fill="#fecaca" stroke="#dc2626"/>
+    <text x="654" y="136" font-size="10.5" fill="#7f1d1d" text-anchor="middle" font-weight="700">클라이언트</text>
+    <text x="654" y="152" font-size="10.5" fill="#7f1d1d" text-anchor="middle">버퍼</text>
+    <rect x="698" y="112" width="70" height="60" rx="4" fill="#fed7aa" stroke="#d97706"/>
+    <text x="733" y="136" font-size="10.5" fill="#92400e" text-anchor="middle" font-weight="700">복제본</text>
+    <text x="733" y="152" font-size="10.5" fill="#92400e" text-anchor="middle">버퍼</text>
+    <rect x="768" y="112" width="72" height="60" rx="4" fill="url(#frg)" stroke="#94a3b8"/>
+    <text x="804" y="136" font-size="10.5" fill="#475569" text-anchor="middle" font-weight="700">단편화</text>
+    <text x="804" y="152" font-size="10.5" fill="#475569" text-anchor="middle">빈틈</text>
+    <rect x="840" y="112" width="168" height="60" rx="4" fill="#fff" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+    <text x="924" y="147" font-size="11.5" fill="#6b7280" text-anchor="middle">남은 여유</text>
+
+    <line x1="1010" y1="96" x2="1010" y2="196" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="1010" y="212" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">물리 메모리 한계</text>
+    <text x="1010" y="230" font-size="10.5" fill="#dc2626" text-anchor="middle">넘으면 스왑 · OOM killer</text>
+
+    <!-- brackets -->
+    <path d="M112,184 V198 H610 V184" fill="none" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="361" y="218" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">used_memory — Redis가 자기 장부에 적은 "데이터" 양</text>
+    <text x="361" y="236" font-size="11" fill="#2563eb" text-anchor="middle">maxmemory는 이 막대만 붙잡고 있다</text>
+
+    <path d="M112,252 V268 H840 V252" fill="none" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="476" y="288" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">used_memory_rss — OS가 이 프로세스에 실제로 내준 물리 메모리 (RSS = Resident Set Size)</text>
+    <text x="476" y="306" class="mono" font-size="11" fill="#6b7280" text-anchor="middle">mem_fragmentation_ratio = 아래 막대 ÷ 위 막대</text>
+
+    <!-- four tiles -->
+    <rect x="24" y="322" width="258" height="76" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="153" y="344" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">① fork의 copy-on-write</text>
+    <text x="153" y="364" font-size="10.5" fill="#374151" text-anchor="middle">부모가 고친 페이지만큼 사본이 생긴다</text>
+    <text x="153" y="382" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">쓰기가 많을수록 커진다 — 최악 2배</text>
+
+    <rect x="296" y="322" width="258" height="76" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="425" y="344" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">② 클라이언트별 입출력 버퍼</text>
+    <text x="425" y="364" font-size="10.5" fill="#374151" text-anchor="middle">연결이 1,000개면 버퍼도 1,000개</text>
+    <text x="425" y="382" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">큰 응답을 내보낼 때 부푼다</text>
+
+    <rect x="568" y="322" width="258" height="76" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="697" y="344" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">③ 복제본에 보낼 버퍼</text>
+    <text x="697" y="364" font-size="10.5" fill="#374151" text-anchor="middle">전달할 변경 내역을 담아둔다</text>
+    <text x="697" y="382" font-size="10.5" fill="#92400e" text-anchor="middle" font-weight="700">복제본이 느리거나 끊기면 쌓인다</text>
+
+    <rect x="840" y="322" width="256" height="76" rx="9" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="968" y="344" font-size="12" fill="#475569" text-anchor="middle" font-weight="700">④ 메모리 단편화</text>
+    <text x="968" y="364" font-size="10.5" fill="#374151" text-anchor="middle">잦은 할당·해제가 남긴 못 쓰는 빈틈</text>
+    <text x="968" y="382" font-size="10.5" fill="#475569" text-anchor="middle" font-weight="700">4GB라고 계산해도 실제는 5GB일 수 있다</text>
+
+    <rect x="24" y="406" width="1072" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="428" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">복사본 하나 · 버퍼 둘 · 빈틈 하나 — 이 넷이 maxmemory 바깥에서 먹는다. 그래서 maxmemory는 물리 메모리보다 충분히 낮게 잡는다</text>
+  </svg>
+  <figcaption>도식의 핵심은 <b>두 개의 괄호가 서로 다른 구간을 잰다</b>는 것이다. 파란 괄호(<code>used_memory</code>)만 보고 "아직 여유 있다"고 판단하면, <b>초록 괄호(<code>used_memory_rss</code>)는 이미 한계선에 붙어 있을 수 있다.</b> 게다가 빨간 점선 블록(CoW)은 <b>평소에는 그래프에 아예 없다가 스냅샷이 도는 순간에만 나타난다</b> — 모니터링 간격 사이에 숨는 사고가 여기서 나온다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>네 가지를 외우는 방법 — 1 + 2 + 1로 묶는다</h4>
+  <div class="rule"><b>복사본 하나</b>(fork CoW) · <b>버퍼 둘</b>(클라이언트 · 복제본) · <b>빈틈 하나</b>(단편화)</div>
+  <p style="margin:8px 0 0">"넷을 나열하세요"보다 <b>"1+2+1"</b>로 묶으면 인출이 훨씬 쉽다. 그리고 이 넷 중 <b>가장 결정적인 것은 ①</b>이다 — 나머지 셋은 서서히 늘지만, <b>CoW는 스냅샷이 도는 그 순간에 급격히 튄다.</b> 최악의 경우 스냅샷 도중에 전체 데이터가 한 번씩 바뀌면 <b>메모리가 두 배까지</b> 갈 수 있고, <b>이 순간이 OOM killer가 방문하는 대표적인 시점</b>이다.</p>
+</div>
+
+<div class="callout warn"><span class="t">얼마나 낮춰야 하는가 — 고정된 숫자로 외우지 않는다</span>
+  여유의 크기는 <b>쓰기 비율(CoW 양을 좌우)과 클라이언트 수(버퍼 개수를 좌우)</b>에 따라 달라진다. 그래서 "몇 %"를 외우는 것보다 <b>위 네 항목이 우리 인스턴스에서 실제로 얼마나 먹고 있는지를 관측해 정하는 것</b>이 맞다. 면접에서도 숫자를 단정하기보다 <b>"이 네 가지를 관측해서 역산한다"</b>고 답하는 편이 정확하고 강하다.
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 방어선 1 — 용도별 인스턴스 분리 (구조)</h2>
+
+<p class="sub">여기서부터가 방어책이다. 방어는 네 겹이고, 각각 <b>사고의 다른 단계</b>를 끊는다.</p>
+
+<div class="rule">eviction 정책은 <b>인스턴스당 하나</b>다 — 이 한 문장이 이 방어선의 전부다</div>
+
+<p>한 Redis 인스턴스 안에 <b>"지워도 되는 데이터"와 "지우면 안 되는 데이터"</b>가 섞여 있으면, <b>어떤 정책을 골라도 한쪽이 틀린다.</b> 이것은 설정을 잘 고르면 해결되는 문제가 아니라 <b>구조의 문제</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 376" role="img" aria-label="정책 두 가지와 데이터 두 종류를 교차한 표에서 어느 정책을 골라도 한 칸이 오답이 되는 것을 보여주는 매트릭스">
+    <text x="24" y="26" font-size="13.5" fill="#1f2937" font-weight="700">한 인스턴스에 두 종류가 섞여 있을 때 — 행을 어느 쪽으로 골라도 빨간 칸이 하나 남는다</text>
+
+    <!-- column headers -->
+    <rect x="214" y="44" width="440" height="40" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="434" y="70" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">캐시 키 — 지워도 됨 (원본이 DB에 있다)</text>
+    <rect x="664" y="44" width="432" height="40" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="880" y="70" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">세션 · 분산 락 · 발급 카운터 — 지우면 안 됨</text>
+
+    <!-- row 1 -->
+    <rect x="24" y="94" width="180" height="112" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="114" y="140" class="mono" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="700">allkeys-lru</text>
+    <text x="114" y="162" font-size="10.5" fill="#6b7280" text-anchor="middle">가득 차면</text>
+    <text x="114" y="178" font-size="10.5" fill="#6b7280" text-anchor="middle">오래된 것부터 지운다</text>
+
+    <rect x="214" y="94" width="440" height="112" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="434" y="124" font-size="14" fill="#166534" text-anchor="middle" font-weight="700">✓ 정답</text>
+    <text x="434" y="150" font-size="12" fill="#166534" text-anchor="middle">안 쓰는 것부터 지우고 서비스를 계속한다</text>
+    <text x="434" y="174" font-size="11" fill="#374151" text-anchor="middle">지워진 키는 DB에서 다시 채우면 그만이다</text>
+
+    <rect x="664" y="94" width="432" height="112" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="880" y="124" font-size="14" fill="#b91c1c" text-anchor="middle" font-weight="700">✗ 오답 — 조용한 유실</text>
+    <text x="880" y="150" font-size="12" fill="#b91c1c" text-anchor="middle">세션이 에러 없이 사라진다 → 무작위 로그아웃</text>
+    <text x="880" y="174" font-size="11" fill="#374151" text-anchor="middle">카운터가 0으로 리셋 → 한정 수량 초과 발급</text>
+
+    <!-- row 2 -->
+    <rect x="24" y="216" width="180" height="112" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="114" y="262" class="mono" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="700">noeviction</text>
+    <text x="114" y="284" font-size="10.5" fill="#6b7280" text-anchor="middle">가득 차면</text>
+    <text x="114" y="300" font-size="10.5" fill="#6b7280" text-anchor="middle">쓰기를 거부한다</text>
+
+    <rect x="214" y="216" width="440" height="112" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="434" y="246" font-size="14" fill="#b91c1c" text-anchor="middle" font-weight="700">✗ 오답 — 반쪽 장애</text>
+    <text x="434" y="272" font-size="12" fill="#b91c1c" text-anchor="middle">캐시 put이 실패해 조회 API가 500을 낸다</text>
+    <text x="434" y="296" font-size="11" fill="#374151" text-anchor="middle">지워도 되는 데이터를 붙잡고 서비스를 죽인 셈</text>
+
+    <rect x="664" y="216" width="432" height="112" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="880" y="246" font-size="14" fill="#166534" text-anchor="middle" font-weight="700">✓ 정답</text>
+    <text x="880" y="272" font-size="12" fill="#166534" text-anchor="middle">쓰기 에러 + 알람으로 사람이 개입한다</text>
+    <text x="880" y="296" font-size="11" fill="#374151" text-anchor="middle">조용히 사라지는 것보다 시끄럽게 실패하는 편이 낫다</text>
+
+    <rect x="24" y="338" width="1072" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="360" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">정책은 인스턴스당 하나뿐이므로 이 표에서는 답이 나오지 않는다 — 답은 정책 선택이 아니라 인스턴스를 나누는 것이다</text>
+  </svg>
+  <figcaption>이 매트릭스가 말하는 것은 <b>"어떤 정책이 옳은가"라는 질문 자체가 잘못됐다</b>는 것이다. 두 종류의 데이터는 <b>가득 찼을 때 원하는 행동이 정반대</b>이므로, 하나의 다이얼로는 둘을 동시에 만족시킬 수 없다.</figcaption>
+</figure>
+
+<div class="grid g2">
+  <div class="tile ok">
+    <div class="k">캐시 인스턴스</div>
+    <div class="d"><code>allkeys-lru</code> 또는 <code>allkeys-lfu</code>. <b>가득 차면 안 쓰는 것부터 지우는 것이 정답인 데이터</b>다.</div>
+  </div>
+  <div class="tile">
+    <div class="k">세션 · 원본 인스턴스</div>
+    <div class="d"><code>noeviction</code> + 넉넉한 용량 + <b>알람</b>. 데이터가 조용히 사라지는 것보다 <b>쓰기 에러를 내고 사람이 개입</b>하는 편이 낫다.</div>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>이 판단의 본질을 한 문장으로</h4>
+  <div class="rule ok">에러는 <b>시끄럽고</b>, 유실은 <b>조용하다</b> — 그래서 원본 데이터에는 <b>시끄러운 실패</b>를 고른다</div>
+  <p style="margin:8px 0 0">면접에서 <code>noeviction</code>을 고르는 이유를 <b>"안전해서"</b>라고 답하면 절반이다. <b>"실패를 감지 가능하게 만들려고"</b>라고 답하면 운영 관점이 드러난다.</p>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 방어선 2 — TTL 규율 (누수 차단)</h2>
+
+<div class="rule red">TTL(Time To Live, 키의 수명) 없는 캐시 키는 <b>메모리 누수</b>다</div>
+
+<p>한 번 쓰이고 다시는 조회되지 않는 키가 <b>영원히 남아 자리를 차지한다.</b> 자바의 메모리 누수와 구조가 똑같다 — <b>아무도 안 쓰는데 회수되지 않는 것.</b></p>
+
+<div class="callout trap"><span class="t">이 누수가 위험한 진짜 이유 — "깜빡함"으로 발생하고, 아무 데서도 안 걸린다</span>
+  TTL을 빼먹은 코드는 <b>정상 동작한다.</b> 테스트도 통과하고 코드 리뷰에서도 눈에 안 띈다. <b>몇 주 뒤 메모리가 찼을 때야 드러난다.</b> 그러니 개인의 주의력이 아니라 <b>구조로 막아야</b> 한다.
+</div>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 지워질 계기가 아예 없는 키</div>
+<pre><code><span class="cm">// TTL 없는 캐시 put</span>
+<span class="cm">// 이 키가 지워질 계기는 eviction뿐이다.</span>
+<span class="ln-bad">redis.<span class="fn">set</span>(<span class="st">"product:detail:"</span> + id, json);</span>
+
+<span class="cm">// noeviction 인스턴스라면?</span>
+<span class="cm">// 축출도 안 일어나므로 지워질 계기가</span>
+<span class="cm">// 아예 없어 영구히 남는다.</span>
+<span class="cm">// = 되돌릴 수 없는 단방향 누수</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 타입 시그니처가 규율을 강제한다</div>
+<pre><code><span class="cm">// TTL을 인자로 강제하는 래퍼를 팀 표준으로</span>
+<span class="ln-good">cacheClient.<span class="fn">set</span>(<span class="st">"product:detail:"</span> + id, json,
+                <span class="fn">Duration</span>.ofMinutes(<span class="kw">30</span>));</span>
+
+<span class="cm">// 래퍼 내부에서 TTL 미지정·과도한 TTL을</span>
+<span class="cm">// 예외로 막거나 기본값을 넣는다.</span>
+<span class="cm">// TTL 인자가 필수이므로 "깜빡함"이</span>
+<span class="cm">// 컴파일 단계에서 불가능해진다.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>요점은 "TTL을 걸자"가 아니라 <b>규율의 위치를 옮기는 것</b>이다</h4>
+  <div class="rule ok">코드 리뷰가 잡는 규칙 <span style="color:#6b7280">→</span> <b>타입 시그니처가 강제하는 규칙</b></div>
+  <p style="margin:8px 0 0">면접에서 "TTL을 꼭 겁니다"는 누구나 말한다. <b>"TTL 인자를 필수로 받는 래퍼를 두어 빼먹는 것 자체를 불가능하게 만듭니다"</b>는 <b>같은 사고를 두 번 겪지 않으려는 사람</b>의 답이다.</p>
+</div>
+
+<h3>7-1. TTL이 있어도 남는 "주인 잃은 키"</h3>
+
+<div class="grid g2">
+  <div class="tile red"><div class="k" style="font-family:inherit">버려진 구버전 키</div><div class="d">키 이름 규칙을 바꾸면서 남겨진 <code>product:v1:*</code> 같은 것들. <b>아무도 조회하지 않는데 메모리에는 남아 있다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">정리되지 않은 임시 키</div><div class="d">배치가 만들고 지우지 않은 중간 결과. <b>배치가 돌 때마다 쌓인다.</b></div></div>
+</div>
+
+<p>이런 키는 <code>SCAN</code>으로 키 공간을 조금씩 훑어 <b>주기적으로 점검</b>한다.</p>
+
+<div class="callout trap"><span class="t">왜 <code>KEYS</code>가 아니라 <code>SCAN</code>인가 — 운영 중인 Redis에 <code>KEYS</code>를 날리면 안 되는 이유</span>
+  <code>KEYS *</code>는 전체 키를 <b>한 번에 훑는 동안 싱글 스레드를 통째로 점유</b>해 그 사이 <b>모든 요청을 멈춰 세운다.</b> <code>SCAN</code>은 <b>조금씩 끊어 순회</b>하므로 다른 명령이 사이사이 처리된다. 메모리를 정리하러 들어갔다가 <b>정리하는 행위 자체로 장애를 만드는</b> 것이 이 실수의 결말이다. (자세한 내용은 12번 문서)
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 방어선 3 — 관측과 알람 (조기 경보)</h2>
+
+<div class="rule">가득 찬 뒤에 아는 것과 <b>70%에서 아는 것</b>의 차이가 장애의 유무를 가른다</div>
+
+<p><b>70%에서 알면</b> 키를 정리하거나 증설할 시간이 있고, <b>100%에서 알면</b> 이미 사용자가 로그인을 못 하고 있다. <code>INFO memory</code>가 내주는 지표 중 봐야 할 것들을 하나씩 뜯어보자.</p>
+
+<h3>8-1. <code>used_memory</code> 대비 <code>maxmemory</code> 비율 — 임계치를 정하는 기준</h3>
+
+<div class="memo">
+  <h4>숫자를 외우지 말고 <b>기준</b>을 외운다</h4>
+  <div class="rule">임계치는 <b>"조치할 시간이 남아 있는 지점"</b>에서 울리게 정한다 — 사람이 움직이는 데 걸리는 시간을 <b>역산</b>한다</div>
+  <p style="margin:8px 0 0">보통 <b>70~80%</b>를 쓰지만, 중요한 것은 그 숫자가 아니라 <b>"이 알람이 울리고 나서 우리가 할 수 있는 일이 남아 있는가"</b>다. 증설에 반나절이 걸리는 조직이라면 70%도 늦다.</p>
+</div>
+
+<h3>8-2. <code>used_memory</code>와 <code>used_memory_rss</code> — 두 개의 장부</h3>
+
+<p>이 둘의 뜻이 다르다는 것을 아는 것이 <b>해석의 출발점</b>이다.</p>
+
+<div class="scroll"><table>
+  <thead><tr><th>지표</th><th>누구의 장부인가</th><th>무엇을 세는가</th></tr></thead>
+  <tbody>
+    <tr><td><code>used_memory</code></td><td><b>Redis의 장부</b></td><td>Redis가 <b>자기가 데이터에 쓰고 있다고 스스로 계산한</b> 양</td></tr>
+    <tr><td><code>used_memory_rss</code></td><td><b>OS의 장부</b></td><td><b>OS가 이 프로세스에 실제로 할당해 준</b> 물리 메모리 양<br><span class="sub">RSS = Resident Set Size, "메모리에 상주하고 있는 크기"</span></td></tr>
+  </tbody>
+</table></div>
+
+<p>두 장부가 다른 이유는 <a href="#s5">5절</a>에서 본 그대로다 — <b>Redis는 데이터 바깥에서도 메모리를 쓰고, 반납한 메모리가 OS에 즉시 돌아가지 않아 빈틈으로 남기 때문</b>이다. 그리고 이 둘의 비율이 <code>mem_fragmentation_ratio</code>다. <b>값 하나로 서로 다른 두 문제를 진단할 수 있다는 점</b>이 이 지표의 묘미다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 224" role="img" aria-label="mem_fragmentation_ratio 값 구간별 해석 — 1 미만은 스왑, 1에서 1.5는 정상, 1.5 초과는 단편화">
+    <text x="24" y="26" font-size="13" fill="#1f2937" font-weight="700">mem_fragmentation_ratio = used_memory_rss ÷ used_memory — 하나의 값이 두 가지 다른 문제를 가리킨다</text>
+
+    <rect x="60" y="56" width="240" height="54" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="180" y="82" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">1.0 보다 작음</text>
+    <text x="180" y="100" font-size="10.5" fill="#b91c1c" text-anchor="middle">실제 물리에 올라온 양이 데이터보다 적다</text>
+
+    <rect x="300" y="56" width="260" height="54" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="430" y="82" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">약 1.0 ~ 1.5</text>
+    <text x="430" y="100" font-size="10.5" fill="#166534" text-anchor="middle">정상 범위 — 약간의 단편화는 항상 있다</text>
+
+    <rect x="560" y="56" width="280" height="54" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+    <text x="700" y="82" font-size="13" fill="#92400e" text-anchor="middle" font-weight="700">1.5 보다 크게 높음</text>
+    <text x="700" y="100" font-size="10.5" fill="#92400e" text-anchor="middle">OS가 준 메모리가 데이터보다 훨씬 많다</text>
+
+    <line x1="60" y1="118" x2="840" y2="118" stroke="#9ca3af" stroke-width="1.4"/>
+    <line x1="300" y1="112" x2="300" y2="124" stroke="#6b7280" stroke-width="1.6"/>
+    <line x1="560" y1="112" x2="560" y2="124" stroke="#6b7280" stroke-width="1.6"/>
+    <text x="300" y="140" class="mono" font-size="11" fill="#6b7280" text-anchor="middle">1.0</text>
+    <text x="560" y="140" class="mono" font-size="11" fill="#6b7280" text-anchor="middle">1.5</text>
+
+    <rect x="24" y="152" width="290" height="62" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="169" y="174" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">나머지는 어디 갔나 → 디스크로 밀려났다</text>
+    <text x="169" y="192" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">= 스왑이 발생하고 있다</text>
+    <text x="169" y="208" font-size="10.5" fill="#374151" text-anchor="middle">갈래 ③ 진입 신호 — 즉시 대응 대상</text>
+
+    <rect x="330" y="152" width="240" height="62" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="450" y="180" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">그대로 두면 된다</text>
+    <text x="450" y="200" font-size="10.5" fill="#374151" text-anchor="middle">"1에 가까울수록 좋다"가 아니다</text>
+
+    <rect x="586" y="152" width="290" height="62" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="731" y="174" font-size="11.5" fill="#92400e" text-anchor="middle" font-weight="700">빈틈이 많다 = 단편화</text>
+    <text x="731" y="192" font-size="10.5" fill="#374151" text-anchor="middle">큰 값의 잦은 삽입·삭제가 원인인 경우가 많다</text>
+    <text x="731" y="208" font-size="10.5" fill="#92400e" text-anchor="middle">용량 계획이 계산과 어긋나기 시작한다</text>
+  </svg>
+  <figcaption>세 구간 중 <b>가장 중요한 것은 왼쪽</b>이다. 대부분의 사람은 "단편화 지표"로만 알고 있어서 <b>1 미만 구간을 못 읽는다.</b></figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>비율이 1보다 작다는 것이 왜 스왑을 뜻하는가 — 한 번 더 짚는다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">Redis의 주장</div><div class="d">"나는 <b>4GB어치 데이터</b>를 갖고 있다"</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">OS의 답변</div><div class="d">"이 프로세스는 물리 메모리에 <b>3GB만 올라와</b> 있다"</div></div>
+  </div>
+  <p style="margin:10px 0 0">차이인 <b>1GB는 사라진 게 아니라 디스크로 밀려나 있는 것</b>이다. 이 지표가 1 아래로 내려가면 <b>응답 시간이 이미 튀고 있을 가능성이 높다.</b></p>
+</div>
+
+<h3>8-3. <code>evicted_keys</code> — 이 값의 해석은 정책에 따라 정반대다</h3>
+
+<p><b>축출로 지워진 키의 누적 개수</b>다. Redis가 시작된 이후 eviction 정책에 의해 삭제한 키가 몇 개인지 세는 카운터다. <b>TTL 만료로 자연히 사라진 키는 여기 안 들어간다</b> — 오직 <b>"자리가 모자라서 강제로 지운" 키만</b> 센다.</p>
+
+<div class="scroll"><table>
+  <thead><tr><th>어디서 봤나</th><th>값</th><th>해석</th><th>해야 할 일</th></tr></thead>
+  <tbody>
+    <tr><td><code>noeviction</code> 인스턴스</td><td class="bad">0이 아니다</td><td>정책상 축출이 <b>일어날 수 없다</b> → 누군가 정책을 바꿨거나 <b>설정이 의도와 다르다</b></td><td class="bad">즉시 조사</td></tr>
+    <tr><td>캐시 인스턴스</td><td>증가 중</td><td>이미 한계에 닿아 아슬아슬하게 돌고 있다. 지금 당장 에러는 안 나지만 <b>캐시 히트율이 떨어지고 그만큼 DB 부하가 오르고 있다</b></td><td>용량 계획 재검토</td></tr>
+    <tr class="hl"><td>캐시 인스턴스</td><td class="bad">증가율이 급등</td><td><b>용량 부족 또는 어딘가의 키 누수</b>를 의심한다</td><td>키 패턴별 점유 조사</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout warn"><span class="t">big key 감시도 같이 건다</span>
+  멤버가 수백만 개인 리스트나 셋 하나가 있으면 <b>용량 계획 자체가 무의미해진다.</b> 게다가 그런 키를 <code>DEL</code>로 지우는 순간 <b>싱글 스레드가 오래 붙잡혀 전체 지연이 튄다.</b> <code>--bigkeys</code> 스캔 등으로 주기 점검한다.
+</div>
+
+<h3>8-4. 헬스체크가 <code>PING</code>만 확인하면 갈래 ①을 절대 못 잡는다</h3>
+
+<p><a href="#s2">2절</a>에서 본 대로 <code>PING</code>은 메모리를 쓰지 않는 명령이라 <b>OOM 상태에서도 성공한다.</b> 관측을 아무리 촘촘히 깔아도 <b>헬스체크가 읽기 계열만 확인하고 있다면 이 상태를 원천적으로 감지할 수 없다.</b></p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 쓰기가 죽어도 초록불</div>
+<pre><code><span class="cm">// 겉보기 헬스체크</span>
+<span class="ln-bad">redis.<span class="fn">ping</span>();   <span class="cm">// PONG -> UP</span></span>
+
+<span class="cm">// maxmemory에 닿아 세션 SET이 전부</span>
+<span class="cm">// 실패하는 중에도 이 체크는 통과한다.</span>
+<span class="cm">// 대시보드는 전부 초록불이고</span>
+<span class="cm">// 장애 인지가 CS 문의로부터 시작된다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 쓰기 경로까지 확인한다</div>
+<pre><code><span class="cm">// 짧은 TTL을 건 프로브 키에 실제로 써 본다</span>
+<span class="ln-good">redis.<span class="fn">set</span>(<span class="st">"healthcheck:probe"</span>, <span class="st">"1"</span>,
+          <span class="fn">Duration</span>.ofSeconds(<span class="kw">10</span>));</span>
+
+<span class="cm">// OOM이면 여기서 즉시 예외가 나므로</span>
+<span class="cm">// 알람이 "Redis 쓰기 실패"를 바로 가리킨다.</span>
+<span class="cm">// TTL을 걸어 프로브 키 자체가</span>
+<span class="cm">// 누수가 되지 않게 한다.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>이 방어의 값어치는 "장애를 막는 것"이 아니라 <b>"추적 시간을 없애는 것"</b>이다</h4>
+  <div class="rule ok">읽기만 확인하는 헬스체크는 <b>반쪽만 본다</b> — 쓰기 프로브 한 줄이 <b>몇 시간의 원인 추적</b>을 지운다</div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 방어선 4 — 애플리케이션 방어 (폭발 반경 축소)</h2>
+
+<p>앞의 세 방어선을 다 깔아도 <b>캐시는 언젠가 실패한다.</b> 그 전제에서 마지막 방어선은 <b>캐시 에러가 서비스 에러로 전파되지 않게 막는 것</b>이다.</p>
+
+<div class="codehead bad"><span class="tag">Before</span> 캐시 put 실패가 그대로 조회 API의 500이 된다</div>
+<pre><code><span class="kw">public</span> Product <span class="fn">getProduct</span>(Long id) {
+    Product p = repository.<span class="fn">findById</span>(id);
+<span class="ln-bad">    redis.<span class="fn">set</span>(<span class="fn">key</span>(id), <span class="fn">serialize</span>(p), TTL);   <span class="cm">// OOM 에러가 그대로 위로 전파된다</span></span>
+    <span class="kw">return</span> p;
+    <span class="cm">// DB에서 데이터를 이미 성공적으로 읽어왔는데도,</span>
+    <span class="cm">// "캐시에 넣어두려던" 부수적 동작 하나 때문에 응답을 못 준다.</span>
+}</code></pre>
+
+<div class="codehead good"><span class="tag">After</span> 캐시는 최선노력(best-effort) — 실패해도 본 기능은 산다</div>
+<pre><code><span class="kw">public</span> Product <span class="fn">getProduct</span>(Long id) {
+    Product p = repository.<span class="fn">findById</span>(id);
+<span class="ln-good">    <span class="kw">try</span> {</span>
+<span class="ln-good">        redis.<span class="fn">set</span>(<span class="fn">key</span>(id), <span class="fn">serialize</span>(p), TTL);</span>
+<span class="ln-good">    } <span class="kw">catch</span> (RedisException e) {</span>
+        <span class="cm">// 삼키되 반드시 남긴다. 조용히 무시하면 캐시가 몇 주째</span>
+        <span class="cm">// 동작하지 않고 있어도 아무도 모르는 상태가 된다.</span>
+<span class="ln-good">        log.<span class="fn">warn</span>(<span class="st">"cache put failed, serving without cache"</span>, e);</span>
+<span class="ln-good">        cacheFailureCounter.<span class="fn">increment</span>();   <span class="cm">// 메트릭 -> 알람으로 연결</span></span>
+<span class="ln-good">    }</span>
+    <span class="kw">return</span> p;   <span class="cm">// 응답은 정상. 사용자는 조금 느릴 뿐 실패하지 않는다.</span>
+}</code></pre>
+
+<div class="memo red">
+  <h4>반드시 함께 말해야 하는 <b>이면</b> — 이 방어는 문제를 없앤 게 아니라 <b>옮긴 것</b>이다</h4>
+  <div class="chain">
+    <span class="chip r">캐시 put이 계속 실패</span><span class="arrow">→</span>
+    <span class="chip r">캐시에 아무것도 안 쌓인다</span><span class="arrow">→</span>
+    <span class="chip r">모든 조회가 DB로 직행</span><span class="arrow">→</span>
+    <span class="chip r">DB가 평소의 몇 배를 맞는다</span>
+  </div>
+  <p style="margin:8px 0 0">서비스는 죽지 않았지만 <b>부하가 통째로 DB로 넘어간다.</b> 즉 이 방어선은 <b>"캐시 장애를 DB 부하 문제로 바꿔치기한 것"</b>이다. 그래서 <b>"DB가 캐시 없는 트래픽을 견딜 수 있는가"</b>가 곧바로 다음 질문이 되고, 그것이 <b>19번 문서(캐시 무력화 방어)</b>의 주제다. <b>두 문항이 한 몸이라는 것을 아는 것</b>이 이 방어선의 마무리다.</p>
+</div>
+
+<div class="callout ok"><span class="t">예외를 삼킬 때의 두 가지 규칙</span>
+  ① <b>로그를 남긴다</b> — 조용히 무시하면 캐시가 몇 주째 동작하지 않아도 아무도 모른다. ② <b>메트릭으로 센다</b> — 실패 카운터를 알람에 연결해야 "삼킨 실패"가 관측 가능해진다. <b>삼키는 것과 없는 척하는 것은 다르다.</b>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 실무 시나리오 — "배포 후 로그인이 안 돼요"</h2>
+
+<p>혼합 사용 + <code>noeviction</code> 인스턴스에서 <b>전형적으로</b> 벌어지는 사고다. 결론을 먼저 말하지 않고 <b>증상에서 출발해 어떻게 원인에 도달하는지</b> 순서대로 따라가 보자. 면접에서 값어치가 있는 것은 결론이 아니라 <b>이 추적 순서</b>다.</p>
+
+<div class="card">
+  <h4 style="margin-top:4px">들어온 신고는 이 한 줄뿐이다</h4>
+  <div class="rule red" style="font-size:1rem">"어제 배포 이후로 <b>로그인이 안 된다</b>는 문의가 늘고 있어요."</div>
+  <p style="margin:12px 0 4px">그런데 확인해 보면 이상하다.</p>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">이미 로그인한 사용자</div><div class="d">아무 문제 없이 서비스를 쓰고 있다</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">5xx 에러율</div><div class="d">평소와 비슷하다</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">Redis <code>PING</code></div><div class="d"><code>PONG</code>이 온다. 헬스체크 대시보드는 전부 초록불</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">DB</div><div class="d">정상이고 슬로우 쿼리도 없다</div></div>
+  </div>
+  <p style="margin:12px 0 0"><b>"다 정상인데 로그인만 안 된다."</b> 여기서 헤매기 시작한다.</p>
+</div>
+
+<h3>10-1. 추적 순서 — 다섯 걸음</h3>
+
+<div class="step">
+  <span class="n">1</span>
+  <div class="body">
+    <b>"로그인만 안 된다"에서 공통점을 찾는다.</b><br>
+    작동하는 것과 안 되는 것을 갈라 놓고 본다. 기존 사용자의 조회는 되고 신규 로그인은 안 된다. <b>로그인은 세션을 쓰는 동작이고, 기존 사용자의 요청은 세션을 읽는 동작이다.</b> 여기서 가설이 하나 선다 — <b>"읽기는 되는데 쓰기만 안 되는 상태 아닌가?"</b>
+    <div class="callout info" style="margin-bottom:0"><span class="t"><code>PING</code>이 성공한다는 사실이 왜 도움이 안 됐는지도 이 순간 이해된다</span><code>PING</code>은 <b>메모리를 쓰지 않는 명령이라 OOM 상태에서도 성공한다.</b> 헬스체크가 읽기 계열만 확인하고 있었다면 이 상태를 감지할 방법이 없었다.</div>
+  </div>
+</div>
+
+<div class="step">
+  <span class="n">2</span>
+  <div class="body">
+    <b>가설을 직접 검증한다.</b> Redis에 붙어 <b>아무 키나 하나 써 본다.</b>
+<pre style="margin-bottom:0"><code>127.0.0.1:6379&gt; SET healthcheck:probe 1 EX 10
+<span class="er">(error) OOM command not allowed when used memory &gt; 'maxmemory'.</span></code></pre>
+    <p style="margin:8px 0 0">여기서 <b>원인의 성격이 확정된다.</b> 애플리케이션 버그도 네트워크 문제도 아니고 <b>Redis 메모리 포화</b>다. <b>한 줄로 판정이 끝났다.</b></p>
+  </div>
+</div>
+
+<div class="step">
+  <span class="n">3</span>
+  <div class="body">
+    <b>얼마나 찼고 정책이 무엇인지 본다.</b>
+<pre style="margin-bottom:0"><code>127.0.0.1:6379&gt; INFO memory
+used_memory_human:7.94G
+maxmemory_human:8.00G          <span class="cm">&lt;- 상한에 거의 닿아 있다</span>
+mem_fragmentation_ratio:1.12   <span class="cm">&lt;- 단편화는 정상 범위, 스왑도 아니다</span>
+
+127.0.0.1:6379&gt; CONFIG GET maxmemory-policy
+1) "maxmemory-policy"
+2) "noeviction"                <span class="cm">&lt;- 그래서 지우지 않고 쓰기를 거부한 것</span></code></pre>
+    <p style="margin:8px 0 0">여기까지로 <b>"왜 이런 증상이 나오는가"</b>가 완전히 설명된다. <b>갈래 ①의 교과서적 전개</b>다.</p>
+  </div>
+</div>
+
+<div class="step red">
+  <span class="n">4</span>
+  <div class="body">
+    <b>그럼 무엇이 메모리를 먹었는가 — 원인을 찾는다.</b><br>
+    증상의 원인은 알았지만 <b>메모리가 찬 원인</b>은 아직 모른다. <b>여기서 멈추고 재시작하면 며칠 뒤 똑같은 일이 반복된다.</b> 키 패턴별로 얼마를 쓰는지 본다 — <code>--bigkeys</code>로 거대한 키가 있는지, <code>SCAN</code>으로 접두사별 키 개수를 세어 어떤 패턴이 비정상적으로 많은지 확인한다.
+<pre><code><span class="cm">키 패턴별 개수 (SCAN 샘플링)</span>
+  session:*                  약 42만 개    <span class="cm">(평소 수준)</span>
+  cache:product:*            약 31만 개    <span class="cm">(평소 수준)</span>
+<span class="ln-bad">  cache:searchresult:*     약 1,180만 개   <span class="cm">&lt;- 어제 배포된 신규 기능</span></span></code></pre>
+    그리고 <b>그 키의 TTL을 확인한다.</b>
+<pre style="margin-bottom:0"><code>127.0.0.1:6379&gt; TTL cache:searchresult:a3f9...
+<span class="er">(integer) -1</span>        <span class="cm">&lt;- -1은 "만료 시각이 설정되지 않았다"는 뜻. 영구 키다.</span></code></pre>
+  </div>
+</div>
+
+<div class="step ok">
+  <span class="n">5</span>
+  <div class="body">
+    <b>결론이 조립된다.</b><br>
+    어제 배포된 검색 결과 캐시가 <b>TTL 없이</b> 키를 만들고 있었다. <b>검색어 조합마다 키가 하나씩 생기므로</b> 증가 속도가 대단히 빨랐고, 하루 만에 남은 메모리를 다 먹었다.<br>
+    그리고 <b>세션과 캐시가 같은 인스턴스에 있었기 때문에</b>, 캐시가 먹어치운 메모리가 곧바로 <b>세션 쓰기의 실패</b>로 나타났다. <b>캐시 기능의 결함이 인증 기능의 장애가 된 것이다.</b>
+  </div>
+</div>
+
+<h3>10-2. 네 방어선이 각각 어느 단계를 끊는가</h3>
+
+<p>이 사고가 흥미로운 이유는, 앞의 네 방어선 중 <b>어느 하나만 있었어도 여기까지 오지 않았다</b>는 점이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 516" role="img" aria-label="TTL 없는 키 대량 생성부터 장애 인지까지의 사고 진행 단계와 각 단계를 끊는 네 방어선을 매핑한 도식">
+    <defs>
+      <marker id="f5a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="f5g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <!-- stages -->
+    <rect x="140" y="24" width="460" height="56" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="370" y="48" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">신규 기능이 TTL 없는 키를 대량 생성한다</text>
+    <text x="370" y="68" font-size="11" fill="#374151" text-anchor="middle">검색어 조합마다 키 하나 — 아무도 이상을 못 느낀다</text>
+
+    <rect x="140" y="128" width="460" height="56" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="370" y="152" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">메모리가 서서히 차오른다</text>
+    <text x="370" y="172" font-size="11" fill="#374151" text-anchor="middle">알람이 없어 아무도 모른다</text>
+
+    <rect x="140" y="232" width="460" height="56" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="370" y="256" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">maxmemory 도달 → 세션 SET 실패</text>
+    <text x="370" y="276" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">신규 로그인 전면 불가 — 여기서 사용자가 다친다</text>
+
+    <rect x="140" y="336" width="460" height="56" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="370" y="360" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">PING OK · DB 정상 → 원인 추적이 헤맨다</text>
+    <text x="370" y="380" font-size="11" fill="#374151" text-anchor="middle">"다 정상인데 로그인만 안 된다"</text>
+
+    <rect x="140" y="440" width="460" height="56" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="370" y="464" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">장애 인지 → 원인 파악 → 복구</text>
+    <text x="370" y="484" font-size="11" fill="#6b7280" text-anchor="middle">여기 도달하기까지가 곧 장애 시간이다</text>
+
+    <line x1="370" y1="80" x2="370" y2="126" stroke="#dc2626" stroke-width="2" marker-end="url(#f5a)"/>
+    <line x1="370" y1="184" x2="370" y2="230" stroke="#dc2626" stroke-width="2" marker-end="url(#f5a)"/>
+    <line x1="370" y1="288" x2="370" y2="334" stroke="#dc2626" stroke-width="2" marker-end="url(#f5a)"/>
+    <line x1="370" y1="392" x2="370" y2="438" stroke="#dc2626" stroke-width="2" marker-end="url(#f5a)"/>
+
+    <!-- cuts -->
+    <line x1="110" y1="104" x2="660" y2="104" stroke="#16a34a" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="110" y="99" font-size="11" fill="#16a34a" font-weight="700">✂</text>
+    <line x1="660" y1="104" x2="678" y2="104" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+    <rect x="686" y="76" width="410" height="56" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="706" y="99" font-size="12.5" fill="#166534" font-weight="700">방어선 2 — TTL 규율</text>
+    <text x="706" y="119" font-size="11.5" fill="#374151">래퍼가 TTL을 강제했다면 이 키들은 30분 뒤 사라졌다</text>
+
+    <line x1="110" y1="208" x2="660" y2="208" stroke="#16a34a" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="110" y="203" font-size="11" fill="#16a34a" font-weight="700">✂</text>
+    <line x1="660" y1="208" x2="678" y2="208" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+    <rect x="686" y="180" width="410" height="56" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="706" y="203" font-size="12.5" fill="#166534" font-weight="700">방어선 3 — 사용률 알람</text>
+    <text x="706" y="223" font-size="11.5" fill="#374151">70%에서 울렸다면 배포 당일에 정리·증설할 시간이 있었다</text>
+
+    <line x1="110" y1="312" x2="660" y2="312" stroke="#16a34a" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="110" y="307" font-size="11" fill="#16a34a" font-weight="700">✂</text>
+    <line x1="660" y1="312" x2="678" y2="312" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+    <rect x="686" y="278" width="410" height="68" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="706" y="301" font-size="12.5" fill="#166534" font-weight="700">방어선 1 — 인스턴스 분리</text>
+    <text x="706" y="321" font-size="11.5" fill="#374151">세션이 별도 인스턴스였다면 로그인은 멀쩡했다</text>
+    <text x="706" y="339" font-size="11.5" fill="#6b7280">캐시 인스턴스에서 축출이 돌았을 뿐 — 사용자는 못 느낀다</text>
+
+    <line x1="110" y1="416" x2="660" y2="416" stroke="#16a34a" stroke-width="2" stroke-dasharray="7 5"/>
+    <text x="110" y="411" font-size="11" fill="#16a34a" font-weight="700">✂</text>
+    <line x1="660" y1="416" x2="678" y2="416" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+    <rect x="686" y="382" width="410" height="68" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="706" y="405" font-size="12.5" fill="#166534" font-weight="700">방어선 4 + 쓰기 헬스체크</text>
+    <text x="706" y="425" font-size="11.5" fill="#374151">헬스체크가 실제 SET을 시도했다면 알람이</text>
+    <text x="706" y="443" font-size="11.5" fill="#374151">"Redis 쓰기 실패"를 바로 가리켰다 — 추적 시간이 사라진다</text>
+  </svg>
+  <figcaption><b>면접에서는 이 매핑을 말하는 것이 좋다.</b> 방어책을 목록으로 나열하는 것과, <b>"이 사고의 이 단계를 이 방어선이 끊는다"</b>고 연결해 말하는 것은 다르게 들린다. 후자는 <b>실제로 사고를 겪어보고 미리 그려본 사람의 말투</b>다.</figcaption>
+</figure>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 이미 섞여 운영 중이라면 — 무중단 분리 이행 <span class="badge senior">시니어 변별</span></h2>
+
+<p><b>한 번에 못 바꾼다. 그러니 이행 계획을 말해야 한다.</b> "분리해야 합니다"까지만 말하면 <b>문제 인식만 있고 실행 경험은 없는 사람</b>으로 들린다.</p>
+
+<div class="step">
+  <span class="n">1</span>
+  <div class="body"><b>현황 파악.</b> <code>SCAN</code>으로 키 패턴별 개수와 메모리 점유를 샘플링해 캐시와 세션의 비중을 <b>수치화</b>한다. 새 인스턴스의 용량을 정하려면 이 숫자가 필요하고, <b>분리 후에도 캐시 쪽이 여전히 부족할지</b>를 여기서 판단한다.</div>
+</div>
+<div class="step">
+  <span class="n">2</span>
+  <div class="body"><b>신규 인스턴스 준비.</b> 세션용으로 <code>noeviction</code> 인스턴스를 따로 띄운다. <b>세션이 옮겨 가는 쪽이 되는 이유</b>는, 세션이 "지우면 안 되는" 데이터라 <b>정책 요구가 더 엄격하기 때문</b>이다.</div>
+</div>
+<div class="step ok">
+  <span class="n">3</span>
+  <div class="body"><b>이중 쓰기 → 읽기 전환 → 구 데이터 소멸 대기.</b> 여기가 핵심이고, <b>세션의 TTL 특성을 이관 전략에 활용하는 것</b>이 판단 포인트다.</div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 366" role="img" aria-label="이중 쓰기, 읽기 전환, 이중 쓰기 종료의 3단계로 세션을 무중단 이관하는 과정 도식">
+    <defs>
+      <marker id="f6b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker>
+      <marker id="f6g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+      <marker id="f6t" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+    </defs>
+
+    <!-- legend -->
+    <line x1="800" y1="20" x2="836" y2="20" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="844" y="24" font-size="11.5" fill="#1d4ed8" font-weight="700">쓰기</text>
+    <line x1="900" y1="20" x2="936" y2="20" stroke="#16a34a" stroke-width="2.4" stroke-dasharray="6 4"/>
+    <text x="944" y="24" font-size="11.5" fill="#166534" font-weight="700">읽기</text>
+
+    <!-- panel A -->
+    <rect x="24" y="34" width="342" height="266" rx="12" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="195" y="58" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">3-a 이중 쓰기 시작</text>
+    <rect x="125" y="72" width="140" height="34" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="195" y="94" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">애플리케이션</text>
+    <path d="M160,106 L100,164" stroke="#2563eb" stroke-width="2.2" marker-end="url(#f6b)"/>
+    <path d="M230,106 L290,164" stroke="#2563eb" stroke-width="2.2" marker-end="url(#f6b)"/>
+    <path d="M140,110 C90,130 70,140 66,162" stroke="#16a34a" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#f6g)"/>
+    <rect x="44" y="170" width="140" height="58" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="114" y="194" font-size="12" fill="#1f2937" text-anchor="middle" font-weight="700">기존 인스턴스</text>
+    <text x="114" y="213" font-size="10.5" fill="#6b7280" text-anchor="middle">캐시 + 세션 혼재</text>
+    <rect x="216" y="170" width="128" height="58" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="280" y="194" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">신규 세션</text>
+    <text x="280" y="213" class="mono" font-size="10" fill="#166534" text-anchor="middle">noeviction</text>
+    <text x="195" y="252" font-size="11" fill="#374151" text-anchor="middle">쓰기는 양쪽, 읽기는 아직 기존에서</text>
+    <text x="195" y="272" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">이 시점에는 아무 위험이 없다</text>
+    <text x="195" y="290" font-size="10.5" fill="#6b7280" text-anchor="middle">신규 인스턴스가 틀려도 아무도 안 읽는다</text>
+
+    <!-- wait arrow -->
+    <line x1="372" y1="150" x2="398" y2="150" stroke="#6b7280" stroke-width="1.8" marker-end="url(#f6t)"/>
+    <text x="386" y="132" font-size="10.5" fill="#6b7280" text-anchor="middle" font-weight="700">TTL</text>
+    <text x="386" y="120" font-size="10.5" fill="#6b7280" text-anchor="middle" font-weight="700">대기</text>
+
+    <!-- panel B -->
+    <rect x="404" y="34" width="342" height="266" rx="12" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="575" y="58" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">3-b 읽기 전환</text>
+    <rect x="505" y="72" width="140" height="34" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="575" y="94" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">애플리케이션</text>
+    <path d="M540,106 L480,164" stroke="#2563eb" stroke-width="2.2" marker-end="url(#f6b)"/>
+    <path d="M610,106 L670,164" stroke="#2563eb" stroke-width="2.2" marker-end="url(#f6b)"/>
+    <path d="M630,110 C690,130 706,140 710,162" stroke="#16a34a" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#f6g)"/>
+    <rect x="424" y="170" width="140" height="58" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="494" y="194" font-size="12" fill="#1f2937" text-anchor="middle" font-weight="700">기존 인스턴스</text>
+    <text x="494" y="213" font-size="10.5" fill="#6b7280" text-anchor="middle">쓰기만 유지</text>
+    <rect x="596" y="170" width="128" height="58" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="660" y="194" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">신규 세션</text>
+    <text x="660" y="213" font-size="10.5" fill="#166534" text-anchor="middle">살아 있는 세션 전부</text>
+    <text x="575" y="252" font-size="11" fill="#374151" text-anchor="middle">읽기를 신규로 돌린다. 쓰기는 아직 양쪽</text>
+    <text x="575" y="272" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">문제가 생기면 읽기만 되돌리면 된다</text>
+    <text x="575" y="290" font-size="10.5" fill="#6b7280" text-anchor="middle">= 롤백이 안전한 지점</text>
+
+    <line x1="752" y1="150" x2="778" y2="150" stroke="#6b7280" stroke-width="1.8" marker-end="url(#f6t)"/>
+
+    <!-- panel C -->
+    <rect x="784" y="34" width="312" height="266" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="940" y="58" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">3-c 이중 쓰기 종료</text>
+    <rect x="870" y="72" width="140" height="34" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="940" y="94" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">애플리케이션</text>
+    <path d="M975,106 L1010,164" stroke="#2563eb" stroke-width="2.2" marker-end="url(#f6b)"/>
+    <path d="M950,110 C1030,128 1046,140 1050,162" stroke="#16a34a" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#f6g)"/>
+    <rect x="804" y="170" width="140" height="58" rx="9" fill="#fff" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+    <text x="874" y="192" font-size="12" fill="#9ca3af" text-anchor="middle" font-weight="700">기존 인스턴스</text>
+    <text x="874" y="210" font-size="10" fill="#9ca3af" text-anchor="middle">구 세션 키는 TTL로 자연 소멸</text>
+    <rect x="964" y="170" width="120" height="58" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="1024" y="194" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">신규 세션</text>
+    <text x="1024" y="213" font-size="10.5" fill="#166534" text-anchor="middle">단독 운영</text>
+    <text x="940" y="252" font-size="11" fill="#374151" text-anchor="middle">명시적으로 지울 필요조차 없다</text>
+    <text x="940" y="274" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">기존은 allkeys-lru로 바꿔 캐시 전용 확정</text>
+
+    <rect x="24" y="318" width="1072" height="40" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="343" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">세션은 TTL이 있으므로 "이관"이 필요 없다 — 이중 쓰기를 TTL 기간만큼만 유지하면 살아 있는 세션이 저절로 넘어가고, 만료된 세션은 옮길 이유가 없다</text>
+  </svg>
+  <figcaption><b>마이그레이션 스크립트도, 다운타임도 필요 없다.</b> 세션 TTL이 30분이라면 <b>이중 쓰기 30분 뒤에는 신규 인스턴스에 "살아 있는 모든 세션"이 들어와 있다.</b> 이 점을 짚는 것이 이 답의 핵심이다 — <b>데이터의 성질(TTL)을 이행 전략의 도구로 쓴 것</b>이기 때문이다.</figcaption>
+</figure>
+
+<div class="step ok">
+  <span class="n">4</span>
+  <div class="body"><b>기존 인스턴스를 캐시 전용으로 확정.</b> 세션이 빠졌으니 정책을 <code>allkeys-lru</code>로 바꾼다. <b>이제 축출이 돌아도 지워지는 것은 캐시뿐이다.</b></div>
+</div>
+
+<div class="memo green">
+  <h4>전체를 한 문장으로 묶으면</h4>
+  <div class="rule ok">분리의 <b>근거</b>는 "eviction 정책 하나로 두 용도를 동시에 만족시킬 수 없다"는 것이고,<br>무중단 이행의 <b>열쇠</b>는 "세션에는 TTL이 있으므로 기다리면 저절로 넘어간다"는 성질이다</div>
+</div>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 면접 전날 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<div class="memo">
+  <h4>이 주제에서 반드시 입에 붙여야 할 여섯 개</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 세 갈래</div><div class="d"><code>noeviction</code>=쓰기만 실패 / eviction=조용한 유실 / 미설정=통째로 사망</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 표식</div><div class="d"><b>메모리를 늘리는 명령만</b> 거부 → <code>GET</code>·<code>DEL</code>·<code>PING</code>은 통과</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">③ 바깥의 넷</div><div class="d"><b>복사본 1 · 버퍼 2 · 빈틈 1</b> — <code>maxmemory</code>는 물리보다 낮게</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">④ 지표 셋</div><div class="d">사용률 · <code>mem_fragmentation_ratio</code> · <code>evicted_keys</code></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">⑤ 비율이 1 미만</div><div class="d">단편화가 아니라 <b>스왑</b> — 갈래 ③ 진입 신호</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">⑥ 네 방어선</div><div class="d">인스턴스 분리 · TTL 규율 · 알람 · 예외 삼키기</div></div>
+  </div>
+  <p style="margin:12px 0 0"><b>네 방어선 연상법</b> — <b>"나누고, 재우고, 지켜보고, 삼킨다"</b>: <b>나누고</b>(용도별 인스턴스 분리) → <b>재우고</b>(모든 키에 TTL로 수명을 준다) → <b>지켜보고</b>(사용률·<code>evicted_keys</code> 알람) → <b>삼킨다</b>(캐시 예외를 삼켜 폭발 반경 축소). <b>구조 → 입력 → 감지 → 확산 억제</b>의 순서라 사고 타임라인 순서와도 일치한다.</p>
+</div>
+
+<div class="memo red">
+  <h4>진단할 때 순서대로 던지는 네 개의 명령 — 이 순서 그대로 외운다</h4>
+  <div class="grid g4">
+    <div class="tile"><div class="k">SET probe 1 EX 10</div><div class="d">쓰기가 되는가? → <b>갈래 ① 판정</b></div></div>
+    <div class="tile"><div class="k">INFO memory</div><div class="d">얼마나 찼고 <b>단편화·스왑</b>은?</div></div>
+    <div class="tile"><div class="k">CONFIG GET maxmemory-policy</div><div class="d">지울 수 있는 설정인가?</div></div>
+    <div class="tile"><div class="k">--bigkeys / SCAN</div><div class="d"><b>무엇이 먹었는가</b> — 여기서 멈추면 재발한다</div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>앞의 셋은 "증상의 설명"이고, 마지막 하나만이 "원인"이다.</b> 셋에서 멈추고 재시작하면 며칠 뒤 같은 장애가 온다.</p>
+</div>
+
+<p class="sub">질문만 먼저 읽고 <b>소리 내어 답해 본 뒤</b> 펼쳐서 맞춰 본다. 답을 눈으로 읽는 것보다 인출 훈련이 훨씬 오래 간다.</p>
+<div class="tools">
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=true})">모두 펼치기</button>
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=false})">모두 접기</button>
+</div>
+
+<details class="q"><summary><code>noeviction</code>으로 가득 찬 상태에서 읽기도 실패하나요?<span class="hint">힌트: 아니오 → 이유(표식) → 그래서 무엇이 문제인가, 3단으로</span></summary><div class="a">
+  <p><b>아니다. 메모리를 추가로 쓸 수 있는 명령만 거부된다.</b> <code>GET</code>, <code>DEL</code>, <code>EXPIRE</code>(수명을 줄이는 방향), <code>EXISTS</code> 같은 명령은 그대로 동작한다.</p>
+  <p><b>이 비대칭이 나오는 이유</b>는 Redis가 명령마다 <b>"메모리를 늘릴 수 있음" 표식을 미리 붙여두고</b>, 상한을 넘었을 때 <b>그 표식이 붙은 명령만 골라 막기</b> 때문이다. 실행해 보고 판단하는 게 아니라 <b>명령 테이블에 이미 표시돼 있다.</b></p>
+  <p>그래서 이 상태는 <b>반쪽 장애</b>가 된다. <code>PING</code>이나 <code>GET</code>으로 하는 겉보기 헬스체크는 멀쩡히 통과하는데 <b>쓰기 경로만 죽어 있다.</b></p>
+  <div class="rule red">결론까지 붙인다 — "헬스체크에 <b>실제 쓰기 확인</b>을 포함해야 한다. 짧은 TTL을 건 프로브 키에 <code>SET</code> 한 번이면 충분하다"</div>
+</div></details>
+
+<details class="q"><summary>사용률이 100%인데 <code>evicted_keys</code>가 0입니다. 무슨 상황인가요?<span class="hint">힌트: 후보가 없거나, 애초에 안 지우는 설정이거나</span></summary><div class="a">
+  <p><b>둘 중 하나다.</b></p>
+  <p><b>① 정책이 <code>noeviction</code>이다.</b> 애초에 축출이 일어나지 않는 설정이므로 카운터가 0인 것이 정상이고, 지금 쓰기는 전부 OOM 에러로 실패하고 있을 것이다. <code>SET</code> 프로브 한 번으로 즉시 확인된다.</p>
+  <p><b>② 정책은 <code>volatile-*</code>인데 축출 후보가 고갈됐다.</b> TTL이 걸린 키만 지울 수 있는데 <b>TTL 없는 키가 메모리를 다 먹은 상태</b>라면 지울 대상이 없다. 그러면 <b>설정 파일에는 축출 정책이 적혀 있는데 실제 동작은 <code>noeviction</code>과 똑같아진다.</b></p>
+  <p>이 질문이 좋은 이유는 <b>"정책이 무엇인가"와 "그 정책이 실제로 지울 수 있는 키가 있는가"가 다른 질문</b>이라는 것을 드러내기 때문이다. 확인 방법도 같이 말하면 좋다 — <code>SCAN</code>으로 훑어 <b>TTL이 <code>-1</code>인 키의 비중</b>을 세어 보면 후보 고갈 여부가 바로 나온다.</p>
+</div></details>
+
+<details class="q"><summary><code>maxmemory</code>를 물리 메모리와 같게 잡으면 왜 위험한가요?<span class="hint">힌트: 그 값이 통제하는 범위가 어디까지인지부터</span></summary><div class="a">
+  <p><b><code>maxmemory</code>가 통제하는 것은 데이터에 쓰는 메모리뿐인데, Redis 프로세스는 데이터 바깥에서도 메모리를 쓰기 때문</b>이다. 그 바깥의 몫이 물리 메모리를 넘기면 <b>OS 레벨에서 스왑이나 OOM killer가 발동</b>한다.</p>
+  <p><b>바깥의 몫이 넷이다 — 복사본 하나, 버퍼 둘, 빈틈 하나.</b></p>
+  <ol style="margin:6px 0">
+    <li><b>fork 자식의 copy-on-write 몫</b> — RDB 스냅샷이나 AOF rewrite 중 <b>부모가 변경한 페이지만큼 복사본</b>이 생긴다. 쓰기가 많으면 순간 사용량이 크게 뛴다. <b>가장 결정적인 항목이다.</b></li>
+    <li><b>클라이언트별 입출력 버퍼</b> — 연결 수에 비례해 늘고, 큰 응답을 내보낼 때 부푼다.</li>
+    <li><b>복제본에 보낼 버퍼</b> — 복제본이 느리거나 끊기면 계속 쌓인다.</li>
+    <li><b>메모리 단편화</b> — 잦은 할당·해제로 생긴 빈틈. <code>mem_fragmentation_ratio</code>로 관측한다.</li>
+  </ol>
+  <p><b>딱 맞춰 잡으면 스냅샷이 도는 순간 OOM killer가 방문할 수 있다.</b> 그리고 이때는 쓰기 몇 개가 실패하는 게 아니라 <b>프로세스가 통째로 사라진다.</b> 여유분을 남기는 것이 원칙이고, <b>여유의 크기는 쓰기 비율·클라이언트 수를 관측해 정한다</b>고 답하는 것이 숫자를 단정하는 것보다 정확하다.</p>
+</div></details>
+
+<details class="q"><summary><code>mem_fragmentation_ratio</code>가 0.85로 나옵니다. 어떻게 읽어야 하나요?<span class="hint">힌트: 1보다 작다는 것은 어느 쪽이 더 작다는 뜻인가</span></summary><div class="a">
+  <p><b>단편화가 적어서 좋은 상태가 아니라, 스왑이 발생하고 있다는 신호다.</b> 이 지표를 "단편화 지표"로만 외운 사람이 정확히 여기서 틀린다.</p>
+  <p>비율은 <code>used_memory_rss ÷ used_memory</code>다. 1보다 작다는 것은 <b>"OS가 물리 메모리에 올려둔 양"이 "Redis가 데이터라고 계산한 양"보다 적다</b>는 뜻이다. Redis는 "나는 4GB를 갖고 있다"는데 OS는 "이 프로세스는 물리에 3.4GB만 있다"고 답하는 상황이고, <b>차이는 사라진 게 아니라 디스크로 밀려나 있다.</b></p>
+  <p><b>대응은 즉시다.</b> 이 상태는 <b>싱글 스레드가 디스크를 기다리는 구간</b>이 이미 생겼다는 뜻이라 응답 시간이 튀고 있을 가능성이 높다. 반대로 <b>1.5보다 크게 높으면</b> 단편화 쪽이고, <b>큰 값의 잦은 삽입·삭제</b>가 원인인 경우가 많다. 이쪽은 즉시 장애는 아니지만 <b>용량 계획이 계산과 어긋나기 시작</b>했다는 신호다.</p>
+  <div class="rule red">한 문장 — "<b>1보다 작으면 디스크로 샌 것</b>, 1.5보다 크면 <b>빈틈이 많은 것</b>"</div>
+</div></details>
+
+<details class="q"><summary>Redis 프로세스가 흔적 없이 사라졌습니다. OOM killer인지 어떻게 확인하나요?<span class="hint">힌트: Redis 로그가 아니라 다른 쪽 로그를 봐야 한다</span></summary><div class="a">
+  <p><b>커널 로그를 본다.</b> OOM killer는 <b>Redis가 스스로 종료한 것이 아니라 커널이 죽인 것</b>이므로, 판정 근거도 Redis 쪽이 아니라 커널 쪽에 남는다. <code>dmesg</code>나 시스템 로그에서 <b>"Out of memory: Killed process ... (redis-server)"</b> 형태의 줄을 찾으면 확정이다.</p>
+  <p><b>Redis 자체 로그의 모양도 단서가 된다.</b> 정상 종료라면 종료 절차 로그가 남는데, OOM killer에 당하면 <b>아무 마무리 로그 없이 뚝 끊기고</b> 바로 재기동 로그가 이어진다. "정상 종료 흔적이 없다"는 것 자체가 <b>외부에서 강제 종료됐다</b>는 신호다.</p>
+  <p>여기서 한 발 더 나가면 좋다 — <b>강제 종료라서 Redis는 마무리 작업을 할 기회조차 없다.</b> 종료 시점에 스냅샷을 남기지도 못하므로, 영속화 설정이 없거나 마지막 스냅샷이 오래됐다면 <b>그 사이 데이터는 전부 사라진다.</b> 갈래 ③이 "부분 실패"가 아니라 <b>"복구 작업"</b>인 이유가 이것이다.</p>
+</div></details>
+
+<details class="q"><summary>캐시 인스턴스에 <code>allkeys-lru</code>를 걸어두면 OOM 에러는 절대 안 나나요?<span class="hint">힌트: 지울 게 있느냐, 그리고 maxmemory 바깥은 어떤가</span></summary><div class="a">
+  <p><b>"에러가 안 나니까 안전하다"로 답하면 절반만 맞다.</b> 두 가지를 짚어야 한다.</p>
+  <p><b>① 정책이 지킬 수 있는 범위는 <code>maxmemory</code> 안쪽뿐이다.</b> 축출은 데이터 영역의 자리를 만드는 동작이므로, <b>fork CoW·클라이언트 버퍼·복제 버퍼가 물리 메모리를 밀어내는 상황</b>은 어떤 정책으로도 막지 못한다. 그쪽은 갈래 ③의 영역이다.</p>
+  <p><b>② 에러가 안 나는 것과 문제가 없는 것은 다르다.</b> 축출이 격하게 돌면 <b>지우는 작업 자체가 CPU를 먹어 응답 지연이 튀고</b>, 지워진 캐시만큼 <b>요청이 DB로 내려가 DB 부하가 오른다.</b> 즉 <b>Redis의 메모리 부족이 DB 장애의 방아쇠</b>가 될 수 있다.</p>
+  <p>그래서 캐시 인스턴스라도 <b><code>evicted_keys</code> 증가율을 알람에 걸어둔다.</b> "에러가 없다"가 아니라 <b>"조용히 히트율을 잃고 있다"</b>를 감지하기 위해서다.</p>
+</div></details>
+
+<details class="q"><summary>세션에도 TTL이 걸려 있는데, 왜 세션 인스턴스에 <code>volatile-lru</code>가 아니라 <code>noeviction</code>인가요?<span class="hint">힌트: TTL이 있다는 것과 지워도 된다는 것은 같은 말인가</span></summary><div class="a">
+  <p><b>TTL이 있다는 것은 "언젠가 만료된다"는 뜻이지 "지금 지워도 된다"는 뜻이 아니기 때문</b>이다. 이 구분이 이 질문의 전부다.</p>
+  <p><code>volatile-lru</code>를 걸면 축출 후보는 <b>TTL이 걸린 키 전체</b>가 된다. 세션에 TTL이 있으니 <b>세션이 곧 후보</b>가 되고, 메모리가 차면 <b>아직 만료되지 않은 살아 있는 세션이 축출된다.</b> 결과는 <b>에러 한 줄 없는 무작위 로그아웃</b> — 우리가 피하려던 바로 그 장애다.</p>
+  <p>세션 인스턴스에서 원하는 행동은 <b>"자리가 없으면 시끄럽게 실패하고 사람을 부르는 것"</b>이다. 그래서 <code>noeviction</code> + 넉넉한 용량 + 알람이 답이 된다.</p>
+  <div class="rule">TTL은 <b>데이터의 수명</b>을 정하는 장치이고, eviction 정책은 <b>자리가 없을 때의 행동</b>을 정하는 장치다 — <b>둘은 다른 축</b>이다</div>
+</div></details>
+
+<details class="q"><summary>Redis의 LRU는 정확한 LRU인가요?<span class="hint">힌트: 정확히 하려면 무엇이 필요한지부터 세어 보라</span></summary><div class="a">
+  <p><b>아니다. 근사(approximated) LRU다.</b></p>
+  <p>정확한 LRU를 구현하려면 <b>모든 키를 최근 사용 순서로 정렬한 연결 리스트</b>로 관리해야 한다. 키가 하나 접근될 때마다 그 키를 맨 앞으로 옮겨야 하고, 그 리스트를 유지하는 <b>포인터들이 키마다 추가 메모리를 먹는다.</b> <b>메모리를 아끼려고 도입한 기능이 메모리를 더 먹는</b> 역설이 생긴다.</p>
+  <p>그래서 Redis는 타협한다. 축출이 필요할 때 <b>키 몇 개를 무작위로 뽑아(샘플링) 그중 가장 오래 안 쓴 것을 지운다.</b> 전체에서 가장 오래된 키가 아니라 <b>"뽑힌 것 중 가장 오래된 키"</b>다. 샘플 개수는 <code>maxmemory-samples</code>로 조절하며, <b>늘리면 정확도가 오르고 CPU를 더 쓴다</b> — 정확도와 비용 사이의 다이얼이다.</p>
+  <p><b>(가산점) LFU까지 얹으면 좋다.</b> LRU는 <b>"언제 마지막으로 썼는가"만 보므로 한 번의 대량 스캔에 취약하다.</b> 배치가 상품 100만 건을 한 번씩 훑고 지나가면 그 100만 개가 전부 "방금 쓴 키"가 되어 <b>원래 자주 쓰이던 인기 키를 밀어낸다.</b> 캐시 히트율이 배치 한 번에 무너지는 것이다. <b><code>allkeys-lfu</code>는 "얼마나 자주 썼는가"를 보므로</b> 한 번 스쳐간 키는 빈도가 낮아 우선 축출된다.</p>
+</div></details>
+
+<details class="q"><summary>이미 70~80% 알람이 울렸습니다. 당장 뭘 하나요?<span class="hint">힌트: 답을 두 갈래로 나누는 것 자체가 답의 절반이다</span></summary><div class="a">
+  <p><b>단기 대응과 구조 대응을 나눠서 답한다.</b></p>
+  <p><b>단기 — 무엇이 먹고 있는지부터 확인한다.</b> <code>INFO memory</code>로 현재 사용량과 단편화 비율을 보고, <code>--bigkeys</code>와 <code>SCAN</code> 샘플링으로 <b>어떤 키 패턴이 메모리를 점유하는지</b> 찾는다. <b>원인을 모르는 채 용량부터 올리면 같은 일이 곧 반복된다.</b></p>
+  <p>그다음 TTL 없는 키·버려진 구버전 키를 정리한다. 이때 <b>대형 컬렉션은 <code>DEL</code> 대신 <code>UNLINK</code>를 쓴다.</b> <code>DEL</code>은 키를 지우는 작업 전부를 <b>그 자리에서</b> 처리하므로, 멤버가 수백만 개인 키를 지우면 <b>싱글 스레드가 오래 붙잡혀 전체 요청이 그동안 멈춘다.</b> <code>UNLINK</code>는 <b>키 공간에서 참조만 즉시 끊고 실제 메모리 회수는 백그라운드로 넘긴다</b> — 이름 그대로 "링크만 끊는다"는 뜻이다.</p>
+  <p>정말 급하면 <code>maxmemory</code>를 올린다. 단 <b>물리 여유 안에서</b> 올려야 한다. 여기서 물리 메모리에 붙여 올리면 <b>OOM killer를 부르게 되어 상황이 더 나빠진다.</b></p>
+  <p><b>구조 — 증가 추세를 분석해 용량 증설이나 용도 분리를 계획한다.</b> 최근 며칠의 사용량 곡선을 보면 <b>"정상적으로 늘어난 것"인지 "새 기능이 누수를 만든 것"인지</b> 갈린다. 전자면 증설, 후자면 해당 키의 TTL 규율을 잡는 것이 답이다.</p>
+  <div class="rule red">"일단 재시작"은 답이 아니다 — 원인이 누수면 며칠 뒤 다시 차고, 영속화가 없으면 <b>캐시가 전부 비어 모든 요청이 DB로 쏟아지는 2차 장애</b>를 스스로 만드는 셈이 된다</div>
+</div></details>
+
+<details class="q"><summary>"느려진 Redis가 죽은 Redis보다 나쁘다"는 말은 무슨 뜻인가요? <span class="badge bonus">가산점</span><span class="hint">힌트: 클라이언트 입장에서 두 상황을 비교하라</span></summary><div class="a">
+  <p><b>죽으면 클라이언트가 즉시 연결 실패를 받고 폴백 경로로 갈 수 있지만, 느려지면 모두가 그 앞에 줄을 서서 기다리기 때문</b>이다.</p>
+  <p>스왑에 걸린 Redis는 <b>죽지도 살지도 않은 상태</b>가 된다. <code>PING</code>은 (오래 걸릴지언정) 결국 성공하므로 <b>헬스체크 대시보드는 초록불</b>인데, 사용자는 응답을 못 받는다. <b>Redis가 싱글 스레드라 한 명령의 디스크 대기가 뒤에 줄 선 전부의 지연이 된다</b>는 점이 이 상황을 증폭시킨다.</p>
+  <p><b>애플리케이션 쪽 결말까지 붙이면 완성된다.</b> 응답이 늦어지면 그 호출을 붙잡고 있는 <b>애플리케이션 스레드가 반환되지 않고 쌓이므로</b>, Redis 하나의 지연이 <b>애플리케이션 서버 전체의 스레드 고갈</b>로 번진다. 그래서 대응은 "Redis를 빠르게"만이 아니라 <b>타임아웃을 짧게 잡아 실패를 빨리 확정하는 것</b>이 함께 가야 한다. (이 논점은 19번 문서로 이어진다)</p>
+</div></details>
+
+<details class="q"><summary>캐시와 세션이 이미 한 인스턴스에 섞여 운영 중입니다. 어떻게 풀어가나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "분리해야 합니다"에서 멈추면 감점이다</span></summary><div class="a">
+  <p><b>한 번에 못 바꾼다. 그러니 이행 계획을 말해야 한다.</b> "분리해야 합니다"까지만 말하면 <b>문제 인식만 있고 실행 경험은 없는 사람</b>으로 들린다.</p>
+  <p><b>1단계 — 현황 파악.</b> <code>SCAN</code>으로 키 패턴별 개수와 메모리 점유를 샘플링해 캐시와 세션의 비중을 <b>수치화</b>한다. 새 인스턴스 용량을 정하려면 이 숫자가 필요하고, <b>분리 후에도 캐시 쪽이 여전히 부족할지</b>를 여기서 판단한다.</p>
+  <p><b>2단계 — 신규 인스턴스 준비.</b> 세션용으로 <code>noeviction</code> 인스턴스를 따로 띄운다. <b>세션이 옮겨 가는 쪽인 이유는 정책 요구가 더 엄격하기 때문</b>이다.</p>
+  <p><b>3단계 — 이중 쓰기 → 읽기 전환 → 구 데이터 소멸 대기.</b> 세션 쓰기를 양쪽에 하고 읽기는 기존에 둔다(<b>이 시점에는 아무 위험이 없다</b>). 세션 TTL이 30분이라면 <b>30분 뒤 신규 인스턴스에 "살아 있는 모든 세션"이 들어와 있다</b> — 만료된 세션은 옮길 필요가 없기 때문이다. 그다음 읽기를 신규로 돌리고(쓰기는 아직 양쪽이라 <b>롤백이 안전하다</b>), 마지막으로 이중 쓰기를 끝낸다. 기존 인스턴스의 세션 키는 <b>TTL이 지나며 자연 소멸</b>하므로 명시적으로 지울 필요조차 없다.</p>
+  <p><b>4단계 — 기존 인스턴스를 캐시 전용으로 확정.</b> 정책을 <code>allkeys-lru</code>로 바꾼다. 이제 축출이 돌아도 <b>지워지는 것은 캐시뿐</b>이다.</p>
+  <div class="rule ok">"분리의 근거는 <b>eviction 정책 하나로 두 용도를 만족시킬 수 없다</b>는 것이고, 무중단 이행의 열쇠는 <b>세션에는 TTL이 있으므로 기다리면 저절로 넘어간다</b>는 성질입니다"</div>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  Redis가 가득 찼을 때의 증상은 <b>설정이 결정한다</b> — <code>noeviction</code>이면 <b>"메모리를 늘리는 명령" 표식이 붙은 쓰기만 골라 실패</b>해 로그인이 막히는 반쪽 장애가 되고, eviction 정책이면 (캐시와 세션을 섞어 쓴 경우) <b>에러 없이 세션이 사라지는 조용한 유실</b>이 되며, <code>maxmemory</code> 미설정이면 <b>싱글 스레드가 스왑에 걸려 전체 요청이 줄줄이 밀리거나 커널 OOM killer가 프로세스를 통째로</b> 죽인다 — 그래서 방어는 <b>용도별 인스턴스 분리와 그에 맞는 eviction 정책, 전 키 TTL 규율, 사용률·<code>evicted_keys</code>·단편화 비율 알람, 캐시 실패를 삼키는 애플리케이션 코드</b>로 <b>가득 차기 전에 겹겹이</b> 깔아둬야 하고, <code>maxmemory</code>는 <b>fork의 copy-on-write·클라이언트 버퍼·복제 버퍼·단편화가 데이터 바깥에서 먹는 몫만큼 물리 메모리보다 낮게</b> 잡아야 한다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/05-redis-caching/18-redis-oom-and-defense.md</code> · 함께 보면 좋은 문서: TTL·만료·eviction 정책(04) · 세션 저장소로서의 Redis(11) · KEYS vs SCAN(12) · 영속화 RDB vs AOF(08)</p>
+</main>
+</body>
+</html>

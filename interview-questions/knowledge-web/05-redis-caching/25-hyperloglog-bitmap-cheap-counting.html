@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HyperLogLog와 Bitmap — "정확한 답이 꼭 필요한가"를 되물어 비용을 수백 배 줄이는 발상</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.nu{color:#fca5a5}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+.tools{display:flex;gap:8px;margin:10px 0}
+.tools button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:.85rem;cursor:pointer;color:var(--text)}
+.tools button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">05 Redis · 캐싱 &nbsp;|&nbsp; 자료구조⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>HyperLogLog와 Bitmap<br><span class="sub">"정확한 답이 꼭 필요한가"를 되물어 비용을 수백 배 줄이는 발상</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"HyperLogLog와 Bitmap은 각각 어떤 문제(UV 집계, 출석 체크)를 어떻게 싸게 해결하나요? 정확도의 트레이드오프는?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — UV(순 방문자) 집계를 <b>Set</b>으로 하면 <b>멤버를 전부 저장해야 하므로 메모리가 방문자 수에 비례해</b> 커진다. <b>HyperLogLog</b>는 멤버를 저장하지 않고 <b>해시 관측의 통계만</b> 남겨 <b>12KB 고정 메모리</b>로 <b>표준오차 약 0.81%</b>의 근사 유니크 카운트를 준다(<code>PFADD</code>/<code>PFCOUNT</code>/<code>PFMERGE</code>) — 0.81%는 <code>1.04/√m</code>에 레지스터 수 <code>m=16384</code>를 넣은 값이고, 12KB는 <b>레지스터 16384개 × 6비트</b>를 바이트로 환산한 값이다. 대신 <b>"누가 왔는지"는 못 묻고 개수만 알며</b>, 합집합(<code>PFMERGE</code>)은 되지만 <b>교집합은 직접 구할 수 없다.</b> <b>Bitmap</b>은 사용자 ID를 <b>비트 오프셋</b>으로 쓰는 방식이라 1000만 명 출석 체크가 하루 <b>1,250,000바이트(약 1.25MB)</b> — <b>정확하고</b>, <code>BITOP AND/OR</code>로 "연속 출석·둘 다 방문" 같은 집합 질의를 <b>서버 안에서</b> 끝낼 수 있다. 단 <b>ID가 조밀한 정수여야 한다</b>는 전제가 붙는다. 핵심은 <b>정확도를 비즈니스와 협상 가능한 파라미터로 다루는 감각</b>이다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>먼저 가격표를 계산해 보인다</b> — 중복을 제거하려면 <b>"아까 왔었나"를 판정할 재료를 들고 있어야</b> 하고, 그래서 Set은 <b>멤버 수에 정비례</b>한다. 일 UV 5,000만이면 <b>GB 단위</b>이고 그 자체가 <b>big key</b>다.</div></li>
+    <li><span class="n">2</span><div><b>개수만 필요하면 HLL</b> — 멤버 대신 <b>해시 비트열의 관측 통계</b>만 남긴다. <code>16384 × 6비트 = 12,288바이트</code> 고정, 표준오차 <code>1.04/√16384 = 0.81%</code>. <b>합집합(PFMERGE)은 되고 교집합·개별 조회·삭제는 안 된다.</b></div></li>
+    <li><span class="n">3</span><div><b>"누가"와 교집합이 필요하면 Bitmap</b> — ID를 <b>비트 위치</b>로 쓰면 1인당 1비트다. 1000만 명이 <b>1,250,000바이트</b>, 결과는 <b>정확</b>, <code>BITOP AND</code>로 연속 출석 판정까지 서버에서 끝난다. 대가는 <b>조밀한 정수 ID라는 전제</b>다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">정직하게 세면 얼마가 드나</a></li>
+    <li><a href="#s2">세 도구의 가격표 (핵심 도식)</a></li>
+    <li><a href="#s3">HLL 원리 — 동전 던지기의 역추론</a></li>
+    <li><a href="#s4">왜 레지스터 16384개인가 · 12KB의 산수</a></li>
+    <li><a href="#s5">PFMERGE — 합집합은 max, 교집합은 없다</a></li>
+    <li><a href="#s6">HLL이 포기한 네 가지</a></li>
+    <li><a href="#s7">Bitmap — ID를 비트 위치로 쓴다</a></li>
+    <li><a href="#s8">BITOP — Bitmap의 진짜 무기</a></li>
+    <li><a href="#s9">Bitmap의 전제와 함정</a></li>
+    <li><a href="#s10">선택 기준 — 정확도는 요구사항이지 기본값이 아니다</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "HyperLogLog와 Bitmap은 각각 어떤 문제(UV 집계, 출석 체크)를 어떻게 싸게 해결하나요? 정확도의 트레이드오프는?"</p>
+  <p><b>출제 의도</b>: 수천만 UV를 12KB로 세는 <b>확률 자료구조의 존재</b>를 아는지 — <b>"정확한 답이 꼭 필요한가"를 되물어 비용을 수백 배 줄이는 발상</b>이다. 정확도(±0.8%)를 <b>비즈니스와 협상 가능한 파라미터</b>로 다루는 감각을 본다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"HLL은 12KB, Bitmap은 1비트"라는 숫자 암기</b>로 끝나는 것 → 3·4절에서 <b>왜 그 숫자가 나오는지</b>를 해시 비트열과 <code>1.04/√m</code>에서 직접 유도한다.<br>
+    ② <b>"HLL이 그냥 더 좋은 Set"이라는 오해</b> → 6절에서 <b>"멤버를 저장하지 않는다"는 뿌리 하나에서 제약 네 가지가 파생</b>되는 구조로 정리한다.<br>
+    ③ <b>"Bitmap은 무조건 싸다"는 착각</b> → 9절에서 <b>비용이 인원수가 아니라 최대 오프셋에 비례</b>한다는 사실과 <b>요청 한 번에 500MB를 잡는 오프셋 폭탄</b>까지 연결한다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 문제 설정 — 순 방문자를 "정직하게" 세면 얼마가 드나</h2>
+
+<p>"오늘 우리 서비스에 몇 명이 왔나(UV)"는 <b>중복 제거 카운트</b> 문제다. 집합에 들어 있는 서로 다른 원소의 개수를 <b>카디널리티(cardinality, 집합의 크기)</b>라고 부르므로, UV는 카디널리티를 구하는 문제라고 말한다.</p>
+
+<p>여기서 <b>비용의 근원</b>을 먼저 짚어야 한다. 단순한 방문 <b>횟수</b>라면 카운터 하나를 <code>INCR</code>로 올리면 끝이고 메모리는 8바이트다. 그런데 <b>중복을 제거하려면 "이 사람 아까 왔었나?"를 판정할 수 있어야 하고, 그러려면 지금까지 본 사람들을 어딘가에 기억해 둬야 한다.</b> 기억해야 하는 대상이 방문자 수만큼 늘어나므로 메모리도 같이 늘어난다.</p>
+
+<div class="rule">PV(방문 횟수)는 <b>기억이 필요 없어서</b> 8바이트, UV(순 방문자)는 <b>기억이 필요해서</b> 방문자 수에 비례한다</div>
+
+<div class="codehead bad"><span class="tag">정직하지만 비싼 방법</span> Set — 멤버를 전부 저장한다</div>
+<pre><code><span class="cm">// SADD가 중복을 알아서 걸러 주는 이유가 바로 "멤버를 전부 들고 있기 때문"이다.</span>
+<span class="cm">// 편리함의 대가가 곧 메모리다.</span>
+redis.<span class="fn">opsForSet</span>().<span class="fn">add</span>(<span class="st">"uv:2026-08-31"</span>, userId);       <span class="cm">// SADD</span>
+<span class="kw">Long</span> uv = redis.<span class="fn">opsForSet</span>().<span class="fn">size</span>(<span class="st">"uv:2026-08-31"</span>);    <span class="cm">// SCARD</span></code></pre>
+
+<h3>1-1. 가격표를 먼저 계산해 보인다</h3>
+
+<p>Set의 메모리는 <b>멤버 수에 정비례한다.</b> 멤버 하나가 차지하는 실제 바이트는 값의 길이와 Redis 내부 자료구조(해시 테이블의 엔트리, 문자열 객체 헤더)에 따라 달라져 <b>딱 떨어지는 상수는 아니다.</b> 다만 자릿수 감각을 잡기 위해 <b>멤버 하나에 수십 바이트가 든다고 가정하고</b> 곱해 본다.</p>
+
+<pre><code><span class="cm">가정: 멤버 1개당 약 50바이트 (값 + 내부 구조 오버헤드)</span>
+
+일 UV 5,000만  ->  50,000,000 × 50바이트 = 2,500,000,000바이트 = 약 2.5GB</code></pre>
+
+<div class="callout info"><span class="t">이 2.5GB는 측정값이 아니라 "가정 위에 세운 어림값"이다</span>
+  면접에서 이 숫자를 단정적으로 말하면 오히려 감점이다. <b>중요한 것은 정확한 값이 아니라 성질</b>이다 — <b>"멤버 수에 비례하므로 규모가 커지면 GB 단위로 간다"</b>는 것. 가정을 밝히고 자릿수를 보여 주는 방식이 정확한 태도다.
+</div>
+
+<p>게다가 이게 끝이 아니다. 비용은 <b>두 방향으로 더 불어난다.</b></p>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">① 키가 여러 벌이 된다</div>
+    <div class="d">일·주·월 집계를 각각 들면 같은 데이터를 <b>기간별로 중복 보관</b>하게 된다. 2.5GB가 한 벌로 끝나지 않는다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">② 그 자체가 big key다</div>
+    <div class="d">키 하나가 수 GB면 <b>삭제 한 번, 조회 한 번이 싱글 스레드를 오래 붙잡는다.</b> <a href="23-big-key-risk-and-unlink.html">big key 위험과 UNLINK</a>에서 다룬 그 문제다.</div>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>이 절의 목적 — 답변의 골격을 만드는 순서</h4>
+  <div class="rule">되물을 것: <b>"대시보드에 띄울 UV가 5,000만인지 5,040만인지가 비즈니스에 중요한가?"</b></div>
+  <p style="margin:10px 0 0">대부분 아니다. <b>"정확한 UV"의 가격이 이만큼이라는 것을 먼저 계산해 보이고, 그다음에 정확도를 협상 카드로 꺼내는 것</b>이 이 답변의 골격이다. 도구 이름(HyperLogLog)부터 꺼내면 "아는 자료구조를 나열하는 사람"이 되고, 가격표부터 꺼내면 "요구사항을 설계하는 사람"이 된다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 세 도구의 가격표 — 무엇을 포기하면 얼마가 싸지는가</h2>
+
+<p>같은 질문("오늘 몇 명 왔나")에 세 가지 가격표가 있다. 세 도구는 <b>같은 목표를 정반대 방식으로 푼다</b> — HLL은 <b>정확도를 조금 포기해서 메모리를 상수로</b> 만들고, Bitmap은 <b>정확도를 지키는 대신 "ID가 조밀한 정수여야 한다"는 전제를 요구</b>한다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 480" role="img" aria-label="Set, Bitmap, HyperLogLog의 메모리 사용량을 로그 눈금 막대로 비교한 그림. Set은 약 2.5GB, Bitmap은 1,250,000바이트, HyperLogLog는 12,288바이트이며 각각의 정확도와 질의 능력이 함께 표기되어 있다">
+    <text x="560" y="28" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">"오늘 몇 명 왔나"의 세 가격표 — 가로축은 로그 눈금(한 칸 = 10배)</text>
+
+    <!-- Set row -->
+    <text x="190" y="98" font-size="13" fill="#b91c1c" text-anchor="end" font-weight="700">Set</text>
+    <text x="190" y="115" font-size="11" fill="#6b7280" text-anchor="end">SADD / SCARD</text>
+    <rect x="200" y="76" width="640" height="44" rx="4" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="852" y="96" font-size="14" fill="#b91c1c" font-weight="700">≈ 2.5 GB</text>
+    <text x="852" y="114" font-size="11" fill="#166534" font-weight="700">정확 · 개별 조회 O · 교집합 O</text>
+    <text x="212" y="139" font-size="11.5" fill="#b91c1c">일 UV 5,000만 × (가정) 50바이트 — <tspan font-weight="700">멤버 수에 정비례</tspan>. 기간별로 여러 벌이 되고, 그 자체가 big key다</text>
+
+    <!-- Bitmap row -->
+    <text x="190" y="188" font-size="13" fill="#166534" text-anchor="end" font-weight="700">Bitmap</text>
+    <text x="190" y="205" font-size="11" fill="#6b7280" text-anchor="end">SETBIT / BITCOUNT</text>
+    <rect x="200" y="166" width="310" height="44" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="522" y="186" font-size="14" fill="#166534" font-weight="700">1,250,000 B (약 1.25 MB)</text>
+    <text x="522" y="204" font-size="11" fill="#166534" font-weight="700">정확 · 개별 조회 O · BITOP 교집합 O</text>
+    <text x="212" y="229" font-size="11.5" fill="#166534">1000만 명 × <tspan font-weight="700">1인당 1비트</tspan> — 단, 비용은 인원수가 아니라 <tspan font-weight="700">최대 오프셋</tspan>에 비례한다</text>
+
+    <!-- HLL row -->
+    <text x="190" y="278" font-size="13" fill="#1d4ed8" text-anchor="end" font-weight="700">HyperLogLog</text>
+    <text x="190" y="295" font-size="11" fill="#6b7280" text-anchor="end">PFADD / PFCOUNT</text>
+    <rect x="200" y="256" width="109" height="44" rx="4" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="321" y="276" font-size="14" fill="#1d4ed8" font-weight="700">12,288 B (12 KiB) — 고정</text>
+    <text x="321" y="294" font-size="11" fill="#b91c1c" font-weight="700">±0.81% · 개별 조회 X · 합집합만 O</text>
+    <text x="212" y="319" font-size="11.5" fill="#1d4ed8">레지스터 16,384 × 6비트 — <tspan font-weight="700">100만을 세든 1억을 세든 크기가 같다</tspan></text>
+
+    <!-- axis -->
+    <line x1="200" y1="344" x2="900" y2="344" stroke="#9ca3af" stroke-width="1.2"/>
+    <g font-size="10.5" fill="#6b7280" text-anchor="middle">
+      <line x1="200" y1="344" x2="200" y2="350" stroke="#9ca3af"/><text x="200" y="364">1KB</text>
+      <line x1="300" y1="344" x2="300" y2="350" stroke="#9ca3af"/><text x="300" y="364">10KB</text>
+      <line x1="400" y1="344" x2="400" y2="350" stroke="#9ca3af"/><text x="400" y="364">100KB</text>
+      <line x1="500" y1="344" x2="500" y2="350" stroke="#9ca3af"/><text x="500" y="364">1MB</text>
+      <line x1="600" y1="344" x2="600" y2="350" stroke="#9ca3af"/><text x="600" y="364">10MB</text>
+      <line x1="700" y1="344" x2="700" y2="350" stroke="#9ca3af"/><text x="700" y="364">100MB</text>
+      <line x1="800" y1="344" x2="800" y2="350" stroke="#9ca3af"/><text x="800" y="364">1GB</text>
+      <line x1="900" y1="344" x2="900" y2="350" stroke="#9ca3af"/><text x="900" y="364">10GB</text>
+    </g>
+
+    <rect x="24" y="382" width="1072" height="34" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="560" y="404" font-size="12.5" fill="#92400e" text-anchor="middle" font-weight="700">막대 길이에 속으면 안 된다 — 로그 눈금이라 세 배 정도로 보이지만, 실제 배율은 HLL 대비 Bitmap 약 100배, Set 약 20만 배다</text>
+
+    <rect x="24" y="426" width="352" height="42" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="200" y="443" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">HLL이 파는 것</text>
+    <text x="200" y="460" font-size="11.5" fill="#1e40af" text-anchor="middle">정확도 0.81%를 내주고 "상수 메모리"를 산다</text>
+
+    <rect x="384" y="426" width="352" height="42" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="560" y="443" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">Bitmap이 파는 것</text>
+    <text x="560" y="460" font-size="11.5" fill="#166534" text-anchor="middle">"ID가 조밀한 정수"라는 전제를 내주고 정확성을 산다</text>
+
+    <rect x="744" y="426" width="352" height="42" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="920" y="443" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">Set이 파는 것</text>
+    <text x="920" y="460" font-size="11.5" fill="#b91c1c" text-anchor="middle">아무것도 내주지 않는 대신 값을 가장 비싸게 낸다</text>
+  </svg>
+  <figcaption>세 도구를 <b>기록 방식</b>으로 비유하면 이렇다. <b>Set은 방명록</b>이다 — 이름을 전부 적으니 누구든 다시 찾아볼 수 있고, 그만큼 종이가 든다. <b>Bitmap은 극장 좌석표</b>다 — 자리마다 "앉음/빔"만 표시하니 한 칸이면 되고 "42번 손님 왔나"도 즉답하지만, <b>빈 좌석도 자리값을 낸다</b>(그래서 좌석이 띄엄띄엄이면 손해다). <b>HLL은 관측 노트</b>다 — 방문자를 적지 않고 <b>"오늘 본 가장 희귀한 사건"만</b> 적어 두고, 나중에 그 기록으로 인원을 역추론한다.</figcaption>
+</figure>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. HyperLogLog의 원리 — 동전 던지기의 역추론</h2>
+
+<p>먼저 분류부터. <b>확률 자료구조(probabilistic data structure)</b>는 정확한 답 대신 <b>"정답 근처의 값"을 훨씬 적은 메모리로</b> 돌려주는 자료구조를 말한다. 오차를 받아들이는 대가로 메모리를 극단적으로 줄인다. HyperLogLog(이하 HLL)는 그중 <b>카디널리티 전용</b>이다.</p>
+
+<h3>3-1. 비유 — "앞면 20번 연속"을 들으면 무엇을 추론하나</h3>
+
+<p>친구가 <b>"방금 동전을 던졌는데 앞면이 연속 20번 나왔어"</b>라고 말했다고 하자. 우리가 곧바로 하는 추론은 <b>"그럼 엄청 많이 던졌겠네"</b>다.</p>
+
+<p>왜 그런가. 앞면이 연속 k번 나올 확률은 <code>1/2^k</code>다. k=20이면 약 100만분의 1이다. <b>100만분의 1짜리 사건을 실제로 목격하려면 대략 100만 번쯤 시도했어야 한다.</b> 즉 <b>"가장 희귀한 관측"이 "얼마나 많이 시도했는가"의 증거가 된다.</b> 시도 횟수를 세지 않고도, <b>목격한 최고 기록만 보고</b> 시도 횟수를 역추론할 수 있다는 뜻이다.</p>
+
+<div class="memo">
+  <h4>이 한 문장이 HLL 전체를 지탱한다</h4>
+  <div class="rule"><b>"가장 희귀한 관측"을 기록하면, "몇 번 봤는지"는 세지 않아도 추론된다</b></div>
+  <p style="margin:10px 0 0">저장 대상이 <b>"본 것 전부"에서 "최고 기록 하나"로</b> 바뀌는 순간 메모리가 <b>멤버 수 비례 → 상수</b>로 떨어진다. 면접에서 원리를 물으면 <b>이 비유 → 해시가 동전 던지기와 같다 → 그래서 최댓값 하나만 남긴다</b>의 3단으로 말하면 된다.</p>
+</div>
+
+<h3>3-2. 해시 비트열은 통계적으로 동전 던지기와 같다</h3>
+
+<p>좋은 해시 함수의 출력은 <b>각 비트가 0과 1이 반반이고 서로 독립적</b>이다. 즉 <b>해시 비트열은 통계적으로 동전 던지기 결과와 같다.</b> 그리고 같은 사용자는 항상 같은 비트열이 나오므로, <b>같은 사람이 100번 와도 100번 모두 똑같은 관측</b>이 된다 — <b>중복 제거가 별도 로직 없이 공짜로 따라온다.</b> 이 점이 HLL의 출발점이다.</p>
+
+<p>비트열 <b>앞쪽에 0이 연속 몇 개인지</b>를 세면 그것이 "앞면 연속 k번"에 대응한다. 앞쪽 0이 연속 k개 나올 확률도 <code>1/2^k</code>이므로, 지금까지 본 비트열들 중 <b>"앞쪽 0이 최대 k개"였다면 서로 다른 값을 대략 <code>2^k</code>개쯤 봤다</b>고 역추론할 수 있다.</p>
+
+<div class="grid g3">
+  <div class="tile"><div class="k">0001 0110 …</div><div class="s">앞쪽 연속 0 = 3개</div><div class="d">확률 1/8 → <b>8개쯤 봤겠다</b></div></div>
+  <div class="tile"><div class="k">0000 0000 1010 …</div><div class="s">앞쪽 연속 0 = 8개</div><div class="d">확률 1/256 → <b>256개쯤 봤겠다</b></div></div>
+  <div class="tile"><div class="k">0000 0000 0000 0011 …</div><div class="s">앞쪽 연속 0 = 14개</div><div class="d">확률 1/16384 → <b>16,384개쯤 봤겠다</b></div></div>
+</div>
+
+<p style="margin-top:14px">저장하는 것은 멤버가 아니라 <b>이 최댓값 하나</b>뿐이다. <b>여기서 메모리가 상수로 떨어진다.</b></p>
+
+<h3>3-3. PFADD 한 번에 실제로 일어나는 일</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 560" role="img" aria-label="PFADD의 처리 흐름. userId를 해시해 64비트 비트열을 만들고, 앞 14비트로 레지스터 번호를 정하고, 남은 비트의 앞쪽 연속 0 개수를 세어 해당 레지스터에 최댓값으로 기록하며, PFCOUNT는 16384개 레지스터를 조화평균으로 종합한다">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="560" y="28" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">PFADD uv:2026-08-31 42 — 멤버는 버려지고, 관측값 하나만 남는다</text>
+
+    <!-- step 1 -->
+    <rect x="24" y="60" width="150" height="96" rx="10" fill="#fff" stroke="#94a3b8"/>
+    <circle cx="50" cy="84" r="13" fill="#2563eb"/><text x="50" y="89" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+    <text x="70" y="89" font-size="12.5" fill="#1f2937" font-weight="700">멤버</text>
+    <text x="99" y="116" class="mono" font-size="13" fill="#334155" text-anchor="middle">userId = 42</text>
+    <text x="99" y="140" font-size="11" fill="#6b7280" text-anchor="middle">오늘 100번째 방문</text>
+    <line x1="174" y1="108" x2="200" y2="108" stroke="#2563eb" stroke-width="2" marker-end="url(#a1)"/>
+
+    <!-- step 2 -->
+    <rect x="208" y="60" width="330" height="96" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <circle cx="234" cy="84" r="13" fill="#2563eb"/><text x="234" y="89" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+    <text x="254" y="89" font-size="12.5" fill="#1d4ed8" font-weight="700">64비트로 해시한다</text>
+    <text x="373" y="118" class="mono" font-size="13" fill="#1e3a8a" text-anchor="middle">01100000001101 · 0000000 1 0110…</text>
+    <text x="373" y="140" font-size="11" fill="#1d4ed8" text-anchor="middle">같은 42는 언제나 같은 비트열 → 100번 와도 관측은 하나</text>
+
+    <line x1="373" y1="156" x2="373" y2="186" stroke="#2563eb" stroke-width="2" marker-end="url(#a1)"/>
+
+    <!-- step 3 -->
+    <rect x="24" y="196" width="514" height="104" rx="10" fill="#fff" stroke="#94a3b8"/>
+    <circle cx="50" cy="220" r="13" fill="#2563eb"/><text x="50" y="225" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+    <text x="70" y="225" font-size="12.5" fill="#1f2937" font-weight="700">비트열을 두 조각으로 나눈다</text>
+    <rect x="44" y="238" width="214" height="46" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="151" y="257" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle">앞 14비트 = 01100000001101</text>
+    <text x="151" y="275" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">→ 6157번 레지스터</text>
+    <rect x="270" y="238" width="252" height="46" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="396" y="257" class="mono" font-size="12" fill="#166534" text-anchor="middle">나머지 = 0000000 1 0110…</text>
+    <text x="396" y="275" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">→ 앞쪽 연속 0 = 7개 (관측값)</text>
+
+    <!-- step 4 : registers -->
+    <text x="24" y="336" font-size="12.5" fill="#1f2937" font-weight="700">4  해당 칸에 "지금까지의 최댓값"으로 기록한다 — 기존 5, 새 관측 7 → max(5, 7) = 7</text>
+    <g class="mono" font-size="11.5" text-anchor="middle">
+      <rect x="24" y="348" width="66" height="46" rx="5" fill="#fafbfc" stroke="#cbd5e1"/><text x="57" y="377" fill="#334155">4</text><text x="57" y="408" font-size="10" fill="#6b7280" class="mono">0</text>
+      <rect x="96" y="348" width="66" height="46" rx="5" fill="#fafbfc" stroke="#cbd5e1"/><text x="129" y="377" fill="#334155">2</text><text x="129" y="408" font-size="10" fill="#6b7280" class="mono">1</text>
+      <rect x="168" y="348" width="66" height="46" rx="5" fill="#fafbfc" stroke="#cbd5e1"/><text x="201" y="377" fill="#334155">6</text><text x="201" y="408" font-size="10" fill="#6b7280" class="mono">2</text>
+      <text x="258" y="377" fill="#6b7280">· · ·</text>
+      <rect x="282" y="342" width="86" height="58" rx="5" fill="#dbeafe" stroke="#2563eb" stroke-width="2.2"/>
+      <text x="325" y="374" font-size="15" fill="#1d4ed8" font-weight="700">5 → 7</text>
+      <text x="325" y="390" font-size="9.5" fill="#1d4ed8">max로 갱신</text>
+      <text x="325" y="414" font-size="10" fill="#1d4ed8" font-weight="700">6157</text>
+      <text x="392" y="377" fill="#6b7280">· · ·</text>
+      <rect x="416" y="348" width="66" height="46" rx="5" fill="#fafbfc" stroke="#cbd5e1"/><text x="449" y="377" fill="#334155">3</text><text x="449" y="408" font-size="10" fill="#6b7280" class="mono">16383</text>
+    </g>
+    <text x="24" y="438" font-size="11.5" fill="#6b7280">칸 하나에 들어가는 값은 0~63 → <tspan font-weight="700" fill="#1d4ed8">6비트</tspan>면 충분하다. 칸이 16,384개니까 전부 합쳐 12,288바이트.</text>
+
+    <!-- step 5 : count -->
+    <line x1="546" y1="248" x2="576" y2="248" stroke="#16a34a" stroke-width="2" marker-end="url(#a2)"/>
+    <rect x="584" y="196" width="512" height="124" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <circle cx="610" cy="220" r="13" fill="#16a34a"/><text x="610" y="225" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">5</text>
+    <text x="630" y="225" font-size="12.5" fill="#166534" font-weight="700">PFCOUNT — 16,384칸을 조화평균으로 종합해 추정치를 낸다</text>
+    <text x="604" y="250" font-size="11.5" fill="#166534">레지스터 값은 "2의 몇 승"이라는 <tspan font-weight="700">지수</tspan>다.</text>
+    <text x="604" y="270" font-size="11.5" fill="#166534">하나가 크게 튀면 산술평균은 그쪽으로 끌려간다.</text>
+    <text x="604" y="290" font-size="11.5" fill="#166534"><tspan font-weight="700">조화평균은 큰 값의 영향을 억제</tspan> → 튄 칸 하나에 답이 흔들리지 않는다.</text>
+    <text x="604" y="310" font-size="11.5" fill="#b91c1c" font-weight="700">그래서 답은 숫자 하나 — 원본 멤버는 어디에도 남지 않는다.</text>
+
+    <!-- why many registers -->
+    <rect x="584" y="60" width="512" height="96" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="608" y="84" font-size="12.5" fill="#b91c1c" font-weight="700">칸이 하나뿐이라면? — 운 하나에 답이 뒤집힌다</text>
+    <text x="608" y="108" font-size="11.5" fill="#b91c1c">사용자를 딱 10명 봤는데 그중 한 명의 해시가 앞쪽 0을 20개 달고 나오면</text>
+    <text x="608" y="128" font-size="11.5" fill="#b91c1c" font-weight="700">"100만 명쯤 봤군"이라고 답한다 — 한 번의 관측에 전부를 건 구조다.</text>
+    <text x="608" y="148" font-size="11.5" fill="#1d4ed8" font-weight="700">해법은 통계에서 늘 쓰는 그것 — 여러 칸에 흩어 놓고 평균 낸다.</text>
+
+    <rect x="510" y="330" width="586" height="112" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="803" y="354" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">저장되지 않는 것 / 저장되는 것</text>
+    <text x="530" y="378" font-size="11.5" fill="#b91c1c" font-weight="700">저장 안 됨:</text>
+    <text x="614" y="378" font-size="11.5" fill="#b91c1c">userId 42, 방문 시각, 방문 횟수 — 전부 버려진다</text>
+    <text x="530" y="400" font-size="11.5" fill="#166534" font-weight="700">저장됨:</text>
+    <text x="614" y="400" font-size="11.5" fill="#166534">"6157번 칸에서 본 최고 기록은 7" 같은 관측 통계 16,384개</text>
+    <text x="530" y="428" font-size="11.5" fill="#1d4ed8" font-weight="700">→ 그래서 HLL은 "몇 명"에만 답한다. "누가"는 물을 재료 자체가 없다.</text>
+
+    <rect x="24" y="458" width="1072" height="38" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="482" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">한 줄로: 해시를 동전 던지기로 보고, 16,384개 칸에 나눠 던져, 칸마다 최고 기록만 남긴 뒤 조화평균으로 인원을 역추론한다</text>
+
+    <rect x="24" y="506" width="1072" height="42" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="560" y="524" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">공짜로 따라오는 성질 — 같은 멤버는 항상 같은 칸·같은 관측값을 만든다</text>
+    <text x="560" y="541" font-size="11.5" fill="#166534" text-anchor="middle">중복 제거를 위한 "아까 왔었나?" 판정이 필요 없다. 멤버를 기억하지 않고도 중복이 저절로 흡수된다.</text>
+  </svg>
+  <figcaption>앞 14비트를 레지스터 번호로 쓰면 <code>2^14 = 16384</code>개의 칸이 생기고, 멤버들은 이 칸에 <b>골고루 흩어진다.</b> 각 칸은 자기에게 배정된 멤버들 중 <b>"앞쪽 0 최댓값"만</b> 기록한다. 예시의 <code>01100000001101</code>은 이진수로 <code>4096+2048+8+4+1 = 6157</code>이다.</figcaption>
+</figure>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 왜 레지스터를 16384개나 두는가 — 오차와 메모리의 교환 비율</h2>
+
+<p>레지스터가 많을수록 표본이 많아지고, <b>표본이 많을수록 평균이 참값에 가까워진다.</b> 그 수렴 속도는 <b>표본 수의 제곱근에 반비례</b>한다. HLL의 표준오차 공식이 정확히 그 모양이다.</p>
+
+<pre><code>표준오차 = 1.04 / √m        (m = 레지스터 개수)
+
+Redis 구현은 m = 16384 이므로
+  √16384 = 128
+  1.04 / 128 = 0.008125 = 0.8125%  ->  흔히 말하는 "약 0.81%"</code></pre>
+
+<figure>
+  <svg viewBox="0 0 960 370" role="img" aria-label="레지스터 개수에 따른 표준오차 막대 그래프. 1024개 3.25퍼센트 768바이트, 4096개 1.625퍼센트 3072바이트, 16384개 0.8125퍼센트 12288바이트, 65536개 0.40625퍼센트 49152바이트">
+    <defs><marker id="b1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker></defs>
+    <text x="480" y="26" font-size="14" fill="#1f2937" text-anchor="middle" font-weight="700">오차를 절반으로 줄이는 값은 "메모리 4배"다 — √m이 분모에 있기 때문</text>
+
+    <line x1="60" y1="280" x2="900" y2="280" stroke="#9ca3af" stroke-width="1.2"/>
+
+    <!-- bars -->
+    <rect x="100" y="85" width="100" height="195" rx="4" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="150" y="76" font-size="15" fill="#b91c1c" text-anchor="middle" font-weight="700">3.25%</text>
+    <text x="150" y="300" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="700">m = 1,024</text>
+    <text x="150" y="320" class="mono" font-size="11.5" fill="#6b7280" text-anchor="middle">768 B</text>
+
+    <rect x="300" y="182" width="100" height="98" rx="4" fill="#fef3c7" stroke="#d97706"/>
+    <text x="350" y="173" font-size="15" fill="#92400e" text-anchor="middle" font-weight="700">1.625%</text>
+    <text x="350" y="300" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="700">m = 4,096</text>
+    <text x="350" y="320" class="mono" font-size="11.5" fill="#6b7280" text-anchor="middle">3,072 B (3 KiB)</text>
+
+    <rect x="500" y="231" width="100" height="49" rx="4" fill="#dbeafe" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="550" y="222" font-size="15" fill="#1d4ed8" text-anchor="middle" font-weight="700">0.8125%</text>
+    <text x="550" y="300" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">m = 16,384</text>
+    <text x="550" y="320" class="mono" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">12,288 B (12 KiB)</text>
+    <rect x="486" y="336" width="128" height="22" rx="11" fill="#2563eb"/>
+    <text x="550" y="351" font-size="11.5" fill="#fff" text-anchor="middle" font-weight="700">Redis가 고른 균형점</text>
+
+    <rect x="700" y="256" width="100" height="24" rx="4" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="750" y="247" font-size="15" fill="#166534" text-anchor="middle" font-weight="700">0.40625%</text>
+    <text x="750" y="300" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="700">m = 65,536</text>
+    <text x="750" y="320" class="mono" font-size="11.5" fill="#6b7280" text-anchor="middle">49,152 B (48 KiB)</text>
+
+    <!-- exchange arrows -->
+    <path d="M205,60 C250,40 300,40 345,60" fill="none" stroke="#d97706" stroke-width="1.8" marker-end="url(#b1)"/>
+    <text x="275" y="38" font-size="11.5" fill="#92400e" text-anchor="middle" font-weight="700">m ×4 → 오차 ½ · 메모리 ×4</text>
+    <path d="M405,155 C450,135 500,135 545,195" fill="none" stroke="#d97706" stroke-width="1.8" marker-end="url(#b1)"/>
+    <text x="475" y="133" font-size="11.5" fill="#92400e" text-anchor="middle" font-weight="700">m ×4 → 오차 ½ · 메모리 ×4</text>
+    <path d="M605,205 C650,185 700,185 745,228" fill="none" stroke="#d97706" stroke-width="1.8" marker-end="url(#b1)"/>
+    <text x="675" y="183" font-size="11.5" fill="#92400e" text-anchor="middle" font-weight="700">m ×4 → 오차 ½ · 메모리 ×4</text>
+
+    <text x="830" y="90" font-size="12" fill="#6b7280" font-weight="700">막대 높이 = 표준오차</text>
+    <text x="830" y="110" font-size="11.5" fill="#6b7280">오른쪽으로 갈수록</text>
+    <text x="830" y="128" font-size="11.5" fill="#6b7280">막대는 반씩 줄지만</text>
+    <text x="830" y="146" font-size="11.5" fill="#b91c1c" font-weight="700">메모리는 4배씩 는다</text>
+  </svg>
+  <figcaption>"정확도를 조금만 더 올려 주세요"라는 요구가 <b>얼마나 비싼지</b>를 즉답할 수 있는 근거가 이 그림이다. <b>오차 ½ = 메모리 ×4</b>이므로, 0.81%를 0.1% 근처로 낮추려면 메모리는 수십 배가 된다. Redis가 16384를 고른 것은 <b>"12KB에 0.81%"가 대부분의 집계 용도에서 균형점</b>이라는 판단이다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>레지스터 수 m</th><th>표준오차 = 1.04/√m</th><th>레지스터 메모리 (m × 6비트)</th><th>어떤 자리에 맞나</th></tr></thead>
+  <tbody>
+    <tr><td><code>1,024</code></td><td class="bad">3.25%</td><td>768바이트</td><td>오차가 너무 커서 집계 신뢰가 어렵다</td></tr>
+    <tr><td><code>4,096</code></td><td>1.625%</td><td>3,072바이트 (3KiB)</td><td>대략의 규모만 보면 되는 자리</td></tr>
+    <tr class="hl"><td><code>16,384</code> <span class="badge core">Redis</span></td><td class="good">0.8125%</td><td><b>12,288바이트 (12KiB)</b></td><td>대시보드·트렌드 — 실무 표준</td></tr>
+    <tr><td><code>65,536</code></td><td class="good">0.40625%</td><td>49,152바이트 (48KiB)</td><td>오차를 반으로 줄이려고 메모리 4배를 낸 경우</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>4-1. 12KB는 어디서 나오는 숫자인가</h3>
+
+<p>레지스터 하나에 담기는 값은 <b>"앞쪽 연속 0의 최대 개수"</b>다. 해시가 64비트라면 이 값이 아무리 커야 60 언저리이므로, <b>0~63을 표현할 수 있는 6비트면 충분하다.</b></p>
+
+<pre><code>레지스터 16,384개 × 6비트 = 98,304비트
+98,304비트 ÷ 8 = 12,288바이트 = 12KiB</code></pre>
+
+<p>여기에 짧은 헤더가 붙으므로 실제 키는 12,288바이트보다 아주 조금 크다. 어쨌든 <b>100만을 세든 1억을 세든 이 크기는 변하지 않는다.</b> 1절의 "멤버 수 비례"와 정면으로 대비되는 지점이다.</p>
+
+<div class="memo">
+  <h4>이 두 계산은 통째로 외워서 즉답한다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">1.04 ÷ √16384 = 1.04 ÷ 128</div><div class="d">= 0.008125 = <b>0.8125%</b> — "0.81%"의 출처</div></div>
+    <div class="tile"><div class="k">16384 × 6bit ÷ 8 = 12,288</div><div class="d">= <b>12KiB</b> — "12KB"의 출처</div></div>
+  </div>
+  <p style="margin:10px 0 0">여기에 <b>체감 환산</b>을 하나 붙이면 답이 살아난다 — 표준오차 0.81%를 5,000만에 적용하면 <code>50,000,000 × 0.008125 = 406,250</code>이므로 <b>"5,000만 ±40만" 수준의 근사치를 12KB에 사는 것</b>이다.</p>
+</div>
+
+<div class="callout warn"><span class="t">"표준"오차라는 말의 뜻 — 여기서 한 칸 더 정확해진다</span>
+  <b>항상 0.81% 이내라는 보장이 아니다.</b> 오차의 <b>분포가 그 정도 폭을 갖는다</b>는 통계적 서술이고, 실제 오차는 그보다 클 수도 작을 수도 있다. <b>"대부분의 경우 ±0.81% 근처, 가끔 그 두세 배"</b>라고 이해하는 것이 맞다. 이 구분을 말하면 공식을 외운 사람이 아니라 <b>의미를 아는 사람</b>으로 들린다.
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. PFADD · PFCOUNT · PFMERGE — 합집합은 max, 교집합은 없다</h2>
+
+<p>사용법은 Set과 거의 같은 모양이다. <b>다른 것은 내부에서 무엇이 저장되는가</b>뿐이다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> Set — 멤버 5,000만 개를 그대로 보관</div>
+<pre><code><span class="cm">// 메모리: 멤버 수에 정비례 (어림 2.5GB)</span>
+redis.<span class="fn">opsForSet</span>().<span class="fn">add</span>(<span class="st">"uv:2026-08-31"</span>, userId);
+<span class="kw">Long</span> uv = redis.<span class="fn">opsForSet</span>().<span class="fn">size</span>(<span class="st">"uv:2026-08-31"</span>);
+
+<span class="cm">// 주간 UV — 7일치 Set을 합집합</span>
+redis.<span class="fn">opsForSet</span>().<span class="fn">unionAndStore</span>(<span class="st">"uv:2026-08-25"</span>,
+        <span class="fn">List</span>.<span class="fn">of</span>(<span class="st">"uv:2026-08-26"</span>, <span class="cm">/* ... */</span>),
+        <span class="st">"uv:week-35"</span>);
+<span class="cm">// 결과 Set이 또 하나의 거대 키가 된다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> HyperLogLog — 관측 통계 12KB만 보관</div>
+<pre><code><span class="cm">// PFADD — 멤버 자체는 저장되지 않는다. 해시해서 레지스터만 갱신</span>
+redis.<span class="fn">opsForHyperLogLog</span>().<span class="fn">add</span>(<span class="st">"uv:2026-08-31"</span>, userId);
+
+<span class="cm">// PFCOUNT — 근사 유니크 카운트</span>
+<span class="kw">Long</span> uv = redis.<span class="fn">opsForHyperLogLog</span>().<span class="fn">size</span>(<span class="st">"uv:2026-08-31"</span>);
+
+<span class="cm">// PFMERGE — 일 단위 HLL을 합쳐 주간 UV (합집합의 카디널리티)</span>
+redis.<span class="fn">opsForHyperLogLog</span>().<span class="fn">union</span>(<span class="st">"uv:week-35"</span>,
+        <span class="st">"uv:2026-08-25"</span>, <span class="st">"uv:2026-08-26"</span>, <span class="cm">/* ... */</span>
+        <span class="st">"uv:2026-08-31"</span>);
+<span class="cm">// 결과도 12KB. 원본 재집계 없이 주간·월간이 나온다</span></code></pre>
+  </div>
+</div>
+
+<div class="rule ok"><b>PFMERGE가 실무 가치의 절반</b>이다 — 일 단위로만 적재해 두면 주간·월간 UV를 <b>원본 재집계 없이</b> 얻는다</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="PFMERGE가 레지스터별 최댓값으로 두 HyperLogLog를 합치는 과정과, 교집합에는 대응하는 레지스터 연산이 없다는 설명">
+    <defs><marker id="c1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker></defs>
+    <text x="360" y="28" font-size="14" fill="#1f2937" text-anchor="middle" font-weight="700">PFMERGE = 레지스터별 max — 그래서 원본 없이 합집합이 만들어진다</text>
+
+    <g class="mono" font-size="13" text-anchor="middle">
+      <text x="66" y="76" font-size="12.5" fill="#1d4ed8" font-weight="700" font-family="-apple-system">월요일 HLL</text>
+      <rect x="110" y="56" width="62" height="34" rx="4" fill="#eff6ff" stroke="#93c5fd"/><text x="141" y="79" fill="#1e40af">3</text>
+      <rect x="178" y="56" width="62" height="34" rx="4" fill="#eff6ff" stroke="#93c5fd"/><text x="209" y="79" fill="#1e40af">5</text>
+      <rect x="246" y="56" width="62" height="34" rx="4" fill="#eff6ff" stroke="#93c5fd"/><text x="277" y="79" fill="#1e40af">2</text>
+      <rect x="314" y="56" width="62" height="34" rx="4" fill="#eff6ff" stroke="#93c5fd"/><text x="345" y="79" fill="#1e40af">7</text>
+      <rect x="382" y="56" width="62" height="34" rx="4" fill="#eff6ff" stroke="#93c5fd"/><text x="413" y="79" fill="#1e40af">1</text>
+      <rect x="450" y="56" width="62" height="34" rx="4" fill="#eff6ff" stroke="#93c5fd"/><text x="481" y="79" fill="#1e40af">4</text>
+      <rect x="518" y="56" width="62" height="34" rx="4" fill="#eff6ff" stroke="#93c5fd"/><text x="549" y="79" fill="#1e40af">6</text>
+      <rect x="586" y="56" width="62" height="34" rx="4" fill="#eff6ff" stroke="#93c5fd"/><text x="617" y="79" fill="#1e40af">2</text>
+
+      <text x="66" y="136" font-size="12.5" fill="#7c3aed" font-weight="700" font-family="-apple-system">화요일 HLL</text>
+      <rect x="110" y="116" width="62" height="34" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/><text x="141" y="139" fill="#6d28d9">5</text>
+      <rect x="178" y="116" width="62" height="34" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/><text x="209" y="139" fill="#6d28d9">2</text>
+      <rect x="246" y="116" width="62" height="34" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/><text x="277" y="139" fill="#6d28d9">4</text>
+      <rect x="314" y="116" width="62" height="34" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/><text x="345" y="139" fill="#6d28d9">3</text>
+      <rect x="382" y="116" width="62" height="34" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/><text x="413" y="139" fill="#6d28d9">8</text>
+      <rect x="450" y="116" width="62" height="34" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/><text x="481" y="139" fill="#6d28d9">1</text>
+      <rect x="518" y="116" width="62" height="34" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/><text x="549" y="139" fill="#6d28d9">2</text>
+      <rect x="586" y="116" width="62" height="34" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/><text x="617" y="139" fill="#6d28d9">9</text>
+
+      <text x="66" y="216" font-size="12.5" fill="#166534" font-weight="700" font-family="-apple-system">병합 결과</text>
+      <rect x="110" y="196" width="62" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="141" y="219" fill="#166534" font-weight="700">5</text>
+      <rect x="178" y="196" width="62" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="209" y="219" fill="#166534" font-weight="700">5</text>
+      <rect x="246" y="196" width="62" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="277" y="219" fill="#166534" font-weight="700">4</text>
+      <rect x="314" y="196" width="62" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="345" y="219" fill="#166534" font-weight="700">7</text>
+      <rect x="382" y="196" width="62" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="413" y="219" fill="#166534" font-weight="700">8</text>
+      <rect x="450" y="196" width="62" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="481" y="219" fill="#166534" font-weight="700">4</text>
+      <rect x="518" y="196" width="62" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="549" y="219" fill="#166534" font-weight="700">6</text>
+      <rect x="586" y="196" width="62" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="617" y="219" fill="#166534" font-weight="700">9</text>
+    </g>
+    <line x1="379" y1="154" x2="379" y2="192" stroke="#16a34a" stroke-width="2" marker-end="url(#c1)"/>
+    <text x="672" y="200" font-size="12" fill="#166534" font-weight="700">칸마다</text>
+    <text x="672" y="218" font-size="12" fill="#166534" font-weight="700">max만 취한다</text>
+
+    <rect x="110" y="252" width="538" height="60" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="379" y="274" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">왜 이게 합집합이 되나 — A와 B를 합친 집합에서 그 칸의 최댓값은</text>
+    <text x="379" y="294" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">"A의 최댓값과 B의 최댓값 중 큰 쪽"이기 때문이다. 원본을 다시 훑을 필요가 없다.</text>
+
+    <rect x="110" y="324" width="538" height="56" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="379" y="346" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">덤: 이 성질 덕분에 병합 순서·횟수가 결과를 바꾸지 않는다</text>
+    <text x="379" y="365" font-size="11.5" fill="#1e40af" text-anchor="middle">30일치를 한 번에 합치든 매일 조금씩 합치든, "합집합을 처음부터 넣은 HLL"과 같은 것이 나온다</text>
+
+    <!-- right: no intersection -->
+    <rect x="680" y="44" width="416" height="336" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="888" y="72" font-size="13.5" fill="#b91c1c" text-anchor="middle" font-weight="700">그런데 교집합에는 대응하는 연산이 없다</text>
+    <line x1="712" y1="86" x2="1064" y2="86" stroke="#fecaca"/>
+
+    <text x="704" y="112" font-size="12" fill="#b91c1c" font-weight="700">max가 표현하는 것:</text>
+    <text x="704" y="132" font-size="12" fill="#b91c1c">"둘 중 <tspan font-weight="700">한쪽에서라도</tspan> 관측됐다" = 합집합</text>
+
+    <text x="704" y="164" font-size="12" fill="#b91c1c" font-weight="700">교집합이 필요로 하는 것:</text>
+    <text x="704" y="184" font-size="12" fill="#b91c1c">"<tspan font-weight="700">양쪽 모두에서</tspan> 관측됐다"</text>
+
+    <rect x="704" y="200" width="360" height="76" rx="8" fill="#fff" stroke="#fca5a5"/>
+    <text x="884" y="222" font-size="12" fill="#b91c1c" text-anchor="middle">레지스터 값 <tspan class="mono" font-weight="700">5</tspan> 와 <tspan class="mono" font-weight="700">5</tspan> 가 나란히 있어도</text>
+    <text x="884" y="242" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">"같은 사람이 만든 5"인지 "다른 사람이 만든 5"인지</text>
+    <text x="884" y="262" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">판정할 재료가 남아 있지 않다</text>
+
+    <rect x="704" y="288" width="360" height="76" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="884" y="312" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">어느 멤버가 어느 칸을 어떤 값으로 만들었는지를</text>
+    <text x="884" y="332" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">모르니 "겹치는 멤버"를 셀 방법이 없다</text>
+    <text x="884" y="354" font-size="12" fill="#7f1d1d" text-anchor="middle" font-weight="700">→ 교집합이 요구사항이면 처음부터 Bitmap으로 설계한다</text>
+  </svg>
+  <figcaption><code>PFMERGE</code>로 얻는 것은 <b>합집합뿐</b>이다. "월요일에도 오고 화요일에도 온 사람"(교집합)은 HLL이 직접 답하지 못한다. <b>포함배제 원리로 우회할 수는 있지만 오차가 무너진다</b> — <a href="#s11">11절 첫 번째 꼬리질문</a>에서 숫자로 확인한다.</figcaption>
+</figure>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. HLL이 포기한 것 — 제약 네 가지는 뿌리 하나에서 나온다</h2>
+
+<p>HLL의 제약은 전부 <b>"멤버를 저장하지 않는다"</b>는 <b>한 가지 사실</b>에서 파생된다. 네 가지를 따로 외우는 것이 아니라 <b>이 뿌리 하나를 잡고 그 자리에서 유도</b>하는 것이 답변의 안정성을 만든다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="멤버를 저장하지 않는다는 하나의 사실에서 개별 조회 불가, 삭제 불가, 교집합 불가, 0.81퍼센트 오차라는 네 가지 제약이 파생되는 구조">
+    <defs><marker id="d1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker></defs>
+    <text x="560" y="28" font-size="14" fill="#1f2937" text-anchor="middle" font-weight="700">뿌리 하나 → 제약 넷 — 외우지 말고 여기서 유도한다</text>
+
+    <rect x="24" y="106" width="270" height="110" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="159" y="140" font-size="14.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">멤버를 저장하지 않는다</text>
+    <text x="159" y="166" font-size="12" fill="#1e40af" text-anchor="middle">남아 있는 것은 레지스터 16,384칸의</text>
+    <text x="159" y="184" font-size="12" fill="#1e40af" text-anchor="middle">"앞쪽 0 최댓값"뿐</text>
+    <text x="159" y="204" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">= 12KB를 얻은 대가</text>
+
+    <path d="M294,150 C340,150 350,86 396,86" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#d1)"/>
+    <path d="M294,158 C340,158 350,148 396,148" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#d1)"/>
+    <path d="M294,166 C340,166 350,210 396,210" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#d1)"/>
+    <path d="M294,174 C340,174 350,272 396,272" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#d1)"/>
+
+    <rect x="404" y="56" width="692" height="58" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="424" y="80" font-size="13" fill="#b91c1c" font-weight="700">① 개별 조회 불가</text>
+    <text x="560" y="80" font-size="12.5" fill="#b91c1c">"userId 42가 오늘 왔었나?"를 물을 수 없다.</text>
+    <text x="424" y="101" font-size="12.5" fill="#7f1d1d" font-weight="700">HLL이 답할 수 있는 질문은 "몇 명" 하나뿐이고, "누가"는 원천적으로 답할 수 없다.</text>
+
+    <rect x="404" y="120" width="692" height="58" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="424" y="144" font-size="13" fill="#b91c1c" font-weight="700">② 삭제 불가</text>
+    <text x="536" y="144" font-size="12.5" fill="#b91c1c">"이 관측을 빼라"를 처리할 수 없다.</text>
+    <text x="424" y="165" font-size="12.5" fill="#7f1d1d" font-weight="700">최댓값을 만든 멤버가 누구였는지 모르니 값을 낮출 근거가 없다 — 되돌리기가 없는 자료구조다.</text>
+
+    <rect x="404" y="184" width="692" height="58" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="424" y="208" font-size="13" fill="#b91c1c" font-weight="700">③ 교집합 불가</text>
+    <text x="536" y="208" font-size="12.5" fill="#b91c1c">합집합이 max로 되는 것과 대칭인 연산이 없다.</text>
+    <text x="424" y="229" font-size="12.5" fill="#7f1d1d" font-weight="700">"양쪽 모두에서 관측됐다"를 레지스터 값만으로 표현할 방법이 없다.</text>
+
+    <rect x="404" y="248" width="692" height="58" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="424" y="272" font-size="13" fill="#92400e" font-weight="700">④ ±0.81% 오차</text>
+    <text x="536" y="272" font-size="12.5" fill="#92400e">멤버가 아니라 통계를 남겼으니 답도 통계다.</text>
+    <text x="424" y="293" font-size="12.5" fill="#b91c1c" font-weight="700">대시보드·트렌드에는 충분하지만, 과금·정산·당첨 판정처럼 숫자가 돈이나 권리가 되는 곳에는 부적합하다.</text>
+  </svg>
+  <figcaption>네 번째 항목의 마지막 한 줄이 <b>이 주제 답변의 핵심 구분선</b>이다 — <b>"숫자가 참고 정보인 자리"와 "숫자가 돈이나 권리가 되는 자리"</b>를 나눠 부르는 것. 같은 "카운트"라는 말 안에 <b>판정용 정확 카운트</b>와 <b>관측용 근사 카운트</b>라는 서로 다른 요구사항이 섞여 있다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>가장 자주 나오는 오답 — "HLL은 그냥 더 좋은 Set"</h4>
+  <div class="rule red">HLL은 <b>Set의 상위 호환이 아니라 "개수 질문 전용 특수 도구"</b>다</div>
+  <p style="margin:10px 0 0">Set이 답할 수 있는 질문 중 HLL이 답할 수 있는 것은 <b><code>SCARD</code> 하나뿐</b>이고, 그마저도 근사다. <code>SISMEMBER</code>·<code>SMEMBERS</code>·<code>SREM</code>·<code>SINTER</code>에 대응하는 것이 전부 없다. <b>"싸다"가 아니라 "질문의 범위를 좁힌 대가로 싸다"</b>가 정확한 서술이다.</p>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. Bitmap — 사용자 ID를 "비트의 위치"로 쓴다</h2>
+
+<p>Redis의 Bitmap은 <b>새로운 타입이 아니다.</b> 평범한 String 값을 <b>"비트의 배열"로 취급해 읽고 쓰는 명령들</b>(<code>SETBIT</code> / <code>GETBIT</code> / <code>BITCOUNT</code> / <code>BITOP</code>)의 묶음이다. 타입 목록에 Bitmap이 따로 없는 이유가 이것이다.</p>
+
+<div class="rule">핵심 아이디어: <b>사용자 ID를 비트의 위치(오프셋)로 쓴다</b> — userId 42의 출석 여부는 <b>42번째 비트 하나</b>다. 사람 한 명당 1비트.</div>
+<figure class="wide">
+  <svg viewBox="0 0 1120 380" role="img" aria-label="Bitmap 구조. 하나의 String 값을 비트 배열로 보고 사용자 ID를 비트 오프셋으로 사용한다. 42번 비트가 1로 켜져 있다">
+    <text x="560" y="28" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">attend:2026-08-31 — String 하나를 비트 배열로 본다 (앞 48비트만 확대)</text>
+    <text x="60" y="109" font-size="12.5" fill="#374151" text-anchor="end" font-weight="700">비트</text>
+    <text x="60" y="78" font-size="11" fill="#6b7280" text-anchor="end">오프셋</text>
+    <text x="100" y="78" class="mono" font-size="10.5" fill="#6b7280">0</text>
+    <text x="260" y="78" class="mono" font-size="10.5" fill="#6b7280">8</text>
+    <text x="420" y="78" class="mono" font-size="10.5" fill="#6b7280">16</text>
+    <text x="580" y="78" class="mono" font-size="10.5" fill="#6b7280">24</text>
+    <text x="740" y="78" class="mono" font-size="10.5" fill="#6b7280">32</text>
+    <text x="900" y="78" class="mono" font-size="10.5" fill="#6b7280">40</text>
+    <line x1="98" y1="82" x2="98" y2="140" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <line x1="258" y1="82" x2="258" y2="140" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <line x1="418" y1="82" x2="418" y2="140" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <line x1="578" y1="82" x2="578" y2="140" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <line x1="738" y1="82" x2="738" y2="140" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <line x1="898" y1="82" x2="898" y2="140" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <line x1="1058" y1="82" x2="1058" y2="140" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3 3"/>
+    <rect x="100" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="109" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="120" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="129" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="140" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="149" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="160" y="86" width="18" height="34" rx="3" fill="#dbeafe" stroke="#93c5fd"/><text x="169" y="109" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="180" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="189" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="200" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="209" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="220" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="229" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="240" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="249" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="260" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="269" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="280" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="289" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="300" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="309" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="320" y="86" width="18" height="34" rx="3" fill="#dbeafe" stroke="#93c5fd"/><text x="329" y="109" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="340" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="349" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="360" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="369" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="380" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="389" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="400" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="409" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="420" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="429" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="440" y="86" width="18" height="34" rx="3" fill="#dbeafe" stroke="#93c5fd"/><text x="449" y="109" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="460" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="469" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="480" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="489" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="500" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="509" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="520" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="529" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="540" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="549" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="560" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="569" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="580" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="589" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="600" y="86" width="18" height="34" rx="3" fill="#dbeafe" stroke="#93c5fd"/><text x="609" y="109" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="620" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="629" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="640" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="649" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="660" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="669" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="680" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="689" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="700" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="709" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="720" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="729" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="740" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="749" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="760" y="86" width="18" height="34" rx="3" fill="#dbeafe" stroke="#93c5fd"/><text x="769" y="109" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="780" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="789" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="800" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="809" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="820" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="829" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="840" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="849" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="860" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="869" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="880" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="889" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="900" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="909" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="920" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="929" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="940" y="86" width="18" height="34" rx="3" fill="#2563eb" stroke="#1d4ed8" stroke-width="2"/><text x="949" y="109" class="mono" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+    <rect x="960" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="969" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="980" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="989" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="1000" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="1009" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="1020" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="1029" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="1040" y="86" width="18" height="34" rx="3" fill="#fafbfc" stroke="#e5e7eb"/><text x="1049" y="109" class="mono" font-size="12" fill="#cbd5e1" text-anchor="middle">0</text>
+    <text x="178" y="155" font-size="11" fill="#6b7280" text-anchor="middle">byte 0</text>
+    <text x="338" y="155" font-size="11" fill="#6b7280" text-anchor="middle">byte 1</text>
+    <text x="498" y="155" font-size="11" fill="#6b7280" text-anchor="middle">byte 2</text>
+    <text x="658" y="155" font-size="11" fill="#6b7280" text-anchor="middle">byte 3</text>
+    <text x="818" y="155" font-size="11" fill="#6b7280" text-anchor="middle">byte 4</text>
+    <text x="978" y="155" font-size="11" fill="#6b7280" text-anchor="middle">byte 5</text>
+    <path d="M949,150 L949,176" stroke="#2563eb" stroke-width="2"/>
+    <rect x="828" y="178" width="242" height="52" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="949" y="198" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">SETBIT attend:2026-08-31 42 1</text>
+    <text x="949" y="218" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">userId 42가 출석했다 = 42번 비트를 1로</text>
+
+    <rect x="24" y="178" width="384" height="52" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="216" y="198" class="mono" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">BITCOUNT attend:2026-08-31</text>
+    <text x="216" y="218" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">1인 비트의 개수 = 오늘 총 출석자 수</text>
+
+    <rect x="420" y="178" width="396" height="52" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="618" y="198" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">GETBIT attend:2026-08-31 42</text>
+    <text x="618" y="218" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">HLL은 원천적으로 못 하는 "개별 여부" 질의가 O(1)</text>
+
+    <rect x="24" y="248" width="700" height="118" rx="12" fill="#fafbfc" stroke="#cbd5e1"/>
+    <text x="46" y="272" font-size="13" fill="#1f2937" font-weight="700">가격표 — 계산은 단순하다</text>
+    <text x="46" y="296" class="mono" font-size="12" fill="#334155">사용자 1000만 명 (ID가 0 ~ 9,999,999 로 조밀하게 채워져 있다고 하자)</text>
+    <text x="46" y="318" class="mono" font-size="12" fill="#334155">필요한 비트 수 = 10,000,000비트</text>
+    <text x="46" y="338" class="mono" font-size="12" fill="#166534" font-weight="700">10,000,000 ÷ 8 = 1,250,000바이트 = 약 1.25MB (1.19MiB)</text>
+    <text x="46" y="358" font-size="12" fill="#b91c1c" font-weight="700">1절 Set의 수백 MB~GB와 비교하면 수백분의 1 — 그러면서도 결과는 근사가 아니라 정확하다</text>
+
+    <rect x="736" y="248" width="360" height="118" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="916" y="272" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">BITCOUNT가 빠른 이유</text>
+    <text x="916" y="296" font-size="11.5" fill="#1e40af" text-anchor="middle">CPU에 "1인 비트를 세는" 전용 명령이 있어</text>
+    <text x="916" y="314" font-size="11.5" fill="#1e40af" text-anchor="middle">바이트를 하나하나 뜯어보지 않고 워드 단위로 처리된다</text>
+    <text x="916" y="340" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">그래도 O(N)이다 — N은 비트맵의 바이트 길이</text>
+    <text x="916" y="358" font-size="11.5" fill="#b91c1c" text-anchor="middle">아주 큰 비트맵이면 범위를 잘라 세는 것을 고려한다</text>
+  </svg>
+  <figcaption><b>극장 좌석표</b>가 정확한 비유다. 좌석마다 "앉음/빔"만 표시하니 한 칸이 1비트로 끝나고, <b>"42번 자리에 사람 있나"도 즉답</b>된다. 대신 <b>빈 좌석도 자리값을 낸다</b> — 이 성질이 9절의 함정으로 이어진다.</figcaption>
+</figure>
+
+<div class="codehead plain"><span class="tag">코드</span> 출석 체크 — Java에서는 setBit/getBit, 집계는 Redis 명령으로</div>
+<pre><code><span class="cm">// 출석: 오늘 키의 userId번째 비트를 1로</span>
+redis.<span class="fn">opsForValue</span>().<span class="fn">setBit</span>(<span class="st">"attend:2026-08-31"</span>, userId, <span class="kw">true</span>);   <span class="cm">// SETBIT</span>
+
+<span class="cm">// 특정 유저의 오늘 출석 여부 — HLL은 못 하는 개별 조회가 된다</span>
+<span class="kw">Boolean</span> attended = redis.<span class="fn">opsForValue</span>().<span class="fn">getBit</span>(<span class="st">"attend:2026-08-31"</span>, userId);
+
+<span class="cm">// 오늘 총 출석자 수 — 1인 비트 개수</span>
+<span class="cm">// BITCOUNT attend:2026-08-31</span></code></pre>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. BITOP — Bitmap을 고르는 결정적 이유</h2>
+
+<p>Bitmap을 고르는 결정적 이유는 <b>메모리가 아니라 <code>BITOP</code></b>이다. 날짜별 Bitmap끼리 AND/OR을 하면 <b>그대로 집합 질의</b>가 된다.</p>
+<figure class="wide">
+  <svg viewBox="0 0 1120 500" role="img" aria-label="3일치 출석 비트맵을 BITOP AND로 교집합 계산해 3일 연속 출석자 비트맵을 만드는 과정과, 애플리케이션에서 명단을 내려받아 교집합을 구하는 방식과의 데이터 이동량 비교">
+    <defs><marker id="e1" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker></defs>
+    <text x="560" y="28" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">BITOP AND — "3일 연속 출석자"가 비트 연산 한 번으로 끝난다 (유저 0~15 구간 확대)</text>
+    <text x="259" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">0</text>
+    <text x="301" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">1</text>
+    <text x="343" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">2</text>
+    <text x="385" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">3</text>
+    <text x="427" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">4</text>
+    <text x="469" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">5</text>
+    <text x="511" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">6</text>
+    <text x="553" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">7</text>
+    <text x="595" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">8</text>
+    <text x="637" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">9</text>
+    <text x="679" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">10</text>
+    <text x="721" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">11</text>
+    <text x="763" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">12</text>
+    <text x="805" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">13</text>
+    <text x="847" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">14</text>
+    <text x="889" y="56" class="mono" font-size="10.5" fill="#9ca3af" text-anchor="middle">15</text>
+    <text x="230" y="87" class="mono" font-size="12" fill="#334155" text-anchor="end">attend:2026-08-29</text>
+    <rect x="240" y="64" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="259" y="87" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="282" y="64" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="301" y="87" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="324" y="64" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="343" y="87" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="366" y="64" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="385" y="87" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="408" y="64" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="427" y="87" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="450" y="64" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="469" y="87" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="492" y="64" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="511" y="87" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="534" y="64" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="553" y="87" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="576" y="64" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="595" y="87" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="618" y="64" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="637" y="87" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="660" y="64" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="679" y="87" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="702" y="64" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="721" y="87" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="744" y="64" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="763" y="87" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="786" y="64" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="805" y="87" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="828" y="64" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="847" y="87" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="870" y="64" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="889" y="87" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <text x="230" y="133" class="mono" font-size="12" fill="#334155" text-anchor="end">attend:2026-08-30</text>
+    <rect x="240" y="110" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="259" y="133" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="282" y="110" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="301" y="133" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="324" y="110" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="343" y="133" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="366" y="110" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="385" y="133" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="408" y="110" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="427" y="133" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="450" y="110" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="469" y="133" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="492" y="110" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="511" y="133" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="534" y="110" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="553" y="133" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="576" y="110" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="595" y="133" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="618" y="110" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="637" y="133" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="660" y="110" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="679" y="133" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="702" y="110" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="721" y="133" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="744" y="110" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="763" y="133" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="786" y="110" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="805" y="133" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="828" y="110" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="847" y="133" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="870" y="110" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="889" y="133" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <text x="230" y="179" class="mono" font-size="12" fill="#334155" text-anchor="end">attend:2026-08-31</text>
+    <rect x="240" y="156" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="259" y="179" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="282" y="156" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="301" y="179" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="324" y="156" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="343" y="179" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="366" y="156" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="385" y="179" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="408" y="156" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="427" y="179" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="450" y="156" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="469" y="179" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="492" y="156" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="511" y="179" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="534" y="156" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="553" y="179" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="576" y="156" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="595" y="179" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="618" y="156" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="637" y="179" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="660" y="156" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="679" y="179" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="702" y="156" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="721" y="179" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="744" y="156" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="763" y="179" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="786" y="156" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="805" y="179" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="828" y="156" width="38" height="34" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.6"/><text x="847" y="179" class="mono" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="870" y="156" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="889" y="179" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <line x1="240" y1="198" x2="912" y2="198" stroke="#16a34a" stroke-width="2"/>
+    <text x="230" y="237" class="mono" font-size="12" fill="#166534" text-anchor="end" font-weight="700">attend:streak3</text>
+    <rect x="240" y="214" width="38" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="259" y="237" class="mono" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">1</text>
+    <rect x="282" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="301" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="324" y="214" width="38" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="343" y="237" class="mono" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">1</text>
+    <rect x="366" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="385" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="408" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="427" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="450" y="214" width="38" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="469" y="237" class="mono" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">1</text>
+    <rect x="492" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="511" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="534" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="553" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="576" y="214" width="38" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="595" y="237" class="mono" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">1</text>
+    <rect x="618" y="214" width="38" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="637" y="237" class="mono" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">1</text>
+    <rect x="660" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="679" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="702" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="721" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="744" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="763" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="786" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="805" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <rect x="828" y="214" width="38" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="847" y="237" class="mono" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">1</text>
+    <rect x="870" y="214" width="38" height="34" rx="4" fill="#fafbfc" stroke="#e5e7eb"/><text x="889" y="237" class="mono" font-size="13" fill="#cbd5e1" text-anchor="middle">0</text>
+    <text x="940" y="120" font-size="13" fill="#166534" font-weight="700">AND</text>
+    <text x="940" y="140" font-size="11.5" fill="#166534">세 날 모두 1인</text>
+    <text x="940" y="158" font-size="11.5" fill="#166534">자리만 1로 남는다</text>
+    <rect x="932" y="212" width="164" height="38" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="1014" y="236" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">BITCOUNT → 6명</text>
+
+    <rect x="24" y="268" width="1072" height="52" rx="10" fill="#1e293b"/>
+    <text x="44" y="291" class="mono" font-size="12.5" fill="#86efac">BITOP AND attend:streak3 attend:2026-08-29 attend:2026-08-30 attend:2026-08-31</text>
+    <text x="44" y="311" class="mono" font-size="12.5" fill="#e2e8f0">BITCOUNT attend:streak3<tspan fill="#94a3b8">          # 3일 연속 출석자 수 — 서버 안에서 끝난다</tspan></text>
+
+    <text x="560" y="348" font-size="13.5" fill="#1f2937" text-anchor="middle" font-weight="700">이 두 줄이 왜 강력한가 — 같은 일을 애플리케이션에서 하면 이렇게 된다</text>
+
+    <rect x="24" y="360" width="530" height="126" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="46" y="384" font-size="13" fill="#b91c1c" font-weight="700">[Bitmap 없이] 3일 연속 출석자 구하기</text>
+    <text x="46" y="408" font-size="12" fill="#b91c1c">· 3일치 출석자 명단(각 수백만 건)을 앱으로 전부 내려받는다</text>
+    <text x="46" y="428" font-size="12" fill="#b91c1c">· 네트워크로 수십 MB가 오간다</text>
+    <text x="46" y="448" font-size="12" fill="#b91c1c">· 자바 힙에 Set 세 개를 만든다 (GC 압박)</text>
+    <text x="46" y="468" font-size="12" fill="#b91c1c">· retainAll() 로 교집합을 구한다 <tspan font-weight="700">— 게다가 SMEMBERS 자체가 블로킹 O(N)</tspan></text>
+
+    <rect x="566" y="360" width="530" height="126" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="588" y="384" font-size="13" fill="#166534" font-weight="700">[BITOP AND]</text>
+    <text x="588" y="408" font-size="12" fill="#166534">· Redis 안에서 1.25MB짜리 바이트 배열 세 개를 워드 단위로 AND</text>
+    <text x="588" y="428" font-size="12" fill="#166534">· 앱으로 넘어오는 것은 BITCOUNT 결과 <tspan font-weight="700">숫자 하나</tspan></text>
+    <text x="588" y="452" font-size="12" fill="#166534" font-weight="700">· 결과가 정확하므로 "연속 출석 보상 지급" 같은 권리 판정에도 쓸 수 있다</text>
+    <text x="588" y="474" font-size="12" fill="#92400e" font-weight="700">· 단, BITOP도 바이트 길이에 비례하는 O(N)이다 — 아래 주의 참고</text>
+  </svg>
+  <figcaption>차이의 본질은 <b>"질의가 서버 안에서 끝난다"</b>는 것이다. <b>"연속 출석 보상", "이벤트 A와 B 모두 참여한 사용자"</b>처럼 <b>교집합이 필요한 순간이 Bitmap을 고르는 결정적 이유</b>다(HLL은 합집합만 된다).</figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 명단을 앱으로 끌어와 교집합</div>
+<pre><code><span class="cm">// 3일 연속 출석자 — 각 날짜 명단이 수백만 건</span>
+<span class="ln-bad"><span class="kw">Set</span>&lt;String&gt; d1 = redis.<span class="fn">opsForSet</span>().<span class="fn">members</span>(<span class="st">"attend:2026-08-29"</span>);</span>
+<span class="ln-bad"><span class="kw">Set</span>&lt;String&gt; d2 = redis.<span class="fn">opsForSet</span>().<span class="fn">members</span>(<span class="st">"attend:2026-08-30"</span>);</span>
+<span class="ln-bad"><span class="kw">Set</span>&lt;String&gt; d3 = redis.<span class="fn">opsForSet</span>().<span class="fn">members</span>(<span class="st">"attend:2026-08-31"</span>);</span>
+d1.<span class="fn">retainAll</span>(d2);
+d1.<span class="fn">retainAll</span>(d3);
+<span class="kw">int</span> streak3 = d1.<span class="fn">size</span>();
+<span class="cm">// 문제 1: SMEMBERS가 big key에 대한 블로킹 O(N) 명령</span>
+<span class="cm">// 문제 2: 수십 MB가 네트워크로 이동 + 힙에 Set 3개</span>
+<span class="cm">// 문제 3: 앱 인스턴스마다 이 짓을 반복한다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 서버 안에서 비트 연산으로 끝낸다</div>
+<pre><code><span class="cm"># 3일 연속 출석자 비트맵 (교집합)</span>
+<span class="ln-good">BITOP AND attend:streak3 \
+     attend:2026-08-29 attend:2026-08-30 attend:2026-08-31</span>
+<span class="ln-good">BITCOUNT attend:streak3          <span class="cm"># → 3일 연속 출석자 수</span></span>
+
+<span class="cm"># 이번 주 하루라도 출석 (합집합)</span>
+BITOP OR attend:week attend:2026-08-25 ... attend:2026-08-31
+
+<span class="cm"># 앱으로 넘어오는 것은 숫자 하나. 결과는 정확.</span>
+<span class="cm"># 보상 지급 대상 판정에 그대로 쓸 수 있다.</span></code></pre>
+  </div>
+</div>
+
+<div class="callout warn"><span class="t">BITOP도 공짜는 아니다 — 이 한마디를 붙여야 답이 완성된다</span>
+  <code>BITOP</code>은 <b>대상 바이트 길이에 비례하는 O(N) 작업</b>이라 <b>싱글 스레드를 그만큼 붙잡는다.</b> 1.25MB 몇 개 정도는 순식간이지만, <b>수백 MB짜리 비트맵을 실시간 요청 경로에서 <code>BITOP</code> 하는 설계는 피하고 배치로 미리 계산해 둔다.</b> "무거운 O(N) 명령은 요청 경로 밖으로"라는 원칙은 <a href="12-keys-vs-scan.html">KEYS vs SCAN</a>과 정확히 같은 축이다.
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. Bitmap의 전제와 함정 — "무조건 싸다"가 아니다</h2>
+
+<p><b>전제: ID가 조밀한 정수여야 한다.</b> 이것이 Bitmap의 <b>성립 조건</b>이자 <b>가장 자주 깨지는 가정</b>이다. 비트 오프셋은 정수이므로 UUID나 이메일을 키로 쓰는 시스템에는 그대로 적용할 수 없다. 더 미묘한 함정은 <b>정수인데 띄엄띄엄한 경우</b>다.</p>
+
+<div class="rule red">메모리는 <b>멤버 수가 아니라 "가장 큰 오프셋"에 비례한다</b> — 극장 좌석표는 <b>빈 좌석도 자리값을 낸다</b></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 370" role="img" aria-label="희소 비트맵의 낭비를 보여주는 막대 비교와 큰 오프셋 한 번으로 500MB가 할당되는 오프셋 폭탄 계산">
+    <text x="560" y="26" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">Bitmap이 손해가 되는 두 상황 — 희소(sparse)와 오프셋 폭탄</text>
+
+    <!-- left: sparse -->
+    <rect x="24" y="42" width="656" height="316" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="46" y="66" font-size="13" fill="#b91c1c" font-weight="700">함정 ① 희소한 비트맵 — 활성 유저 10만 명, 그런데 최대 userId가 1억이라면?</text>
+
+    <text x="150" y="106" font-size="12" fill="#374151" text-anchor="end" font-weight="700">Bitmap</text>
+    <rect x="160" y="86" width="400" height="34" rx="4" fill="#fee2e2" stroke="#dc2626" stroke-width="1.4"/>
+    <rect x="160" y="86" width="4" height="34" rx="1" fill="#dc2626"/>
+    <text x="572" y="108" font-size="12.5" fill="#b91c1c" font-weight="700">12,500,000 B (약 12.5MB)</text>
+    <text x="170" y="140" font-size="11.5" fill="#b91c1c">왼쪽 끝 얇은 선(약 0.1%)만 1인 비트 10만 개 — <tspan font-weight="700">나머지는 전부 빈 공간</tspan></text>
+
+    <text x="150" y="180" font-size="12" fill="#166534" text-anchor="end" font-weight="700">같은 10만 명을 Set으로</text>
+    <rect x="160" y="160" width="160" height="34" rx="4" fill="#dcfce7" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="332" y="182" font-size="12.5" fill="#166534" font-weight="700">약 5MB (10만 × 가정 50B)</text>
+    <text x="170" y="214" font-size="11.5" fill="#166534" font-weight="700">→ 이 상황에서는 Set이 오히려 싸다. Bitmap의 장점을 통째로 잃는다.</text>
+
+    <rect x="46" y="230" width="612" height="52" rx="9" fill="#fff" stroke="#fca5a5"/>
+    <text x="66" y="252" class="mono" font-size="12" fill="#b91c1c">필요 공간 = 100,000,000비트 ÷ 8 = 12,500,000바이트</text>
+    <text x="66" y="272" class="mono" font-size="12" fill="#b91c1c">실제로 1인 비트 = 100,000개  →  <tspan font-weight="700">사용률 0.1%</tspan></text>
+
+    <rect x="46" y="292" width="612" height="52" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="352" y="314" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">판단 기준: "최대 오프셋 ÷ 8 바이트" 와 "실제 인원 × 수십 바이트"를 비교해 본다</text>
+    <text x="352" y="333" font-size="11.5" fill="#1e40af" text-anchor="middle">비트맵이 이기려면 <tspan font-weight="700">오프셋 공간이 꽤 촘촘히 채워져 있어야</tspan> 한다</text>
+
+    <!-- right: offset bomb -->
+    <rect x="692" y="42" width="404" height="316" rx="12" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="714" y="66" font-size="13" fill="#9a3412" font-weight="700">함정 ② 큰 오프셋 한 방</text>
+    <rect x="714" y="80" width="360" height="34" rx="7" fill="#1e293b"/>
+    <text x="894" y="102" class="mono" font-size="12" fill="#fca5a5" text-anchor="middle">SETBIT key 4000000000 1</text>
+    <text x="714" y="136" font-size="11.5" fill="#9a3412">이 명령 하나면 Redis는 <tspan font-weight="700">그 오프셋까지의 공간을 즉시 할당</tspan>한다.</text>
+
+    <rect x="714" y="150" width="360" height="52" rx="8" fill="#fff" stroke="#fdba74"/>
+    <text x="730" y="171" class="mono" font-size="11.5" fill="#9a3412">(4,000,000,000 + 1) ÷ 8</text>
+    <text x="730" y="191" class="mono" font-size="11.5" fill="#b91c1c" font-weight="700">= 약 500,000,000바이트 (약 477MiB)</text>
+
+    <text x="714" y="226" font-size="11.5" fill="#b91c1c" font-weight="700">검증하지 않은 외부 입력을 오프셋으로 쓰면</text>
+    <text x="714" y="244" font-size="11.5" fill="#b91c1c" font-weight="700">요청 한 번에 500MB가 잡히는 메모리 폭탄이 된다.</text>
+
+    <rect x="714" y="258" width="360" height="60" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="894" y="278" font-size="11.5" fill="#b91c1c" text-anchor="middle">Redis String의 최댓값은 <tspan font-weight="700">512MiB</tspan></text>
+    <text x="894" y="296" class="mono" font-size="11" fill="#b91c1c" text-anchor="middle">536,870,912 B × 8 = 2^32 비트</text>
+    <text x="894" y="312" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 오프셋 상한 2^32 - 1 = 4,294,967,295</text>
+
+    <text x="894" y="340" font-size="12" fill="#9a3412" text-anchor="middle" font-weight="700">오프셋으로 쓸 값은 반드시 서버에서 범위를 검증한다</text>
+  </svg>
+  <figcaption>이런 상태를 <b>희소(sparse)하다</b>고 말한다. 두 함정은 같은 사실의 앞뒷면이다 — <b>비용이 "몇 명이 켰는가"가 아니라 "가장 멀리 있는 비트가 어디인가"로 결정된다</b>는 것.</figcaption>
+</figure>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 검증 없는 오프셋</div>
+<pre><code><span class="cm">// 외부 입력을 그대로 오프셋으로 쓴다</span>
+<span class="ln-bad"><span class="kw">long</span> offset = <span class="kw">Long</span>.<span class="fn">parseLong</span>(req.<span class="fn">getParameter</span>(<span class="st">"uid"</span>));</span>
+<span class="ln-bad">redis.<span class="fn">opsForValue</span>().<span class="fn">setBit</span>(key, offset, <span class="kw">true</span>);</span>
+<span class="cm">// uid=4000000000 요청 한 번 → 약 500MB 즉시 할당</span>
+<span class="cm">// 몇 번만 반복하면 maxmemory에 도달한다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 서버가 발급한 순번 + 범위 검증</div>
+<pre><code><span class="kw">long</span> slot = slotService.<span class="fn">slotOf</span>(userId);  <span class="cm">// 조밀한 순번</span>
+<span class="ln-good"><span class="kw">if</span> (slot &lt; <span class="nu">0</span> || slot &gt;= MAX_SLOT) {</span>
+<span class="ln-good">    <span class="kw">throw new</span> <span class="fn">IllegalArgumentException</span>(<span class="st">"offset out of range"</span>);</span>
+<span class="ln-good">}</span>
+redis.<span class="fn">opsForValue</span>().<span class="fn">setBit</span>(key, slot, <span class="kw">true</span>);
+<span class="cm">// MAX_SLOT은 "예상 최대 사용자 수"로 잡고 모니터링한다</span></code></pre>
+  </div>
+</div>
+
+<h3>9-1. 전제가 깨질 때의 대안 — ID를 조밀한 정수로 다시 매긴다</h3>
+
+<p><code>userId → 순번(0,1,2,...)</code> 매핑 테이블을 별도로 두고, 비트맵에는 <b>순번을 오프셋으로</b> 쓴다. 새 사용자가 오면 순번을 하나 발급한다(PostgreSQL이면 <code>bigserial</code> 컬럼 하나면 된다).</p>
+
+<pre><code><span class="kw">CREATE TABLE</span> user_bit_slot (
+    user_id  <span class="kw">uuid</span>   <span class="kw">PRIMARY KEY</span>,
+    slot     <span class="kw">bigserial</span> <span class="kw">NOT NULL</span> <span class="kw">UNIQUE</span>   <span class="cm">-- 비트맵 오프셋으로 쓸 조밀한 순번</span>
+);</code></pre>
+
+<div class="callout trap"><span class="t">매핑은 자동으로 정답이 아니다 — 붙는 비용 네 가지</span>
+  ① <b>조회할 때마다 매핑을 한 번 더 타야 한다</b>(그래서 매핑 자체를 캐시하게 된다). ② <b>매핑 테이블이 유실되면 기존 비트맵이 전부 해석 불능</b>이 된다. ③ 오프셋이 사용자 수만큼 늘어나므로 <b>탈퇴자 순번을 재사용할지 말지</b> 같은 운영 정책이 따라온다. ④ 매핑 발급이 <b>새 사용자 가입 경로에 쓰기 한 번</b>을 더 얹는다.<br>
+  <span style="display:inline-block;margin-top:6px"><b>"매핑을 유지하는 비용 &lt; Bitmap으로 얻는 이득"인지를 따져 보고 도입하는 것</b>이지, 자동으로 정답은 아니다.</span>
+</div>
+
+<div class="callout info"><span class="t">규모가 커지면 샤딩</span>
+  인원이 수십억 규모로 가면 <b>비트맵 자체가 커져 big key가 된다.</b> ID 구간별로 키를 쪼갠다(<code>attend:2026-08-31:shard0</code>, <code>:shard1</code>, …). <code>BITOP</code>도 <b>샤드 단위로 수행</b>하고 <code>BITCOUNT</code> 결과를 합산한다. 이러면 명령 하나가 붙잡는 시간이 샤드 크기로 제한된다.
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 선택 기준 — 정확도는 요구사항이지 기본값이 아니다</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th></th><th>Set</th><th>HyperLogLog</th><th>Bitmap</th></tr></thead>
+  <tbody>
+    <tr><th>메모리</th><td class="bad">멤버 수에 비례</td><td class="good">약 12KB 고정</td><td>최대 오프셋에 비례<br>(1000만 = 1,250,000바이트)</td></tr>
+    <tr><th>정확도</th><td class="good">정확</td><td class="bad">표준오차 약 0.81%</td><td class="good">정확</td></tr>
+    <tr><th>개별 멤버 조회</th><td class="good">가능</td><td class="bad">불가</td><td class="good">가능 (<code>GETBIT</code>)</td></tr>
+    <tr><th>집합 연산</th><td>교집합·합집합 모두</td><td class="bad">합집합만 (<code>PFMERGE</code>)</td><td class="good">교집합·합집합 모두 (<code>BITOP</code>)</td></tr>
+    <tr><th>멤버 제약</th><td class="good">없음</td><td class="good">없음 (해시하므로 형식 무관)</td><td class="bad">조밀한 정수 ID</td></tr>
+    <tr><th>삭제</th><td class="good">가능</td><td class="bad">불가</td><td class="good">가능 (비트를 0으로)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>고르는 <b>사고 순서</b>가 답변의 뼈대다. 자료구조를 먼저 고르고 요구사항을 맞추는 것이 아니라, <b>필요한 질의가 무엇인지를 먼저 확정하고 그에 맞는 도구를 고른다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="필요한 질의를 먼저 확정하고 도구를 고르는 결정 흐름도. 개수만 필요하고 오차 허용이면 HyperLogLog, 개별 여부와 교집합과 정확성이 필요하고 조밀한 정수 ID면 Bitmap, 멤버 열람이나 비정수 ID나 작은 규모면 Set">
+    <defs><marker id="f1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker></defs>
+    <text x="560" y="28" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">자료구조가 아니라 "필요한 질의"에서 출발한다</text>
+
+    <rect x="24" y="120" width="200" height="90" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="124" y="150" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">이 데이터에</text>
+    <text x="124" y="170" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">어떤 질의를 하게 되나?</text>
+    <text x="124" y="192" font-size="11.5" fill="#1e40af" text-anchor="middle">"몇 명" / "누가" / "둘 다 한 사람"</text>
+
+    <line x1="224" y1="140" x2="286" y2="88" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1)"/>
+    <line x1="224" y1="165" x2="286" y2="165" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1)"/>
+    <line x1="224" y1="190" x2="286" y2="248" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1)"/>
+
+    <rect x="294" y="52" width="470" height="72" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="314" y="76" font-size="12.5" fill="#1d4ed8" font-weight="700">① 개수만 필요하고 오차가 허용되는가</text>
+    <text x="314" y="98" font-size="12" fill="#1e40af">대시보드 UV, 트렌드 그래프 — 5,000만인지 5,040만인지가 중요하지 않은 자리</text>
+    <text x="314" y="116" font-size="11.5" fill="#166534" font-weight="700">비용이 수백~수천 배 싸다</text>
+    <line x1="764" y1="88" x2="828" y2="88" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1)"/>
+    <rect x="836" y="62" width="260" height="52" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="966" y="94" font-size="15" fill="#1d4ed8" text-anchor="middle" font-weight="700">HyperLogLog</text>
+
+    <rect x="294" y="132" width="470" height="72" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="314" y="156" font-size="12.5" fill="#166534" font-weight="700">② 개별 여부·교집합·정확성이 필요하고 ID가 조밀한 정수인가</text>
+    <text x="314" y="178" font-size="12" fill="#166534">출석 체크, 연속 출석 보상 판정, 세그먼트 교집합</text>
+    <text x="314" y="196" font-size="11.5" fill="#166534" font-weight="700">BITOP으로 집합 질의가 서버 안에서 끝난다</text>
+    <line x1="764" y1="168" x2="828" y2="168" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1)"/>
+    <rect x="836" y="142" width="260" height="52" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="966" y="174" font-size="15" fill="#166534" text-anchor="middle" font-weight="700">Bitmap</text>
+
+    <rect x="294" y="212" width="470" height="90" rx="10" fill="#fafbfc" stroke="#cbd5e1"/>
+    <text x="314" y="236" font-size="12.5" fill="#374151" font-weight="700">③ 멤버 자체를 열람해야 하거나, ID가 정수가 아니거나, 규모가 작은가</text>
+    <text x="314" y="258" font-size="12" fill="#374151">하루 UV가 만 명인 서비스에서 Set은 몇 MB에 불과하다</text>
+    <text x="314" y="278" font-size="11.5" fill="#b91c1c" font-weight="700">작은 규모에 확률 자료구조를 들이미는 것도 과설계다</text>
+    <text x="314" y="296" font-size="11.5" fill="#166534" font-weight="700">그 정도면 정확한 답을 공짜로 받는 셈이다</text>
+    <line x1="764" y1="252" x2="828" y2="252" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1)"/>
+    <rect x="836" y="226" width="260" height="52" rx="10" fill="#fff" stroke="#6b7280" stroke-width="2"/>
+    <text x="966" y="258" font-size="15" fill="#374151" text-anchor="middle" font-weight="700">그냥 Set</text>
+
+    <rect x="836" y="292" width="260" height="34" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="966" y="314" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">판정·정산용 정확 카운트는 INCR도 후보</text>
+  </svg>
+  <figcaption>순서가 뒤집히면 되돌릴 수 없다는 점이 중요하다. <b>나중에 "교집합도 필요해졌다"가 되면 HLL로 쌓아 둔 데이터로는 답이 없고, 원본부터 다시 적재해야 한다.</b></figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>이 주제의 핵심 멘트 — 면접에서 이 한 줄을 반드시 넣는다</h4>
+  <div class="rule ok">"정확도를 낮출 수 있는지부터 <b>비즈니스에 되묻는다.</b> ±0.8%가 허용되는 순간 <b>GB가 12KB</b>가 된다."</div>
+  <p style="margin:10px 0 0"><b>기술 선택이 아니라 요구사항 협상이 비용을 결정한다</b>는 관점이 이 질문의 정답 골격이다. 도구 이름 세 개를 아는 것은 출발점일 뿐이고, <b>"어떤 질의가 필요한가"를 먼저 확정하는 순서</b>가 실제로 평가되는 부분이다.</p>
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 면접 전날 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<div class="memo">
+  <h4>이 주제에서 반드시 입에 붙여야 할 여섯 개</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">1.04 ÷ 128 = 0.8125%</div><div class="d"><code>1.04/√m</code>에 <b>m=16,384</b> 대입 — "0.81%"의 출처</div></div>
+    <div class="tile"><div class="k">16,384 × 6bit = 12,288 B</div><div class="d">= <b>12KiB</b>. 100만을 세든 1억을 세든 <b>고정</b></div></div>
+    <div class="tile"><div class="k">10,000,000 ÷ 8 = 1,250,000</div><div class="d">1000만 명 출석 체크가 하루 <b>약 1.25MB</b>, 그리고 <b>정확</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">합집합 = max · 교집합 = 없음</div><div class="d">HLL은 <code>PFMERGE</code>만. 교집합이 필요하면 <b>처음부터 Bitmap</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">비용 ∝ 최대 오프셋</div><div class="d">인원수가 아니다. <b>희소하면 Set보다 비싸진다</b></div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">오차 ½ = 메모리 ×4</div><div class="d">√m이 분모 — "조금만 더 정확하게"가 비싼 이유</div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>세 개의 연상</b> — <b>"HLL은 '몇 명'만, Bitmap은 '누가'까지"</b>(질의 범위) · <b>"HLL은 관측 노트, Bitmap은 좌석표, Set은 방명록"</b>(저장 방식) · <b>"좌석표는 빈 좌석도 자리값을 낸다"</b>(희소 함정).</p>
+</div>
+
+<p class="sub">질문만 먼저 읽고 <b>소리 내어 답해 본 뒤</b> 펼쳐서 맞춰 본다. 답을 눈으로 읽는 것보다 인출 훈련이 훨씬 오래 간다.</p>
+<div class="tools">
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=true})">모두 펼치기</button>
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=false})">모두 접기</button>
+</div>
+
+<details class="q"><summary>어제도 오고 오늘도 온 사용자 수(교집합)가 필요하면요? <span class="badge core">최다 빈출</span><span class="hint">힌트: 우회로는 있다. 그 우회로가 왜 실패하는지가 답이다</span></summary><div class="a">
+  <p>HLL은 <code>PFMERGE</code>로 <b>합집합만</b> 직접 구한다(5절). 합집합은 레지스터별 <code>max</code>로 만들어지지만, <b>교집합에 대응하는 레지스터 연산이 존재하지 않는다.</b></p>
+  <p>우회로가 하나 있긴 하다. <b>포함배제 원리</b>다. 세 항 모두 HLL로 구할 수 있으니 <b>계산 자체는 된다.</b></p>
+  <pre><code>|A ∩ B| = |A| + |B| - |A ∪ B|</code></pre>
+  <p><b>문제는 오차다.</b> 큰 수에서 큰 수를 빼면 결과는 작아지는데 <b>오차는 작아지지 않는다.</b> 각 항이 자기 크기에 비례한 오차를 갖고 있고, 그 오차들이 뺄셈 후에도 그대로 남기 때문이다.</p>
+  <pre><code>실제:  |A| = 5,000만,  |B| = 5,000만,  교집합 = 100만
+따라서 |A ∪ B| = 5,000만 + 5,000만 - 100만 = 9,900만
+
+각 항의 오차 (표준오차 0.8125%)
+  |A|     = 5,000만 ± 406,250
+  |B|     = 5,000만 ± 406,250
+  |A ∪ B| = 9,900만 ± 804,375
+
+세 오차가 최악으로 겹치면  406,250 + 406,250 + 804,375 = 1,616,875
+
+구하려는 교집합은 100만인데, 오차 폭이 약 162만이다  ->  상대 오차 162%</code></pre>
+  <figure style="margin:12px 0">
+    <svg viewBox="0 0 900 150" role="img" aria-label="구하려는 교집합 100만보다 오차 폭 162만이 더 큰 것을 보여주는 막대 비교">
+      <text x="20" y="34" font-size="12.5" fill="#166534" font-weight="700">구하려는 답 (교집합)</text>
+      <rect x="220" y="18" width="200" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+      <text x="432" y="37" font-size="12.5" fill="#166534" font-weight="700">1,000,000</text>
+      <text x="20" y="82" font-size="12.5" fill="#b91c1c" font-weight="700">누적된 오차 폭</text>
+      <rect x="220" y="66" width="323" height="26" rx="4" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+      <text x="555" y="85" font-size="12.5" fill="#b91c1c" font-weight="700">1,616,875</text>
+      <rect x="20" y="108" width="860" height="32" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="450" y="129" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">답의 크기보다 오차 폭이 더 크다 — 결과가 음수로 나오는 일도 흔하다</text>
+    </svg>
+  </figure>
+  <p>반대로 교집합이 4,000만처럼 클 때 같은 계산을 하면 상대 오차가 약 3.2%로 떨어진다 — 즉 <b>교집합이 작을수록 신뢰도가 급락하는 구조</b>다. 그런데 실무에서 교집합을 묻는 질문은 대개 <b>"겹치는 소수"를 찾는 것</b>이라 하필 <b>신뢰도가 가장 낮은 구간</b>에 걸린다.</p>
+  <div class="rule red">정확한 교집합이 요구사항이면 <b>애초에 Bitmap(<code>BITOP AND</code>)으로 설계한다</b></div>
+  <p style="margin-top:10px">마무리는 순서 이야기로 닫는다 — <b>"어떤 질의가 필요한가"가 자료구조 선택보다 먼저</b>다. 나중에 "교집합도 필요해졌다"가 되면 <b>HLL로 쌓아 둔 데이터로는 되돌릴 수 없고, 원본부터 다시 적재해야 한다.</b></p>
+</div></details>
+
+<details class="q"><summary>사용자 식별자가 UUID인데 Bitmap을 쓸 수 있나요?<span class="hint">힌트: "못 쓴다"로 끝내지 말고 대안의 비용까지</span></summary><div class="a">
+  <p><b>그대로는 못 쓴다.</b> Bitmap의 오프셋은 정수이므로 <code>UUID → 순번 정수</code>의 <b>매핑 테이블</b>을 따로 두어야 하는데, 그 <b>매핑 유지 비용과 정합성 부담</b>이 생긴다(9-1의 <code>user_bit_slot</code>).</p>
+  <p>구체적으로 어떤 부담인지 말할 수 있으면 좋다. <b>① 매핑 조회가 요청 경로에 한 단계 추가</b>되고, <b>② 매핑 자체를 캐시</b>해야 하며, <b>③ 매핑 테이블을 잃으면 기존 비트맵 전체가 해석 불능</b>이 된다. 그리고 오프셋이 사용자 수만큼 늘어나므로 <b>④ 탈퇴자 순번을 재사용할지 말지</b> 같은 운영 정책까지 따라온다.</p>
+  <p>그래서 결론은 갈라서 말한다. <b>개수만 필요하면 HLL</b>(해시 기반이라 <b>멤버 형식과 무관</b>하다 — UUID든 이메일이든 그냥 넣으면 된다). <b>개별 여부까지 필요하면 Set이나 매핑 도입을 비교 검토</b>한다.</p>
+  <div class="callout info" style="margin-bottom:0"><span class="t">한 칸 더</span>UUID를 해시해서 오프셋으로 쓰면 안 되냐는 반문이 나올 수 있다. <b>안 된다</b> — 해시는 <b>충돌</b>이 나므로 서로 다른 두 사용자가 같은 비트를 공유하게 되고, 그 순간 <b>Bitmap이 가진 유일한 장점인 "정확성"이 사라진다.</b> 정확성을 포기할 거면 애초에 HLL이 더 싸다.</div>
+</div></details>
+
+<details class="q"><summary>0.81%라는 오차는 어디서 나오는 숫자인가요?<span class="hint">힌트: 공식 → 대입 → "표준"의 뜻 → 교환 비율</span></summary><div class="a">
+  <p>공식과 대입 과정을 <b>그대로</b> 말한다.</p>
+  <pre><code>HLL의 표준오차 = 1.04 / √m        (m = 레지스터 개수)
+
+Redis 구현은 m = 16,384
+  √16,384 = 128
+  1.04 ÷ 128 = 0.008125
+             = 0.8125%  ≈ 0.81%</code></pre>
+  <p>여기에 두 가지를 덧붙이면 <b>원리를 이해한 답</b>이 된다.</p>
+  <p><b>첫째, "표준"오차라는 말의 뜻.</b> 항상 0.81% 이내라는 <b>보장이 아니다.</b> 오차의 분포가 그 정도 폭을 갖는다는 통계적 서술이고, 실제 오차는 그보다 클 수도 작을 수도 있다. 대략 <b>"대부분의 경우 ±0.81% 근처, 가끔 그 두세 배"</b>라고 이해하는 것이 맞다.</p>
+  <p><b>둘째, 오차와 메모리의 교환 비율.</b> 분모가 √m이므로 <b>오차를 절반으로 줄이려면 m을 4배</b>로 해야 하고, 메모리도 4배가 된다(4절 표 — 12KB에 0.81%, 48KB에 0.41%). <b>"오차를 줄이는 데 드는 비용이 제곱으로 붙는다"</b>를 알고 있으면 <b>"정확도를 조금만 더 올려 주세요"라는 요구가 얼마나 비싼지 즉답</b>할 수 있다.</p>
+  <div class="callout ok" style="margin-bottom:0"><span class="t">가산점 포인트 — 12KB는 사실 "최대 12KB"다 <span class="badge bonus">bonus</span></span>
+    Redis HLL은 카디널리티가 작을 때 <b>희소 표현</b>을 쓴다. 값이 들어 있는 레지스터만 압축해 기록하다가, 크기가 설정된 한계(<code>hll-sparse-max-bytes</code>)를 넘으면 12KB짜리 <b>밀집 표현</b>으로 전환한다. 그래서 <b>"12KB 고정"은 정확히는 "최대 12KB"</b>이고, <b>카운트가 작은 키는 훨씬 싸다.</b> 일자별 HLL을 <b>세밀한 차원(국가별·채널별 등)으로 쪼개 두는 설계가 생각보다 저렴한 이유</b>가 이것이다.
+  </div>
+</div></details>
+
+<details class="q"><summary>이 근사 카운트를 이벤트 "선착순 N명" 판정에 써도 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 오차가 "경계"에서 어떤 사고가 되는지 숫자로</span></summary><div class="a">
+  <p><b>안 된다.</b> 이유를 <b>오차의 성격</b>에서 끌어내야 한다. HLL의 오차는 <b>N명 경계 근처에서 그대로 사고가 된다.</b></p>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">실제 999,000명인데 1,004,000으로 답하면</div><div class="d">아직 자리가 남았는데 <b>마감</b>된다 → 고객 항의</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">실제 1,001,000명인데 998,000으로 답하면</div><div class="d"><b>초과 발급</b>이 나간다 → 정산 사고</div></div>
+  </div>
+  <p style="margin-top:12px">표준오차 0.81%면 100만 근처에서 오차 폭이 <b>±8,000명</b>이다 — <b>8,000명분의 권리가 오락가락한다.</b></p>
+  <p>판정용 카운트는 정확해야 하므로 <b>Set/Bitmap 또는 원자적 카운터(<code>INCR</code>)</b>로 가고, HLL은 <b>사후 집계·대시보드·트렌드</b>처럼 <b>"숫자가 참고 정보인 자리"</b>에만 쓴다.</p>
+  <div class="rule red">같은 "카운트"라는 말 안에 <b>판정용 정확 카운트</b>와 <b>관측용 근사 카운트</b>가 섞여 있다 — 이 둘을 구분해 부르는 것이 정확도를 비즈니스 파라미터로 다루는 감각이다</div>
+</div></details>
+
+<details class="q"><summary>Redis 없이 DB로 UV를 세면 어떻게 되나요?<span class="hint">힌트: 1절의 문제가 DB 안에서 재현된다</span></summary><div class="a">
+  <p>PostgreSQL이라면 <code>SELECT count(DISTINCT user_id) FROM visit_log WHERE visited_at &gt;= ...</code>가 된다. <b>문법은 한 줄인데 비용이 크다.</b></p>
+  <p><code>DISTINCT</code> 집계는 <b>중복을 제거하기 위해 후보 값을 전부 메모리(또는 임시 파일)에 모아야</b> 한다 — <b>1절에서 본 Set의 문제가 DB 안에서 재현되는 것</b>이다. 수천만 행이면 해시 테이블이 <code>work_mem</code>을 넘겨 디스크로 쏟아지고(spill), <b>실행할 때마다 같은 비용을 다시 낸다.</b> 실시간 대시보드가 이 쿼리를 30초마다 때리면 <b>그 자체가 DB 부하의 주범</b>이 된다.</p>
+  <p>실무 구도는 <b>역할 분리</b>다.</p>
+  <pre><code>원본 이벤트  ->  DB / 로그 저장소
+                 (정밀 분석·재집계 가능성을 보존한다.
+                  나중에 "그날 UV를 다시 계산해 줘"가 가능한 유일한 곳)
+
+실시간 화면  ->  Redis HLL
+                 (12KB, 즉답, ±0.81%)</code></pre>
+  <p><b>원본을 지우고 HLL만 남기면 안 된다</b>는 점이 중요하다. HLL은 <b>되돌릴 수 없으므로</b>, 나중에 <b>"봇 트래픽을 빼고 다시 세 줘"</b> 같은 요구가 오면 <b>원본 없이는 답이 없다.</b></p>
+  <div class="callout ok" style="margin-bottom:0"><span class="t">가산점 포인트 <span class="badge bonus">bonus</span></span>대형 분석 DB들도 대부분 <b>근사 유니크 카운트 함수</b>를 따로 제공하고, 그 내부 구현이 HLL인 경우도 많다. <b>"유니크 카운트는 비싸서 근사로 협상한다"는 발상 자체가 Redis만의 트릭이 아니라 업계 공통</b>이라고 덧붙이면 시야가 넓다는 신호가 된다.</div>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>일별 HLL 30개를 PFMERGE하면 오차도 30배로 누적되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 병합 결과가 "무엇과 같은지"를 먼저 말한다</span></summary><div class="a">
+  <p><b>누적되지 않는다.</b> 이유는 <code>max</code>라는 연산의 성질에서 나온다. 병합은 <b>레지스터별로 큰 쪽을 취하는 것</b>뿐이므로, 30일치를 합친 결과는 <b>"30일치 방문자 전체를 처음부터 하나의 HLL에 넣었을 때"와 완전히 같은 레지스터 상태</b>가 된다.</p>
+  <p>그러니 오차도 <b>그 최종 카디널리티에 대한 표준오차 0.81%</b>일 뿐, 병합 횟수와 무관하다. 병합 <b>순서를 바꾸거나, 매일 조금씩 나눠 합쳐도 결과가 같다</b>는 것도 같은 성질에서 나온다.</p>
+  <p><b>실무적 함의</b>가 여기서 나온다 — 일 단위로만 적재해 두면 주간·월간·분기 UV를 <b>필요할 때 조합</b>해서 얻을 수 있고, <b>월간 UV를 위해 따로 적재할 필요가 없다.</b> 대신 <b>"월간 UV는 일별 UV의 단순 합이 아니다"</b>(같은 사람이 여러 날 오므로)라는 점을 함께 말하면 좋다. 그래서 <b>합계가 아니라 <code>PFMERGE</code>가 필요한 것</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>PFADD의 반환값으로 "신규 방문자인가"를 판정해도 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 어느 방향의 오답만 생기는지 따져 보라</span></summary><div class="a">
+  <p><b>안 된다.</b> <code>PFADD</code>는 <b>레지스터가 실제로 갱신되면 1, 아니면 0</b>을 돌려준다. 이것을 <code>SADD</code>의 반환값처럼 "신규면 1"로 읽으면 틀린다.</p>
+  <p>어느 방향의 오답이 생기는지를 따져 보면 성격이 분명해진다.</p>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">1이 나왔다면</div><div class="d">최댓값이 올라갔다는 뜻이고, <b>이미 있던 멤버는 절대 최댓값을 올릴 수 없으므로</b> 신규가 맞다</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">0이 나왔다면</div><div class="d"><b>알 수 없다</b> — 기존 멤버일 수도 있고, <b>신규인데 관측값이 기존 최댓값 이하</b>여서 갱신이 없었을 수도 있다</div></div>
+  </div>
+  <p style="margin-top:12px">즉 <b>"신규인데 0을 돌려주는" 경우가 대량으로 발생</b>한다. 실제로 카디널리티가 커질수록 대부분의 <code>PFADD</code>는 0을 돌려준다 — 이미 웬만한 관측값은 다 나왔기 때문이다. <b>"오늘 첫 방문자에게 쿠폰"</b> 같은 로직을 여기에 걸면 대부분의 신규 사용자가 누락된다.</p>
+  <p>개별 판정이 필요하면 <b>Set의 <code>SADD</code> 반환값</b>이나 <b>Bitmap의 <code>GETBIT</code>/<code>SETBIT</code></b>를 쓴다. 6절의 뿌리로 되돌아가는 이야기다 — <b>HLL은 "몇 명"에만 답한다.</b></p>
+</div></details>
+
+<details class="q"><summary>PFCOUNT에 키를 여러 개 넘기면 무엇이 나오나요?<span class="hint">힌트: PFMERGE와 무엇이 같고 무엇이 다른가</span></summary><div class="a">
+  <p><b>그 HLL들을 합집합했을 때의 근사 카디널리티</b>가 나온다. 즉 <code>PFCOUNT uv:mon uv:tue</code>는 <b>"월요일 또는 화요일에 온 사람 수"</b>다.</p>
+  <p><code>PFMERGE</code>와의 차이는 <b>결과를 남기느냐</b>다. <code>PFMERGE</code>는 <b>합쳐진 HLL 키를 만들어 저장</b>하고, 여러 키를 넘긴 <code>PFCOUNT</code>는 <b>숫자만 돌려주고 끝</b>이다.</p>
+  <p><b>비용 차이도 함께 말하면 좋다.</b> 단일 키 <code>PFCOUNT</code>는 값을 캐시해 두는 최적화가 있어 매우 싸지만, 여러 키를 넘기면 <b>내부적으로 병합 과정을 거쳐야 하므로 그만큼 비싸다.</b> 매 요청마다 30개 키를 <code>PFCOUNT</code>하는 설계라면, <b>배치로 <code>PFMERGE</code>해 둔 키 하나를 읽는 쪽</b>이 낫다.</p>
+</div></details>
+
+<details class="q"><summary>HLL 키를 GET하면 뭐가 나오나요? 타입은 뭔가요? <span class="badge bonus">가산점</span><span class="hint">힌트: Bitmap과 같은 답이 나온다</span></summary><div class="a">
+  <p><b>둘 다 String이다.</b> Bitmap이 "String을 비트 배열로 보는 명령 묶음"인 것처럼(7절), <b>HLL도 별도 타입이 아니라 약속된 형식의 String</b>이다. <code>TYPE</code>을 물으면 <code>string</code>이라고 답하고, <code>GET</code>하면 <b>사람이 읽을 수 없는 이진 데이터</b>가 나온다.</p>
+  <p>여기서 따라오는 실용적 사실 셋. <b>①</b> String이므로 <b>덤프·복제·백업·TTL이 평범하게 적용</b>된다. <b>②</b> 다만 <b>애플리케이션이 임의의 문자열을 <code>SET</code>으로 덮어쓰면</b> 유효한 HLL 형식이 아니게 되어 <b>이후 <code>PFCOUNT</code>가 에러로 거부</b>된다 — HLL 키는 <b><code>PF*</code> 명령으로만 다룬다</b>는 규칙을 지켜야 한다. <b>③</b> 크기가 작아 <b>키를 잘게 쪼개도 부담이 적다</b>(희소 표현까지 감안하면 더 그렇다).</p>
+  <p>정리 문장으로 <b>"Redis에서 HLL과 Bitmap은 둘 다 String 위에 얹힌 '해석 방식'이고, 자료구조라기보다 명령 묶음에 가깝다"</b>고 말하면 구조를 이해한 답이 된다.</p>
+</div></details>
+
+<details class="q"><summary>Bitmap이 Set보다 싸다고 언제나 말할 수 있나요? 손익분기는 어디인가요?<span class="hint">힌트: 9절 함정을 부등식으로 바꿔 본다</span></summary><div class="a">
+  <p><b>말할 수 없다.</b> 비교는 <b>"인원수(n)"가 아니라 "최대 오프셋(M)"</b>을 놓고 해야 한다. 1절의 가정(멤버 1개당 약 50바이트)을 그대로 쓰면 어림 부등식이 나온다.</p>
+  <pre><code>Bitmap 비용 ≈ M ÷ 8 바이트          (M = 최대 오프셋)
+Set    비용 ≈ n × 50 바이트          (n = 실제 인원)
+
+Bitmap이 싸려면   M ÷ 8 &lt; n × 50
+              →   n ÷ M &gt; 1 ÷ 400 = 0.25%</code></pre>
+  <p>즉 <b>"오프셋 공간이 대략 0.25%보다 조밀하게 채워져 있으면 Bitmap이 싸다"</b>는 어림이 나온다. <b>이 0.25%는 50바이트라는 가정 위의 값</b>이므로 정확한 상수로 말하면 안 되고, <b>"밀도가 낮으면 뒤집힌다"는 성질</b>을 보여 주는 용도로 쓴다.</p>
+  <p>그리고 <b>메모리만으로 결정하지 않는다</b>는 점을 덧붙여야 한다. 밀도가 낮아 손해를 보더라도 <b><code>BITOP</code>으로 교집합을 서버에서 끝낼 수 있다는 가치</b>가 더 크면 Bitmap을 고를 수 있다. <b>"메모리 비교표가 아니라 필요한 질의가 먼저"</b>라는 10절의 원칙이 여기서도 유효하다.</p>
+</div></details>
+
+<details class="q"><summary>PV(방문 횟수)와 UV(순 방문자)를 둘 다 봐야 하면 어떻게 설계하나요?<span class="hint">힌트: 하나의 자료구조로 둘 다 답하려 하지 않는다</span></summary><div class="a">
+  <p><b>서로 다른 질문이므로 도구도 따로 둔다.</b> PV는 <b>기억이 필요 없는 질문</b>이라 <code>INCR</code> 카운터 하나로 <b>정확하게</b> 세면 되고(8바이트), UV는 <b>중복 제거가 필요한 질문</b>이라 HLL이나 Bitmap을 쓴다. 요청 한 번에 두 명령을 같이 보내면 된다(파이프라인으로 묶으면 왕복도 한 번이다).</p>
+  <pre><code>INCR  pv:2026-08-31              <span class="cm"># 정확한 방문 횟수 — 8바이트</span>
+PFADD uv:2026-08-31 {userId}     <span class="cm"># 근사 순 방문자 — 최대 12KB</span></code></pre>
+  <p><b>여기서 자주 나오는 실수 하나</b>를 짚으면 좋다. PV는 정확하고 UV는 근사이므로, <b>"UV × 평균 방문 횟수 = PV"가 딱 맞아떨어지지 않는다.</b> 대시보드에서 두 숫자를 나눠 파생 지표(예: 1인당 방문 횟수)를 만들 때는 <b>분모가 근사값이라는 사실을 표기</b>해 두어야 나중에 "숫자가 안 맞는다"는 문의를 막을 수 있다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  HyperLogLog는 멤버 대신 <b>해시 관측의 통계</b>만 저장해 <b>레지스터 16384개 × 6비트 = 12KB</b>로 수천만 유니크를 <code>1.04/√16384 = 0.81%</code> 표준오차로 세는 <b>"개수 전용"</b> 자료구조이고, Bitmap은 <b>조밀한 정수 ID를 비트 오프셋으로</b> 써서 1000만 명 출석 체크를 하루 <b>1,250,000바이트</b>에 정확히 담고 <code>BITOP</code>으로 <b>교집합 질의까지 서버 안에서</b> 끝내는 도구라 — <b>"개별 조회·교집합·정확성이 필요한가"</b>로 둘을 가르고, 무엇보다 <b>"±0.8%를 허용하면 GB가 12KB가 된다"</b>는 정확도-비용 협상을 <b>비즈니스에 먼저 되묻는 것</b>이 이 질문이 요구하는 감각이다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/05-redis-caching/25-hyperloglog-bitmap-cheap-counting.md</code> · 함께 보면 좋은 문서: <a href="23-big-key-risk-and-unlink.html">big key 위험과 UNLINK(23)</a> · <a href="12-keys-vs-scan.html">KEYS vs SCAN(12)</a> · <a href="02-redis-data-structures-use-cases.html">자료구조와 활용 사례(02)</a></p>
+</main>
+</body>
+</html>

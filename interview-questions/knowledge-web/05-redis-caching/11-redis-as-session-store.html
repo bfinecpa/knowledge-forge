@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>세션 저장소로서의 Redis — stateless 확장의 대가</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+.tools{display:flex;gap:8px;margin:10px 0}
+.tools button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:.85rem;cursor:pointer;color:var(--text)}
+.tools button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">05 Redis · 캐싱 &nbsp;|&nbsp; 세션·인증⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>세션 저장소로서의 Redis<br><span class="sub">stateless 확장의 대가로 "Redis 장애 = 전 사용자 로그아웃"을 산다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"세션 저장소로 Redis를 쓸 때의 장단점은?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 세션을 서버 메모리에서 Redis로 빼는 순간 서버는 <b>자기만 아는 데이터를 갖지 않게 되고(stateless)</b>, 그래야 아무 서버나 요청을 받아도 되므로 <b>수평 확장·무중단 배포·서버 교체</b>가 전부 열린다. Redis는 <b>인메모리 속도, 키마다 걸리는 TTL, 필드 단위로 읽고 쓰는 Hash</b> 덕에 세션에 특히 잘 맞는다. 대신 두 가지를 지불한다. 첫째, 인증이 필요한 <b>모든 요청에 세션 조회와 저장이라는 네트워크 왕복</b>이 붙는다. 둘째, Redis가 새로운 <b>단일 장애점(SPOF)</b>이 된다. 그리고 이 두 번째가 진짜 관전 포인트다 — 서버 메모리 세션에서는 서버 한 대가 죽으면 <b>그 서버 사용자만</b> 로그아웃됐지만, Redis 세션에서는 Redis 한 대가 죽으면 <b>전 사용자가 동시에</b> 로그아웃된다. 장애의 <b>폭발 반경이 "일부"에서 "전체"로</b> 커진 것이다. 그러므로 장점만 나열하지 말고 <b>replica + 자동 페일오버, 영속화 여부의 의식적 선택, 캐시 Redis와의 인스턴스 분리</b>까지 세트로 말해야 완결된 답이 된다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>왜 빼는가</b> — 세션이 <b>특정 서버의 소유물</b>인 한 그 서버는 마음대로 죽일 수 없다. 밖으로 빼면 서버가 <b>stateless</b>가 되어 수평 확장·무중단 배포·오토스케일링이 한꺼번에 열린다.</div></li>
+    <li><span class="n">2</span><div><b>왜 하필 Redis인가</b> — <b>인메모리 속도 · 키별 TTL · Hash 부분 갱신 · 중앙 무효화</b>. "가장 자주 읽히는 작은 데이터"라는 세션의 성격과 Redis의 강점이 정확히 겹친다.</div></li>
+    <li><span class="n">3</span><div><b>대가</b> — 인증이 필요한 모든 요청에 <b>왕복 2회</b>(읽기 1 + 쓰기 1)가 붙고, 폭발 반경이 <b>25%에서 100%로</b> 커진다. 그래서 <b>페일오버·영속화 판단·인스턴스 분리·eviction 감시</b>까지 붙여야 답이 닫힌다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">세션은 원래 어디에 사는가</a></li>
+    <li><a href="#s2">sticky session이 무너지는 네 장면</a></li>
+    <li><a href="#s3">세션 외부화 = 서버가 부품이 된다</a></li>
+    <li><a href="#s4">Spring Session은 어떻게 가로채는가</a></li>
+    <li><a href="#s5">왜 하필 Redis인가 — 장점 넷</a></li>
+    <li><a href="#s6">대가 ① 모든 인증 요청에 왕복 2회</a></li>
+    <li><a href="#s7">대가 ② SPOF와 폭발 반경 (핵심)</a></li>
+    <li><a href="#s8">폭발 반경을 줄이는 네 가지 대책</a></li>
+    <li><a href="#s9">대가 ③ 세션 비대화</a></li>
+    <li><a href="#s10">세션 vs JWT (시니어 변별)</a></li>
+    <li><a href="#s11">배포로 세션 구조가 바뀌면</a></li>
+    <li><a href="#s12">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0. 질문 + 의도 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "세션 저장소로 Redis를 쓸 때의 장단점은?"</p>
+  <p><b>출제 의도</b>: <b>stateless 확장의 전제 조건</b>을 이해하는지 보는 질문이다. 세션 외부화의 이득(스케일 아웃, 무중단 배포)만 나열하는 답변과, <b>"Redis 장애 = 전 사용자 로그아웃"이라는 폭발 반경을 인식하고 가용성 대책과 함께</b> 말하는 답변의 차이를 가른다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>장점 나열로 끝나는 답</b> → <a href="#s7">7절</a>에서 "서버 1대 장애 25%" vs "Redis 1대 장애 100%"를 한 장에 겹쳐 폭발 반경을 눈으로 각인시킨다.<br>
+    ② <b>"Redis는 잘 안 죽어요"라는 낙관</b> → <a href="#s8">8절</a>에서 장애 발생부터 재로그인 폭주까지의 타임라인을 그리고, 계층별 대책을 그 위에 얹는다.<br>
+    ③ <b>"그냥 JWT 쓰면 되지 않나요"라는 일반론</b> → <a href="#s10">10절</a>에서 <b>"즉시 무효화 능력 vs 저장소 무의존"</b>이라는 축으로 갈라, 블랙리스트를 붙이는 순간 세션으로 되돌아오는 경로까지 도식화한다.
+  </div>
+</div>
+
+<!-- ===================== 1. 세션은 어디에 사는가 ===================== -->
+<h2 id="s1">1. 전제 — <code>session.setAttribute()</code>가 넣은 값은 어디에 사는가</h2>
+
+<p>로그인을 구현하면 보통 <code>session.setAttribute("memberId", ...)</code> 를 쓴다. 이때 그 값이 <b>실제로 어디에 저장되는지</b>부터 짚고 가야 이 질문의 전부가 풀린다.</p>
+
+<p>서블릿 컨테이너(톰캣)는 세션을 <b>그 JVM 프로세스의 힙 메모리</b>에 들고 있다. 브라우저에는 <code>JSESSIONID</code>라는 <b>세션 식별자만</b> 쿠키로 내려가고, 실제 데이터는 서버 안 <code>Map&lt;세션ID, 세션객체&gt;</code>에 남는다. 즉 <b>세션은 그 서버 프로세스의 소유물</b>이다.</p>
+
+<p>서버가 1대일 때는 아무 문제가 없다. <b>2대가 되는 순간</b> 문제가 시작된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="서버 메모리 세션에서 요청이 다른 서버로 갈 때 세션을 못 찾는 흐름과, 세션을 Redis로 뺐을 때 어느 서버든 같은 세션을 보는 흐름의 비교">
+    <defs>
+      <marker id="f1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+      <marker id="f1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="f1g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <rect x="14" y="46" width="530" height="292" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="279" y="32" font-size="14.5" fill="#b91c1c" text-anchor="middle" font-weight="700">Before — 서버 메모리 세션, 서버 2대</text>
+    <text x="279" y="68" font-size="11.5" fill="#6b7280" text-anchor="middle">브라우저에는 세션 ID 쿠키만 있고, 데이터는 서버 힙에 있다</text>
+
+    <text x="28" y="80" font-size="11" fill="#2563eb" font-weight="700">① 로그인 요청</text>
+    <rect x="28" y="86" width="84" height="44" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="70" y="113" font-size="12" fill="#1f2937" text-anchor="middle">브라우저</text>
+    <line x1="112" y1="108" x2="142" y2="108" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1a)"/>
+    <rect x="146" y="86" width="66" height="44" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="179" y="113" font-size="12" fill="#1f2937" text-anchor="middle">LB</text>
+    <line x1="212" y1="108" x2="244" y2="108" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1a)"/>
+    <rect x="248" y="82" width="276" height="52" rx="8" fill="#fff" stroke="#2563eb"/>
+    <text x="386" y="102" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">A 서버 — JVM 힙에 저장</text>
+    <text x="386" y="122" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">abc123 → memberId=42</text>
+
+    <text x="28" y="178" font-size="11" fill="#2563eb" font-weight="700">② 다음 요청 (마이페이지)</text>
+    <rect x="28" y="184" width="84" height="44" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="70" y="211" font-size="12" fill="#1f2937" text-anchor="middle">브라우저</text>
+    <line x1="112" y1="206" x2="142" y2="206" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1a)"/>
+    <rect x="146" y="184" width="66" height="44" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="179" y="211" font-size="12" fill="#1f2937" text-anchor="middle">LB</text>
+    <line x1="212" y1="206" x2="244" y2="206" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f1r)"/>
+    <rect x="248" y="180" width="276" height="52" rx="8" fill="#fff" stroke="#dc2626"/>
+    <text x="386" y="200" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">B 서버 — JVM 힙</text>
+    <text x="386" y="220" class="mono" font-size="11.5" fill="#b91c1c" text-anchor="middle">abc123? 그런 세션 없다</text>
+    <text x="386" y="252" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">→ "로그인이 필요합니다"</text>
+
+    <rect x="28" y="276" width="496" height="50" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="276" y="297" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">세션은 그 JVM 프로세스의 소유물이다</text>
+    <text x="276" y="316" font-size="12" fill="#b91c1c" text-anchor="middle">→ 사용자에게는 "로그인이 제멋대로 풀리는" 것으로 보인다</text>
+
+    <rect x="576" y="46" width="530" height="292" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="841" y="32" font-size="14.5" fill="#166534" text-anchor="middle" font-weight="700">After — 세션을 Redis로 뺀 뒤</text>
+    <text x="841" y="68" font-size="11.5" fill="#6b7280" text-anchor="middle">어느 서버가 요청을 받아도 같은 세션을 본다</text>
+
+    <rect x="590" y="86" width="72" height="44" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="626" y="113" font-size="11.5" fill="#1f2937" text-anchor="middle">브라우저</text>
+    <line x1="662" y1="108" x2="688" y2="108" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1a)"/>
+    <rect x="692" y="86" width="56" height="44" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="720" y="113" font-size="11.5" fill="#1f2937" text-anchor="middle">LB</text>
+    <line x1="748" y1="108" x2="774" y2="108" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1a)"/>
+    <rect x="778" y="86" width="104" height="44" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="830" y="113" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">A 서버</text>
+    <line x1="882" y1="108" x2="912" y2="120" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f1g)"/>
+
+    <rect x="590" y="184" width="72" height="44" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="626" y="211" font-size="11.5" fill="#1f2937" text-anchor="middle">브라우저</text>
+    <line x1="662" y1="206" x2="688" y2="206" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1a)"/>
+    <rect x="692" y="184" width="56" height="44" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="720" y="211" font-size="11.5" fill="#1f2937" text-anchor="middle">LB</text>
+    <line x1="748" y1="206" x2="774" y2="206" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f1a)"/>
+    <rect x="778" y="184" width="104" height="44" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="830" y="211" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">B 서버</text>
+    <line x1="882" y1="206" x2="912" y2="194" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f1g)"/>
+
+    <rect x="916" y="92" width="176" height="130" rx="10" fill="#fff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="1004" y="118" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">Redis</text>
+    <text x="1004" y="137" font-size="11" fill="#6b7280" text-anchor="middle">공용 세션 저장소</text>
+    <text x="1004" y="164" class="mono" font-size="10.5" fill="#166534" text-anchor="middle">abc123 → memberId=42</text>
+    <text x="1004" y="188" font-size="11" fill="#6b7280" text-anchor="middle">TTL 30:00 (요청마다 연장)</text>
+    <text x="1004" y="208" font-size="11" fill="#6b7280" text-anchor="middle">Hash로 저장</text>
+
+    <rect x="590" y="276" width="502" height="50" rx="9" fill="#fff" stroke="#bbf7d0"/>
+    <text x="841" y="297" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">서버는 자기만 아는 데이터를 갖지 않는다 = stateless(무상태)</text>
+    <text x="841" y="316" font-size="12" fill="#166534" text-anchor="middle">→ 서버 하나하나가 언제든 교체 가능한 부품이 된다</text>
+
+    <rect x="14" y="352" width="1092" height="38" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="376" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">세션 외부화의 본질 — 서버를 "대체 불가능한 존재"에서 "언제든 죽여도 되는 부품"으로 바꾸는 일</text>
+  </svg>
+  <figcaption>왼쪽에서 <b>세션 데이터가 A 서버 박스 안에만 그려져 있다</b>는 점이 문제의 전부다. 오른쪽에서는 그 데이터가 <b>박스 밖으로 나와</b> 두 서버가 함께 가리킨다 — 이 그림 한 장의 차이가 수평 확장·무중단 배포·오토스케일링을 전부 만든다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>비유 하나로 이 문서 전체를 꿰기</h4>
+  <p style="margin:0 0 8px"><b>서버 메모리 세션 = "그 창구 직원 머릿속의 메모"</b>다. 3번 창구 직원이 당신을 기억하고 있으니 3번 창구에서는 빠르다. 하지만 그 직원이 <b>퇴근하거나(배포) 쓰러지면(장애)</b> 당신이 누구였는지 아무도 모른다. 다른 창구로 가면 신분증을 다시 내야 한다.</p>
+  <p style="margin:0 0 8px"><b>sticky session = "당신은 3번 창구 전담" 딱지</b>다. 창구를 고정하면 당장은 되지만, <b>그 직원을 퇴근시킬 수 없는 조직</b>이 된다. 한가한 창구가 있어도 보낼 수 없다.</p>
+  <p style="margin:0"><b>Redis 세션 = "모든 창구가 함께 보는 중앙 명부"</b>다. 직원은 아무나 와도 되고 언제 퇴근해도 된다. 대신 <b>명부를 볼 때마다 자리에서 일어나 다녀와야 하고(네트워크 왕복)</b>, <b>명부가 불타면 전 고객이 동시에 신분증을 다시 내야 한다(전 사용자 로그아웃 + 재로그인 폭주)</b>. 이 비유 하나에 장점과 단점이 전부 들어 있다.</p>
+</div>
+
+<!-- ===================== 2. sticky session ===================== -->
+<h2 id="s2">2. sticky session은 왜 미봉책인가 — 무너지는 네 장면</h2>
+
+<p>가장 먼저 떠오르는 해법이 <b>sticky session</b>이다. 로드밸런서가 "이 사용자는 A 서버"라고 기억해 두고 같은 사용자의 요청을 <b>항상 같은 서버로</b> 보내는 방식이다. 세션이 A에만 있으니 항상 A로 보내면 되지 않느냐는 발상이다.</p>
+
+<p><b>동작은 한다.</b> 하지만 문제를 해결한 것이 아니라 <b>미뤄둔 것</b>이다. 어떻게 깨지는지 네 장면으로 보자.</p>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">① 장애 — 서버 1대가 죽으면 25%가 로그아웃</div>
+    <div class="d">A가 OOM으로 죽으면 A의 힙에 있던 세션이 통째로 증발한다. 로드밸런서가 그 사용자들을 B로 보내도 B에는 세션이 없다. <b>서버 4대면 한 대의 장애로 전체의 4분의 1이 동시에 로그아웃</b>된다. 결제 도중이었다면 그 흐름도 함께 날아간다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">② 배포 — 매주, 매일 같은 일이 일어난다</div>
+    <div class="d">이게 더 아프다. 장애는 어쩌다 한 번이지만 <b>배포는 매주, 매일</b> 한다. 롤링 배포로 A를 내리는 순간 A에 붙어 있던 세션이 사라진다. 즉 <b>sticky session을 쓰는 한 무중단 배포가 성립하지 않는다.</b> "배포는 새벽에"라는 관행이 여기서 나온다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">③ 부하 — 로드밸런서가 재분배할 수 없다</div>
+    <div class="d">로드밸런서의 본래 일은 <b>지금 한가한 서버로 보내는 것</b>이다. sticky session은 "이 사용자는 무조건 A"라는 제약으로 그 판단을 무력화한다. 무거운 사용자들이 A에 몰려 <b>A는 CPU 90%, B는 30%</b>여도 계속 A로 보낼 수밖에 없다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">④ 오토스케일링 — 늘려도 줄여도 안 된다</div>
+    <div class="d">새로 띄운 서버에는 붙어 있는 사용자가 없어 <b>새로 로그인하는 사용자만 조금씩 받으며 한동안 논다.</b> 반대로 줄이려 하면 그 서버 사용자가 로그아웃되므로 마음대로 줄일 수도 없다. <b>탄력적으로 늘렸다 줄이는 것 자체가 불가능</b>해진다.</div>
+  </div>
+</div>
+
+<div class="chain" style="margin-top:16px">
+  <span class="chip r">세션이 특정 서버의 소유물</span><span class="arrow">→</span>
+  <span class="chip r">그 서버는 마음대로 죽일 수 없다</span><span class="arrow">→</span>
+  <span class="chip r">배포·재분배·오토스케일이 전부 막힌다</span>
+</div>
+
+<p>네 가지의 뿌리는 하나다. <b>세션이 특정 서버의 소유물인 한, 그 서버는 마음대로 죽일 수 없는 존재가 된다.</b> 그리고 현대적인 운영은 전부 <b>"서버는 언제든 죽여도 된다"</b>는 전제 위에 서 있다.</p>
+
+<div class="memo">
+  <h4>sticky session이 깨지는 네 장면 — <b>장·배·부·오</b></h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">장 — 장애</div><div class="d">서버 1대 죽으면 그 몫만큼 로그아웃</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">배 — 배포</div><div class="d">무중단 배포가 성립하지 않는다</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">부 — 부하 재분배</div><div class="d">LB가 한가한 서버로 못 보낸다</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">오 — 오토스케일링</div><div class="d">늘려도 안 놀고 줄여도 못 줄인다</div></div>
+  </div>
+  <p style="margin:10px 0 0">면접에서 이 질문을 받으면 <b>"장·배·부·오" 네 글자로 네 장면을 순서대로 꺼내고</b>, 그중 <b>②배포</b>를 가장 강하게 말하는 것이 좋다 — 장애는 가끔이지만 배포는 <b>일상</b>이라 실무 감각이 드러난다.</p>
+</div>
+
+<!-- ===================== 3. 세션 외부화 ===================== -->
+<h2 id="s3">3. 세션을 밖으로 빼면 서버가 "언제든 죽여도 되는 것"이 된다</h2>
+
+<p>그래서 세션을 <b>서버 밖의 공용 저장소</b>로 뺀다. 세션이 밖에 있으면 어떤 서버가 요청을 받아도 같은 세션을 본다. 그러면 서버는 <b>자기만 아는 데이터를 갖지 않는 존재</b>가 되고, 이것을 <b>stateless(무상태)</b>라고 부른다. 상태가 없다는 것은 서버 하나하나가 <b>대체 가능한 부품</b>이 된다는 뜻이고, 그 위에 수평 확장·무중단 배포·오토스케일링이 전부 올라간다.</p>
+
+<p>앞의 네 장면이 어떻게 사라지는지 <b>1:1로 대응시켜</b> 보면 명확하다.</p>
+
+<div class="scroll"><table>
+  <thead><tr><th style="width:22%">장면</th><th>sticky session</th><th>세션 외부화 후</th></tr></thead>
+  <tbody>
+    <tr><td><b>장</b> — 서버 장애</td><td class="bad">그 서버 사용자 로그아웃</td><td class="good">세션이 밖에 있으므로 다른 서버가 이어받는다</td></tr>
+    <tr><td><b>배</b> — 배포</td><td class="bad">배포마다 세션 소실</td><td class="good">서버를 내렸다 올려도 세션은 그대로</td></tr>
+    <tr><td><b>부</b> — 부하 재분배</td><td class="bad">고정 라우팅에 묶여 불가</td><td class="good">로드밸런서가 자유롭게 분배</td></tr>
+    <tr><td><b>오</b> — 오토스케일링</td><td class="bad">늘려도 놀고, 줄이면 로그아웃</td><td class="good">서버를 늘리고 줄이는 데 제약 없음</td></tr>
+  </tbody>
+</table></div>
+
+<p>구현 관점에서 놀라운 점은 <b>애플리케이션 코드가 바뀌지 않는다</b>는 것이다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 서버 메모리 세션</div>
+<pre><code><span class="cm">// 서버가 2대가 되는 순간 로그인이 풀린다</span>
+<span class="kw">@PostMapping</span>(<span class="st">"/login"</span>)
+<span class="kw">public void</span> <span class="fn">login</span>(HttpSession session,
+                  LoginRequest req) {
+<span class="ln-bad">    <span class="cm">// 이 서버의 JVM 힙에만 저장된다</span></span>
+<span class="ln-bad">    session.<span class="fn">setAttribute</span>(<span class="st">"memberId"</span>,</span>
+<span class="ln-bad">        <span class="fn">authenticate</span>(req));<span class="note">A 서버만 안다</span></span>
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> Spring Session + Redis</div>
+<pre><code><span class="cm">// build.gradle</span>
+<span class="cm">// implementation 'org.springframework.session:</span>
+<span class="cm">//                 spring-session-data-redis'</span>
+<span class="cm">// application.yml</span>
+<span class="ln-good"><span class="kw">spring.session.store-type</span>: redis<span class="note">이 한 줄</span></span>
+
+<span class="kw">@PostMapping</span>(<span class="st">"/login"</span>)
+<span class="kw">public void</span> <span class="fn">login</span>(HttpSession session,
+                  LoginRequest req) {
+<span class="ln-good">    <span class="cm">// 코드는 한 글자도 바뀌지 않았다</span></span>
+<span class="ln-good">    session.<span class="fn">setAttribute</span>(<span class="st">"memberId"</span>,</span>
+<span class="ln-good">        <span class="fn">authenticate</span>(req));<span class="note">저장처만 Redis</span></span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout info"><span class="t">"코드를 안 바꿔도 된다"는 말이 마법처럼 들린다면</span>
+  실제로 마법이 아니라 <b>인터페이스에 의존한 설계</b>의 이득이다. 컨트롤러는 <code>HttpSession</code>이라는 <b>인터페이스</b>에만 의존하고 있었고, Spring Session은 그 <b>구현체만 바꿔치기</b>했다. 어떻게 바꿔치기하는지는 바로 다음 절에서 본다 — 이걸 알아야 나중에 세션 문제를 디버깅할 때 <b>어디를 봐야 하는지</b>도 알게 된다.
+</div>
+
+<!-- ===================== 4. Spring Session 필터 ===================== -->
+<h2 id="s4">4. Spring Session은 어떻게 <code>HttpSession</code>을 가로채는가 — 그리고 왕복은 몇 번인가</h2>
+
+<p>Spring Session은 <b>서블릿 필터</b>를 하나 끼워 넣는다. 필터는 컨트롤러보다 앞에서 요청을 받아 가공한 뒤 뒤로 넘길 수 있는 자리다. 이 필터(<code>SessionRepositoryFilter</code>)가 하는 일은 딱 하나다 — <b>들어온 <code>HttpServletRequest</code>를 자기 래퍼 객체로 감싸서 뒤로 넘긴다.</b></p>
+
+<p>이 래퍼는 <code>HttpServletRequest</code>의 모든 메서드를 그대로 위임하되 <b><code>getSession()</code>만 다르게 구현</b>한다. 톰캣의 세션 맵을 뒤지는 대신, <b>쿠키에서 세션 ID를 읽어 Redis에서 세션을 꺼내 오는</b> 것이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 452" role="img" aria-label="SessionRepositoryFilter가 요청을 래퍼로 감싸고 컨트롤러 뒤에서 Redis 읽기와 쓰기가 각각 한 번씩 일어나는 요청 처리 흐름">
+    <defs>
+      <marker id="f2a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+      <marker id="f2b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="f2o" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+
+    <rect x="20" y="120" width="130" height="64" rx="10" fill="#fff" stroke="#94a3b8"/>
+    <text x="85" y="146" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="700">브라우저</text>
+    <text x="85" y="166" class="mono" font-size="10" fill="#6b7280" text-anchor="middle">SESSION=abc123</text>
+    <line x1="150" y1="152" x2="180" y2="152" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f2a)"/>
+    <text x="165" y="140" font-size="10" fill="#6b7280" text-anchor="middle">요청</text>
+
+    <rect x="184" y="64" width="580" height="230" rx="12" fill="#fafbfc" stroke="#cbd5e1"/>
+    <text x="200" y="86" font-size="12" fill="#6b7280" font-weight="700">톰캣 (서블릿 컨테이너)</text>
+
+    <rect x="204" y="100" width="540" height="176" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="222" y="122" font-size="12.5" fill="#1d4ed8" font-weight="700">SessionRepositoryFilter — 컨트롤러보다 앞자리</text>
+
+    <rect x="224" y="136" width="230" height="106" rx="9" fill="#fff" stroke="#2563eb"/>
+    <text x="339" y="160" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">HttpServletRequest 래퍼</text>
+    <text x="339" y="181" font-size="11.5" fill="#1f2937" text-anchor="middle">getSession()만 재정의</text>
+    <text x="339" y="200" font-size="11" fill="#6b7280" text-anchor="middle">나머지 메서드는 그대로 위임</text>
+    <text x="339" y="224" class="mono" font-size="10.5" fill="#2563eb" text-anchor="middle">톰캣 세션 맵 대신 → Redis</text>
+
+    <line x1="454" y1="190" x2="488" y2="190" stroke="#2563eb" stroke-width="1.6" marker-end="url(#f2b)"/>
+
+    <rect x="492" y="146" width="232" height="86" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="608" y="170" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="700">컨트롤러</text>
+    <text x="608" y="190" class="mono" font-size="10.5" fill="#374151" text-anchor="middle">session.setAttribute(...)</text>
+    <text x="608" y="212" font-size="10.5" fill="#6b7280" text-anchor="middle">인터페이스가 같으니 코드 변경 0</text>
+    <text x="608" y="262" font-size="10.5" fill="#6b7280" text-anchor="middle">② 비즈니스 처리 — 여기서는 Redis 접근 없음</text>
+
+    <path d="M300,276 C300,306 340,312 372,326" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#f2b)"/>
+    <text x="196" y="316" font-size="12" fill="#1d4ed8" font-weight="700">① 세션 읽기</text>
+    <text x="196" y="334" font-size="11" fill="#6b7280">쿠키의 ID로 조회</text>
+    <text x="196" y="352" font-size="11" fill="#1d4ed8" font-weight="700">→ 왕복 1회</text>
+
+    <path d="M672,276 C672,306 620,312 588,326" fill="none" stroke="#d97706" stroke-width="2" marker-end="url(#f2o)"/>
+    <text x="700" y="316" font-size="12" fill="#b45309" font-weight="700">③ 응답 직전 저장</text>
+    <text x="700" y="334" font-size="11" fill="#6b7280">마지막 접근 시각 + TTL 연장</text>
+    <text x="700" y="352" font-size="11" fill="#b45309" font-weight="700">→ 왕복 2회</text>
+
+    <rect x="372" y="326" width="216" height="68" rx="10" fill="#fff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="480" y="350" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">Redis — Hash로 저장</text>
+    <text x="480" y="370" class="mono" font-size="10" fill="#374151" text-anchor="middle">spring:session:sessions:abc123</text>
+    <text x="480" y="386" class="mono" font-size="10" fill="#6b7280" text-anchor="middle">memberId · role · lastAccess</text>
+
+    <rect x="790" y="64" width="310" height="230" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="945" y="92" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">인증이 필요한 모든 요청에</text>
+    <text x="945" y="152" font-size="40" fill="#dc2626" text-anchor="middle" font-weight="800">왕복 2회</text>
+    <text x="945" y="180" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">읽기 1회 + 쓰기 1회</text>
+    <line x1="812" y1="196" x2="1078" y2="196" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="945" y="218" font-size="11.5" fill="#374151" text-anchor="middle">세션 속성을 하나도 안 고쳐도</text>
+    <text x="945" y="236" font-size="11.5" fill="#374151" text-anchor="middle">마지막 접근 시각 갱신 · TTL 연장 때문에</text>
+    <text x="945" y="254" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">읽기 전용 API에도 쓰기가 따라붙는다</text>
+    <text x="945" y="280" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">초당 1,000 인증 요청 → Redis 초당 2,000 명령</text>
+
+    <rect x="20" y="408" width="1080" height="38" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="432" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">구현체만 바뀌었을 뿐 호출하는 쪽은 알 필요가 없다 — 대신 그 대가로 요청마다 네트워크 왕복 2회가 조용히 붙는다</text>
+  </svg>
+  <figcaption>필터가 <b>컨트롤러의 앞과 뒤를 모두 감싸고 있다</b>는 점이 핵심이다. 그래서 ①읽기는 컨트롤러에 들어가기 전에, ③쓰기는 응답이 나가기 직전에 <b>자동으로</b> 일어난다. 개발자가 부르지 않은 Redis 호출이 요청마다 두 번 생기는 것이고, 이것이 다음 절의 비용 계산 근거가 된다.</figcaption>
+</figure>
+
+<div class="callout ok"><span class="t">디버깅할 때 어디를 보면 되는가</span>
+  "세션이 안 붙는다", "로그인이 자꾸 풀린다"는 증상은 대부분 이 <b>필터 · 쿠키 · Redis 키</b> 세 지점 중 하나에서 갈린다. ① 필터가 등록됐는가(래퍼가 안 씌워지면 톰캣 세션으로 되돌아간다), ② 브라우저에 <b>쿠키가 실제로 오가는가</b>(도메인·경로·<code>SameSite</code> 설정), ③ Redis에 <code>spring:session:sessions:*</code> 키가 <b>생기고 TTL이 갱신되는가</b>. 이 순서로 따라가면 원인이 한 곳으로 좁혀진다.
+</div>
+
+<!-- ===================== 5. 왜 Redis인가 ===================== -->
+<h2 id="s5">5. 왜 하필 Redis인가 — 장점 넷</h2>
+
+<p>세션을 밖으로 빼는 것까지는 정해졌다. 그러면 <b>왜 하필 Redis인가.</b> RDB에 세션 테이블을 만들어도 되지 않는가. 네 가지 이유가 있고, 넷 다 <b>"세션이라는 데이터의 성격"과 Redis의 성질이 겹치는</b> 지점이다.</p>
+
+<div class="grid g2">
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">① 인메모리 속도 — "가장 자주 읽히는 작은 데이터"</div>
+    <div class="d">세션은 <b>인증된 모든 요청마다</b> 읽힌다. 시스템에서 가장 자주 조회되는 데이터 중 하나다. 디스크 기반 DB에 두면 <b>모든 요청이 디스크 I/O를 지불</b>하지만, Redis는 메모리 접근이라 이 비용이 밀리초 미만으로 떨어진다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">② TTL이 저장소 기능으로 내장</div>
+    <div class="d">세션은 본질적으로 <b>"일정 시간 뒤 만료되는 데이터"</b>다. RDB라면 만료 시각 컬럼 + 지난 행을 지우는 <b>배치</b>를 만들고, 돌리고, 안 도는지 감시해야 한다. Redis는 키마다 TTL을 걸면 알아서 사라진다 — <b>만료 처리 코드가 아예 없어진다.</b></div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">③ Hash 자료구조와의 궁합</div>
+    <div class="d">세션은 <code>세션ID → {memberId, role, lastAccess, …}</code> 형태의 <b>필드 묶음</b>이다. 문자열 하나로 통째 저장하면 필드 하나를 고치려 해도 <b>전체를 읽고 전체를 써야</b> 한다. Hash를 쓰면 <b>필드 단위 부분 조회·부분 갱신</b>이 된다. Spring Session의 Redis 구현도 세션을 Hash로 저장한다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">④ 세션 무효화가 전 서버에 즉시 반영</div>
+    <div class="d">관리자의 강제 로그아웃(계정 탈취 대응), 비밀번호 변경 시 다른 기기 세션 끊기를 생각해 보자. 세션이 한곳에 모여 있으면 <b>그 키를 지우는 것으로 끝난다.</b> 서버별 메모리에 흩어져 있으면 모든 서버에 방송해야 하고, <b>못 받은 서버가 하나라도 있으면 그쪽은 여전히 로그인 상태</b>다.</div>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>네 개를 네 개의 동사로 외운다 — <b>"빠르다 · 사라진다 · 쪼갠다 · 끊는다"</b></h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">빠르다</div><div class="d">인메모리 — 모든 인증 요청이 지나가는 길목</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">사라진다</div><div class="d">TTL — 세션의 생명주기 = 저장소의 만료 기능</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">쪼갠다</div><div class="d">Hash — 필드 단위 부분 갱신</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">끊는다</div><div class="d">중앙 무효화 — 키 하나 지우면 전 서버 즉시 반영</div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>네 번째가 가장 중요하다.</b> 앞의 셋은 "빠르고 편하다"는 성능·편의 얘기지만, <b>네 번째는 기능 요구사항</b>이다 — <a href="#s10">10절에서 JWT와 비교할 때 결정적인 차이</a>로 다시 등장하므로 여기서 기억해 두자.</p>
+</div>
+
+<div class="callout info"><span class="t">"그럼 RDB에 세션 테이블을 만들면 왜 안 되나요"에 한 문장으로</span>
+  <b>안 되는 것이 아니라 비싸다.</b> 세션은 <b>모든 요청마다 읽고 쓰는</b> 데이터인데, RDB에 두면 서비스에서 가장 뜨거운 읽기·쓰기가 전부 <b>가장 지키고 싶은 자원(DB 커넥션과 디스크 I/O)</b>을 소모한다. 게다가 만료 배치까지 직접 만들어야 한다. <b>"세션 하나 때문에 DB가 흔들리는 구조"</b>가 된다는 것이 실질적인 답이다.
+</div>
+
+<!-- ===================== 6. 대가 1 ===================== -->
+<h2 id="s6">6. 대가 ① — 인증이 필요한 <u>모든</u> 요청에 네트워크 왕복이 붙는다</h2>
+
+<p>서버 메모리 세션은 조회 비용이 <b>사실상 0</b>이다. 같은 프로세스 힙에서 참조 하나 따라가면 끝이다. Redis 세션은 그 자리에 <b>네트워크 왕복</b>이 들어간다. <a href="#s4">4절 도식</a>에서 센 것처럼 <b>요청당 최소 2회</b>다.</p>
+
+<div class="callout trap"><span class="t">놓치기 쉬운 것은 ③ 쓰기다</span>
+  "세션을 수정하지 않았으니 쓰기는 없겠지"라고 생각하기 쉽다. 하지만 세션은 <b>마지막 접근 시각을 갱신하고 만료 시각을 뒤로 미뤄야</b> 한다. 사용자가 활동 중인데 30분 뒤 로그아웃되면 안 되기 때문이다. 그래서 <b>읽기만 하는 API에서도 쓰기가 따라붙는다.</b>
+</div>
+
+<h3>6-1. 이 비용이 무거운 이유는 크기가 아니라 <b>붙는 위치</b>다</h3>
+
+<p>왕복 2회면 요청당 대략 <b>1밀리초 안팎</b>이다. 같은 AZ 안이라도 네트워크 왕복은 수백 마이크로초에서 밀리초 수준이기 때문이다. 단일 요청의 1밀리초는 무시할 만해 보인다. 문제는 <b>어디에 붙느냐</b>다.</p>
+
+<div class="chain">
+  <span class="chip b">특정 API 하나가 아니다</span><span class="arrow">→</span>
+  <span class="chip r">인증이 필요한 <b>모든</b> API</span><span class="arrow">→</span>
+  <span class="chip r">로그인 없이 보는 페이지를 빼면 <b>서비스의 거의 전부</b></span>
+</div>
+
+<div class="grid g3">
+  <div class="tile big"><div class="k" style="color:#dc2626">2</div><div class="s">요청당 Redis 명령 수 (읽기 1 + 쓰기 1)</div></div>
+  <div class="tile big"><div class="k" style="color:#dc2626">2,000</div><div class="s">초당 1,000 인증 요청일 때 Redis 초당 명령 수 — <b>세션 처리만으로</b></div></div>
+  <div class="tile big"><div class="k">≈1ms</div><div class="s">요청당 얹히는 지연 — 전 API에 곱해진다</div></div>
+</div>
+
+<p>초당 1,000건의 인증 요청을 받는 서비스라면 Redis에는 <b>초당 2,000개의 명령이 세션 처리만으로</b> 들어간다. 그래서 이 숫자는 <b>Redis 인스턴스의 처리량 계산에 반드시 들어가야 하는 값</b>이다. "Redis는 초당 몇만 건도 처리한다"는 일반론이 아니라, <b>우리 트래픽 × 2</b>가 세션만으로 소모된다는 인식이 필요하다.</p>
+
+<h3>6-2. 여기에 직렬화·역직렬화 비용이 얹힌다</h3>
+
+<p>세션 객체를 Redis에 넣으려면 <b>바이트 배열이나 JSON 문자열로 바꿔야</b> 하고, 꺼낼 때는 되돌려야 한다. 이 비용은 CPU를 쓴다. 세션에 큰 객체를 담아두는 습관이 있다면 <b>이 비용이 요청마다 반복된다.</b> <a href="#s9">9절(세션 비대화)</a>이 단순한 "메모리 낭비" 문제가 아니라 <b>전 API의 응답 시간 문제</b>인 이유가 여기 있다.</p>
+
+<div class="memo green">
+  <h4>왕복 비용을 줄이는 세 가지 — 그리고 하지 말아야 할 하나</h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k" style="font-family:inherit">① 세션 필터 경로 좁히기</div><div class="d">정적 리소스·헬스체크·비인증 공개 API는 <b>세션을 볼 이유가 없다.</b> 필터가 타지 않도록 경로를 정리하면 왕복 자체가 사라진다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">② 세션을 작게 유지</div><div class="d">직렬화 대상이 작아지면 <b>CPU와 네트워크 전송량이 함께</b> 줄어든다. 9절의 규율이 곧 성능 대책이다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">③ 불필요한 갱신 줄이기</div><div class="d">TTL 연장 정책·세션 타임아웃 값을 <b>의식적으로</b> 정한다. 무엇을 세션에 쓰는지 알고 있어야 줄일 수 있다.</div></div>
+  </div>
+  <div class="rule red" style="margin-top:12px">하지 말 것 — "세션을 서버 로컬에 캐싱해서 왕복을 없애자"</div>
+  <p style="margin:6px 0 0">그 순간 <b>5절의 ④ 중앙 무효화가 깨진다.</b> 관리자가 세션을 지워도 로컬 캐시를 들고 있는 서버에서는 <b>캐시가 만료될 때까지 로그인 상태가 유지</b>된다. 세션을 밖으로 뺀 가장 큰 이유 중 하나를 성능을 위해 반납하는 셈이다. 굳이 한다면 <b>수백 밀리초 수준의 아주 짧은 TTL</b>로 두고 "무효화가 그만큼 늦어진다"를 <b>명시적으로 감수</b>해야 한다.</p>
+</div>
+
+<!-- ===================== 7. 대가 2 - SPOF ===================== -->
+<h2 id="s7">7. 대가 ② — Redis가 새로운 SPOF가 된다 <span class="badge core">이 질문의 핵심</span></h2>
+
+<p>먼저 용어를 정확히 하고 가자. 이 두 단어를 정확히 쓰는 것만으로도 답의 밀도가 달라진다.</p>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">SPOF (single point of failure, 단일 장애점)</div>
+    <div class="d"><b>그것 하나가 죽으면 시스템 전체가 멈추는 지점.</b> 아무리 서버를 여러 대로 늘려도 그 앞에 이중화되지 않은 로드밸런서가 하나 있으면 <b>그 로드밸런서가 SPOF</b>다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">폭발 반경 (blast radius)</div>
+    <div class="d"><b>하나가 죽었을 때 그 영향이 미치는 범위.</b> 폭탄이 터졌을 때 피해가 미치는 반경에서 온 말이다. 장애를 논할 때 "죽느냐"보다 중요한 것이 <b>"죽으면 누가, 얼마나 피해를 보느냐"</b>인데 그 크기를 재는 개념이다.</div>
+  </div>
+</div>
+
+<p>이 두 개념으로 세션 외부화의 <b>아이러니</b>를 정확히 표현할 수 있다. <b>서버의 장애 내성을 높이려고 세션을 밖으로 뺐는데, 그 결과 세션 저장소가 SPOF가 되면서 폭발 반경이 최대로 커졌다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 420" role="img" aria-label="서버 메모리 세션에서 서버 한 대가 죽었을 때 25퍼센트가 로그아웃되는 것과, Redis 세션에서 Redis가 죽었을 때 전 사용자가 로그아웃되고 재로그인 폭주가 뒤따르는 것을 비교한 도식">
+    <defs>
+      <marker id="f3r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <pattern id="f3loss" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect width="8" height="8" fill="#fef2f2"/><line x1="0" y1="0" x2="0" y2="8" stroke="#f87171" stroke-width="3"/>
+      </pattern>
+    </defs>
+
+    <rect x="14" y="46" width="530" height="300" rx="12" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="279" y="32" font-size="14.5" fill="#92400e" text-anchor="middle" font-weight="700">서버 메모리 세션 — 서버 4대 중 1대 장애</text>
+
+    <rect x="34" y="76" width="110" height="52" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="89" y="100" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">A 서버 ✕</text>
+    <text x="89" y="118" font-size="10.5" fill="#b91c1c" text-anchor="middle">세션 증발</text>
+    <rect x="158" y="76" width="110" height="52" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="213" y="100" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">B 서버</text>
+    <text x="213" y="118" font-size="10.5" fill="#166534" text-anchor="middle">세션 정상</text>
+    <rect x="282" y="76" width="110" height="52" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="337" y="100" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">C 서버</text>
+    <text x="337" y="118" font-size="10.5" fill="#166534" text-anchor="middle">세션 정상</text>
+    <rect x="406" y="76" width="110" height="52" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="461" y="100" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">D 서버</text>
+    <text x="461" y="118" font-size="10.5" fill="#166534" text-anchor="middle">세션 정상</text>
+
+    <text x="279" y="164" font-size="12" fill="#92400e" text-anchor="middle">각 서버가 자기 사용자의 세션만 들고 있다 → 죽은 서버의 몫만 사라진다</text>
+
+    <rect x="34" y="184" width="482" height="44" rx="6" fill="#dcfce7" stroke="#86efac"/>
+    <rect x="34" y="184" width="120" height="44" rx="6" fill="url(#f3loss)" stroke="#dc2626"/>
+    <text x="94" y="211" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">25% 로그아웃</text>
+    <text x="335" y="211" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">75%는 아무 일도 없다</text>
+    <text x="279" y="246" font-size="10.5" fill="#6b7280" text-anchor="middle">전체 사용자</text>
+
+    <text x="279" y="286" font-size="19" fill="#92400e" text-anchor="middle" font-weight="800">폭발 반경 : 일부</text>
+    <text x="279" y="314" font-size="11.5" fill="#92400e" text-anchor="middle">재로그인 부하도 25%만 발생한다</text>
+
+    <rect x="576" y="46" width="530" height="300" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="841" y="32" font-size="14.5" fill="#b91c1c" text-anchor="middle" font-weight="700">Redis 세션 — Redis 1대 장애</text>
+
+    <rect x="596" y="76" width="110" height="46" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="651" y="104" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">A 서버 (정상)</text>
+    <rect x="720" y="76" width="110" height="46" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="775" y="104" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">B 서버 (정상)</text>
+    <rect x="844" y="76" width="110" height="46" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="899" y="104" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">C 서버 (정상)</text>
+    <rect x="968" y="76" width="110" height="46" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="1023" y="104" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">D 서버 (정상)</text>
+
+    <line x1="651" y1="122" x2="790" y2="144" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#f3r)"/>
+    <line x1="775" y1="122" x2="830" y2="144" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#f3r)"/>
+    <line x1="899" y1="122" x2="870" y2="144" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#f3r)"/>
+    <line x1="1023" y1="122" x2="910" y2="144" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#f3r)"/>
+
+    <rect x="760" y="150" width="180" height="44" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+    <text x="850" y="178" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">Redis ✕ 세션 조회 실패</text>
+    <text x="666" y="176" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">서버는 다 살아 있는데</text>
+    <text x="666" y="192" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">아무도 세션을 못 읽는다</text>
+
+    <rect x="596" y="212" width="482" height="44" rx="6" fill="url(#f3loss)" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="837" y="239" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">전 사용자 100% 동시 로그아웃</text>
+
+    <text x="841" y="286" font-size="19" fill="#b91c1c" text-anchor="middle" font-weight="800">폭발 반경 : 전체</text>
+    <text x="841" y="310" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">2차 피해 — 복구 직후 전원이 동시에 재로그인 시도</text>
+    <text x="841" y="328" font-size="11.5" fill="#b91c1c" text-anchor="middle">→ 로그인 API와 인증 DB에 평소의 수십 배 부하</text>
+
+    <rect x="14" y="360" width="1092" height="46" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="380" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">서버의 장애 내성을 높이려고 세션을 밖으로 뺐더니, 저장소가 SPOF가 되면서 폭발 반경이 "일부"에서 "전체"로 커졌다</text>
+    <text x="560" y="399" font-size="12.5" fill="#1d4ed8" text-anchor="middle">→ 그래서 세션용 Redis는 캐시용 Redis보다 훨씬 높은 가용성 기준으로 운영해야 한다</text>
+  </svg>
+  <figcaption>오른쪽에서 <b>서버 네 대가 전부 초록색(정상)</b>이라는 점이 이 그림의 아이러니다. 애플리케이션은 멀쩡한데 <b>세션을 못 읽어서</b> 서비스가 선다. "서버를 늘려도 해결되지 않는 장애"가 바로 SPOF의 정의다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>같은 Redis라도 폭발 반경이 다르면 운영 기준도 달라야 한다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">캐시 Redis가 죽으면</div><div class="d">DB로 요청이 몰려 <b>느려지지만 서비스는 돈다.</b> (물론 그 자체로 위험하지만 사용자는 로그인 상태를 유지한다)</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">세션 Redis가 죽으면</div><div class="d"><b>서비스가 선다.</b> 인증이 필요한 모든 화면이 로그인 페이지로 튕긴다.</div></div>
+  </div>
+  <div class="rule red" style="margin-top:12px">"Redis 한 대가 죽으면 전 사용자가 동시에 로그아웃된다" = 폭발 반경이 최대라는 뜻</div>
+</div>
+
+<!-- ===================== 8. 대책 ===================== -->
+<h2 id="s8">8. 폭발 반경을 줄이는 네 가지 대책 — <b>복·영·분·축</b></h2>
+
+<p>여기까지 말하면 면접관은 반드시 <b>"그럼 어떻게 하나요"</b>를 묻는다. 답의 골격은 하나다 — <b>"Redis는 안 죽는다"가 아니라 "죽었을 때의 시나리오가 준비돼 있다".</b> 먼저 죽었을 때 무슨 일이 시간 순서로 벌어지는지 그려 보자.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="Redis 마스터 장애부터 자동 페일오버, 복구 직후 재로그인 폭주, 정상화까지의 타임라인과 각 구간에 대응하는 계층별 대책">
+    <defs>
+      <marker id="f4a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#9ca3af"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">Redis 세션 장애의 시간축 — 장애 구간보다 "복구 직후"가 더 위험하다</text>
+
+    <path d="M60,104 L430,104 L470,104 C500,104 510,44 540,44 C580,44 610,86 700,96 C780,105 820,100 1060,100" fill="none" stroke="#dc2626" stroke-width="2"/>
+    <text x="60" y="60" font-size="11" fill="#6b7280">로그인 API QPS</text>
+    <text x="548" y="36" font-size="11" fill="#dc2626" font-weight="700">평소의 수십 배</text>
+
+    <rect x="140" y="126" width="290" height="42" rx="7" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="285" y="145" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">① 장애 구간 — 세션 조회 전부 실패</text>
+    <text x="285" y="161" font-size="11" fill="#b91c1c" text-anchor="middle">사실상 전 사용자 로그아웃</text>
+
+    <rect x="430" y="126" width="60" height="42" rx="7" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="460" y="145" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">② 승격</text>
+    <text x="460" y="161" font-size="10" fill="#1d4ed8" text-anchor="middle">완료</text>
+
+    <rect x="490" y="126" width="330" height="42" rx="7" fill="#fffbeb" stroke="#d97706"/>
+    <text x="655" y="145" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">③ 재로그인 폭주 (2차 부하)</text>
+    <text x="655" y="161" font-size="11" fill="#92400e" text-anchor="middle">로그인 API · 인증 DB가 동시에 얻어맞는다</text>
+
+    <rect x="820" y="126" width="240" height="42" rx="7" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="940" y="152" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">④ 정상화</text>
+
+    <line x1="60" y1="186" x2="1070" y2="186" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#f4a)"/>
+    <line x1="140" y1="176" x2="140" y2="196" stroke="#dc2626" stroke-width="2"/>
+    <text x="140" y="212" font-size="11" fill="#dc2626" text-anchor="middle" font-weight="700">T0 마스터 다운</text>
+    <line x1="430" y1="176" x2="430" y2="196" stroke="#2563eb" stroke-width="2"/>
+    <text x="430" y="212" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">수 초 ~ 수십 초</text>
+    <text x="1060" y="212" font-size="11" fill="#6b7280" text-anchor="end">시간</text>
+
+    <rect x="70" y="232" width="330" height="70" rx="9" fill="#fff" stroke="#2563eb"/>
+    <text x="86" y="254" font-size="12.5" fill="#1d4ed8" font-weight="700">대책 ① 인프라 계층</text>
+    <text x="86" y="274" font-size="11.5" fill="#374151">replica + Sentinel/Cluster 자동 페일오버로</text>
+    <text x="86" y="291" font-size="11.5" fill="#374151">①구간의 길이 자체를 줄인다</text>
+
+    <rect x="410" y="232" width="330" height="70" rx="9" fill="#fff" stroke="#dc2626"/>
+    <text x="426" y="254" font-size="12.5" fill="#b91c1c" font-weight="700">대책 ② 애플리케이션 계층</text>
+    <text x="426" y="274" font-size="11.5" fill="#374151">짧은 타임아웃 + 서킷 브레이커로</text>
+    <text x="426" y="291" font-size="11.5" fill="#374151">①구간이 <tspan font-weight="700">전체 마비로 번지는 것</tspan>을 막는다</text>
+
+    <rect x="750" y="232" width="320" height="70" rx="9" fill="#fff" stroke="#d97706"/>
+    <text x="766" y="254" font-size="12.5" fill="#92400e" font-weight="700">대책 ③ 용량 계층</text>
+    <text x="766" y="274" font-size="11.5" fill="#374151">로그인 경로가 ③구간의 폭주를</text>
+    <text x="766" y="291" font-size="11.5" fill="#374151">버티는지 미리 점검한다</text>
+  </svg>
+  <figcaption>붉은 곡선(로그인 QPS)이 <b>장애가 끝난 뒤에 치솟는다</b>는 점이 이 그림의 요점이다. 평소 트래픽 기준으로 잡은 로그인 API 용량은 <b>전원 동시 재로그인을 감당하지 못한다</b> — 장애 대응을 인프라 얘기로만 끝내면 이 구간을 놓친다.</figcaption>
+</figure>
+
+<h3>8-1. 네 가지 대책</h3>
+
+<div class="step"><span class="n">복</span><div class="body"><b>Replica + 자동 페일오버 (Sentinel 또는 Cluster)</b><br>마스터가 죽었을 때 복제본이 자동으로 승격되어 <b>수 초에서 수십 초 내</b>에 복구되는 구조다. Sentinel은 마스터를 감시하다가 장애를 판정하면 replica를 승격시키는 <b>별도 프로세스</b>이고, Cluster는 샤딩과 페일오버를 함께 제공한다. <b>"장애 시 어떻게 되나"에 대한 1차 답</b>이 여기다.</div></div>
+
+<div class="step"><span class="n">영</span><div class="body"><b>영속화 판단 — 켜든 끄든 "의식적으로"</b><br>캐시용 Redis는 데이터가 날아가도 DB에서 다시 채우면 되지만, 세션은 <b>유실 = 전원 로그아웃</b>이다. 재시작 시 세션을 살리고 싶다면 AOF(<b>모든 쓰기 명령을 파일에 남겨 재시작 시 되짚어 복원하는 방식</b>)를 검토한다. 다만 <b>"세션은 어차피 만료되는 데이터니 유실을 감수하고 성능을 택한다"도 유효한 판단</b>이다. 어느 쪽이든 <b>의식적으로 선택했는지</b>가 중요하다 — 켜지도 끄지도 않고 <b>기본값으로 흘러온 상태가 가장 나쁘다.</b></div></div>
+
+<div class="step ok"><span class="n">분</span><div class="body"><b>용도 분리 — 세션 Redis와 캐시 Redis를 나눈다 <span class="badge bonus">가산점</span></b><br>같은 인스턴스에 두면 <b>캐시 쪽의 big key나 메모리 폭주가 세션까지 죽인다.</b> 캐시는 유실돼도 되는 데이터이고 세션은 유실되면 전원 로그아웃인데, 같은 인스턴스에 두는 순간 <b>둘의 폭발 반경이 같아진다.</b> 게다가 요구하는 설정도 정반대다 — 캐시는 밀어내도 되고(eviction), 세션은 밀려나면 안 된다. <b>폭발 반경이 다른 데이터는 인스턴스를 분리하는 것이 정석이다.</b></div></div>
+
+<div class="step red"><span class="n">축</span><div class="body"><b>eviction(축출) 정책 주의 <span class="badge bonus">가산점</span></b><br>Redis는 <code>maxmemory</code>에 도달하면 설정된 정책에 따라 <b>기존 키를 밀어내고</b> 새 키를 받는다. 캐시용으로 흔히 쓰는 <code>allkeys-lru</code>는 <b>TTL이 남아 있든 말든</b> 오래 안 쓰인 키부터 지운다. 세션 저장소에 이 정책을 쓰면 <b>아직 만료되지 않은 세션이 밀려나면서 사용자가 영문 모를 로그아웃</b>을 겪는다.</div></div>
+
+<figure>
+  <svg viewBox="0 0 940 250" role="img" aria-label="maxmemory 도달 시 allkeys-lru 정책이 TTL이 남은 세션 키를 축출해 조용한 로그아웃이 발생하는 경로">
+    <defs>
+      <marker id="f5r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="30" y="34" font-size="12.5" fill="#b91c1c" font-weight="700">① 메모리가 가득 찬다</text>
+    <rect x="30" y="46" width="420" height="40" rx="6" fill="#fff" stroke="#94a3b8"/>
+    <rect x="30" y="46" width="420" height="40" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="240" y="72" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">maxmemory 100% 도달</text>
+    <text x="470" y="60" font-size="12" fill="#374151">새 키를 받으려면</text>
+    <text x="470" y="78" font-size="12" fill="#374151">기존 키를 밀어내야 한다</text>
+
+    <text x="30" y="126" font-size="12.5" fill="#b91c1c" font-weight="700">② 정책이 대상을 고른다</text>
+    <rect x="30" y="138" width="180" height="46" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="120" y="160" class="mono" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">allkeys-lru</text>
+    <text x="120" y="177" font-size="10.5" fill="#b91c1c" text-anchor="middle">TTL과 무관하게 고른다</text>
+    <line x1="212" y1="161" x2="252" y2="161" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f5r)"/>
+    <rect x="256" y="138" width="250" height="46" rx="8" fill="#fff" stroke="#dc2626"/>
+    <text x="381" y="158" class="mono" font-size="11.5" fill="#374151" text-anchor="middle">spring:session:sessions:abc123</text>
+    <text x="381" y="176" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">TTL 25분 남아 있는데도 축출 대상</text>
+    <line x1="508" y1="161" x2="548" y2="161" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f5r)"/>
+
+    <rect x="552" y="120" width="358" height="86" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="731" y="144" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">③ 사용자가 갑자기 로그아웃된다</text>
+    <text x="731" y="166" font-size="11.5" fill="#b91c1c" text-anchor="middle">에러 로그 없음 · 예외 없음 · 알림 없음</text>
+    <text x="731" y="188" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">"가끔 로그아웃돼요" 산발적 민원으로만 나타난다</text>
+
+    <rect x="30" y="216" width="880" height="30" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="470" y="236" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">이 사고는 조용히 일어나기 때문에 원인을 찾기가 가장 어렵다 — 그래서 미리 알고 막아야 하는 종류의 함정이다</text>
+  </svg>
+  <figcaption>정책 이름을 <code>volatile-lru</code>로 바꾸는 것으로는 해결되지 않는다. <b>세션 키는 전부 TTL이 걸려 있으므로</b> 여전히 축출 후보다. 근본 대응은 <b>메모리를 여유 있게 잡고, 세션 인스턴스를 분리하고, 실제로 축출이 일어나는지 감시</b>하는 것이다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>eviction 함정 — 무엇을 보고 무엇을 정할 것인가</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">감시</div><div class="d"><code>INFO stats</code>의 <b><code>evicted_keys</code></b>가 0이 아니면 세션 저장소에서는 <b>이미 사고가 나고 있다는 뜻</b>이다. 이 지표에 알림을 건다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">여유</div><div class="d">세션 저장소는 <b>메모리를 꽉 채워 쓰는 곳이 아니다.</b> 동시 접속자 × 세션 크기로 상한을 계산하고 여유를 둔다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">판단</div><div class="d"><code>noeviction</code>은 <b>조용한 유실 대신 시끄러운 쓰기 실패</b>로 바꾼다. 어느 쪽이 나은지는 서비스가 정할 문제이지만, <b>모르고 <code>allkeys-lru</code>인 상태</b>보다는 낫다.</div></div>
+  </div>
+</div>
+
+<h3>8-2. 대책 ②를 코드로 — 왜 "빠르게 실패"가 피해를 줄이는가</h3>
+
+<p>세션 조회가 실패했을 때의 동작을 <b>미리 정의해 둬야</b> 한다. 여기서 서킷 브레이커가 왜 필요한지가 중요하다. <b>Redis가 응답하지 않을 때 타임아웃을 길게 잡아 두면, 인증 요청을 처리하던 톰캣 스레드들이 전부 Redis 응답을 기다리며 묶인다.</b> 스레드 풀이 고갈되면 <b>Redis와 무관한 API까지 요청을 못 받게 된다</b> — 세션 저장소 장애가 애플리케이션 전체 마비로 번지는 <b>연쇄 장애</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 384" role="img" aria-label="긴 타임아웃일 때 톰캣 스레드가 전부 Redis 대기로 묶여 무관한 API까지 마비되는 경우와, 짧은 타임아웃과 서킷 브레이커로 피해가 인증 경로에 국한되는 경우의 비교">
+    <defs>
+      <marker id="f6r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="f6g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <rect x="14" y="44" width="530" height="286" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="279" y="30" font-size="14" fill="#b91c1c" text-anchor="middle" font-weight="700">타임아웃을 길게 잡아둔 경우</text>
+    <text x="279" y="66" font-size="11.5" fill="#b91c1c" text-anchor="middle">톰캣 스레드 풀 (8개)</text>
+    <g>
+      <rect x="34" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="61" y="98" font-size="10.5" fill="#b91c1c" text-anchor="middle">대기</text>
+      <rect x="94" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="121" y="98" font-size="10.5" fill="#b91c1c" text-anchor="middle">대기</text>
+      <rect x="154" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="181" y="98" font-size="10.5" fill="#b91c1c" text-anchor="middle">대기</text>
+      <rect x="214" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="241" y="98" font-size="10.5" fill="#b91c1c" text-anchor="middle">대기</text>
+      <rect x="274" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="301" y="98" font-size="10.5" fill="#b91c1c" text-anchor="middle">대기</text>
+      <rect x="334" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="361" y="98" font-size="10.5" fill="#b91c1c" text-anchor="middle">대기</text>
+      <rect x="394" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="421" y="98" font-size="10.5" fill="#b91c1c" text-anchor="middle">대기</text>
+      <rect x="454" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="481" y="98" font-size="10.5" fill="#b91c1c" text-anchor="middle">대기</text>
+    </g>
+    <line x1="279" y1="112" x2="279" y2="146" stroke="#dc2626" stroke-width="2" marker-end="url(#f6r)"/>
+    <text x="292" y="134" font-size="11" fill="#b91c1c">전부 세션 조회 응답 대기</text>
+    <rect x="189" y="150" width="180" height="40" rx="8" fill="#fff" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="279" y="175" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">Redis (무응답)</text>
+
+    <rect x="34" y="212" width="196" height="46" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="132" y="232" font-size="11.5" fill="#1f2937" text-anchor="middle" font-weight="700">Redis와 무관한 API</text>
+    <text x="132" y="249" font-size="10.5" fill="#6b7280" text-anchor="middle">공지 조회 · 헬스체크</text>
+    <line x1="232" y1="235" x2="270" y2="235" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f6r)"/>
+    <rect x="276" y="212" width="232" height="46" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="392" y="240" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">받아줄 스레드가 없다 ✕</text>
+
+    <rect x="34" y="276" width="474" height="42" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="271" y="295" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">세션 저장소 장애 → 애플리케이션 전체 마비</text>
+    <text x="271" y="312" font-size="11.5" fill="#b91c1c" text-anchor="middle">연쇄 장애(cascading failure)로 번진 것</text>
+
+    <rect x="576" y="44" width="530" height="286" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="841" y="30" font-size="14" fill="#166534" text-anchor="middle" font-weight="700">짧은 타임아웃 + 서킷 브레이커</text>
+    <text x="841" y="66" font-size="11.5" fill="#166534" text-anchor="middle">톰캣 스레드 풀 (8개)</text>
+    <g>
+      <rect x="596" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="623" y="98" font-size="9.5" fill="#b91c1c" text-anchor="middle">401 응답</text>
+      <rect x="656" y="76" width="54" height="34" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="683" y="98" font-size="9.5" fill="#b91c1c" text-anchor="middle">401 응답</text>
+      <rect x="716" y="76" width="54" height="34" rx="6" fill="#dcfce7" stroke="#16a34a"/><text x="743" y="98" font-size="9.5" fill="#166534" text-anchor="middle">처리 중</text>
+      <rect x="776" y="76" width="54" height="34" rx="6" fill="#dcfce7" stroke="#16a34a"/><text x="803" y="98" font-size="9.5" fill="#166534" text-anchor="middle">처리 중</text>
+      <rect x="836" y="76" width="54" height="34" rx="6" fill="#dcfce7" stroke="#16a34a"/><text x="863" y="98" font-size="9.5" fill="#166534" text-anchor="middle">처리 중</text>
+      <rect x="896" y="76" width="54" height="34" rx="6" fill="#dcfce7" stroke="#16a34a"/><text x="923" y="98" font-size="9.5" fill="#166534" text-anchor="middle">처리 중</text>
+      <rect x="956" y="76" width="54" height="34" rx="6" fill="#dcfce7" stroke="#16a34a"/><text x="983" y="98" font-size="9.5" fill="#166534" text-anchor="middle">처리 중</text>
+      <rect x="1016" y="76" width="54" height="34" rx="6" fill="#dcfce7" stroke="#16a34a"/><text x="1043" y="98" font-size="9.5" fill="#166534" text-anchor="middle">처리 중</text>
+    </g>
+    <line x1="841" y1="112" x2="841" y2="146" stroke="#16a34a" stroke-width="2" marker-end="url(#f6g)"/>
+    <text x="854" y="134" font-size="11" fill="#166534">회로가 열려 호출 자체를 안 한다</text>
+    <rect x="751" y="150" width="180" height="40" rx="8" fill="#fff" stroke="#94a3b8" stroke-dasharray="5 4"/>
+    <text x="841" y="175" font-size="12.5" fill="#6b7280" text-anchor="middle" font-weight="700">Redis (무응답)</text>
+
+    <rect x="596" y="212" width="196" height="46" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="694" y="232" font-size="11.5" fill="#1f2937" text-anchor="middle" font-weight="700">Redis와 무관한 API</text>
+    <text x="694" y="249" font-size="10.5" fill="#6b7280" text-anchor="middle">공지 조회 · 헬스체크</text>
+    <line x1="794" y1="235" x2="832" y2="235" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f6g)"/>
+    <rect x="838" y="212" width="232" height="46" rx="8" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="954" y="240" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">정상 처리 ✓</text>
+
+    <rect x="596" y="276" width="474" height="42" rx="9" fill="#fff" stroke="#bbf7d0"/>
+    <text x="833" y="295" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">피해가 인증 경로로 국한된다</text>
+    <text x="833" y="312" font-size="11.5" fill="#166534" text-anchor="middle">사용자는 로그아웃되지만 서비스 전체가 서지는 않는다</text>
+
+    <rect x="14" y="342" width="1092" height="36" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="365" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">장애 상황에서 "기다리는 것"이 가장 비싼 선택 — 대기는 스레드를 삼키고, 삼켜진 스레드는 무관한 API까지 끌고 들어간다</text>
+  </svg>
+  <figcaption>왼쪽 여덟 칸이 <b>전부 빨간색</b>인 것이 연쇄 장애의 그림이다. Redis를 못 쓰는 것은 양쪽 다 같지만, <b>스레드를 붙잡느냐 놓아주느냐</b>에서 "인증만 안 되는 상태"와 "아무것도 안 되는 상태"로 갈린다.</figcaption>
+</figure>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 기본값에 맡긴 설정</div>
+<pre><code><span class="cm"># 프로퍼티 경로는 Boot 버전에 따라</span>
+<span class="cm"># spring.redis.* 또는 spring.data.redis.*</span>
+<span class="kw">spring.data.redis</span>:
+  host: session-redis
+<span class="ln-bad">  <span class="cm"># timeout 미설정 = 넉넉한 기본값</span><span class="note">스레드가 오래 묶인다</span></span>
+
+<span class="cm"># 세션 조회 실패 시 동작도 정의돼 있지 않다</span>
+<span class="cm"># → 장애가 나 봐야 무슨 일이 생길지 안다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 빠르게 실패하도록 못 박기</div>
+<pre><code><span class="kw">spring.data.redis</span>:
+  host: session-redis
+<span class="ln-good">  timeout: 200ms<span class="note">스레드를 오래 안 붙잡는다</span></span>
+<span class="ln-good">  connect-timeout: 200ms</span>
+
+<span class="cm"># + 세션 조회 경로에 서킷 브레이커</span>
+<span class="cm">#   연속 실패가 쌓이면 회로를 열어</span>
+<span class="cm">#   호출 자체를 건너뛰고 즉시 401</span>
+<span class="cm"># + 실패 시 동작을 문서로 합의해 둔다</span>
+<span class="cm">#   ("401로 떨어뜨린다"도 명시적 선택)</span></code></pre>
+  </div>
+</div>
+
+<div class="callout warn"><span class="t">타임아웃 값은 "정답 숫자"가 아니라 "근거 있는 선택"이다</span>
+  200ms는 예시일 뿐이다. 판단 기준은 <b>"정상 상태의 세션 조회 지연보다 충분히 크고, 스레드를 붙잡아도 될 시간보다는 짧게"</b>다. 정상 상태에서 세션 조회가 1ms 안팎이라면 200ms는 <b>정상 요청을 자를 위험은 거의 없으면서 장애 시에는 빠르게 포기하는</b> 값이 된다. 면접에서는 <b>숫자보다 이 기준을 말하는 편</b>이 낫다.
+</div>
+
+<!-- ===================== 9. 세션 비대화 ===================== -->
+<h2 id="s9">9. 대가 ③ — 세션 데이터 비대화의 유혹 (기술이 아니라 규율의 문제)</h2>
+
+<p>세 번째 대가는 기술이 아니라 <b>규율</b>의 문제다. 세션이 <b>"어디서든 접근되는 편한 저장소"</b>가 되는 순간 사람들이 여기에 이것저것 담기 시작한다. 사용자 프로필 전체, 장바구니 목록, 최근 본 상품, 화면 상태. 컨트롤러 어디서나 <code>session.getAttribute()</code> 한 줄로 꺼낼 수 있으니 유혹이 크다.</p>
+
+<p>세션이 커지면 <b>두 가지가 함께</b> 나빠진다.</p>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">① 전 API의 응답 시간</div>
+    <div class="d"><a href="#s6">6절</a>의 직렬화·네트워크 비용이 <b>요청마다</b> 커진다. 세션이 <b>200바이트일 때와 50KB일 때</b>는 인증이 필요한 <b>모든 API</b>의 응답 시간이 다르다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">② Redis 메모리</div>
+    <div class="d"><b>동시 접속자 수 × 세션 크기</b>로 부푼다. 동시 접속 10만 명에 세션 50KB면 <b>5GB</b>다. 그리고 메모리가 차면 <a href="#s8">8절의 eviction 함정</a>이 기다리고 있다.</div>
+  </div>
+</div>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 세션을 보관함처럼 쓰는 코드</div>
+<pre><code><span class="kw">@PostMapping</span>(<span class="st">"/login"</span>)
+<span class="kw">public void</span> <span class="fn">login</span>(HttpSession session, LoginRequest req) {
+    Member member = <span class="fn">authenticate</span>(req);
+<span class="ln-bad">    session.<span class="fn">setAttribute</span>(<span class="st">"member"</span>, member);<span class="note">프로필 전체</span></span>
+<span class="ln-bad">    session.<span class="fn">setAttribute</span>(<span class="st">"cart"</span>, <span class="fn">loadCart</span>(member));<span class="note">목록</span></span>
+<span class="ln-bad">    session.<span class="fn">setAttribute</span>(<span class="st">"recentItems"</span>, <span class="fn">loadRecent</span>(member));</span>
+}
+<span class="cm">// 세션 50KB → 인증이 필요한 모든 요청이</span>
+<span class="cm">// 50KB를 직렬화·전송·역직렬화한다</span>
+<span class="cm">// 동시 접속 10만 명 → Redis 메모리 5GB</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> "이 요청이 누구인지"만 남긴다</div>
+<pre><code><span class="kw">@PostMapping</span>(<span class="st">"/login"</span>)
+<span class="kw">public void</span> <span class="fn">login</span>(HttpSession session, LoginRequest req) {
+    Member member = <span class="fn">authenticate</span>(req);
+<span class="ln-good">    session.<span class="fn">setAttribute</span>(<span class="st">"memberId"</span>, member.<span class="fn">getId</span>());</span>
+<span class="ln-good">    session.<span class="fn">setAttribute</span>(<span class="st">"role"</span>, member.<span class="fn">getRole</span>());<span class="note">최소 인증 컨텍스트</span></span>
+}
+<span class="cm">// 프로필·장바구니·최근 본 상품은</span>
+<span class="cm">// 필요한 화면에서 캐시나 DB로 읽는다</span>
+<span class="cm">// 세션 200바이트 → 왕복 비용도 메모리도 작아진다</span></code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>세션에 무엇을 담을지 정하는 한 문장</h4>
+  <div class="rule ok">세션은 "이 요청이 누구인지"를 알려 주는 자리이지, 사용자 데이터의 보관함이 아니다</div>
+  <p style="margin:8px 0 0"><b>담는다</b> — 식별자(<code>memberId</code>)와 최소한의 인증 컨텍스트(권한 정도). &nbsp;·&nbsp; <b>담지 않는다</b> — 프로필 전체, 장바구니, 목록, 화면 상태처럼 <b>필요할 때 캐시나 DB에서 읽으면 되는 것</b>. 판단이 애매하면 이렇게 물어보면 된다 — <b>"이걸 인증이 필요한 모든 요청마다 왕복시킬 가치가 있나?"</b></p>
+</div>
+
+<!-- ===================== 10. 세션 vs JWT ===================== -->
+<h2 id="s10">10. "그럴 바에 JWT를 쓰면 되지 않나요?" <span class="badge senior">시니어 변별</span></h2>
+
+<p>먼저 JWT가 <b>왜 다른지</b>부터 짚는다. <b>JWT는 상태를 토큰 자체에 담는다.</b> 사용자 ID와 권한, 만료 시각을 토큰 안에 넣고 서버 서명을 붙여서 클라이언트에게 준다. 서버는 요청이 올 때마다 <b>서명만 검증</b>하면 되므로 <b>저장소를 조회하지 않는다.</b> <a href="#s6">6절의 네트워크 왕복</a>도, <a href="#s7">7절의 SPOF</a>도 구조적으로 사라진다.</p>
+
+<p>여기까지만 말하면 JWT가 압도적으로 보인다. 하지만 <b>대가가 정확히 반대편에 있다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 440" role="img" aria-label="세션 방식과 JWT 방식의 요청 경로 및 강제 로그아웃 가능 여부 비교와, 블랙리스트를 도입하면 다시 저장소 조회로 돌아오는 경로">
+    <defs>
+      <marker id="f7a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+      <marker id="f7r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <rect x="14" y="46" width="530" height="292" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="279" y="32" font-size="14.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">세션 — 상태는 서버 쪽(Redis)에 있다</text>
+
+    <rect x="34" y="70" width="140" height="46" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="104" y="90" font-size="11.5" fill="#1f2937" text-anchor="middle" font-weight="700">요청 + 쿠키</text>
+    <text x="104" y="107" class="mono" font-size="10" fill="#6b7280" text-anchor="middle">SESSION=abc123</text>
+    <line x1="176" y1="93" x2="200" y2="93" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f7a)"/>
+    <rect x="204" y="70" width="140" height="46" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="274" y="98" font-size="11.5" fill="#1f2937" text-anchor="middle" font-weight="700">서버</text>
+    <line x1="346" y1="93" x2="370" y2="93" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f7a)"/>
+    <rect x="374" y="70" width="140" height="46" rx="8" fill="#fff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="444" y="90" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">Redis 조회</text>
+    <text x="444" y="107" font-size="10" fill="#6b7280" text-anchor="middle">있는지 · 유효한지</text>
+
+    <text x="279" y="142" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">요청마다 저장소 조회 (왕복 2회) · Redis가 SPOF</text>
+
+    <rect x="34" y="160" width="480" height="122" rx="10" fill="#fff" stroke="#bfdbfe"/>
+    <text x="274" y="184" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">강제 로그아웃이 필요할 때</text>
+    <rect x="120" y="196" width="308" height="30" rx="6" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="274" y="216" class="mono" font-size="11" fill="#334155" text-anchor="middle">DEL spring:session:sessions:abc123</text>
+    <text x="274" y="248" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">→ 다음 요청부터 즉시 차단된다</text>
+    <text x="274" y="268" font-size="11" fill="#6b7280" text-anchor="middle">비밀번호 변경 · 권한 회수 · 계정 탈취 대응 모두 같은 방식</text>
+
+    <text x="279" y="312" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">얻는 것: 즉시 무효화 능력 &nbsp;/&nbsp; 내는 값: 저장소 의존</text>
+
+    <rect x="576" y="46" width="530" height="292" rx="12" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="841" y="32" font-size="14.5" fill="#92400e" text-anchor="middle" font-weight="700">JWT — 상태는 토큰 자체에 들어 있다</text>
+
+    <rect x="596" y="70" width="140" height="46" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="666" y="90" font-size="11.5" fill="#1f2937" text-anchor="middle" font-weight="700">요청 + 토큰</text>
+    <text x="666" y="107" class="mono" font-size="10" fill="#6b7280" text-anchor="middle">Bearer eyJhbGci…</text>
+    <line x1="738" y1="93" x2="762" y2="93" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f7a)"/>
+    <rect x="766" y="70" width="150" height="46" rx="8" fill="#fff" stroke="#d97706"/>
+    <text x="841" y="90" font-size="11.5" fill="#92400e" text-anchor="middle" font-weight="700">서버 — 서명만 검증</text>
+    <text x="841" y="107" font-size="10" fill="#6b7280" text-anchor="middle">토큰 안의 정보를 그대로 신뢰</text>
+    <line x1="918" y1="93" x2="942" y2="93" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <rect x="946" y="70" width="140" height="46" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+    <text x="1016" y="98" font-size="11.5" fill="#94a3b8" text-anchor="middle" font-weight="700">저장소 조회 없음</text>
+
+    <text x="841" y="142" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">왕복 0회 · 세션 저장소 SPOF 없음</text>
+
+    <rect x="596" y="160" width="480" height="122" rx="10" fill="#fff" stroke="#fde68a"/>
+    <text x="836" y="184" font-size="12.5" fill="#92400e" text-anchor="middle" font-weight="700">강제 로그아웃이 필요할 때</text>
+    <text x="836" y="208" font-size="11.5" fill="#374151" text-anchor="middle">서버는 그 토큰이 <tspan font-weight="700">존재하는지조차 모른다</tspan></text>
+    <text x="836" y="234" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 만료 시각이 될 때까지 그 토큰은 유효하다</text>
+    <text x="836" y="262" font-size="11" fill="#b91c1c" text-anchor="middle">계정 탈취 즉시 차단 ✕ &nbsp;·&nbsp; 비번 변경 시 다른 기기 끊기 ✕ &nbsp;·&nbsp; 권한 회수 즉시 반영 ✕</text>
+
+    <text x="841" y="312" font-size="13" fill="#92400e" text-anchor="middle" font-weight="700">얻는 것: 저장소 무의존 &nbsp;/&nbsp; 내는 값: 즉시 무효화 능력</text>
+
+    <path d="M841,348 C700,378 420,378 279,352" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#f7r)"/>
+    <rect x="382" y="356" width="356" height="26" rx="13" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="560" y="374" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">블랙리스트를 붙이는 순간 여기로 되돌아온다</text>
+
+    <rect x="14" y="392" width="1092" height="44" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="411" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">"세션 vs JWT"는 우열이 아니라 트레이드오프 — 즉시 무효화 능력 vs 저장소 무의존</text>
+    <text x="560" y="429" font-size="12.5" fill="#1d4ed8" text-anchor="middle">즉시 차단이 요구사항이면 세션 · 수명 짧은 서버 간 신뢰 전달이면 JWT</text>
+  </svg>
+  <figcaption>가운데 <b>붉은 점선 화살표</b>가 이 질문의 결론이다. 실무의 JWT는 대개 무효화된 토큰 <b>블랙리스트</b>를 두고 요청마다 확인하는데, 그 저장소로 흔히 쓰이는 것이 Redis다. <b>그 순간 "저장소 조회가 없다"는 JWT의 장점이 사라지고 Redis가 다시 SPOF가 된다</b> — 세션 방식으로 돌아온 셈이다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>비유로 붙잡아 두기 — 명부 대조 vs 입장권 도장</h4>
+  <p style="margin:0 0 8px"><b>세션</b>은 입장할 때마다 <b>중앙 명부를 대조</b>하는 방식이다. 매번 명부를 보러 가야 하니 번거롭고 명부가 불타면 아무도 못 들어가지만, <b>명부에서 이름 한 줄을 지우면 그 사람은 즉시 못 들어온다.</b></p>
+  <p style="margin:0 0 8px"><b>JWT</b>는 <b>위조 방지 도장이 찍힌 입장권</b>이다. 도장만 확인하면 되니 명부가 필요 없고 빠르다. 대신 <b>이미 발급한 입장권은 회수할 방법이 없다</b> — 유효 기간이 끝날 때까지 그 표는 들어온다.</p>
+  <p style="margin:0"><b>블랙리스트</b>는 입구에 <b>"이 번호들은 받지 마시오" 목록을 붙여 두는 것</b>이다. 이제 직원은 표마다 그 목록을 확인해야 한다 — <b>결국 명부 대조로 돌아왔다.</b></p>
+</div>
+
+<div class="scroll"><table>
+  <thead><tr><th style="width:22%">항목</th><th>세션 (Redis)</th><th>JWT</th></tr></thead>
+  <tbody>
+    <tr><td>상태가 사는 곳</td><td>서버 쪽 저장소</td><td>토큰 자체 (클라이언트가 들고 있다)</td></tr>
+    <tr><td>요청당 저장소 조회</td><td class="bad">읽기 1 + 쓰기 1</td><td class="good">없음 (서명 검증만)</td></tr>
+    <tr class="hl"><td><b>즉시 무효화</b></td><td class="good">키 삭제로 즉시</td><td class="bad">만료 전까지 불가</td></tr>
+    <tr><td>저장소 장애 영향</td><td class="bad">전 사용자 로그아웃</td><td class="good">영향 없음 (블랙리스트를 두면 다시 생김)</td></tr>
+    <tr><td>권한 변경 반영</td><td class="good">다음 요청부터</td><td class="bad">토큰 재발급 전까지 옛 권한</td></tr>
+    <tr><td>맞는 자리</td><td>관리자 콘솔 · 금융 · 결제 등 <b>즉시 차단이 요구사항</b>인 서비스</td><td>MSA 내부 서비스 간 신뢰 전달 등 <b>수명이 짧고 중간 무효화가 필요 없는</b> 용도</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout ok"><span class="t">요구사항 기준으로 갈라 답하는 것이 시니어 답변이다</span>
+  <b>즉시 차단이 중요한 서비스</b> — 관리자 콘솔, 금융, 결제. <b>세션이 맞다.</b> 무효화가 기능 요구사항이므로 저장소 의존은 어차피 피할 수 없다.<br>
+  <b>서버 간 신뢰 전달</b> — MSA 내부 서비스끼리 "이 요청은 인증된 사용자 42번의 것"임을 전달하는 용도. <b>JWT가 맞다.</b> 수명이 짧고(수 분) 중간에 무효화할 일이 없으므로 JWT의 단점이 드러나지 않는다.<br>
+  <b>"JWT가 최신이니까", "세션은 확장이 안 되니까"</b> 같은 일반론으로 답하면 이 질문의 의도를 놓친 것이다.
+</div>
+
+<!-- ===================== 11. 직렬화 호환 ===================== -->
+<h2 id="s11">11. 배포로 세션 객체 구조가 바뀌면 — <b>배포는 세션 데이터와의 계약을 바꾸는 사건</b></h2>
+
+<p>무슨 일이 벌어지는지부터 보자. 배포 시점에 Redis에는 <b>구버전 코드가 직렬화해 넣은 세션들</b>이 이미 살아 있다. 신버전 코드가 그것을 역직렬화하려다 실패하면, <b>배포 직후 기존 로그인 사용자들이 일제히 에러를 만난다.</b> 세션을 밖으로 뺐기 때문에 생기는, <b>서버 메모리 세션에는 없던 문제</b>다(서버 메모리 세션은 배포하면 어차피 다 날아가므로 이 문제가 생길 여지가 없다).</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 344" role="img" aria-label="구버전 형식으로 저장된 세션을 신버전 코드가 역직렬화하다 실패하는 문제와, 키 네임스페이스에 버전을 넣어 신구 세션을 공존시키는 해법">
+    <defs>
+      <marker id="f8a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+      <marker id="f8r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="f8g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <rect x="14" y="44" width="530" height="248" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="279" y="30" font-size="14" fill="#b91c1c" text-anchor="middle" font-weight="700">문제 — 구버전 세션 + 신버전 코드</text>
+
+    <rect x="34" y="70" width="200" height="76" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="134" y="94" font-size="12" fill="#1f2937" text-anchor="middle" font-weight="700">Redis에 살아 있는 세션</text>
+    <text x="134" y="114" class="mono" font-size="10.5" fill="#374151" text-anchor="middle">v1 형식 — 필드 3개</text>
+    <text x="134" y="133" font-size="10.5" fill="#6b7280" text-anchor="middle">TTL이 남아 아직 유효하다</text>
+    <line x1="238" y1="108" x2="290" y2="108" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f8r)"/>
+    <text x="264" y="98" font-size="10" fill="#dc2626" text-anchor="middle">읽기</text>
+    <rect x="296" y="70" width="216" height="76" rx="9" fill="#fff" stroke="#dc2626"/>
+    <text x="404" y="94" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">신버전 코드</text>
+    <text x="404" y="114" class="mono" font-size="10.5" fill="#374151" text-anchor="middle">v2 형식 — 필드 4개 기대</text>
+    <text x="404" y="133" font-size="10.5" fill="#b91c1c" text-anchor="middle">역직렬화 시도</text>
+
+    <text x="279" y="180" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 역직렬화 실패 (JDK 직렬화면 InvalidClassException)</text>
+    <text x="279" y="206" font-size="11.5" fill="#374151" text-anchor="middle">필드를 하나만 추가해도 serialVersionUID가 달라진다</text>
+    <text x="279" y="226" font-size="11.5" fill="#374151" text-anchor="middle">데이터에는 아무 문제가 없는데도 <tspan font-weight="700" fill="#b91c1c">통째로 실패</tspan>한다</text>
+    <text x="279" y="256" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">배포 직후 기존 로그인 사용자 전원이 에러를 만난다</text>
+    <text x="279" y="276" font-size="11" fill="#6b7280" text-anchor="middle">롤링 배포 중이라면 신구 인스턴스가 같은 키를 두고 부딪힌다</text>
+
+    <rect x="576" y="44" width="530" height="248" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="841" y="30" font-size="14" fill="#166534" text-anchor="middle" font-weight="700">해법 2 — 키 네임스페이스에 버전을 넣어 공존</text>
+
+    <rect x="596" y="76" width="170" height="48" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="681" y="105" font-size="11.5" fill="#1f2937" text-anchor="middle" font-weight="700">구버전 인스턴스</text>
+    <line x1="770" y1="100" x2="798" y2="100" stroke="#6b7280" stroke-width="1.6" marker-end="url(#f8a)"/>
+    <rect x="802" y="76" width="288" height="48" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="946" y="97" class="mono" font-size="11" fill="#374151" text-anchor="middle">app:session:v1:*</text>
+    <text x="946" y="114" font-size="10.5" fill="#6b7280" text-anchor="middle">건드리지 않고 TTL로 자연 소멸</text>
+
+    <rect x="596" y="146" width="170" height="48" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="681" y="175" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">신버전 인스턴스</text>
+    <line x1="770" y1="170" x2="798" y2="170" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f8g)"/>
+    <rect x="802" y="146" width="288" height="48" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="946" y="167" class="mono" font-size="11" fill="#166534" text-anchor="middle">app:session:v2:*</text>
+    <text x="946" y="184" font-size="10.5" fill="#166534" text-anchor="middle">새 로그인부터 여기에 쌓인다</text>
+
+    <text x="841" y="226" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">각자 자기 버전의 키만 보므로 롤링 배포 중에도 충돌이 없다</text>
+    <text x="841" y="252" font-size="11.5" fill="#374151" text-anchor="middle">대가 — 호환 불가능한 변경이므로 기존 사용자는 한 번 재로그인한다</text>
+    <text x="841" y="272" font-size="11.5" fill="#374151" text-anchor="middle">"전원 에러"를 "한 번 재로그인"으로 바꾸는 거래다</text>
+
+    <rect x="14" y="302" width="1092" height="38" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="326" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">캐시 키 버저닝과 완전히 같은 문제, 같은 해법 — "저장소에 남은 데이터 형식"과 "지금 배포된 코드가 기대하는 형식"의 어긋남</text>
+  </svg>
+  <figcaption>해법은 두 단계다. <b>①</b> 웬만한 변경(필드 추가·삭제)은 <b>JSON 직렬화 + "모르는 필드 무시"</b> 설정으로 흡수한다. <b>②</b> 흡수되지 않는 변경(타입 변경, 구조 재편)이면 위 그림처럼 <b>키에 버전을 넣어 신구를 분리하고 옛것은 TTL로 버린다.</b></figcaption>
+</figure>
+
+<h3>11-1. 실패 양상은 직렬화 방식에 따라 다르다</h3>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">JDK 기본 직렬화 — 통째로 실패</div>
+    <div class="d">클래스마다 <code>serialVersionUID</code>라는 버전 번호를 가진다. 이 값을 코드에 명시하지 않으면 컴파일러가 <b>필드 구성과 메서드 시그니처 등으로부터 자동 계산</b>하는데, <b>필드를 하나만 추가해도 이 값이 달라진다.</b> 그러면 역직렬화 시 저장된 데이터의 UID와 현재 클래스의 UID가 안 맞아 <code>InvalidClassException</code>이 난다.</div>
+  </div>
+  <div class="tile">
+    <div class="k" style="font-family:inherit">JSON 직렬화 — 훨씬 관대하다, 단 설정이 필요하다</div>
+    <div class="d"><b>필드 추가</b>: 구버전 JSON에는 그 필드가 없으니 기본값(null이나 0)으로 채워진다. <b>필드 삭제</b>: JSON에 남아 있는 그 필드를 어떻게 처리할지가 문제다. Jackson은 <b>기본 설정에서 모르는 필드를 만나면 예외를 던진다.</b> 즉 JSON이 자동으로 안전한 것이 아니라 <b>"모르는 필드를 무시한다"는 설정을 해 둬야</b> 관대해진다.</div>
+  </div>
+</div>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 기본 직렬화에 맡긴 상태</div>
+<pre><code><span class="cm">// Spring Session의 기본 직렬화는 JDK 직렬화</span>
+<span class="kw">public class</span> LoginUser <span class="kw">implements</span> Serializable {
+    <span class="kw">private</span> Long memberId;
+    <span class="kw">private</span> String role;
+<span class="ln-bad">    <span class="kw">private</span> String nickname;<span class="note">이번 배포에 추가한 필드</span></span>
+<span class="ln-bad">    <span class="cm">// serialVersionUID 미선언 → 자동 계산값이 바뀐다</span></span>
+}
+<span class="cm">// 배포 직후: Redis에 남은 구버전 세션을 읽다가</span>
+<span class="cm">// InvalidClassException → 로그인 사용자 전원 에러</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> JSON + 모르는 필드 무시</div>
+<pre><code><span class="kw">@Bean</span>(<span class="st">"springSessionDefaultRedisSerializer"</span>)
+<span class="kw">public</span> RedisSerializer&lt;Object&gt; <span class="fn">sessionSerializer</span>() {
+    ObjectMapper om = <span class="kw">new</span> <span class="fn">ObjectMapper</span>();
+<span class="ln-good">    om.<span class="fn">configure</span>(DeserializationFeature</span>
+<span class="ln-good">        .FAIL_ON_UNKNOWN_PROPERTIES, <span class="kw">false</span>);<span class="note">필드 추가/삭제 흡수</span></span>
+    <span class="kw">return new</span> <span class="fn">GenericJackson2JsonRedisSerializer</span>(om);
+}
+
+<span class="cm"># 호환 불가능한 변경이라면 네임스페이스로 분리</span>
+<span class="ln-good"><span class="kw">spring.session.redis.namespace</span>: app:session:v2</span></code></pre>
+  </div>
+</div>
+
+<div class="callout warn"><span class="t">직렬화 방식을 바꿀 때 함께 확인할 것</span>
+  세션에 <b>프레임워크가 만든 인증 객체</b>(예: Spring Security의 인증 정보)를 담고 있다면, 그 타입들을 JSON으로 읽고 쓸 수 있게 <b>추가 설정이 필요</b>하다. 직렬화 방식 교체는 "설정 한 줄"로 끝나지 않을 수 있으므로 <b>스테이징에서 실제 로그인·재접속 시나리오로 확인</b>하고 배포해야 한다. 그리고 교체 배포 자체도 <b>구버전 세션과의 형식 불일치</b>를 일으키므로, 위의 <b>네임스페이스 버저닝</b>과 함께 나가는 것이 안전하다.
+</div>
+
+<!-- ===================== 12. 인출 카드 + 꼬리질문 ===================== -->
+<h2 id="s12">12. 면접 전날 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<div class="memo">
+  <h4>이 주제에서 반드시 입에 붙여야 할 여섯 개</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">① 장·배·부·오</div><div class="d">sticky가 깨지는 네 장면 — 장애·배포·부하 재분배·오토스케일링</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 빠르다·사라진다·쪼갠다·끊는다</div><div class="d">Redis가 세션에 맞는 이유 — 인메모리·TTL·Hash·중앙 무효화</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ 왕복 2회</div><div class="d">읽기 1 + 쓰기 1. <b>안 고쳐도 쓴다</b>(접근 시각·TTL 갱신)</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">④ 25% → 100%</div><div class="d">폭발 반경. 서버 1대 장애 vs Redis 1대 장애</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">⑤ 복·영·분·축</div><div class="d">페일오버 · 영속화 의식적 선택 · 인스턴스 분리 · eviction 감시</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">⑥ 즉시 무효화 vs 저장소 무의존</div><div class="d">세션과 JWT를 가르는 단 하나의 축</div></div>
+  </div>
+  <div class="rule" style="margin-top:12px">한 문장 연상 — <b>"세션을 밖에 두면 서버는 살고, 대신 저장소가 죽는다"</b></div>
+</div>
+
+<div class="callout info"><span class="t">답변 골격 (30초 버전)</span>
+  ① <b>이득</b>: 세션이 서버 소유물이면 그 서버를 못 죽인다 → 밖으로 빼면 stateless가 되어 수평 확장·무중단 배포가 열린다. ② <b>왜 Redis</b>: 인메모리·TTL·Hash·중앙 무효화가 세션 성격과 맞는다. ③ <b>대가</b>: 인증 요청마다 왕복 2회, 그리고 <b>Redis가 SPOF가 되어 폭발 반경이 전체로 커진다.</b> ④ <b>그래서</b>: replica+자동 페일오버, 영속화 여부의 의식적 선택, 캐시와의 인스턴스 분리, eviction 감시까지 세트로 설계한다. — <b>③④를 말하지 않으면 절반짜리 답</b>이다.
+</div>
+
+<p class="sub">질문만 먼저 읽고 <b>소리 내어 답해 본 뒤</b> 펼쳐서 맞춰 본다. 답을 눈으로 읽는 것보다 인출 훈련이 훨씬 오래 간다.</p>
+<div class="tools">
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=true})">모두 펼치기</button>
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=false})">모두 접기</button>
+</div>
+
+<details class="q"><summary>Redis가 죽으면 서비스는 어떻게 되나요? 대책은? <span class="badge core">핵심</span><span class="hint">힌트: 무슨 일이 벌어지는지 먼저, 그다음 계층별로 셋</span></summary><div class="a">
+  <p><b>먼저 무슨 일이 벌어지는지부터 정확히 말한다.</b> 모든 인증 요청이 세션 조회에서 실패한다 — <b>사실상 전 사용자 로그아웃</b>이다. 그리고 복구된 뒤에는 <b>재로그인 폭주가 2차 부하</b>로 온다.</p>
+  <p><b>① 인프라 계층</b> — replica + Sentinel/Cluster로 자동 페일오버를 걸어 <b>수 초에서 수십 초 내</b>에 복구되게 한다.</p>
+  <p><b>② 애플리케이션 계층</b> — 세션 조회가 실패했을 때의 동작을 <b>미리 정의</b>해 둔다. 여기서 서킷 브레이커가 왜 필요한지가 중요하다. <b>Redis가 응답하지 않을 때 타임아웃을 길게 잡아 두면 인증 요청을 처리하던 톰캣 스레드들이 전부 Redis 응답을 기다리며 묶인다.</b> 스레드 풀이 고갈되면 <b>Redis와 무관한 API까지 요청을 못 받게 된다</b> — 세션 저장소 장애가 애플리케이션 전체 마비로 번지는 연쇄 장애다. <b>빠르게 실패시키는 것이 오히려 피해를 줄인다.</b></p>
+  <p><b>③ 용량 계층</b> — 재로그인 폭주에 로그인 경로가 버티는지 점검한다. <b>평소 트래픽 기준으로 잡은 로그인 API 용량은 전원 동시 재로그인을 감당하지 못한다.</b></p>
+  <div class="rule">"Redis는 안 죽는다"가 아니라 <b>"죽었을 때의 시나리오가 준비돼 있다"</b>가 정답의 골격</div>
+</div></details>
+
+<details class="q"><summary>그럴 바에 세션 대신 JWT를 쓰면 되지 않나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 장점을 인정한 뒤, 대가가 정확히 반대편에 있음을 보여라</span></summary><div class="a">
+  <p><b>먼저 JWT가 왜 다른지부터 짚는다.</b> JWT는 <b>상태를 토큰 자체에 담는다.</b> 사용자 ID·권한·만료 시각을 토큰에 넣고 서명을 붙여 클라이언트에게 준다. 서버는 <b>서명만 검증</b>하면 되므로 저장소를 조회하지 않는다 — <b>네트워크 왕복도, SPOF도 구조적으로 사라진다.</b></p>
+  <p><b>여기까지만 말하면 JWT가 압도적으로 보이지만, 대가가 정확히 반대편에 있다.</b> 서버가 세션을 갖고 있지 않다는 말은 <b>발급한 토큰을 즉시 무효화할 수단이 없다</b>는 말이기도 하다. 서버는 그 토큰이 존재하는지조차 모른다. 그래서 <b>계정 탈취 시 즉시 강제 로그아웃</b>, <b>비밀번호 변경 시 다른 기기 세션 끊기</b>, <b>권한 회수 즉시 반영</b>을 못 들어준다.</p>
+  <p><b>그래서 실무의 JWT는 대개 블랙리스트를 둔다.</b> 무효화된 토큰 목록을 저장해 두고 요청마다 확인하는 것이고, 그 저장소로 흔히 쓰이는 것이 Redis다. <b>그 순간 "저장소 조회가 없다"는 장점이 사라지고 Redis가 다시 SPOF가 된다</b> — 세션 방식으로 돌아온 셈이다.</p>
+  <p>즉 <b>우열이 아니라 "즉시 무효화 능력 vs 저장소 무의존"의 트레이드오프</b>다. <b>즉시 차단이 중요한 서비스</b>(관리자 콘솔·금융·결제)는 세션이 맞고, <b>MSA 내부의 서버 간 신뢰 전달</b>처럼 수명이 짧고 중간 무효화가 필요 없는 용도는 JWT가 맞다.</p>
+  <div class="rule ok">요구사항 기준으로 갈라 답하는 것이 시니어 답변 — 일반론("JWT가 최신이라")으로 답하면 의도를 놓친 것</div>
+</div></details>
+
+<details class="q"><summary>세션용 Redis에 영속화(RDB/AOF)를 켜야 하나요?<span class="hint">힌트: 정답을 고르지 말고 판단 기준을 제시하라</span></summary><div class="a">
+  <p><b>용도로 판단한다</b>고 답하고 <b>양쪽 선택지와 근거를 다 제시</b>한다.</p>
+  <p>세션을 <b>"유실되면 재로그인으로 복구 가능한 데이터"</b>로 본다면 영속화를 끄거나 RDB 스냅샷 정도만 두는 선택이 합리적이다. 반대로 <b>"전원 로그아웃은 사고"</b>로 본다면 AOF를 <code>everysec</code>(1초에 한 번 디스크에 밀어 쓰는 설정)으로 켜서 유실 폭을 초 단위로 줄인다.</p>
+  <p>핵심은 어느 쪽이 정답이냐가 아니라 <b>트레이드오프를 아느냐</b>다. <b>AOF는 유실 폭을 줄여 주는 대신 쓰기 비용과 재시작 시 로드 시간을 지불한다.</b> AOF 파일을 되짚어 메모리를 복원해야 하므로 데이터가 많으면 재시작이 느려지고, <b>그동안은 세션을 못 읽는다</b> — 유실을 막으려다 복구 시간이 길어지는 역설도 가능하다.</p>
+  <div class="rule">"캐시면 끄고, 세션이면 <b>서비스가 전원 로그아웃을 감당할 수 있는지</b>로 결정한다"</div>
+</div></details>
+
+<details class="q"><summary>sticky session으로 버티면 안 되나요?<span class="hint">힌트: 먼저 인정하고, "언제까지 버틸 수 있느냐"로 옮겨라</span></summary><div class="a">
+  <p><b>작은 규모에서는 유효한 선택</b>이라는 것부터 인정하고 시작한다. Redis라는 인프라를 추가하지 않고 <b>로드밸런서 설정만으로</b> 동작하고, 운영해야 할 컴포넌트가 하나 줄어든다. 서버 2대에 배포가 월 1회인 서비스라면 이걸로 충분할 수 있다.</p>
+  <p>문제는 <b>언제까지 버틸 수 있느냐</b>다. <b>장·배·부·오</b> 네 가지가 성장과 함께 하나씩 터진다. 서버 수가 늘면 장애 시 로그아웃되는 사용자 <b>비율</b>은 줄지만 장애 <b>빈도</b>는 늘고, 배포가 잦아질수록 배포 때마다 세션 소실 민원이 반복된다. <b>오토스케일링을 도입하려는 순간에는 아예 막힌다.</b></p>
+  <p>결론은 이렇다. <b>성장 궤도에 있는 서비스라면 이르게 외부화하는 편이 이행 비용이 싸다.</b> 사용자가 적고 세션 구조가 단순할 때 옮기는 것과, 트래픽이 많고 세션에 온갖 것이 들어간 뒤에 옮기는 것은 <b>난이도가 다르다.</b></p>
+  <div class="rule">"언제까지 버틸 수 있는 선택인지"를 <b>알고 쓰는 것과 모르고 쓰는 것</b>의 차이가 이 질문의 포인트</div>
+</div></details>
+
+<details class="q"><summary>세션 객체 구조가 배포로 바뀌면(필드 추가/삭제) 어떻게 되나요?<span class="hint">힌트: 배포는 세션 데이터와의 계약을 바꾸는 사건이다</span></summary><div class="a">
+  <p>배포 시점에 Redis에는 <b>구버전 코드가 직렬화해 넣은 세션들</b>이 이미 살아 있다. 신버전 코드가 그것을 역직렬화하려다 실패하면 <b>배포 직후 기존 로그인 사용자들이 일제히 에러</b>를 만난다.</p>
+  <p><b>JDK 기본 직렬화</b>는 클래스마다 <code>serialVersionUID</code>를 가지는데, 명시하지 않으면 컴파일러가 자동 계산하고 <b>필드를 하나만 추가해도 값이 달라진다.</b> 그러면 역직렬화 시 <code>InvalidClassException</code>이 난다 — <b>데이터에는 문제가 없는데 통째로 실패</b>하는 것이다.</p>
+  <p><b>JSON 직렬화</b>는 훨씬 관대하다. 필드 추가는 기본값으로 채워지고, 필드 삭제는 남아 있는 필드 처리가 문제인데 <b>Jackson은 기본 설정에서 모르는 필드를 만나면 예외를 던진다.</b> 즉 <b>JSON이 자동으로 안전한 것이 아니라 "모르는 필드를 무시한다"는 설정을 해 둬야</b> 관대해진다.</p>
+  <p><b>대응은 두 단계다.</b> ① JDK 직렬화 대신 <b>JSON 직렬화 + 모르는 필드 무시</b> 설정으로 필드 추가·삭제를 흡수한다. ② 호환 불가능한 변경(타입 변경·구조 재편)이면 <b>세션 키 네임스페이스에 버전을 넣어 신구를 공존</b>시킨다 — 신버전은 <code>v2</code> 키를 쓰고 구버전 키는 <b>TTL로 자연 소멸</b>시키면 롤링 배포 중에도 충돌이 없다.</p>
+  <p>덧붙이면 좋은 한 마디 — <b>이것은 캐시 키 버저닝과 완전히 같은 문제이자 같은 해법</b>이다. 캐시든 세션이든 <b>"저장소에 남아 있는 데이터 형식"과 "지금 배포된 코드가 기대하는 형식"이 어긋나는 문제</b>이고, 해법도 똑같이 "키를 바꿔 신구를 분리하고 옛것은 TTL로 버린다"이다.</p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>세션 TTL은 누가 갱신하나요? "30분 무활동 로그아웃"은 어떻게 동작하죠?<span class="hint">힌트: 요청당 왕복 2회 중 두 번째가 하는 일</span></summary><div class="a">
+  <p><b>요청이 끝나는 길목에서 필터가 갱신한다.</b> <a href="#s4">4절 도식</a>의 ③번 쓰기가 바로 그 일이다 — 마지막 접근 시각을 기록하고 세션 키의 <b>만료 시각을 뒤로 민다.</b> 그래서 사용자가 계속 활동하면 세션이 유지되고, 요청이 끊기면 남은 TTL이 흘러 만료된다. <b>"세션을 안 고쳐도 쓰기가 일어나는" 이유가 여기</b>이므로 이 질문은 6절의 비용 이야기와 그대로 이어진다.</p>
+  <p>한 칸 더 들어가면 <b>Redis의 만료는 "만료 시각에 즉시 지워지는 것"이 아니다.</b> Redis는 <b>그 키에 접근할 때 만료를 확인해 지우고(lazy)</b>, 여기에 더해 <b>백그라운드에서 만료된 키를 조금씩 샘플링해 지운다.</b> 사용자 체감에는 문제가 없다 — 조회 시점에 이미 만료된 세션은 없는 것으로 취급되기 때문이다. 다만 <b>메모리는 만료 즉시 회수되지 않을 수 있다</b>는 점은 용량 계산에서 알아둘 만하다.</p>
+  <p>덧붙여, 세션 만료를 <b>애플리케이션 이벤트로 받아 후처리</b>하려는 경우(만료 시 로그 적재 등)에는 Redis의 <b>키스페이스 알림 설정</b>이 함께 필요하다. "TTL만 걸면 알아서 다 된다"보다 한 겹 깊은 답이 된다.</p>
+</div></details>
+
+<details class="q"><summary>로그아웃은 쿠키만 지우면 되는 것 아닌가요?<span class="hint">힌트: 쿠키를 지운 뒤 Redis에는 무엇이 남아 있나</span></summary><div class="a">
+  <p><b>안 된다.</b> 쿠키를 지우는 것은 <b>브라우저에게 "그 종이를 버려라"라고 말하는 것일 뿐</b>이고, Redis에는 <b>그 세션이 TTL이 끝날 때까지 그대로 살아 있다.</b> 누군가 그 세션 ID를 알고 있다면(로그 유출, 공용 PC, 네트워크 탈취) <b>로그아웃한 뒤에도 그 ID로 계속 인증된 요청을 보낼 수 있다.</b></p>
+  <p>그래서 로그아웃은 반드시 <b>서버 쪽 세션을 무효화</b>해야 한다(<code>session.invalidate()</code> — Spring Session에서는 이것이 Redis 키 삭제로 이어진다). 쿠키 삭제는 <b>그다음에 하는 정리 작업</b>이다.</p>
+  <p>이 질문이 좋은 이유는 <b><a href="#s5">5절의 ④ 중앙 무효화</a>가 왜 장점인지</b>를 그대로 보여주기 때문이다. 세션이 한곳에 모여 있으므로 <b>키 하나를 지우는 것으로 모든 서버에서 즉시</b> 끝난다. 같은 이유로 <a href="#s10">JWT는 이 요구를 구조적으로 못 들어준다</a>.</p>
+</div></details>
+
+<details class="q"><summary>한 사용자의 <b>모든 기기</b> 세션을 한 번에 끊으려면 어떻게 하나요?<span class="hint">힌트: 세션 키만 있으면 "이 사용자의 세션들"을 못 찾는다</span></summary><div class="a">
+  <p><b>문제부터 정확히 세운다.</b> 세션은 <code>세션ID → 데이터</code>로 저장돼 있으므로, <b>"memberId 42의 세션을 전부 찾아라"라는 조회는 그대로는 불가능</b>하다. 방향이 반대이기 때문이다. 전체 키를 훑는 것은 운영 중인 Redis에서 할 짓이 아니다.</p>
+  <p>그래서 <b>역방향 인덱스</b>가 필요하다 — <code>memberId → 세션ID 집합</code>을 따로 관리해 두고, 강제 로그아웃 시 그 집합을 읽어 세션 키들을 지운다. Spring Session에는 이를 위한 <b>사용자 이름(principal) 인덱스</b>가 있어 <b>한 사용자의 세션 목록을 찾아 무효화</b>할 수 있다(인덱스를 지원하는 저장소 구현을 쓸 때).</p>
+  <p><b>대가도 함께 말하면 좋다.</b> 인덱스는 <b>세션이 만들어지고 사라질 때마다 함께 갱신</b>돼야 하므로 쓰기 비용과 정합성 관리 부담이 늘고, 저장 구조가 그만큼 복잡해진다. <b>"비밀번호 변경 시 다른 기기 로그아웃" 같은 기능 요구가 있을 때만 도입하는 것</b>이 맞다 — 요구가 없는데 미리 인덱스를 얹으면 비용만 남는다.</p>
+</div></details>
+
+<details class="q"><summary>요청당 왕복 2회가 부담입니다. 줄일 방법이 있나요?<span class="hint">힌트: 세 가지는 하고, 한 가지는 대가를 알고 해야 한다</span></summary><div class="a">
+  <p><b>① 세션을 볼 필요가 없는 경로를 빼는 것</b>이 가장 먼저다. 정적 리소스·헬스체크·비인증 공개 API가 세션 필터를 타고 있으면 <b>아무 이득 없이 왕복만 발생</b>한다. 경로 정리만으로 총 명령 수가 눈에 띄게 준다.</p>
+  <p><b>② 세션을 작게 유지한다.</b> 왕복 횟수는 그대로여도 <b>직렬화 CPU와 전송량이 줄어든다.</b> <a href="#s9">9절</a>의 규율이 곧 성능 대책이다.</p>
+  <p><b>③ 세션 타임아웃과 갱신 정책을 의식적으로 정한다.</b> 무엇이 언제 쓰이는지 알고 있어야 줄일 수 있다.</p>
+  <p><b>그리고 조심해야 할 하나 — "세션을 서버 로컬에 캐싱해서 왕복을 없애자"</b>는 발상이다. 그 순간 <b>중앙 무효화가 깨진다.</b> 관리자가 세션을 지워도 로컬 캐시를 들고 있는 서버에서는 <b>캐시가 만료될 때까지 로그인 상태가 유지</b>된다. 세션을 밖으로 뺀 가장 큰 이유 중 하나를 성능과 맞바꾸는 것이므로, 한다면 <b>아주 짧은 TTL</b>로 두고 "무효화가 그만큼 늦어진다"를 <b>명시적으로 감수</b>해야 한다. <b>이 대가를 인지하고 있다는 것을 말하는 것</b>이 이 질문의 진짜 채점 포인트다.</p>
+</div></details>
+
+<details class="q"><summary>세션 Redis와 캐시 Redis를 굳이 나눠야 하나요? 인스턴스만 늘어나는데요 <span class="badge bonus">가산점</span><span class="hint">힌트: 폭발 반경 + 두 데이터가 요구하는 설정</span></summary><div class="a">
+  <p><b>이유는 두 가지다.</b></p>
+  <p><b>① 폭발 반경이 다르다.</b> 캐시는 유실돼도 DB에서 다시 채우면 되지만 세션은 <b>유실 = 전원 로그아웃</b>이다. 같은 인스턴스에 두는 순간 <b>둘의 폭발 반경이 같아진다</b> — 캐시 쪽의 big key 하나, 메모리 폭주 한 번이 <b>전 사용자 로그아웃</b>으로 번진다. <b>폭발 반경이 다른 데이터는 인스턴스를 분리하는 것이 정석이다.</b></p>
+  <p><b>② 요구하는 설정이 정반대다.</b> 캐시는 메모리가 차면 <b>밀어내야</b> 하고(<code>allkeys-lru</code> 같은 eviction), 세션은 <b>밀려나면 안 된다.</b> 영속화도 캐시는 꺼도 되지만 세션은 켤지 말지를 따로 판단해야 한다. <b>한 인스턴스에서는 이 설정들을 동시에 만족시킬 수 없다.</b></p>
+  <p>여기서 나오는 원칙이 <b>"성격이 다른 데이터는 설정을 공유할 수 없다"</b>이다. 인스턴스가 늘어나는 운영 비용은 실제 비용이 맞지만, <b>그 비용과 "캐시 사고가 전 사용자 로그아웃이 되는 위험"을 저울에 올려 비교</b>하는 것이 답변의 형태여야 한다.</p>
+</div></details>
+
+<details class="q"><summary>Redis가 느려졌을 때 401로 떨어뜨리면 사용자가 다 로그아웃되는데, 차라리 기다리게 하면 안 되나요?<span class="hint">힌트: 기다리는 동안 무엇이 소모되나</span></summary><div class="a">
+  <p><b>직관과 반대로, 기다리는 쪽이 더 큰 피해를 만든다.</b> 요청이 Redis 응답을 기다리는 동안 <b>그 요청을 처리 중인 톰캣 스레드가 붙잡혀 있다.</b> 인증 요청이 초당 수백 건씩 들어오는데 각각 몇 초씩 묶이면 <b>스레드 풀이 순식간에 고갈</b>된다.</p>
+  <p>그러면 <b>Redis를 전혀 쓰지 않는 API까지 요청을 받지 못한다.</b> 공지 조회도, 헬스체크도 안 된다. 헬스체크가 실패하면 로드밸런서가 그 인스턴스를 빼고, 남은 인스턴스로 트래픽이 몰려 그쪽도 같은 방식으로 무너진다 — <b>연쇄 장애</b>다.</p>
+  <p>반면 빠르게 실패시키면 <b>피해가 "인증이 필요한 요청"으로 국한</b>된다. 사용자는 로그아웃되지만 <b>서비스 전체가 서지는 않는다.</b> 즉 이 선택은 "사용자를 로그아웃시킬 것인가"가 아니라 <b>"피해를 인증 경로에 가둘 것인가, 전체로 번지게 둘 것인가"</b>의 문제다.</p>
+  <div class="rule red">장애 상황에서 대기는 공짜가 아니다 — 대기는 스레드를 삼키고, 삼켜진 스레드는 무관한 API까지 끌고 들어간다</div>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  세션을 Redis로 빼면 서버가 자기만 아는 데이터를 갖지 않게 되어(<b>stateless</b>) 수평 확장과 무중단 배포가 열리고 <b>TTL·Hash·중앙 무효화</b>까지 세션과 궁합이 완벽하지만, 그 대가로 인증이 필요한 모든 요청에 <b>조회 1회 + 저장 1회의 네트워크 왕복</b>이 붙고 <b>"Redis 한 대의 장애 = 전 사용자 동시 로그아웃"</b>이라는 최대 폭발 반경을 지불하므로 — <b>replica + 자동 페일오버, 영속화 여부의 의식적 선택, 캐시와의 인스턴스 분리, eviction으로 세션이 밀려나지 않는지의 감시</b>까지 세트로 설계해야 비로소 <b>"장점을 산 것"</b>이 된다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/05-redis-caching/11-redis-as-session-store.md</code> · 함께 보면 좋은 문서: 영속화 RDB vs AOF(08) · TTL·만료·eviction 정책(04) · 캐시 키 설계와 버저닝(14)</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>캐시-DB 정합성: 갱신 vs 삭제 — "늦게 도착한 옛 값"이 캐시를 오염시키는 타이밍 문제</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --text:#1f2937; --muted:#6b7280;
+    --accent:#2563eb; --accent-soft:#dbeafe; --warn:#dc2626; --warn-soft:#fee2e2;
+    --ok:#16a34a; --ok-soft:#dcfce7; --amber:#d97706; --amber-soft:#fef3c7;
+    --violet:#7c3aed; --violet-soft:#ede9fe;
+    --code-bg:#1e293b; --code-text:#e2e8f0; --line:#e5e7eb;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    font-size:16px;line-height:1.7;word-break:keep-all}
+  main{max-width:960px;margin:0 auto;padding:24px 16px 80px}
+  h1{font-size:1.6rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+  h2{font-size:1.3rem;margin:56px 0 16px;padding-top:8px;color:var(--accent);
+    border-top:3px solid var(--accent-soft)}
+  h3{font-size:1.08rem;margin:28px 0 10px}
+  p{margin:0 0 14px}
+  a{color:var(--accent)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;
+    background:#e8ecf3;padding:1px 5px;border-radius:4px}
+  pre{background:var(--code-bg);color:var(--code-text);padding:16px;border-radius:10px;
+    overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.82rem;line-height:1.6;margin:0 0 16px}
+  pre code{background:none;padding:0;color:inherit;font-size:inherit}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;margin:0 0 16px}
+  .kicker{font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:6px}
+  .hero{background:var(--card);border:2px solid var(--accent);border-radius:16px;
+    padding:24px 24px 20px;margin:20px 0 20px}
+  .hero .sub{color:var(--muted);font-size:.95rem;margin-bottom:14px}
+  .hero .point{font-size:1.02rem;line-height:1.8}
+  .hero .point b{color:var(--accent)}
+  .toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;
+    list-style:none;padding:0;margin:0}
+  .toc li a{display:block;background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:10px 12px;text-decoration:none;color:var(--text);font-size:.92rem}
+  .toc li a:hover{border-color:var(--accent)}
+  .toc .n{color:var(--accent);font-weight:700;margin-right:6px}
+  .callout{border-left:5px solid var(--accent);background:var(--card);padding:14px 18px;
+    border-radius:0 10px 10px 0;margin:0 0 16px}
+  .callout.warn{border-color:var(--warn);background:#fff7f7}
+  .callout.ok{border-color:var(--ok);background:#f6fdf8}
+  .callout.gap{border-color:var(--amber);background:#fffbeb}
+  .callout .t{font-weight:700;margin-bottom:4px}
+  .badge{display:inline-block;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;
+    vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+  .badge.senior{background:var(--warn);color:#fff}
+  .badge.bonus{background:var(--ok);color:#fff}
+  .badge.gap{background:var(--amber);color:#fff}
+  .badge.blue{background:var(--accent);color:#fff}
+  .badge.extra{background:#6b7280;color:#fff}
+  .fig{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;
+    margin:0 0 16px;overflow-x:auto}
+  .fig svg{display:block;min-width:560px;width:100%;height:auto}
+  .fig .cap{font-size:.85rem;color:var(--muted);margin-top:8px;text-align:center}
+  .wide{width:min(1180px,calc(100vw - 40px));margin-left:50%;transform:translateX(-50%)}
+  .fig.wide svg{min-width:900px}
+  .memo{background:var(--card);border:2px solid var(--accent);border-radius:14px;padding:18px 20px;margin:0 0 16px}
+  .memo .kicker{color:var(--accent)}
+  .memo.warn{border-color:var(--warn)} .memo.warn .kicker{color:var(--warn)}
+  .memo.ok{border-color:var(--ok)} .memo.ok .kicker{color:var(--ok)}
+  .memo.gap{border-color:var(--amber)} .memo.gap .kicker{color:var(--amber)}
+  .memo .big{font-size:1.15rem;font-weight:700;line-height:1.55;margin:4px 0 6px}
+  .rule{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px dashed var(--line)}
+  .rule:first-of-type{border-top:none}
+  .rule .num{flex:0 0 34px;height:34px;border-radius:50%;background:var(--accent);color:#fff;
+    font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.95rem}
+  .rule.w .num{background:var(--warn)}
+  .rule.g .num{background:var(--ok)}
+  .rule .body b{display:block}
+  .rule .body span{font-size:.92rem;color:var(--muted)}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:0 0 16px}
+  .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:0 0 16px}
+  .mini{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .mini .h{font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mini .tag{font-size:.7rem;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--accent-soft);color:var(--accent)}
+  .mini .tag.warn{background:var(--warn-soft);color:var(--warn)}
+  .mini .tag.ok{background:var(--ok-soft);color:var(--ok)}
+  .mini .tag.gap{background:var(--amber-soft);color:var(--amber)}
+  .mini p{font-size:.92rem;margin:0}
+  .mini ul{margin:4px 0 0;padding-left:18px;font-size:.9rem}
+  .tbl{overflow-x:auto;margin:0 0 16px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:.9rem}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:#f1f4f9;font-weight:700;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.ok{color:var(--ok);font-weight:700} td.warn{color:var(--warn);font-weight:700} td.mid{color:var(--amber);font-weight:700}
+  .ba{display:grid;grid-template-columns:1fr;gap:12px;margin:0 0 16px}
+  @media(min-width:700px){.ba{grid-template-columns:1fr 1fr}}
+  .ba .col{background:var(--card);border-radius:12px;border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column}
+  .ba .head{padding:8px 14px;font-weight:700;font-size:.9rem;color:#fff}
+  .ba .head.bad{background:var(--warn)} .ba .head.good{background:var(--ok)}
+  .ba pre{border-radius:0;margin:0;flex:1}
+  .ba.single{grid-template-columns:1fr}
+  .hl-bad{background:rgba(220,38,38,.28);display:inline-block;width:100%}
+  .hl-good{background:rgba(22,163,74,.28);display:inline-block;width:100%}
+  .cmt{color:#94a3b8}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:0}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;position:relative;padding-right:40px}
+  details summary::-webkit-details-marker{display:none}
+  details summary::after{content:"+";position:absolute;right:16px;top:10px;font-size:1.4rem;color:var(--accent);font-weight:400}
+  details[open] summary::after{content:"−"}
+  details .ans{padding:0 18px 16px;border-top:1px dashed var(--line);padding-top:12px;font-size:.95rem}
+  details .ans .key{font-weight:700;color:var(--accent)}
+  details .ans ol,details .ans ul{margin:6px 0 8px;padding-left:20px}
+  .banner{margin-top:56px;background:var(--accent);color:#fff;border-radius:16px;padding:24px 26px;font-size:1.05rem;line-height:1.8}
+  .banner .kicker{color:#bfdbfe}
+  .banner b{color:#fff;background:rgba(255,255,255,.18);padding:0 4px;border-radius:4px}
+  .steps{counter-reset:s;list-style:none;padding:0;margin:0 0 16px}
+  .steps li{counter-increment:s;background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:10px 14px 10px 50px;margin-bottom:8px;position:relative;font-size:.95rem}
+  .steps li::before{content:counter(s);position:absolute;left:12px;top:10px;width:26px;height:26px;border-radius:50%;
+    background:var(--accent);color:#fff;font-weight:800;font-size:.85rem;display:flex;align-items:center;justify-content:center}
+  .small{font-size:.88rem;color:var(--muted)}
+  .qa{font-size:.92rem;color:var(--muted)}
+  .chant{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:0 0 16px}
+  .chant .c{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 10px;text-align:center}
+  .chant .c .syl{font-size:2rem;font-weight:900;line-height:1.1;color:var(--accent)}
+  .chant .c .eng{font-size:.76rem;color:var(--muted);margin:2px 0 8px}
+  .chant .c .q{font-size:.86rem;font-weight:700;padding:6px 6px;border-radius:8px;background:#f8fafc;border:1px dashed var(--line)}
+  .chant.w .c .syl{color:var(--warn)}
+  .chant.a .c .syl{color:var(--amber)}
+  .kv{display:flex;gap:10px;align-items:baseline;font-size:.94rem;padding:7px 0;border-top:1px dashed var(--line)}
+  .kv:first-child{border-top:none}
+  .kv .k{flex:0 0 132px;font-weight:700;color:var(--muted);font-size:.86rem;text-align:right}
+
+  /* ---- 이 페이지 전용 ---- */
+  .frame{background:#f8fafc;border:1px dashed var(--accent);border-radius:10px;padding:12px 14px;
+    font-size:.97rem;font-weight:700;margin:0 0 14px;line-height:1.6}
+  .frame span{color:var(--accent)}
+  .flow3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 14px}
+  .flow3 .st{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:10px 10px;text-align:center;font-size:.86rem}
+  .flow3 .st b{display:block;font-size:.98rem;color:var(--accent)}
+  .flow3 .st.g{background:var(--ok-soft);border-color:var(--ok)} .flow3 .st.g b{color:var(--ok)}
+  .flow3 .st.a{background:var(--amber-soft);border-color:var(--amber)} .flow3 .st.a b{color:var(--amber)}
+  .sim{background:var(--card);border:2px solid var(--accent);border-radius:14px;padding:16px 18px;margin:0 0 16px}
+  .simbar{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px;align-items:center}
+  .simbar button{font:inherit;font-size:.88rem;font-weight:700;padding:7px 14px;border-radius:8px;
+    border:1px solid var(--accent);background:var(--card);color:var(--accent);cursor:pointer}
+  .simbar button:hover{background:var(--accent-soft)}
+  .simbar button.on{background:var(--accent);color:#fff}
+  .simgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .simcell{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#f8fafc}
+  .simcell .t{font-weight:800;margin-bottom:8px;font-size:.95rem}
+  .simcell .val{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.02rem;font-weight:800;
+    padding:9px 11px;border-radius:8px;background:#eef2f7;color:var(--muted)}
+  .simcell .note{font-size:.87rem;color:var(--muted);margin-top:8px;min-height:2.6em}
+  .simcell.bad{border-color:var(--warn)} .simcell.bad .t{color:var(--warn)}
+  .simcell.bad .val{background:var(--warn-soft);color:var(--warn)}
+  .simcell.good{border-color:var(--ok)} .simcell.good .t{color:var(--ok)}
+  .simcell.good .val{background:var(--ok-soft);color:var(--ok)}
+  .drillbar{display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap}
+  .drillbar button{font:inherit;font-size:.88rem;font-weight:700;padding:7px 14px;border-radius:8px;border:1px solid var(--accent);
+    background:var(--card);color:var(--accent);cursor:pointer}
+  .drillbar button:hover{background:var(--accent-soft)}
+  .rq{display:block;width:100%;text-align:left;font:inherit;font-size:.93rem;background:var(--card);border:1px solid var(--line);
+    border-radius:10px;padding:10px 14px;margin-bottom:8px;cursor:pointer;position:relative;padding-right:230px}
+  .rq:hover{border-color:var(--accent)}
+  .rq .a{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:none;font-weight:800;color:var(--accent);font-size:.86rem}
+  .rq.open .a{display:inline-block}
+  .rq:not(.open)::after{content:"무엇이 문제?";position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#cbd5e1;font-size:.8rem;font-weight:700}
+  .cond{counter-reset:c;list-style:none;padding:0;margin:0 0 16px}
+  .cond li{counter-increment:c;background:var(--card);border:1px solid var(--line);border-left:5px solid var(--amber);
+    border-radius:0 10px 10px 0;padding:10px 14px 10px 54px;margin-bottom:8px;position:relative;font-size:.95rem}
+  .cond li::before{content:"조건 " counter(c);position:absolute;left:10px;top:11px;font-size:.66rem;font-weight:800;
+    color:#fff;background:var(--amber);border-radius:6px;padding:2px 5px;line-height:1.3;width:38px;text-align:center}
+</style>
+</head>
+<body>
+<main>
+
+<div class="kicker">05 · Redis / 캐싱 — 중급 ⭐⭐ · 캐시-DB 정합성</div>
+<h1>캐시-DB 정합성: 갱신 vs 삭제 — "늦게 도착한 옛 값"이 캐시를 오염시키는 타이밍 문제</h1>
+<p class="small">원본: <code>interview-questions/knowledge/05-redis-caching/07-cache-db-consistency-update-vs-delete.md</code></p>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="kicker">30초 카드 — 프레임 한 줄 → 선택 → 3겹 조합</div>
+  <div class="sub">질문: "캐시와 DB의 정합성을 어떻게 맞추나요? ‘캐시 갱신 vs 캐시 삭제’ 중 무엇을 선호하고 왜인가요?"</div>
+
+  <div class="frame">
+    첫 문장은 결론이 아니라 <span>프레임</span>으로 연다 —<br>
+    "캐시와 DB는 <span>한 트랜잭션으로 못 묶는 두 저장소</span>라서, 정합성은 <span>보장하는 게 아니라 확률적으로 좁히는 것</span>입니다.
+    그래서 저는 <span>갱신보다 삭제</span>를 선호합니다."
+  </div>
+
+  <div class="flow3">
+    <div class="st"><b>① 커밋 "후" 삭제</b>갱신(SET) 아님 · AFTER_COMMIT</div>
+    <div class="st g"><b>② 삭제 실패 대비</b>재시도 → 큐 → CDC</div>
+    <div class="st a"><b>③ TTL 상한</b>최후 안전망</div>
+  </div>
+
+  <div class="kicker">핵심 관전 포인트 — 그대로 말하기</div>
+  <div class="point">
+    캐시와 DB는 서로 다른 두 저장소라 하나의 트랜잭션으로 함께 바꿀 수 없다 — <b>정합성은 보장하는 게 아니라 확률적으로 좁히는 것</b>이다.
+    나는 <b>갱신(update)보다 삭제(delete/evict)를 선호</b>한다: 갱신은 동시 쓰기 시 <b>캐시 도착 순서가 DB 커밋 순서와 역전</b>되면
+    옛 값이 캐시의 최종값으로 남아 <b>TTL 내내 서빙</b>되지만, 삭제는 최악의 경우가 <b>"미스 한 번 더"로 수렴</b>하고 경합 시나리오도 훨씬 좁기 때문이다.
+    정석 조합은 <b>DB 커밋 후 캐시 삭제 + 삭제 실패 대비(재시도/CDC) + TTL을 최후 안전망으로 겹치는 것</b>이다.
+  </div>
+</section>
+
+<div class="callout gap">
+  <div class="t">출제 의도 — "삭제요"라는 답이 아니라 <b>삭제가 안전한 이유를 논증하는 과정</b>을 본다</div>
+  <div class="qa">
+    <b>순서 역전</b>(늦게 도착한 옛 값이 캐시를 덮는 현상)까지 언급하는지로 <b>분산 환경의 타이밍 문제를 사고할 수 있는지</b>를 잰다.
+    즉 이 문항의 점수는 결론이 아니라 <b>시간축을 그리는 능력</b>에서 나온다. 이 페이지의 무게중심도
+    <a href="#s3">§3 갱신의 함정</a>과 <a href="#s5">§5 삭제에 남는 창</a> 두 타임라인에 있다.
+  </div>
+</div>
+
+<ul class="toc">
+  <li><a href="#s1"><span class="n">1</span>왜 "문제"인가 — 두 저장소, 한 트랜잭션 불가</a></li>
+  <li><a href="#s2"><span class="n">2</span>순서 역전이란 무엇인가</a></li>
+  <li><a href="#s3"><span class="n">3</span>갱신의 함정 — 옛 값이 최종값이 된다 ★</a></li>
+  <li><a href="#s4"><span class="n">4</span>삭제가 안전한 이유 — 멱등성</a></li>
+  <li><a href="#s5"><span class="n">5</span>삭제에도 남는 창 — 읽기와의 경합 ★</a></li>
+  <li><a href="#s6"><span class="n">6</span>정석① 커밋 "후" 삭제(AFTER_COMMIT)</a></li>
+  <li><a href="#s7"><span class="n">7</span>정석② 삭제 실패 대비 — 재시도·큐·CDC</a></li>
+  <li><a href="#s8"><span class="n">8</span>정석③ TTL — 불일치에 시간 상한</a></li>
+  <li><a href="#s9"><span class="n">9</span>예외 — 갱신이 나은 경우와 버전 방어</a></li>
+  <li><a href="#s10"><span class="n">10</span>꼬리질문 셀프 테스트</a></li>
+</ul>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 왜 정합성이 "문제"인가 — 두 저장소를 한 트랜잭션으로 못 묶는다</h2>
+
+<p>본론에 들어가기 전에 <b>캐시가 붙은 코드가 실제로 어떤 순서로 도는지</b>를 그려 둬야 한다. 가장 흔한 방식이 <b>캐시 어사이드(cache-aside)</b> — 캐시를 애플리케이션이 직접 챙기기 때문에 "옆에 둔다(aside)"고 부른다.</p>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#2563eb">
+    <div class="h">읽기 경로 <span class="tag">캐시를 채우는 쪽</span></div>
+    <ul>
+      <li>① 캐시 <code>GET</code> → <b>히트</b>면 그대로 응답(DB를 안 건드림)</li>
+      <li><b>미스</b>면 ② DB <code>SELECT</code> → ③ 결과를 캐시에 <code>SET</code> → 응답</li>
+      <li><b style="color:#dc2626">눈여겨볼 것 — 읽기 경로에도 "캐시 쓰기(③)"가 있다.</b> 그래서 뒤의 사고 시나리오는 "쓰기 둘"뿐 아니라 <b>"읽기 하나 + 쓰기 하나"</b>에서도 터진다(<a href="#s5">§5</a>).</li>
+    </ul>
+  </div>
+  <div class="mini" style="border-color:#16a34a">
+    <div class="h">쓰기 경로 <span class="tag ok">이 문서의 주제</span></div>
+    <ul>
+      <li>① DB <code>UPDATE</code> (커밋)</li>
+      <li>② 캐시를 <b>조작</b>한다</li>
+      <li>이 "조작"이 <b style="color:#2563eb">SET(갱신)</b>이냐 <b style="color:#16a34a">DEL(삭제)</b>이냐 — <b>이 한 글자 차이가 문서 전체의 주제</b>다.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 320" role="img" aria-label="애플리케이션이 DB와 Redis라는 두 저장소에 각각 별개의 호출을 하며 이 둘을 묶는 트랜잭션은 존재하지 않는다">
+  <defs>
+    <marker id="c1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+  </defs>
+
+  <rect x="455" y="22" width="210" height="50" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="560" y="52" text-anchor="middle" font-size="14" font-weight="800" fill="#1f2937">애플리케이션</text>
+
+  <line x1="500" y1="72" x2="340" y2="158" stroke="#2563eb" stroke-width="2.2" marker-end="url(#c1)"/>
+  <text x="330" y="112" text-anchor="end" font-size="12" font-weight="800" fill="#2563eb">① UPDATE + COMMIT</text>
+  <text x="330" y="129" text-anchor="end" font-size="10.5" fill="#6b7280">PostgreSQL 안의 변경만 확정</text>
+
+  <line x1="620" y1="72" x2="782" y2="158" stroke="#2563eb" stroke-width="2.2" marker-end="url(#c1)"/>
+  <text x="792" y="112" font-size="12" font-weight="800" fill="#2563eb">② DEL 또는 SET</text>
+  <text x="792" y="129" font-size="10.5" fill="#6b7280">Redis 안에서만 일어남</text>
+
+  <rect x="150" y="162" width="230" height="62" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.8"/>
+  <text x="265" y="188" text-anchor="middle" font-size="14" font-weight="800">DB (PostgreSQL)</text>
+  <text x="265" y="209" text-anchor="middle" font-size="11" fill="#6b7280">원본 · 트랜잭션 경계는 여기까지</text>
+
+  <rect x="740" y="162" width="230" height="62" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.8"/>
+  <text x="855" y="188" text-anchor="middle" font-size="14" font-weight="800">캐시 (Redis)</text>
+  <text x="855" y="209" text-anchor="middle" font-size="11" fill="#6b7280">사본 · 자기만의 경계를 가짐</text>
+
+  <rect x="120" y="144" width="880" height="98" rx="14" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="9 6"/>
+  <circle cx="560" cy="193" r="26" fill="#fee2e2" stroke="#dc2626" stroke-width="2.4"/>
+  <path d="M549 182 L571 204 M571 182 L549 204" stroke="#dc2626" stroke-width="3.4" stroke-linecap="round"/>
+  <text x="560" y="253" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">이 점선을 하나의 트랜잭션으로 묶는 방법은 없다</text>
+  <text x="560" y="273" text-anchor="middle" font-size="11.5" fill="#6b7280">둘을 한꺼번에 성공시키거나 한꺼번에 되돌릴 수 없다 → 반드시 틈이 생긴다</text>
+
+  <text x="560" y="304" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1f2937">그래서 남는 세 가지 틈 —
+    <tspan fill="#d97706">시간 창</tspan> · <tspan fill="#d97706">부분 실패</tspan> · <tspan fill="#dc2626">순서 역전</tspan></text>
+</svg>
+<div class="cap">"정합성이 왜 어렵냐"의 답은 기술 부족이 아니라 <b>구조</b>다 — 저장소가 둘이고 경계가 둘이기 때문이다.</div>
+</div>
+
+<div class="chant a">
+  <div class="c"><div class="syl">창</div><div class="eng">두 호출 사이의 시간 창</div><div class="q">DB는 바뀌었는데 캐시는 아직 옛 값</div></div>
+  <div class="c"><div class="syl">실</div><div class="eng">부분 실패</div><div class="q">DB만 반영되고 캐시 호출은 실패</div></div>
+  <div class="c"><div class="syl">역</div><div class="eng">순서 역전</div><div class="q">커밋 순서 ≠ 캐시 도착 순서</div></div>
+</div>
+
+<div class="memo">
+  <div class="kicker">답변의 프레임 — 첫 문장으로 깔고 시작한다</div>
+  <div class="big">이 질문의 정답 프레임은 "이렇게 하면 완벽히 맞습니다"가 아니라<br>
+  <span style="color:#2563eb">"불일치 창을 어디까지 좁히고, 남는 틈은 무엇으로 막느냐"</span>다.</div>
+  <p style="margin:0;font-size:.94rem">이 프레임을 먼저 세우는 것 자체가 관전 포인트에 대한 답이다. 반대로 <b>"이렇게 하면 항상 일치합니다"라고 단언하는 순간</b>, 두 저장소 문제를 이해하지 못한 답변이 된다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 순서 역전이란 무엇인가 — 이 문서의 핵심 논거를 먼저 못 박자</h2>
+
+<div class="memo warn">
+  <div class="kicker">용어 고정 — 이 한 문장이 답변의 심장</div>
+  <div class="big">순서 역전이란, 두 개의 동시 쓰기 W1·W2가 있을 때<br>
+  <span style="color:#dc2626">DB에 반영된 순서</span>와 <span style="color:#dc2626">캐시에 도착한 순서</span>가 서로 어긋나는 현상이다.</div>
+  <p style="margin:0;font-size:.94rem">DB에서는 W1 → W2 순으로 커밋됐는데, 캐시에는 W2 → W1 순으로 도착하는 식이다.</p>
+</div>
+
+<p>왜 이런 일이 생기는가. <b>DB 커밋과 캐시 호출은 서로 다른 네트워크 경로를 타는 별개의 왕복</b>이기 때문이다. 커밋을 먼저 했다고 캐시 호출이 먼저 도착한다는 보장은 어디에도 없다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 300" role="img" aria-label="커밋과 캐시 호출은 별개의 왕복이라 순서가 어긋날 수 있다">
+  <defs>
+    <marker id="r1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+    <marker id="r2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+  </defs>
+
+  <text x="24" y="30" font-size="13" font-weight="800" fill="#1f2937">"내가 나중에 커밋했으니 캐시에도 나중에 도착하겠지" — 성립하지 않는 가정</text>
+
+  <rect x="24" y="48" width="150" height="46" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="99" y="70" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">서버 A (W1)</text>
+  <text x="99" y="87" text-anchor="middle" font-size="10.5" fill="#6b7280">price = 1000</text>
+
+  <rect x="24" y="176" width="150" height="46" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="99" y="198" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">서버 B (W2)</text>
+  <text x="99" y="215" text-anchor="middle" font-size="10.5" fill="#6b7280">price = 2000</text>
+
+  <rect x="470" y="112" width="150" height="46" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.8"/>
+  <text x="545" y="141" text-anchor="middle" font-size="12.5" font-weight="800">DB</text>
+
+  <rect x="900" y="112" width="150" height="46" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.8"/>
+  <text x="975" y="141" text-anchor="middle" font-size="12.5" font-weight="800">캐시</text>
+
+  <path d="M174 68 C 300 68 360 116 466 130" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#r1)"/>
+  <text x="310" y="86" text-anchor="middle" font-size="11" font-weight="700" fill="#2563eb">커밋 ① 먼저</text>
+  <path d="M174 202 C 300 202 360 154 466 142" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#r1)" stroke-opacity=".85"/>
+  <text x="310" y="196" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">커밋 ② 나중</text>
+
+  <path d="M174 82 C 420 250 640 258 896 152" fill="none" stroke="#dc2626" stroke-width="2.4" stroke-dasharray="8 5" marker-end="url(#r2)"/>
+  <text x="545" y="262" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">캐시 호출 ② 나중에 도착 — 이 경로가 밀렸다</text>
+
+  <path d="M174 188 C 430 96 660 92 896 128" fill="none" stroke="#16a34a" stroke-width="2.2" marker-end="url(#r1)"/>
+  <text x="545" y="86" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">캐시 호출 ① 먼저 도착</text>
+
+  <rect x="640" y="196" width="410" height="82" rx="10" fill="#fff7f7" stroke="#dc2626" stroke-width="1.4"/>
+  <text x="656" y="218" font-size="11.5" font-weight="800" fill="#dc2626">캐시 호출이 밀리는 흔한 이유</text>
+  <text x="656" y="238" font-size="11" fill="#1f2937">· 커밋 직후 그 서버의 JVM이 GC로 잠깐 멈춤</text>
+  <text x="656" y="256" font-size="11" fill="#1f2937">· 그 서버에서 Redis로 가는 패킷이 재전송됨</text>
+  <text x="656" y="274" font-size="11" fill="#1f2937">· 스레드가 CPU를 못 받고 실행 대기열에 밀림</text>
+</svg>
+<div class="cap">애플리케이션 서버가 여러 대인 순간, <b>커밋 순서와 캐시 도착 순서를 일치시킬 지점 자체가 사라진다.</b> 두 저장소를 묶는 잠금이 없기 때문이다.</div>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 갱신의 함정 — 순서 역전이 옛 값을 "최종값"으로 만든다 ★</h2>
+
+<p>캐시를 조작하는 방법은 논리적으로 두 가지뿐이다. <b>새 값을 캐시에도 써넣거나(갱신), 캐시에서 지워서 다음 읽기가 다시 채우게 하거나(삭제).</b> 직관적으로는 "삭제하면 미스가 나니까 갱신이 낫지 않나?" 싶다. 그런데 <b>동시 쓰기에서 방향이 뒤집힌다.</b></p>
+
+<p>같은 상품의 가격을 두 요청이 거의 동시에 수정한다. W1은 1000원, W2는 2000원. <b>W1이 DB에 먼저 커밋됐으므로 정답은 W2의 2000원</b>이다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 460" role="img" aria-label="갱신 전략의 순서 역전 타임라인 — 늦게 도착한 W1의 SET이 캐시를 옛 값으로 오염시킨다">
+  <defs><marker id="ax1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#94a3b8"/></marker>
+  <marker id="ax2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker></defs>
+
+  <text x="110" y="26" font-size="13.5" font-weight="800" fill="#dc2626">전략 = 갱신(SET) — 두 쓰기가 모두 "성공"했는데 결과는 틀렸다</text>
+
+  <g stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 4">
+    <line x1="200" y1="40" x2="200" y2="396"/><line x1="380" y1="40" x2="380" y2="396"/>
+    <line x1="560" y1="40" x2="560" y2="396"/><line x1="740" y1="40" x2="740" y2="396"/>
+    <line x1="920" y1="40" x2="920" y2="396"/>
+  </g>
+
+  <line x1="110" y1="118" x2="1075" y2="118" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="100" y="114" text-anchor="end" font-size="13" font-weight="800" fill="#2563eb">W1</text>
+  <text x="100" y="131" text-anchor="end" font-size="10.5" fill="#6b7280">먼저 커밋</text>
+
+  <line x1="110" y1="248" x2="1075" y2="248" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="100" y="244" text-anchor="end" font-size="13" font-weight="800" fill="#16a34a">W2</text>
+  <text x="100" y="261" text-anchor="end" font-size="10.5" fill="#6b7280">나중 커밋 (정답)</text>
+
+  <rect x="112" y="95" width="176" height="46" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="200" y="117" text-anchor="middle" font-size="12" font-weight="800" fill="#2563eb">UPDATE 1000 · 커밋</text>
+  <text x="200" y="134" text-anchor="middle" font-size="10.5" fill="#6b7280">t0 — DB에 먼저 반영</text>
+
+  <path d="M290 130 C 420 178 700 178 828 130" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="8 5" marker-end="url(#ax2)"/>
+  <text x="560" y="176" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">t3 — GC 정지 / 네트워크 재전송으로 W1의 캐시 호출이 밀린다</text>
+
+  <rect x="832" y="95" width="176" height="46" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="2.2"/>
+  <text x="920" y="117" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">캐시 SET 1000</text>
+  <text x="920" y="134" text-anchor="middle" font-size="10.5" font-weight="700" fill="#dc2626">t4 — ★ 옛 값이 최종 승자</text>
+
+  <rect x="292" y="225" width="176" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="380" y="247" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">UPDATE 2000 · 커밋</text>
+  <text x="380" y="264" text-anchor="middle" font-size="10.5" fill="#6b7280">t1 — DB의 진실은 이제 2000</text>
+
+  <rect x="472" y="225" width="176" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="560" y="247" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">캐시 SET 2000</text>
+  <text x="560" y="264" text-anchor="middle" font-size="10.5" fill="#6b7280">t2 — 여기까진 정상</text>
+
+  <text x="100" y="318" text-anchor="end" font-size="11.5" font-weight="700" fill="#6b7280">DB 상태</text>
+  <rect x="110" y="300" width="270" height="26" rx="4" fill="#f1f4f9" stroke="#e5e7eb"/>
+  <text x="245" y="318" text-anchor="middle" font-size="11.5" fill="#6b7280">1000</text>
+  <rect x="380" y="300" width="695" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="727" y="318" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">2000 (진실 — 끝까지 안 바뀐다)</text>
+
+  <text x="100" y="356" text-anchor="end" font-size="11.5" font-weight="700" fill="#6b7280">캐시 상태</text>
+  <rect x="110" y="338" width="450" height="26" rx="4" fill="#f1f4f9" stroke="#e5e7eb"/>
+  <text x="335" y="356" text-anchor="middle" font-size="11.5" fill="#6b7280">(비어 있음)</text>
+  <rect x="560" y="338" width="360" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="740" y="356" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">2000</text>
+  <rect x="920" y="338" width="155" height="26" rx="4" fill="#fee2e2" stroke="#dc2626"/>
+  <text x="997" y="356" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">1000 ← 오염</text>
+
+  <line x1="110" y1="396" x2="1078" y2="396" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ax1)"/>
+  <text x="200" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t0</text>
+  <text x="380" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t1</text>
+  <text x="560" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t2</text>
+  <text x="740" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t3</text>
+  <text x="920" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t4</text>
+  <text x="1070" y="416" text-anchor="end" font-size="11" fill="#94a3b8">시간 →</text>
+
+  <text x="14" y="442" font-size="12.5" font-weight="800" fill="#dc2626">결과: DB = 2000, 캐시 = 1000 — 그리고 이 1000은 "미스"가 아니라 <tspan text-decoration="underline">정상적인 히트</tspan>로 응답된다.</text>
+</svg>
+<div class="cap">t4 이후의 상태가 문제의 전부다. 캐시 입장에서 이 1000은 <b>아무 이상 없는 멀쩡한 값</b>이고, 다음 쓰기나 TTL 만료까지 계속 서빙된다.</div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">이 사고가 유난히 고약한 이유</div>
+  <div class="big">옛 값이 <u>미스가 아니라 히트</u>로 나간다 — 아무도 눈치채지 못한다.</div>
+  <p style="margin:0;font-size:.94rem">에러 로그도, 예외도, 실패한 호출도 없다. 두 쓰기 모두 성공했고 캐시도 정상이다. 그런데 사용자에게는 옛 가격이 보인다.
+  <b>핵심은 DB의 커밋 순서(W1→W2)와 캐시 도착 순서(W2→W1)를 일치시킬 방법이 애플리케이션 레벨에 없다는 것</b>이다 — 두 저장소를 묶는 잠금이 없으니 순서를 강제할 지점 자체가 없다.</p>
+</div>
+
+<h3>3-1. 갱신의 부수적 단점 둘 — 순서 역전만큼은 아니지만 같이 말하면 좋다</h3>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">① 안 읽힐 값을 미리 만드는 낭비 <span class="tag warn">비용</span></div>
+    <p>쓰기가 잦고 읽기가 드문 키라면, 갱신할 때마다 만드는 그 값이 <b>한 번도 안 읽히고 다음 갱신에 덮인다.</b>
+    삭제는 다음 읽기가 실제로 있을 때만 적재 비용을 낸다 — 필요할 때 계산한다는 뜻에서 <b>지연 적재(lazy)</b>다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">② 쓰기 경로가 무거워진다 <span class="tag warn">결합</span></div>
+    <p>캐시 값이 여러 테이블을 조인·가공해 만든 결과라면, 갱신 방식은 <b>쓰기 경로마다 그 가공 로직을 다시 태워야 한다.</b>
+    가격 변경 코드, 재고 변경 코드, 일괄 수정 배치가 <b>전부 "상품 상세 캐시 만드는 법"을 알아야 하고</b> 그 로직이 여러 군데로 복제된다.</p>
+  </div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 삭제가 더 안전한 이유 — 최악이 "미스 한 번"으로 수렴한다</h2>
+
+<p>같은 순서 역전 시나리오를 <b>삭제로 다시 돌려보자.</b> 바뀐 것은 W1·W2가 캐시에 하는 명령 하나뿐이다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 460" role="img" aria-label="삭제 전략의 같은 순서 역전 타임라인 — 늦게 도착한 DEL은 또 지울 뿐이라 결과가 멀쩡하다">
+  <defs><marker id="bx1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#94a3b8"/></marker>
+  <marker id="bx2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+  <marker id="bx3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker></defs>
+
+  <text x="110" y="26" font-size="13.5" font-weight="800" fill="#16a34a">전략 = 삭제(DEL) — 똑같은 역전이 일어났는데 결과가 멀쩡하다</text>
+
+  <g stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 4">
+    <line x1="200" y1="40" x2="200" y2="396"/><line x1="380" y1="40" x2="380" y2="396"/>
+    <line x1="560" y1="40" x2="560" y2="396"/><line x1="740" y1="40" x2="740" y2="396"/>
+    <line x1="920" y1="40" x2="920" y2="396"/>
+  </g>
+
+  <line x1="110" y1="118" x2="1075" y2="118" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="100" y="114" text-anchor="end" font-size="13" font-weight="800" fill="#2563eb">W1</text>
+  <text x="100" y="131" text-anchor="end" font-size="10.5" fill="#6b7280">먼저 커밋</text>
+
+  <line x1="110" y1="248" x2="1075" y2="248" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="100" y="244" text-anchor="end" font-size="13" font-weight="800" fill="#16a34a">W2</text>
+  <text x="100" y="261" text-anchor="end" font-size="10.5" fill="#6b7280">나중 커밋 (정답)</text>
+
+  <rect x="112" y="95" width="176" height="46" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="200" y="117" text-anchor="middle" font-size="12" font-weight="800" fill="#2563eb">UPDATE 1000 · 커밋</text>
+  <text x="200" y="134" text-anchor="middle" font-size="10.5" fill="#6b7280">t0</text>
+
+  <path d="M290 130 C 420 178 700 178 828 130" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="8 5" marker-end="url(#bx3)"/>
+  <text x="560" y="176" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">t3 — 여기서도 똑같이 W1의 캐시 호출이 밀린다</text>
+
+  <rect x="832" y="95" width="176" height="46" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2.2"/>
+  <text x="920" y="117" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">캐시 DEL</text>
+  <text x="920" y="134" text-anchor="middle" font-size="10.5" font-weight="700" fill="#16a34a">t4 — "또 지울" 뿐, 무해</text>
+
+  <rect x="292" y="225" width="176" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="380" y="247" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">UPDATE 2000 · 커밋</text>
+  <text x="380" y="264" text-anchor="middle" font-size="10.5" fill="#6b7280">t1</text>
+
+  <rect x="472" y="225" width="176" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="560" y="247" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">캐시 DEL</text>
+  <text x="560" y="264" text-anchor="middle" font-size="10.5" fill="#6b7280">t2</text>
+
+  <text x="100" y="318" text-anchor="end" font-size="11.5" font-weight="700" fill="#6b7280">DB 상태</text>
+  <rect x="110" y="300" width="270" height="26" rx="4" fill="#f1f4f9" stroke="#e5e7eb"/>
+  <text x="245" y="318" text-anchor="middle" font-size="11.5" fill="#6b7280">1000</text>
+  <rect x="380" y="300" width="695" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="727" y="318" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">2000 (진실)</text>
+
+  <text x="100" y="356" text-anchor="end" font-size="11.5" font-weight="700" fill="#6b7280">캐시 상태</text>
+  <rect x="110" y="338" width="810" height="26" rx="4" fill="#f1f4f9" stroke="#e5e7eb"/>
+  <text x="515" y="356" text-anchor="middle" font-size="11.5" fill="#6b7280">(비어 있음) — 몇 번을 지우든, 어떤 순서로 지우든 상태는 동일하다</text>
+  <rect x="920" y="338" width="155" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="997" y="356" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">(비어 있음)</text>
+
+  <line x1="110" y1="396" x2="1078" y2="396" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#bx1)"/>
+  <text x="200" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t0</text>
+  <text x="380" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t1</text>
+  <text x="560" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t2</text>
+  <text x="740" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t3</text>
+  <text x="920" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t4</text>
+  <text x="1070" y="416" text-anchor="end" font-size="11" fill="#94a3b8">시간 →</text>
+
+  <text x="14" y="442" font-size="12.5" font-weight="800" fill="#16a34a">이후 첫 읽기: 미스 → DB SELECT → <tspan fill="#16a34a">2000을 적재</tspan> — DB의 진실이 그대로 캐시에 올라온다.</text>
+</svg>
+<div class="cap">§3 그림과 <b>t3의 지연은 완전히 동일</b>하다. 다른 것은 t2·t4의 명령이 SET이 아니라 DEL이라는 것뿐인데, 결과는 오염 vs 무해로 갈린다.</div>
+</div>
+
+<div class="memo ok">
+  <div class="kicker">외울 한 줄 — 이 문서에서 가장 중요한 암기 카드</div>
+  <div class="big"><span style="color:#dc2626">SET은 마지막에 도착한 쪽이 이긴다</span> — 순서가 결과를 결정한다.<br>
+  <span style="color:#16a34a">DEL은 몇 번을 어떤 순서로 하든 결과가 "비어 있음"</span> — <u>뒤집힐 결과 자체가 없다</u>.</div>
+  <p style="margin:0;font-size:.94rem">이 성질을 <b>멱등(idempotent)</b>이라고 부른다 — <b>같은 작업을 몇 번 실행해도 결과가 한 번 실행한 것과 같은 성질</b>이다.
+  순서를 보장할 수 없는 환경에서 <b>순서에 의존하지 않는 연산을 고르는 것</b>, 이것이 삭제 선호의 기술적 뿌리다.</p>
+</div>
+
+<!-- ===== 인터랙티브 시뮬레이터 ===== -->
+<div class="sim">
+  <div class="kicker">직접 돌려보기 — 캐시 도착 순서를 바꿔가며 최종 상태를 확인한다</div>
+  <p class="small" style="margin:0 0 2px">DB 커밋 순서는 항상 <b>W1(1000) → W2(2000)</b>, 따라서 <b>정답은 언제나 2000</b>이다. 바꾸는 것은 <b>캐시 호출의 도착 순서</b>뿐이다.</p>
+  <div class="simbar">
+    <button type="button" id="simNormal" class="on">정상 순서 — 캐시에도 W1 → W2 도착</button>
+    <button type="button" id="simInvert">순서 역전 — 캐시에 W2 → W1 도착</button>
+  </div>
+  <div class="simgrid">
+    <div class="simcell" id="cellSet">
+      <div class="t">갱신 전략 (SET) — 최종 캐시</div>
+      <div class="val" id="valSet">2000</div>
+      <div class="note" id="noteSet">마지막에 도착한 W2의 SET 2000이 남는다. DB와 일치.</div>
+    </div>
+    <div class="simcell" id="cellDel">
+      <div class="t">삭제 전략 (DEL) — 최종 캐시</div>
+      <div class="val" id="valDel">(비어 있음)</div>
+      <div class="note" id="noteDel">다음 읽기가 미스를 내고 DB에서 2000을 적재한다. DB와 일치.</div>
+    </div>
+  </div>
+  <p class="small" style="margin:12px 0 0" id="simVerdict">두 전략 모두 정상 — <b>순서가 지켜지는 한 갱신도 아무 문제가 없다.</b> 그래서 이 문제는 테스트로 잘 안 잡힌다.</p>
+</div>
+
+<h3>4-1. 그래서 무엇과 무엇을 맞바꾸는가</h3>
+
+<div class="tbl">
+<table>
+  <thead><tr><th>전략</th><th>최악의 결과</th><th>대가</th><th>발생 조건의 폭</th><th>멱등</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b style="color:#dc2626">갱신 (SET)</b></td>
+      <td class="warn">옛 값이 <b>히트로 서빙</b>됨 (TTL까지 지속)</td>
+      <td>없음 (미스가 안 생김)</td>
+      <td class="warn">넓다 — 같은 키에 동시 쓰기 둘이면 성립</td>
+      <td class="warn">✕</td>
+    </tr>
+    <tr>
+      <td><b style="color:#16a34a">삭제 (DEL)</b></td>
+      <td class="mid">다음 읽기가 <b>미스</b> (DB를 한 번 더)</td>
+      <td>미스 1회의 지연</td>
+      <td class="ok">좁다 — 세 조건이 겹쳐야 성립(<a href="#s5">§5</a>)</td>
+      <td class="ok">○</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo">
+  <div class="kicker">논증의 뼈대 — 이 한 문장으로 닫는다</div>
+  <div class="big">"<span style="color:#dc2626">오답을 정답인 척 서빙하는 위험</span>"과 "<span style="color:#16a34a">미스 한 번의 비용</span>"을 맞바꾸는 것.</div>
+  <p style="margin:0;font-size:.94rem">면접에서 "삭제요"만 말하면 <b>취향</b>이고, 이 교환을 말하면 <b>판단</b>이 된다.</p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 삭제도 완벽하지 않다 — 읽기와의 경합 ★ <span class="badge senior">시니어 변별</span></h2>
+
+<div class="callout warn">
+  <div class="t">"삭제는 안전합니다"에서 멈추면 절반이다</div>
+  <div class="qa">시니어 변별은 정확히 여기서 갈린다. <b>삭제 전략에도 옛 값이 캐시에 남는 창이 있다.</b>
+  다만 그 창은 <b>쓰기 둘 사이가 아니라 읽기 하나와 쓰기 하나 사이</b>에 열린다.
+  <a href="#s1">§1</a>에서 짚었듯 <b>읽기도 캐시에 값을 쓰기 때문</b>이다.</div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 470" role="img" aria-label="읽기와 쓰기가 인터리빙되어 삭제 전략에서도 옛 값이 적재되는 타임라인">
+  <defs><marker id="cx1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#94a3b8"/></marker></defs>
+
+  <rect x="390" y="58" width="620" height="252" rx="10" fill="#fee2e2" fill-opacity="0.45" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="7 5"/>
+  <text x="700" y="46" text-anchor="middle" font-size="13" font-weight="800" fill="#dc2626">★ R의 취약 구간 — DB에서 값을 받은 직후 ~ 캐시에 넣기 직전</text>
+
+  <g stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 4">
+    <line x1="200" y1="58" x2="200" y2="400"/><line x1="380" y1="58" x2="380" y2="400"/>
+    <line x1="560" y1="58" x2="560" y2="400"/><line x1="740" y1="58" x2="740" y2="400"/>
+    <line x1="920" y1="58" x2="920" y2="400"/>
+  </g>
+
+  <line x1="110" y1="120" x2="1075" y2="120" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="100" y="116" text-anchor="end" font-size="13" font-weight="800" fill="#2563eb">읽기 R</text>
+  <text x="100" y="133" text-anchor="end" font-size="10.5" fill="#6b7280">price 조회</text>
+
+  <line x1="110" y1="250" x2="1075" y2="250" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="100" y="246" text-anchor="end" font-size="13" font-weight="800" fill="#16a34a">쓰기 W</text>
+  <text x="100" y="263" text-anchor="end" font-size="10.5" fill="#6b7280">price를 2000으로</text>
+
+  <rect x="112" y="97" width="176" height="46" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="200" y="119" text-anchor="middle" font-size="12" font-weight="800" fill="#2563eb">캐시 GET → 미스</text>
+  <text x="200" y="136" text-anchor="middle" font-size="10.5" fill="#6b7280">t0 — 조건①: 하필 캐시가 비었다</text>
+
+  <rect x="292" y="97" width="196" height="46" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="390" y="119" text-anchor="middle" font-size="12" font-weight="800" fill="#2563eb">DB SELECT → 1000</text>
+  <text x="390" y="136" text-anchor="middle" font-size="10.5" font-weight="700" fill="#dc2626">t1 — 손에 쥐었지만 아직 안 넣음</text>
+
+  <rect x="832" y="97" width="176" height="46" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="2.2"/>
+  <text x="920" y="119" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">캐시 SET 1000</text>
+  <text x="920" y="136" text-anchor="middle" font-size="10.5" font-weight="700" fill="#dc2626">t4 — ★ 지나간 무효화를 되돌림</text>
+
+  <rect x="472" y="227" width="176" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="560" y="249" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">UPDATE 2000 · 커밋</text>
+  <text x="560" y="266" text-anchor="middle" font-size="10.5" fill="#6b7280">t2 — DB의 진실은 이제 2000</text>
+
+  <rect x="652" y="227" width="176" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="740" y="249" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">캐시 DEL</text>
+  <text x="740" y="266" text-anchor="middle" font-size="10.5" fill="#6b7280">t3 — 지울 게 없다(성공했으나 무의미)</text>
+
+  <text x="700" y="296" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">W는 "커밋 후 삭제" 정석을 완벽히 수행했다 — 실패한 호출이 하나도 없다</text>
+
+  <text x="100" y="322" text-anchor="end" font-size="11.5" font-weight="700" fill="#6b7280">DB 상태</text>
+  <rect x="110" y="304" width="450" height="26" rx="4" fill="#f1f4f9" stroke="#e5e7eb"/>
+  <text x="335" y="322" text-anchor="middle" font-size="11.5" fill="#6b7280">1000</text>
+  <rect x="560" y="304" width="515" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="817" y="322" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">2000 (진실)</text>
+
+  <text x="100" y="360" text-anchor="end" font-size="11.5" font-weight="700" fill="#6b7280">캐시 상태</text>
+  <rect x="110" y="342" width="810" height="26" rx="4" fill="#f1f4f9" stroke="#e5e7eb"/>
+  <text x="515" y="360" text-anchor="middle" font-size="11.5" fill="#6b7280">(비어 있음)</text>
+  <rect x="920" y="342" width="155" height="26" rx="4" fill="#fee2e2" stroke="#dc2626"/>
+  <text x="997" y="360" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">1000 ← 오염</text>
+
+  <line x1="110" y1="400" x2="1078" y2="400" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#cx1)"/>
+  <text x="200" y="420" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t0</text>
+  <text x="380" y="420" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t1</text>
+  <text x="560" y="420" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t2</text>
+  <text x="740" y="420" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t3</text>
+  <text x="920" y="420" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">t4</text>
+  <text x="1070" y="420" text-anchor="end" font-size="11" fill="#94a3b8">시간 →</text>
+
+  <text x="14" y="448" font-size="12.5" font-weight="800" fill="#1f2937">R은 잘못한 게 없다 — t1에 DB가 준 값은 <tspan fill="#dc2626">진짜로 1000</tspan>이었다.</text>
+  <text x="14" y="466" font-size="12" fill="#6b7280">문제는 그 값을 캐시에 넣기까지의 사이에 세상이 바뀌었고, <tspan font-weight="700" fill="#1f2937">세상이 바뀌었다는 신호(캐시 DEL)가 R보다 먼저 지나가 버렸다</tspan>는 것이다.</text>
+</svg>
+<div class="cap">두 경로를 <b>한 시간축에 겹쳐 그려야만</b> 보이는 문제다. 이 그림을 그릴 수 있다는 것 자체가 분산 환경 타이밍 사고력의 증명이다.</div>
+</div>
+
+<h3>5-1. 그럼 왜 이 창이 갱신 쪽보다 "훨씬 좁다"고 말할 수 있나 — 조건을 세어 본다</h3>
+
+<p>여기가 논증의 핵심이다. <b>위험이 0이냐 아니냐</b>의 비교가 아니라 <b>창의 넓이</b> 비교라는 점을 먼저 밝히고 들어간다. 위 사고가 성립하려면 세 가지가 <b>동시에</b> 맞아떨어져야 한다.</p>
+
+<ol class="cond">
+  <li>하필 그 순간 <b>캐시가 비어 있어야</b> 한다(미스). 캐시가 채워져 있으면 R은 t1로 내려가지 않고 <b>히트로 끝난다.</b></li>
+  <li><b style="color:#dc2626">결정적 조건 —</b> 쓰기 W의 <b>"DB 커밋 → 캐시 삭제" 전체가</b>, 읽기 R의 <b>"DB에서 값을 받은 직후 ~ 캐시에 넣기 직전"이라는 짧은 구간 안에 통째로</b> 들어와야 한다.</li>
+  <li>그 짧은 구간에 R이 <b>계속 머물러 있어야</b> 한다.</li>
+</ol>
+
+<div class="fig">
+<svg viewBox="0 0 900 250" role="img" aria-label="읽기의 취약 구간과 그 안에 들어가야 하는 쓰기 전체의 길이 비교">
+  <text x="20" y="28" font-size="13" font-weight="800" fill="#1f2937">조건 ②를 길이로 보면 — <tspan fill="#dc2626">짧은 구간 안에 그보다 훨씬 긴 작업이 통째로</tspan> 들어가야 한다</text>
+
+  <text x="256" y="72" text-anchor="end" font-size="11.5" font-weight="800" fill="#2563eb">R의 취약 구간</text>
+  <rect x="266" y="54" width="170" height="34" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="351" y="76" text-anchor="middle" font-size="11" font-weight="700" fill="#2563eb">객체 매핑 · 직렬화 · Redis 왕복 1회</text>
+
+  <line x1="266" y1="48" x2="266" y2="196" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <line x1="436" y1="48" x2="436" y2="196" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="351" y="106" text-anchor="middle" font-size="10.5" font-weight="800" fill="#dc2626">↕ 이 폭 안에</text>
+
+  <text x="256" y="152" text-anchor="end" font-size="11.5" font-weight="800" fill="#16a34a">그 안에 들어가야 하는 W 전체</text>
+  <rect x="266" y="134" width="530" height="34" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="531" y="156" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">트랜잭션 커밋을 포함한 DB 쓰기 전체 + 캐시 삭제 왕복</text>
+  <path d="M436 178 L790 178" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="4 4"/>
+  <text x="796" y="182" font-size="11" font-weight="800" fill="#dc2626">← 삐져나온다</text>
+
+  <text x="20" y="216" font-size="11.5" font-weight="800" fill="#1f2937">그래서 확률이 낮다. <tspan fill="#dc2626">낮지만 0은 아니다</tspan> — 남는 틈은 TTL이 상한을 씌운다(§8).</text>
+  <text x="20" y="238" font-size="10.5" fill="#6b7280">※ 막대 길이는 두 작업의 성격을 비교하기 위한 개념적 표현이며, 실제 측정값이 아니다.</text>
+</svg>
+<div class="cap">조건 ②가 결정적인 이유를 길이로 보면 한눈에 들어온다.</div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">갱신 쪽과 나란히 놓으면 차이가 선명하다</div>
+  <div class="big">갱신의 순서 역전은 <span style="color:#dc2626">같은 키에 동시 쓰기 둘만 있으면 성립</span>한다.</div>
+  <p style="margin:0;font-size:.94rem">캐시가 비어 있을 필요도 없고, 특정 구간에 딱 맞춰 끼어들 필요도 없다. <b>그냥 두 캐시 호출의 도착 순서가 뒤집히기만 하면 된다.</b>
+  게다가 <b style="color:#dc2626">쓰기가 몰리는 인기 데이터일수록 잘 터진다</b> — 방어하고 싶은 대상에서 오히려 확률이 올라가는 구조다.
+  <br><br>결론 문장: <b>"삭제가 완벽하다"가 아니라 "창의 넓이와 발생 조건이 다르다"</b>까지 말해야 논증이 완성된다.</p>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 실무 정석 조합 — 세 겹으로 겹친다 / 정석① 커밋 "후" 삭제</h2>
+
+<p>전략을 골랐으면 그것을 실제로 안전하게 굴리는 조합이 필요하다. <b>세 겹</b>이다. 각각이 <b>다른 종류의 실패</b>를 막는다는 점이 중요하다 — 셋은 대체재가 아니라 <b>보완재</b>다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 300" role="img" aria-label="정합성 방어 3겹 — 커밋 후 삭제, 삭제 실패 대비, TTL 상한">
+  <rect x="60" y="30" width="1000" height="70" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="88" y="60" font-size="14" font-weight="800" fill="#2563eb">1겹 · 순서 — DB 커밋 "후" 캐시 삭제 (AFTER_COMMIT)</text>
+  <text x="88" y="82" font-size="11.5" fill="#1f2937">막는 것: 내가 만든 옛 값이 스스로 재적재되는 자기 유발 사고 · 롤백됐는데 캐시만 지우는 헛수고</text>
+  <text x="1032" y="70" text-anchor="end" font-size="11.5" font-weight="800" fill="#2563eb">§6</text>
+
+  <rect x="60" y="112" width="1000" height="70" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="88" y="142" font-size="14" font-weight="800" fill="#16a34a">2겹 · 실패 대비 — 재시도 → 큐 → CDC</text>
+  <text x="88" y="164" font-size="11.5" fill="#1f2937">막는 것: 캐시 삭제 호출 자체의 실패(Redis 순단·타임아웃·인스턴스 종료) · 삭제 코드를 아예 안 부른 경로</text>
+  <text x="1032" y="152" text-anchor="end" font-size="11.5" font-weight="800" fill="#16a34a">§7</text>
+
+  <rect x="60" y="194" width="1000" height="70" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="88" y="224" font-size="14" font-weight="800" fill="#d97706">3겹 · 안전망 — 모든 키에 TTL</text>
+  <text x="88" y="246" font-size="11.5" fill="#1f2937">막는 것: 위 두 겹을 전부 뚫고 들어온 오염 — 없애지는 못하고 <tspan font-weight="700">지속 시간에 상한</tspan>을 씌운다</text>
+  <text x="1032" y="234" text-anchor="end" font-size="11.5" font-weight="800" fill="#d97706">§8</text>
+
+  <text x="560" y="288" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">세 겹을 다 쌓아도 확률은 0이 되지 않는다 — 그래서 "보장"이 아니라 "좁힌다"고 말하는 것이다</text>
+</svg>
+<div class="cap">암기 순서: <b>후 → 실 → 상</b> (커밋 "후" 삭제 → "실"패 대비 → TTL "상"한)</div>
+</div>
+
+<h3>6-1. 캐시를 먼저 지우고 DB를 쓰면 왜 안 되는가 — MVCC와 롤백</h3>
+
+<p>삭제한 직후~커밋 전 사이에 읽기가 들어오면, 그 읽기는 미스를 내고 DB를 조회하는데 <b>아직 커밋 전이므로 DB가 주는 값은 옛 값이다.</b> 그 옛 값이 캐시에 다시 채워지고, 뒤이어 커밋이 끝난다. <b>지운 보람이 없다.</b></p>
+
+<div class="callout">
+  <div class="t">여기서 PostgreSQL의 MVCC를 짚고 가면 이해가 분명해진다</div>
+  <div class="qa">PostgreSQL은 <b>다중 버전 동시성 제어(MVCC)</b>를 쓴다 — <b>한 행의 여러 버전을 함께 두고, 각 트랜잭션에게 자기가 볼 수 있는 버전만 보여주는</b> 방식이다.
+  그래서 트랜잭션 T가 값을 2000으로 바꿔놓고 <b>아직 커밋하지 않았다면, 다른 세션이 그 행을 읽을 때 보이는 것은 여전히 옛 버전인 1000</b>이다.
+  <b>커밋 전에 캐시를 지운다는 것은 "아직 아무에게도 안 보이는 변경"을 근거로 캐시를 비우는 셈</b>이라, 그 순간의 읽기는 <b>정확히 지우려던 옛 값을 다시 퍼 담는다.</b></div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 360" role="img" aria-label="커밋 전 삭제와 커밋 후 삭제의 비교">
+  <defs><marker id="dx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+  <marker id="dr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker></defs>
+
+  <text x="20" y="30" font-size="13.5" font-weight="800" fill="#dc2626">✕ 캐시 먼저 삭제 → 그다음 DB 커밋</text>
+  <rect x="110" y="44" width="380" height="82" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.8" stroke-dasharray="7 5"/>
+  <text x="300" y="62" text-anchor="middle" font-size="10.5" fill="#d97706" font-weight="700">트랜잭션 T — 아직 커밋 전. 다른 세션에는 여전히 옛 값(1000)이 보인다 (MVCC)</text>
+  <rect x="126" y="72" width="120" height="40" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="186" y="97" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">① 캐시 DEL</text>
+  <rect x="370" y="72" width="106" height="40" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="1.8"/>
+  <text x="423" y="97" text-anchor="middle" font-size="11.5" font-weight="800" fill="#d97706">③ COMMIT</text>
+
+  <rect x="252" y="140" width="200" height="40" rx="6" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="352" y="165" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">② 읽기 R: 미스 → 1000 적재</text>
+  <line x1="352" y1="140" x2="352" y2="118" stroke="#dc2626" stroke-width="1.8" marker-end="url(#dr)"/>
+
+  <rect x="520" y="52" width="580" height="106" rx="10" fill="#fff7f7" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="540" y="78" font-size="12.5" font-weight="800" fill="#dc2626">결과 ① 커밋이 끝나도 캐시에는 1000이 앉아 있다 — 지운 보람이 없다</text>
+  <text x="540" y="102" font-size="12" fill="#1f2937">결과 ② 트랜잭션이 <tspan font-weight="700">롤백</tspan>되면? DB는 아무것도 안 바뀌었는데 캐시만 지워진 꼴이다.</text>
+  <text x="540" y="122" font-size="12" fill="#6b7280">데이터가 틀리지는 않지만 <tspan font-weight="700" fill="#dc2626">아무 이유 없이 미스를 한 번 만든 것</tspan>이다.</text>
+  <text x="540" y="144" font-size="11.5" font-weight="700" fill="#dc2626">→ 캐시를 비운 근거가 "아직 아무에게도 안 보이는 변경"이었다는 게 문제의 뿌리</text>
+
+  <line x1="20" y1="188" x2="1100" y2="188" stroke="#e5e7eb" stroke-width="1.5"/>
+
+  <text x="20" y="216" font-size="13.5" font-weight="800" fill="#16a34a">✓ DB 커밋 → 그 이후 캐시 삭제 (AFTER_COMMIT)</text>
+  <rect x="110" y="230" width="380" height="82" rx="10" fill="#f6fdf8" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="300" y="248" text-anchor="middle" font-size="10.5" fill="#16a34a" font-weight="700">트랜잭션 T</text>
+  <rect x="126" y="258" width="120" height="40" rx="6" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="186" y="283" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">① UPDATE</text>
+  <rect x="370" y="258" width="106" height="40" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="423" y="283" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">② COMMIT</text>
+  <line x1="492" y1="278" x2="524" y2="278" stroke="#16a34a" stroke-width="2" marker-end="url(#dx)"/>
+  <rect x="528" y="258" width="150" height="40" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="603" y="283" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">③ 캐시 DEL</text>
+
+  <rect x="700" y="238" width="400" height="86" rx="10" fill="#f6fdf8" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="718" y="264" font-size="12" font-weight="800" fill="#16a34a">이 시점 이후 DB를 읽는 누구든 새 값(2000)을 본다</text>
+  <text x="718" y="286" font-size="11.5" fill="#1f2937">롤백된 트랜잭션의 이벤트는 리스너로 <tspan font-weight="700">전달조차 되지 않는다</tspan> —</text>
+  <text x="718" y="306" font-size="11.5" fill="#6b7280">"지울 필요 없는데 지우는" 경우까지 함께 막힌다.</text>
+</svg>
+<div class="cap">순서를 바꾸는 것만으로 두 가지 문제(옛 값 재적재 · 롤백 시 헛된 무효화)가 동시에 닫힌다.</div>
+</div>
+
+<h3>6-2. 스프링에서 정확히 이 지점이 함정이다 — <code>@Transactional</code> 안의 삭제</h3>
+
+<p><code>@Transactional</code> 메서드 <b>안에서</b> 캐시를 지우면, 그 삭제는 메서드가 끝나면서 일어나는 <b>커밋보다 먼저</b> 실행된다. 코드를 위에서 아래로 읽으면 "갱신하고 지웠다"로 보이지만, <b>실제 커밋 시점은 메서드를 빠져나간 뒤</b>라서 순서가 어긋난다.</p>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">✕ Before — 커밋 전에 삭제</div>
+<pre><code>@Transactional
+public void updatePrice(Long id, long newPrice) {
+    productRepository.updatePrice(id, newPrice);
+
+<span class="hl-bad">    <span class="cmt">// 이 줄이 실행되는 시점에 트랜잭션은 아직 커밋 전이다.</span></span>
+<span class="hl-bad">    redisTemplate.delete("product:" + id);</span>
+}
+<span class="cmt">// 문제 ①  지금 다른 세션이 이 행을 읽으면 MVCC 때문에</span>
+<span class="cmt">//         옛 값(1000)이 보이고, 그 값이 캐시에 도로 채워진다</span>
+<span class="cmt">// 문제 ②  롤백되면 DB는 그대로인데 캐시만 헛되이 지운 셈</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">✓ After — 커밋 이후로 삭제를 미룬다</div>
+<pre><code>@Transactional
+public void updatePrice(Long id, long newPrice) {
+    productRepository.updatePrice(id, newPrice);
+<span class="hl-good">    <span class="cmt">// 여기서는 "가격이 바뀌었다"는 사실만 알린다.</span></span>
+<span class="hl-good">    eventPublisher.publishEvent(new PriceChangedEvent(id));</span>
+}
+
+<span class="hl-good">@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)</span>
+public void onPriceChanged(PriceChangedEvent event) {
+    <span class="cmt">// 이 메서드가 도는 시점에는 커밋이 확정돼 있다.</span>
+    <span class="cmt">// 즉 지금 이후로 DB를 읽는 누구든 새 값(2000)을 본다.</span>
+    <span class="cmt">// 롤백된 트랜잭션의 이벤트는 아예 전달되지 않는다.</span>
+    redisTemplate.delete("product:" + event.productId());
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout ok">
+  <div class="t">애너테이션이 낯설다면 — 결국 같은 일이다</div>
+  <div class="qa"><code>@TransactionalEventListener</code>가 낯설다면
+  <code>TransactionSynchronizationManager.registerSynchronization(...)</code>으로 <code>afterCommit()</code> 콜백을 직접 등록해도 같은 일을 한다.
+  <b>스프링 이벤트가 하는 일이 결국 그 등록</b>이다. 면접에서는 <b>"커밋 이후로 실행을 미루는 지점을 어디에 두느냐"</b>가 핵심이라고 말하면 된다.</div>
+</div>
+
+<h3>6-3. 커밋 후로 미뤄도 §5의 창은 남는다 — 지연 이중 삭제</h3>
+
+<div class="memo">
+  <div class="kicker">헷갈리기 쉬운 구분</div>
+  <div class="big">커밋 후 삭제는 <span style="color:#2563eb">"내가 만든 옛 값이 재적재되는" 자기 유발 사고</span>를 없애는 것이지,<br>
+  <span style="color:#dc2626">다른 읽기와의 인터리빙(§5)</span>까지 막지는 못한다.</div>
+</div>
+
+<p>그 남은 창까지 줄이려는 기법이 <b>지연 이중 삭제(delayed double delete)</b>다. 이름 그대로 삭제를 두 번 한다 — <b>커밋 후 한 번 지우고, 짧은 지연(예: 수백 밀리초) 뒤에 한 번 더 지운다.</b> 첫 삭제 직전에 이미 옛 값을 손에 쥐고 있던 읽기가 뒤늦게 캐시를 채우더라도, <b>두 번째 삭제가 그것을 걷어내는</b> 구조다.</p>
+
+<div class="fig">
+<svg viewBox="0 0 900 220" role="img" aria-label="지연 이중 삭제 — 두 번째 삭제가 뒤늦게 적재된 옛 값을 걷어낸다">
+  <defs><marker id="ex" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#94a3b8"/></marker></defs>
+  <line x1="70" y1="176" x2="860" y2="176" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ex)"/>
+
+  <rect x="80" y="46" width="130" height="40" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="145" y="71" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">커밋</text>
+  <line x1="145" y1="86" x2="145" y2="176" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+  <rect x="230" y="46" width="150" height="40" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="305" y="71" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">① 1차 DEL</text>
+  <line x1="305" y1="86" x2="305" y2="176" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+  <rect x="410" y="104" width="200" height="40" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="510" y="129" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">뒤늦은 읽기가 옛 값 적재</text>
+  <line x1="510" y1="144" x2="510" y2="176" stroke="#dc2626" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+  <rect x="650" y="46" width="180" height="40" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2.4"/>
+  <text x="740" y="71" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">② 2차 DEL — 걷어냄</text>
+  <line x1="740" y1="86" x2="740" y2="176" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+  <path d="M305 196 L740 196" stroke="#d97706" stroke-width="1.8"/>
+  <path d="M305 190 L305 202 M740 190 L740 202" stroke="#d97706" stroke-width="1.8"/>
+  <text x="522" y="214" text-anchor="middle" font-size="11.5" font-weight="800" fill="#d97706">지연 시간 — 짧으면 못 막고, 길면 캐시가 두 번 비어 미스가 늘어난다 (정답 없음)</text>
+</svg>
+<div class="cap">두 번째 삭제가 "뒤늦게 되살아난 옛 값"을 걷어내는 것이 이 기법의 전부다.</div>
+</div>
+
+<div class="callout warn">
+  <div class="t">대가가 분명하다 — 기본 조합으로 깔지 않는 이유</div>
+  <div class="qa">
+    ① <b>지연 시간에 정답이 없다</b> — 짧으면 못 막고, 길면 캐시가 두 번 비어 미스가 늘어난다.
+    ② <b>두 번째 삭제를 실행할 지연 작업 인프라</b>가 필요하다.
+    ③ <b>그 사이에 들어온 읽기가 만든 (정상적인) 값도 함께 날아간다.</b>
+    ④ 무엇보다 <b>이것도 확률을 더 좁힐 뿐 0으로 만들지 못한다.</b>
+    <br>그래서 기본으로 깔기보다 <b>"허용 가능한 staleness가 유난히 짧은 소수의 키"에만 선택적으로 적용</b>하는 것이 현실적이다.
+  </div>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 정석② 삭제 실패 대비 — 캐시 호출은 실패할 수 있다</h2>
+
+<p>DB 커밋은 성공했는데 <b>캐시 삭제 호출이 실패</b>하는 경우가 있다. Redis 순단, 네트워크 오류, 커넥션 풀 고갈, 또는 <b>삭제를 실행할 애플리케이션 인스턴스가 그 순간 죽는 경우</b>다. 이러면 옛 값이 TTL이 다할 때까지 그대로 남는다.</p>
+
+<div class="memo warn">
+  <div class="kicker">이 절 전체를 관통하는 태도 — 한 줄로 외운다</div>
+  <div class="big">삭제 호출의 <u>성공을 전제하지 않는다</u>.</div>
+  <p style="margin:0;font-size:.94rem">"지우면 되지 않나요?"와 <b>"지우는 데 실패하면요?"</b> 사이가 이 문항의 실무 감각 구간이다. 실패를 전제로 방어를 겹친다.</p>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1120 330" role="img" aria-label="삭제 실패 대비 — 재시도와 큐로 이어지는 경로, 그리고 CDC로 무효화를 구조에 맡기는 경로">
+  <defs><marker id="p1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+  <marker id="p2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7c3aed"/></marker></defs>
+
+  <text x="20" y="26" font-size="13" font-weight="800" fill="#2563eb">경로 A · 애플리케이션이 직접 지우는 길 — 실패를 두 겹으로 받는다</text>
+
+  <rect x="30" y="40" width="150" height="48" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="105" y="62" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">DB 커밋 성공</text>
+  <text x="105" y="78" text-anchor="middle" font-size="10" fill="#6b7280">여기까진 확정</text>
+  <line x1="180" y1="64" x2="201" y2="64" stroke="#2563eb" stroke-width="2" marker-end="url(#p1)"/>
+
+  <rect x="205" y="40" width="150" height="48" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="280" y="62" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">캐시 DEL 시도</text>
+  <text x="280" y="78" text-anchor="middle" font-size="10" fill="#6b7280">AFTER_COMMIT</text>
+  <line x1="355" y1="64" x2="376" y2="64" stroke="#dc2626" stroke-width="2" marker-end="url(#p1)"/>
+  <text x="365" y="34" text-anchor="middle" font-size="10" font-weight="800" fill="#dc2626">실패</text>
+
+  <rect x="380" y="40" width="150" height="48" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="455" y="62" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">① 즉시 재시도</text>
+  <text x="455" y="78" text-anchor="middle" font-size="10" fill="#6b7280">1~2회 · 타임아웃 짧게</text>
+  <line x1="530" y1="64" x2="551" y2="64" stroke="#dc2626" stroke-width="2" marker-end="url(#p1)"/>
+  <text x="541" y="34" text-anchor="middle" font-size="10" font-weight="800" fill="#dc2626">여전히 실패</text>
+
+  <rect x="555" y="40" width="150" height="48" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="630" y="62" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">② 큐에 적재</text>
+  <text x="630" y="78" text-anchor="middle" font-size="10" fill="#6b7280">"이 키를 지워야 한다"</text>
+  <line x1="705" y1="64" x2="726" y2="64" stroke="#2563eb" stroke-width="2" marker-end="url(#p1)"/>
+
+  <rect x="730" y="40" width="180" height="48" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="820" y="62" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">비동기 재시도</text>
+  <text x="820" y="78" text-anchor="middle" font-size="10" fill="#6b7280">요청 응답과 분리 → 사용자 지연 없음</text>
+  <line x1="910" y1="64" x2="931" y2="64" stroke="#2563eb" stroke-width="2" marker-end="url(#p1)"/>
+
+  <rect x="935" y="40" width="155" height="48" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="1012" y="62" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">언젠가 반드시</text>
+  <text x="1012" y="78" text-anchor="middle" font-size="10" fill="#16a34a">실행되는 작업으로 승격</text>
+
+  <text x="30" y="112" font-size="11.5" fill="#6b7280">삭제의 성격이 바뀌는 지점이 ②다 — <tspan font-weight="800" fill="#1f2937">"지금 해보고 안 되면 마는 작업"에서 "언젠가 반드시 실행되는 작업"으로.</tspan></text>
+
+  <line x1="20" y1="132" x2="1100" y2="132" stroke="#e5e7eb" stroke-width="1.5"/>
+
+  <text x="20" y="158" font-size="13" font-weight="800" fill="#7c3aed">경로 B · CDC — 무효화를 애플리케이션이 아니라 구조에 맡긴다 <tspan fill="#16a34a">(가산점)</tspan></text>
+
+  <rect x="30" y="172" width="190" height="56" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.8"/>
+  <text x="125" y="194" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">모든 변경 경로</text>
+  <text x="125" y="212" text-anchor="middle" font-size="9.5" fill="#6b7280">서비스 코드 · 야간 배치 · 수동 UPDATE · 어드민</text>
+  <line x1="220" y1="200" x2="246" y2="200" stroke="#7c3aed" stroke-width="2" marker-end="url(#p2)"/>
+
+  <rect x="250" y="172" width="140" height="56" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.8"/>
+  <text x="320" y="200" text-anchor="middle" font-size="12" font-weight="800">PostgreSQL</text>
+  <text x="320" y="216" text-anchor="middle" font-size="9.5" fill="#6b7280">어느 경로든 여기를 지난다</text>
+  <line x1="390" y1="200" x2="416" y2="200" stroke="#7c3aed" stroke-width="2" marker-end="url(#p2)"/>
+
+  <rect x="420" y="172" width="150" height="56" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.8"/>
+  <text x="495" y="194" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">WAL (선행 기록 로그)</text>
+  <text x="495" y="212" text-anchor="middle" font-size="9.5" fill="#dc2626" font-weight="700">커밋된 변경이 여기 없을 수는 없다</text>
+  <line x1="570" y1="200" x2="596" y2="200" stroke="#7c3aed" stroke-width="2" marker-end="url(#p2)"/>
+
+  <rect x="600" y="172" width="160" height="56" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.8"/>
+  <text x="680" y="194" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">CDC 커넥터</text>
+  <text x="680" y="212" text-anchor="middle" font-size="9.5" fill="#6b7280">논리적 디코딩 구독 (Debezium)</text>
+  <line x1="760" y1="200" x2="786" y2="200" stroke="#7c3aed" stroke-width="2" marker-end="url(#p2)"/>
+
+  <rect x="790" y="172" width="130" height="56" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.8"/>
+  <text x="855" y="205" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">메시지 브로커</text>
+  <line x1="920" y1="200" x2="946" y2="200" stroke="#7c3aed" stroke-width="2" marker-end="url(#p2)"/>
+
+  <rect x="950" y="172" width="140" height="56" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="1020" y="194" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">무효화 컨슈머</text>
+  <text x="1020" y="212" text-anchor="middle" font-size="10" fill="#16a34a">→ Redis DEL</text>
+
+  <text x="30" y="256" font-size="12" font-weight="800" fill="#1f2937">왜 근본적인가 — 애플리케이션이 삭제에 실패하거나 <tspan fill="#dc2626">삭제 코드를 부르는 것을 아예 잊었더라도</tspan>, DB를 바꿨다는 사실만큼은 WAL에 반드시 남아 있다.</text>
+  <text x="30" y="278" font-size="12" fill="#1f2937">덤으로 — 우리 코드뿐 아니라 <tspan font-weight="700">야간 배치 · 운영자가 직접 실행한 UPDATE · 다른 팀 어드민 툴</tspan>까지 전부 WAL을 지나므로 <tspan font-weight="800" fill="#16a34a">어떤 경로로 바뀌었든 무효화가 따라온다.</tspan></text>
+  <text x="30" y="302" font-size="11.5" font-weight="700" fill="#dc2626">대가: CDC 파이프라인(커넥터·브로커·컨슈머)이 운영 대상으로 새로 늘고, 무효화가 비동기라 커밋과 삭제 사이에 지연이 하나 더 낀다.</text>
+</svg>
+<div class="cap">CDC의 본질은 <b>"캐시 지우는 코드를 사람이 기억해서 넣는 규칙"을 "구조가 보장하는 규칙"으로 바꾸는 것</b>이다.</div>
+</div>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">✕ Before — 삭제 성공을 암묵적으로 전제</div>
+<pre><code>@TransactionalEventListener(phase = AFTER_COMMIT)
+public void onPriceChanged(PriceChangedEvent e) {
+<span class="hl-bad">    <span class="cmt">// Redis가 순단이면? 여기서 예외가 나고 끝이다.</span></span>
+<span class="hl-bad">    redisTemplate.delete("product:" + e.productId());</span>
+}
+<span class="cmt">// 커밋은 이미 끝났으므로 롤백도 안 된다.</span>
+<span class="cmt">// → 옛 값이 TTL이 다할 때까지 히트로 서빙된다.</span>
+<span class="cmt">// 더 나쁜 변형: try/catch로 예외를 삼키고 로그만 남기기</span>
+<span class="cmt">//   — 실패를 "관측"만 하고 "복구"하지 않는 코드다.</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">✓ After — 실패를 복구 가능한 작업으로 승격</div>
+<pre><code>@TransactionalEventListener(phase = AFTER_COMMIT)
+public void onPriceChanged(PriceChangedEvent e) {
+    String key = "product:" + e.productId();
+    try {
+<span class="hl-good">        cacheEvictor.deleteWithShortRetry(key);  <span class="cmt">// ① 1~2회</span></span>
+    } catch (Exception ex) {
+<span class="hl-good">        <span class="cmt">// ② 그래도 실패 → "지워야 한다"는 사실을 남긴다</span></span>
+<span class="hl-good">        evictionQueue.send(new EvictionMessage(key));</span>
+    }
+}
+<span class="cmt">// 재시도는 응답을 붙잡으므로 횟수·타임아웃을 짧게 잡는다.</span>
+<span class="cmt">// ③ 더 근본적으로는 CDC가 WAL을 보고 대신 지우게 한다.</span></code></pre>
+  </div>
+</div>
+
+<div class="chant">
+  <div class="c"><div class="syl">재</div><div class="eng">즉시 재시도 1~2회</div><div class="q">순간적 네트워크 흔들림 흡수</div></div>
+  <div class="c"><div class="syl">큐</div><div class="eng">실패 시 큐 적재</div><div class="q">"언젠가 반드시" 실행으로 승격</div></div>
+  <div class="c"><div class="syl">C</div><div class="eng">CDC (WAL 구독)</div><div class="q">삭제 호출 성공에 의존하지 않기</div></div>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 정석③ TTL — 모든 전략의 최후 안전망</h2>
+
+<p>위의 어떤 조합도 불일치 확률을 0으로 만들지 못한다. <a href="#s5">§5</a>의 읽기 경합 창이 남고, <a href="#s7">§7</a>의 재시도·큐·CDC도 유실될 수 있다. 그래서 <b>모든 캐시 키에 TTL을 준다.</b></p>
+
+<div class="memo gap">
+  <div class="kicker">TTL을 "메모리 회수 수단"으로만 알고 있으면 이 대목이 안 잡힌다</div>
+  <div class="big">안전망으로서 TTL의 의미는 — 앞의 모든 방어가 뚫려 옛 값이 캐시에 남더라도<br>
+  그 불일치가 <span style="color:#d97706">영원히 지속되지 않고 최대 TTL만큼으로 시간 상한</span>이 걸린다는 것이다.</div>
+</div>
+
+<div class="fig">
+<svg viewBox="0 0 900 250" role="img" aria-label="TTL이 있고 없고에 따른 불일치 지속 시간 비교">
+  <text x="20" y="28" font-size="13" font-weight="800" fill="#1f2937">오염이 발생한 순간(★)부터 — 그 오염이 얼마나 오래 사는가</text>
+
+  <line x1="230" y1="44" x2="230" y2="196" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 4"/>
+  <text x="230" y="216" text-anchor="middle" font-size="11" font-weight="800" fill="#dc2626">★ 오염 발생</text>
+
+  <text x="220" y="78" text-anchor="end" font-size="11.5" font-weight="800" fill="#6b7280">TTL 없음</text>
+  <rect x="230" y="60" width="620" height="30" rx="5" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="540" y="80" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">다음 쓰기가 그 키를 건드릴 때까지 — 무한</text>
+  <text x="858" y="80" font-size="14" font-weight="800" fill="#dc2626">→</text>
+  <text x="230" y="108" font-size="10.5" fill="#6b7280">※ <tspan font-weight="700" fill="#dc2626">거의 안 바뀌는 데이터일수록 오염이 더 오래 간다</tspan>는 뜻 — 가장 안전해 보이는 데이터가 가장 오래 틀린다.</text>
+
+  <text x="220" y="152" text-anchor="end" font-size="11.5" font-weight="800" fill="#6b7280">TTL = 5분</text>
+  <rect x="230" y="134" width="180" height="30" rx="5" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="320" y="154" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">최악 5분</text>
+  <rect x="410" y="134" width="440" height="30" rx="5" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="630" y="154" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">만료 → 다음 읽기가 DB의 진실을 다시 적재</text>
+  <line x1="410" y1="128" x2="410" y2="170" stroke="#16a34a" stroke-width="1.6"/>
+
+  <rect x="20" y="196" width="860" height="44" rx="8" fill="#f8fafc" stroke="#2563eb" stroke-width="1.6"/>
+  <text x="34" y="216" font-size="12" font-weight="800" fill="#2563eb">그래서 이렇게 말할 수 있게 된다 — "우리 시스템의 캐시 불일치는 최악의 경우에도 N분을 넘지 않는다."</text>
+  <text x="34" y="234" font-size="11.5" fill="#1f2937">그리고 그 N을 정하는 것은 기술 판단이 아니라 <tspan font-weight="800">비즈니스와의 합의</tspan>다.</text>
+</svg>
+<div class="cap">TTL은 오염을 <b>막는</b> 장치가 아니라 오염의 <b>수명을 끊는</b> 장치다. 그래서 다른 방어와 대체 관계가 아니다.</div>
+</div>
+
+<div class="callout">
+  <div class="t">N을 정하는 기준 — "허용 가능한 staleness"를 데이터별로 정한다</div>
+  <div class="qa">상품 설명은 10분 지나도 되지만 가격은 30초도 곤란할 수 있다. <b>이렇게 데이터마다 "값이 옛것인 정도를 얼마까지 허용할 수 있는가"를 정하는 것이 TTL 설계의 실체</b>다.
+  면접에서 "TTL을 5분으로 둡니다"보다 <b>"이 데이터는 몇 분까지 옛 값이어도 되는지 비즈니스와 합의하고 그 값을 TTL로 씁니다"</b>가 훨씬 강한 답이다.</div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 예외 — 갱신(update)이 나은 경우와 그때의 방어 <span class="badge senior">시니어 변별</span></h2>
+
+<p>결론은 "무조건 삭제"가 아니다. <b>삭제의 비용인 "미스"가 감당 못 할 만큼 비싼 경우</b>에는 갱신을 검토한다. 두 가지가 대표적이다.</p>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#d97706">
+    <div class="h">① 초고빈도로 읽히는 hot key <span class="tag gap">미스 비용이 지배적</span></div>
+    <p>초당 수천 번 읽히는 키를 지우면, 그 직후 들어온 요청이 <b>전부 미스를 내고 동시에 DB로 몰린다.</b> 이것이 <b>캐시 스탬피드(stampede, 가축 떼의 폭주)</b>다.
+    <b style="color:#16a34a">갱신은 캐시가 비는 순간 자체를 만들지 않으므로</b> 이 폭주가 원천적으로 없다.</p>
+  </div>
+  <div class="mini" style="border-color:#d97706">
+    <div class="h">② 순서 역전이 구조적으로 불가능한 경우 <span class="tag gap">함정 자체가 성립 안 함</span></div>
+    <p>그 키에 대한 <b>쓰기 경로가 하나뿐이고 순차적</b>이라면 — 예: 한 서버가 도는 단일 스레드 배치, 또는 <b>키별로 파티션이 나뉘어 같은 키의 쓰기가 항상 같은 컨슈머 스레드로 가는 구조</b> — 캐시 호출 순서도 자연히 커밋 순서를 따른다. <b>갱신의 함정 자체가 성립하지 않는다.</b></p>
+  </div>
+</div>
+
+<h3>9-1. 그때도 방어를 하나 얹는다 — 값에 순서 정보를 싣는다</h3>
+
+<div class="memo">
+  <div class="kicker">발상의 전환 — 이 한 문장이 시니어 답변의 정점</div>
+  <div class="big">순서를 <u>보장</u>할 수 없으니, 대신 <span style="color:#2563eb">값 자체에 순서 정보를 실어</span><br>늦게 온 것을 <u>알아보게</u> 만든다.</div>
+  <p style="margin:0;font-size:.94rem">캐시 값에 <b>버전이나 타임스탬프를 함께 저장</b>해 두고 <b>"캐시에 있는 버전보다 새 값일 때만 SET"</b> 한다.
+  늦게 도착한 옛 값은 버전 비교에서 걸러져 무시된다.
+  <b>비교와 설정이 사이에 끼어들 틈 없이 한 번에 일어나야 하므로 Lua 스크립트로 처리한다</b> — Redis는 스크립트를 하나의 단위로 실행하기 때문이다.</p>
+</div>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">✕ 무방비 갱신 — 늦게 온 옛 값이 이긴다</div>
+<pre><code><span class="cmt">// 캐시에 지금 무엇이 들어 있든 상관없이 덮어쓴다</span>
+<span class="hl-bad">redisTemplate.opsForValue()</span>
+<span class="hl-bad">    .set("product:" + id, newValue, TTL);</span>
+
+<span class="cmt">// W1(1000)의 SET이 W2(2000)의 SET보다 늦게 도착하면</span>
+<span class="cmt">// 캐시에는 1000이 남는다. SET은 "마지막이 이긴다".</span>
+<span class="cmt">// 두 호출 모두 성공했으므로 어디에도 오류 흔적이 없다.</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">✓ 버전 비교 후 조건부 SET (Lua)</div>
+<pre><code><span class="cmt">-- KEYS[1]=캐시 키, ARGV[1]=새 값(JSON, ver 포함)</span>
+<span class="cmt">-- ARGV[2]=새 값의 버전, ARGV[3]=TTL(초)</span>
+local cur = redis.call('GET', KEYS[1])
+if cur then
+  local curVer = tonumber(cjson.decode(cur)['ver'])
+<span class="hl-good">  if curVer and curVer >= tonumber(ARGV[2]) then</span>
+<span class="hl-good">    return 0   <span class="cmt">-- 늦게 도착한 옛 값 → 무시</span></span>
+  end
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[3])
+return 1
+<span class="cmt">-- ver는 DB의 낙관적 락 version 컬럼이나 updated_at 등</span>
+<span class="cmt">-- "DB가 인정한 순서"를 반영하는 값이어야 의미가 있다.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo ok">
+  <div class="kicker">이 절의 결론 — 트레이드오프로 답한다</div>
+  <div class="big">"무조건 삭제"가 아니라 —<br>
+  <span style="color:#16a34a">기본은 삭제</span>, <span style="color:#d97706">미스 비용이 지배적인 키만 갱신을 검토</span>하되 <span style="color:#2563eb">순서 역전 방어를 함께 건다</span>.</div>
+</div>
+
+<h3>9-2. 인기 키를 삭제하는 순간의 스탬피드가 걱정된다면</h3>
+
+<p>삭제 전략의 <b>실질적 부작용이 이것이라는 것부터 인정</b>하고 시작한다. 완화책은 셋이다.</p>
+
+<div class="card">
+  <div class="rule g"><div class="num">1</div><div class="body">
+    <b>재계산을 한 요청만 수행하게 만든다</b>
+    <span>미스가 동시에 100건 나도 <b>DB에는 한 번만 가고 나머지는 그 결과를 기다리게</b> 하는 방식이다. 스프링 캐시의 <code>@Cacheable(sync = true)</code>가 이 역할을 하는데, <b style="color:#dc2626">구현체에 따라 한 인스턴스(JVM) 안에서만 유효한 경우가 있으므로</b> 서버가 여러 대라면 Redis 분산 락으로 인스턴스 사이까지 묶어야 한다.</span>
+  </div></div>
+  <div class="rule g"><div class="num">2</div><div class="body">
+    <b>논리적 만료 (soft TTL)</b>
+    <span>캐시 값 안에 <b>"이 값의 만료 시각"</b>을 함께 저장해 두고, 실제 Redis TTL은 그보다 넉넉하게 잡는다. 읽기가 만료 시각이 지난 값을 만나면 <b>일단 그 옛 값을 응답하고</b>, 백그라운드에서 한 명만 재계산해 채운다. <b>캐시가 물리적으로 비는 순간이 없으므로 폭주가 없고</b>, 대가는 재계산 동안 잠깐 옛 값이 나간다는 것이다.</span>
+  </div></div>
+  <div class="rule g"><div class="num">3</div><div class="body">
+    <b>변경 이벤트를 받아 미리 재계산해서 갱신한다</b>
+    <span>삭제 대신 새 값을 채워 넣는 것이므로 <b>9절의 "갱신이 나은 경우"에 해당</b>한다. 이 경우 <b>순서 역전 방어(9-1의 버전 비교)를 함께 걸어야 한다.</b></span>
+  </div></div>
+</div>
+
+<div class="callout warn">
+  <div class="t">한 몸의 설계라는 것을 드러내면 좋다</div>
+  <div class="qa"><b>정합성 전략과 스탬피드 방어는 서로 영향을 주는 한 몸</b>이다 —
+  <b>삭제를 택하면 스탬피드를 걱정해야 하고, 스탬피드를 피하려 갱신으로 가면 순서 역전을 걱정해야 한다.</b>
+  둘 중 하나만 말하면 반쪽이고, 이 순환을 말하면 설계를 본 사람이 된다.</div>
+</div>
+
+<!-- ===== 판별 드릴 ===== -->
+<div class="card">
+  <div class="kicker" style="margin-bottom:8px">판별 드릴 — 상황을 읽고 "무엇이 문제인지" 3초 안에</div>
+  <div class="drillbar">
+    <button type="button" id="q-all">전부 펼치기</button>
+    <button type="button" id="q-reset">전부 접기</button>
+  </div>
+  <button type="button" class="rq">두 요청이 동시에 같은 상품 가격을 바꿨는데, DB는 2000인데 캐시만 1000이 <b>히트로</b> 계속 나간다.<span class="a">→ 갱신의 순서 역전 (§3)</span></button>
+  <button type="button" class="rq">쓰기는 한 건뿐이었고 삭제도 성공했는데, 그 직후부터 옛 값이 캐시에 앉아 있다.<span class="a">→ 읽기·쓰기 경합 (§5)</span></button>
+  <button type="button" class="rq">트랜잭션이 <b>롤백</b>됐는데도 캐시가 한 번 비워져서 불필요한 미스가 났다.<span class="a">→ 커밋 전 삭제 (§6-1)</span></button>
+  <button type="button" class="rq">DB에는 새 값이 있는데, 그 행을 읽은 세션은 <b>커밋 전이라</b> 여전히 옛 값을 봤다.<span class="a">→ MVCC · 커밋 전 삭제 (§6-1)</span></button>
+  <button type="button" class="rq">야간 배치가 상품을 일괄 수정했는데 <b>캐시 삭제 코드가 그 경로엔 없어서</b> 옛 값이 남았다.<span class="a">→ CDC로 구조에 맡길 문제 (§7)</span></button>
+  <button type="button" class="rq">인기 키를 지운 직후 요청 수천 건이 동시에 DB로 몰렸다.<span class="a">→ 스탬피드 · 삭제의 대가 (§9-2)</span></button>
+  <button type="button" class="rq">거의 안 바뀌는 데이터인데 한 번 잘못 들어간 값이 <b>며칠째</b> 나가고 있다.<span class="a">→ TTL 부재 (§8)</span></button>
+  <button type="button" class="rq">Redis 순단으로 삭제 호출이 실패했고, 커밋은 이미 끝나 되돌릴 수도 없다.<span class="a">→ 삭제 실패 대비 부재 (§7)</span></button>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 꼬리질문 셀프 테스트</h2>
+<p class="small">질문만 보고 <b>먼저 스스로 답한 뒤</b> 펼쳐서 확인한다. <span class="badge senior">시니어 변별</span> 문항은 <b>말로 설명하지 말고 시간축을 그려서</b> 답해 본다.</p>
+
+<details>
+  <summary>삭제도 옛 값이 적재되는 시나리오가 있는데, 왜 갱신보다 안전하다고 하나요? <span class="badge senior">시니어 변별</span></summary>
+  <div class="ans">
+    <p><span class="key">발생 조건의 폭이 다르다</span>는 것이 답의 골격이다. <b>위험이 0이냐 아니냐의 비교가 아니라 창의 넓이 비교</b>라는 점을 먼저 밝히고 들어간다.</p>
+    <ul>
+      <li><b>갱신의 순서 역전</b>은 <b>같은 키에 동시 쓰기 둘만 있으면 성립</b>한다. 전제 조건이 없다시피 하고, <b>쓰기가 몰리는 인기 데이터일수록 오히려 잘 터진다.</b></li>
+      <li><b>삭제 쪽 경합</b>은 세 조건이 겹쳐야 한다 — ① 캐시가 마침 비어 있고, ② 읽기의 "DB 조회 ~ 캐시 적재" 사이라는 짧은 틈에, ③ 쓰기의 "커밋 ~ 캐시 삭제" <b>전체</b>가 통째로 끼어들어야 한다. <b>짧은 구간 안에 더 긴 작업이 들어가야 하는 구조라 확률이 낮다.</b></li>
+    </ul>
+    <p>여기에 <span class="key">삭제는 멱등이라 실행 순서가 뒤집혀도 결과가 같다</span>는 점을 얹으면 논증이 닫힌다. <code>SET</code>은 마지막에 도착한 쪽이 이기지만, <code>DEL</code>은 몇 번을 어떤 순서로 하든 결과가 "비어 있음"으로 같다.</p>
+    <p>마무리는 <b>결과의 성격 차이</b>로. 갱신이 뚫리면 <b>옛 값이 히트로 서빙</b>되고, 삭제가 뚫려도 최악은 <b>미스 한 번 더</b>다(경합이 터진 경우엔 옛 값이 적재되지만 그마저 TTL 상한이 걸린다).</p>
+  </div>
+</details>
+
+<details>
+  <summary>DB 커밋은 됐는데 캐시 삭제가 실패하면 어떻게 하나요?</summary>
+  <div class="ans">
+    <p>옛 값이 남으므로 <span class="key">방어를 겹친다.</span> 그리고 커밋은 이미 끝나 <b>되돌릴 수 없다</b>는 점을 먼저 짚는다.</p>
+    <ol>
+      <li>즉시 <b>재시도</b>(짧게 1~2회) — 순간적 네트워크 흔들림 흡수. <b>응답을 붙잡으므로 횟수·타임아웃은 짧게.</b></li>
+      <li>그래도 실패하면 <b>큐에 적재해 비동기로 반드시 재실행</b> — 삭제를 <b>"언젠가 반드시 되는 작업"으로 승격</b>시킨다. 요청 응답과 분리되므로 사용자 지연에도 영향이 없다.</li>
+      <li>근본적으로는 <b>CDC로 DB 변경 로그(PostgreSQL의 WAL)에서 무효화를 구동</b>해, <b>애플리케이션의 삭제 호출 성공 자체에 의존하지 않게</b> 만든다.</li>
+      <li>그래도 남는 틈은 <b>TTL이 상한을 보장</b>한다.</li>
+    </ol>
+    <p>한 줄로 정리하면 <span class="key">"삭제 호출의 성공을 전제하지 않는다"</span>는 태도가 포인트다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>그럼 갱신(update)이 더 나은 경우는 없나요? <span class="badge senior">시니어 변별</span></summary>
+  <div class="ans">
+    <p>있다. <span class="key">삭제의 비용인 "미스"가 감당 못 할 만큼 비싼 경우</span>다. 두 가지가 대표적이다.</p>
+    <ul>
+      <li><b>① 초고빈도로 읽히는 hot key.</b> 초당 수천 번 읽히는 키를 지우면 직후 요청이 전부 미스를 내고 동시에 DB로 몰린다(<b>캐시 스탬피드</b>). 갱신은 <b>캐시가 비는 순간 자체를 만들지 않으므로</b> 이 폭주가 원천적으로 없다.</li>
+      <li><b>② 순서 역전이 구조적으로 불가능한 경우.</b> 그 키의 쓰기 경로가 하나뿐이고 순차적이라면(단일 스레드 배치, 또는 키별 파티션으로 같은 키의 쓰기가 항상 같은 컨슈머 스레드로 가는 구조) 캐시 호출 순서도 자연히 커밋 순서를 따른다. <b>갱신의 함정 자체가 성립하지 않는다.</b></li>
+    </ul>
+    <p>이때도 방어를 하나 얹는다 — <b>캐시 값에 버전이나 타임스탬프를 함께 저장해 두고 "캐시에 있는 버전보다 새 값일 때만 SET"</b> 한다. 비교와 설정이 <b>사이에 끼어들 틈 없이 한 번에</b> 일어나야 하므로 Lua 스크립트로 처리한다. 늦게 도착한 옛 값은 버전 비교에서 걸러져 무시된다 — <span class="key">순서를 보장할 수 없으니, 대신 값 자체에 순서 정보를 실어 늦게 온 것을 알아보게 만드는</span> 접근이다.</p>
+    <p>결론은 "무조건 삭제"가 아니라 <b>"기본은 삭제, 미스 비용이 지배적인 키만 갱신을 검토하되 순서 역전 방어를 함께 건다"</b>다. <b>트레이드오프로 답하는 것이 시니어 답변</b>이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>인기 키를 삭제하는 순간 스탬피드가 걱정되면 어떻게 하나요?</summary>
+  <div class="ans">
+    <p><span class="key">삭제 전략의 실질적 부작용이 이것이라는 것부터 인정</span>하고 시작한다. 완화책은 셋이다.</p>
+    <ul>
+      <li><b>① 재계산을 한 요청만 수행하게 만든다.</b> 미스가 동시에 100건 나도 DB에는 한 번만 가고 나머지는 기다린다. 스프링 <code>@Cacheable(sync = true)</code>가 이 역할인데, <b>구현체에 따라 한 인스턴스(JVM) 안에서만 유효할 수 있으므로</b> 서버가 여러 대면 Redis 분산 락으로 인스턴스 사이까지 묶는다.</li>
+      <li><b>② 논리적 만료(soft TTL).</b> 값 안에 "이 값의 만료 시각"을 넣고 Redis TTL은 더 넉넉히. 만료 시각이 지난 값을 만나면 <b>일단 옛 값을 응답하고</b> 백그라운드에서 한 명만 재계산한다. <b>캐시가 물리적으로 비는 순간이 없어 폭주가 없고</b>, 대가는 재계산 동안 잠깐 옛 값이 나가는 것.</li>
+      <li><b>③ 변경 이벤트로 미리 재계산해 갱신.</b> 삭제 대신 새 값을 채우는 것이므로 앞 질문의 "갱신이 나은 경우"에 해당한다. <b>순서 역전 방어를 함께 걸어야 한다.</b></li>
+    </ul>
+    <p>마무리로 <span class="key">정합성 전략과 스탬피드 방어가 서로 영향을 주는 한 몸의 설계</span>임을 드러내면 좋다 — <b>삭제를 택하면 스탬피드를 걱정해야 하고, 스탬피드를 피하려 갱신으로 가면 순서 역전을 걱정해야 한다.</b></p>
+  </div>
+</details>
+
+<details>
+  <summary>캐시와 DB의 강한 정합성(불일치 0)이 정말 필요하다면요?</summary>
+  <div class="ans">
+    <p><span class="key">캐시로는 안 된다고 답하는 것이 정답이다.</span> 캐시를 두는 순간 두 저장소가 되고, 두 저장소는 한 트랜잭션으로 못 묶이므로 <b>불일치 창은 원리적으로 남는다.</b></p>
+    <p>불일치 0이 진짜 요구라면 방향은 둘이다.</p>
+    <ul>
+      <li><b>그 읽기 경로에서 캐시를 뺀다.</b> 원본인 DB를 직접 읽는다.</li>
+      <li><b>판단이 목적이라면 DB의 조건부 연산이 최종 심판이 되게 한다.</b> 예를 들어 재고 차감은 <code>UPDATE ... WHERE stock &gt;= 1</code>처럼 <b>DB가 조건과 갱신을 한 번에 판정</b>하게 하고, 캐시의 재고 숫자는 <b>화면 표시용</b>으로만 쓴다. <b>캐시가 틀려도 실제 차감은 DB에서 걸러지므로 사고가 나지 않는다.</b></li>
+    </ul>
+    <p>분산 락으로 읽기·쓰기를 전부 직렬화하면 이론상 가능하지만, 그 순간 모든 읽기가 락을 기다리게 되어 <b>캐시를 쓰는 이유인 성능을 스스로 없애는 구조</b>라 실무 답이 아니다.</p>
+    <p>정리 문장은 이것이다 — <b>"캐시는 결국 eventual consistency(결과적 일관성 — 지금은 다를 수 있지만 시간이 지나면 결국 일치한다)를 받아들이는 결정이고, 그것을 못 받아들이는 데이터는 애초에 캐시 후보가 아니다."</b></p>
+  </div>
+</details>
+
+<details>
+  <summary>캐시를 먼저 지우고 그다음 DB에 쓰면 안 되나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>두 가지가 동시에 잘못된다.</p>
+    <ul>
+      <li><b>① 지운 보람이 없다.</b> 삭제 직후~커밋 전 사이에 읽기가 들어오면 미스를 내고 DB를 조회하는데, <b>아직 커밋 전이라 DB가 주는 값은 옛 값</b>이다. PostgreSQL은 <b>MVCC</b>(한 행의 여러 버전을 두고 각 트랜잭션에게 볼 수 있는 버전만 보여주는 방식)를 쓰므로, <b>커밋 전 변경은 다른 세션에 아예 보이지 않는다.</b> 결국 <span class="key">정확히 지우려던 옛 값을 그 읽기가 다시 퍼 담는다.</span></li>
+      <li><b>② 롤백되면 헛수고다.</b> 트랜잭션이 롤백되면 DB는 아무것도 안 바뀌었는데 캐시만 지워진 꼴이다. 데이터가 틀리지는 않지만 <b>아무 이유 없이 미스를 한 번 만든 것</b>이다.</li>
+    </ul>
+    <p>그래서 순서는 <b>"DB 쓰기(커밋) → 캐시 삭제"</b>가 기본이다. 한 문장으로 <b>"커밋 전 삭제는 아직 아무에게도 안 보이는 변경을 근거로 캐시를 비우는 것"</b>이라고 말하면 이유까지 담긴다.</p>
+  </div>
+</details>
+
+<details>
+  <summary><code>@Transactional</code> 메서드에 <code>@CacheEvict</code>를 붙이면 커밋 후 삭제가 되나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key">되지 않는다.</span> 스프링의 캐시 추상화는 기본적으로 <b>트랜잭션을 인식하지 않는다.</b> <code>@CacheEvict</code>의 기본값 <code>beforeInvocation = false</code>는 <b>"메서드 실행 후"</b>를 뜻하지 <b>"커밋 후"</b>가 아니다. 메서드가 끝나고 트랜잭션이 커밋되기 전에 삭제가 실행되므로, 앞 질문의 <b>커밋 전 삭제와 똑같은 문제</b>가 생긴다.</p>
+    <p>대응은 둘이다.</p>
+    <ul>
+      <li><b>무효화를 커밋 이후로 옮긴다</b> — <code>@TransactionalEventListener(AFTER_COMMIT)</code> 또는 <code>TransactionSynchronizationManager</code>의 <code>afterCommit()</code> 콜백.</li>
+      <li><b>캐시 매니저의 트랜잭션 인지 옵션(transactionAware)을 켠다</b> — 캐시 연산을 커밋 이후로 미뤄 준다. 다만 <b>커밋 이후에 실행되므로 그때 발생한 실패는 요청 흐름 바깥에서 처리해야 한다</b>(§7의 재시도·큐가 그래서 필요하다).</li>
+    </ul>
+    <p>면접에서 강한 표현은 <b>"코드를 위에서 아래로 읽은 순서와 실제 커밋 시점이 다르다는 것을 알아야 한다"</b>이다. 이 함정은 <b>테스트에서도 잘 안 잡힌다</b> — 단일 요청만 도는 테스트에는 끼어들 읽기가 없기 때문이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>지연 이중 삭제가 그렇게 좋으면 왜 기본으로 깔지 않나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>대가가 분명하기 때문이다. 넷을 세면 된다.</p>
+    <ol>
+      <li><b>지연 시간에 정답이 없다.</b> 짧으면 못 막고, 길면 캐시가 두 번 비어 미스가 늘어난다. 그리고 이 값을 정할 근거가 <b>"읽기가 얼마나 오래 옛 값을 들고 있을 수 있는가"</b>라는, 측정하기 애매한 값이다.</li>
+      <li><b>지연 작업 인프라가 필요하다</b> — 두 번째 삭제를 누가 언제 실행할 것인가.</li>
+      <li><b>그 사이에 들어온 (정상적인) 읽기가 만든 값도 함께 날아간다.</b> 즉 <b>멀쩡한 캐시를 한 번 더 비우는</b> 부작용이 있다.</li>
+      <li><b>그래도 확률이 0이 되지는 않는다.</b> 두 번째 삭제보다도 늦게 도착하는 적재가 이론상 가능하다.</li>
+    </ol>
+    <p>그래서 <span class="key">"허용 가능한 staleness가 유난히 짧은 소수의 키"에만 선택적으로 적용</span>하는 것이 현실적이다. <b>비용 대비 효과가 키마다 다르다는 판단</b>을 말하는 것이 핵심이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>"<code>DEL</code>은 멱등이다"가 정확히 무슨 뜻인가요? <code>SET</code>은 왜 아닌가요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key">멱등(idempotent) = 같은 작업을 몇 번 실행해도 결과가 한 번 실행한 것과 같은 성질.</span></p>
+    <ul>
+      <li><code>DEL</code>을 한 번 하든 세 번 하든, 어떤 순서로 섞이든 <b>끝난 뒤의 캐시 상태는 똑같이 "비어 있음"</b>이다. 그래서 <b>순서가 뒤집혀도 뒤집힐 결과 자체가 없다.</b></li>
+      <li><code>SET 1000</code>과 <code>SET 2000</code>은 <b>마지막에 실행된 쪽이 이긴다.</b> 즉 <b>순서가 결과를 결정</b>하고, 순서를 보장할 수 없는 환경에서는 그것이 그대로 사고가 된다.</li>
+    </ul>
+    <p>한 걸음 더 들어가면 이렇게 말할 수 있다 — <b>분산 환경에서 순서를 강제할 지점이 없을 때의 정석은, 순서를 보장하려 애쓰는 대신 <span class="key">순서에 의존하지 않는 연산을 고르는 것</span></b>이다. 그것이 안 되면 <b>값에 순서 정보(버전)를 실어 늦게 온 것을 식별</b>한다. 이 두 가지가 이 문서 전체의 해법 구조다.</p>
+    <p>주의할 구분 하나 — <b>멱등은 "결과가 항상 옳다"는 뜻이 아니다.</b> §5의 읽기 경합처럼 <b>DEL 이후에 다른 주체가 옛 값을 적재</b>하면 캐시는 오염된다. 멱등이 지켜 주는 것은 <b>"DEL들끼리의 순서"</b>일 뿐이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>§5의 읽기 경합을 없애려고 읽기 쪽에도 락을 걸면 되지 않나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>이론상 가능하지만 <span class="key">캐시를 쓰는 이유를 스스로 없애는 구조</span>가 된다. 읽기와 쓰기를 전부 직렬화하려면 <b>모든 읽기가 락을 획득·해제하는 왕복</b>을 추가로 내야 하고, 그 순간 캐시는 "빠르게 읽으려고 둔 계층"이 아니라 <b>경합 지점</b>이 된다. 게다가 분산 락 자체가 TTL 만료·소유자 검증 같은 새로운 실패 모드를 데려온다.</p>
+    <p>그래서 실무의 선택은 <b>"없애기"가 아니라 "좁히고, 상한을 씌우기"</b>다.</p>
+    <ul>
+      <li><b>좁히기</b> — 커밋 후 삭제(§6), 필요하면 소수 키에 지연 이중 삭제(§6-3).</li>
+      <li><b>상한 씌우기</b> — TTL(§8).</li>
+      <li><b>그래도 안 되면</b> — 그 데이터는 애초에 캐시 대상이 아니라고 판단한다(강한 정합성 질문의 결론과 같다).</li>
+    </ul>
+    <p>답변을 닫는 문장: <b>"불일치 확률을 0으로 만드는 비용이 캐시의 이득보다 커지는 지점이 있고, 그 지점을 넘으면 캐시를 빼는 것이 옳은 설계다."</b></p>
+  </div>
+</details>
+
+<!-- ===================== SUM ===================== -->
+<div class="banner" id="sum">
+  <div class="kicker">한 줄 요약</div>
+  캐시와 DB는 한 트랜잭션으로 못 묶는 두 저장소라 정합성은 <b>"좁히는 것"</b>이며 —
+  갱신은 동시 쓰기의 <b>순서 역전</b>(DB 커밋 순서와 캐시 도착 순서가 어긋나는 현상)으로 <b>옛 값이 히트로 서빙되는 넓은 창</b>을 열지만
+  삭제는 <b>멱등</b>이라 최악이 <b>미스 한 번</b>으로 수렴하므로 기본은 <b>"DB 커밋 후 삭제(AFTER_COMMIT)"</b>이고,
+  <b>삭제 실패 대비(재시도·큐·CDC)</b>와 <b>TTL 상한</b>을 겹친 뒤,
+  hot key처럼 미스가 지배적인 예외에서만 <b>버전 방어를 갖춘 갱신</b>을 검토한다 —
+  이 논증 과정 자체가 <b>동시성 사고력의 시연</b>이다.
+</div>
+
+</main>
+<script>
+(function(){
+  /* 판별 드릴 */
+  var rqs = document.querySelectorAll('.rq');
+  for (var i = 0; i < rqs.length; i++){
+    rqs[i].addEventListener('click', function(){ this.classList.toggle('open'); });
+  }
+  var all = document.getElementById('q-all');
+  var reset = document.getElementById('q-reset');
+  if (all) all.addEventListener('click', function(){
+    for (var j = 0; j < rqs.length; j++) rqs[j].classList.add('open');
+  });
+  if (reset) reset.addEventListener('click', function(){
+    for (var k = 0; k < rqs.length; k++) rqs[k].classList.remove('open');
+  });
+
+  /* 순서 역전 시뮬레이터 */
+  var bN = document.getElementById('simNormal');
+  var bI = document.getElementById('simInvert');
+  var cSet = document.getElementById('cellSet'), vSet = document.getElementById('valSet'), nSet = document.getElementById('noteSet');
+  var cDel = document.getElementById('cellDel'), vDel = document.getElementById('valDel'), nDel = document.getElementById('noteDel');
+  var verdict = document.getElementById('simVerdict');
+
+  function render(mode){
+    var inverted = (mode === 'invert');
+    bN.classList.toggle('on', !inverted);
+    bI.classList.toggle('on', inverted);
+
+    cSet.className = 'simcell ' + (inverted ? 'bad' : 'good');
+    vSet.textContent = inverted ? '1000  ← 옛 값' : '2000';
+    nSet.innerHTML = inverted
+      ? '늦게 도착한 W1의 <b>SET 1000</b>이 W2를 덮었다. 미스가 아니라 <b>히트로 서빙</b>되므로 아무도 눈치채지 못한다.'
+      : '마지막에 도착한 W2의 <b>SET 2000</b>이 남는다. DB와 일치.';
+
+    cDel.className = 'simcell good';
+    vDel.textContent = '(비어 있음)';
+    nDel.innerHTML = inverted
+      ? 'DEL이 <b>두 번 실행됐을 뿐</b>이다. 다음 읽기가 미스를 내고 DB에서 2000을 적재한다.'
+      : '다음 읽기가 미스를 내고 DB에서 2000을 적재한다. DB와 일치.';
+
+    verdict.innerHTML = inverted
+      ? '<b style="color:#dc2626">여기서 갈린다</b> — 똑같은 역전인데 갱신만 오염됐다. <b>SET은 순서에 의존하고 DEL은 멱등</b>이기 때문이다.'
+      : '두 전략 모두 정상 — <b>순서가 지켜지는 한 갱신도 아무 문제가 없다.</b> 그래서 이 문제는 테스트로 잘 안 잡힌다.';
+  }
+  if (bN && bI){
+    bN.addEventListener('click', function(){ render('normal'); });
+    bI.addEventListener('click', function(){ render('invert'); });
+    render('normal');
+  }
+})();
+</script>
+</body>
+</html>

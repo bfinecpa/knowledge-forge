@@ -1,0 +1,1384 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel vs Cluster — 고가용성과 샤딩, 그리고 해시 슬롯의 제약</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+svg .ttl{font-weight:700}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+.tools{display:flex;gap:8px;margin:10px 0}
+.tools button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:.85rem;cursor:pointer;color:var(--text)}
+.tools button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+
+/* 이 페이지 전용 보강 */
+.vs{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+.vs .col{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.vs .col h4{margin:0 0 8px;font-size:1rem}
+.vs .col.a{border-top:4px solid var(--accent)}
+.vs .col.b{border-top:4px solid var(--ok)}
+ul.tight{margin:6px 0;padding-left:20px}
+ul.tight li{margin:4px 0}
+.qa{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:10px;padding:12px 16px;margin:12px 0}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">05 Redis · 캐싱 &nbsp;|&nbsp; 중급⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>Sentinel vs Cluster<br><span class="sub">고가용성과 샤딩, 그리고 해시 슬롯이 코드에 남기는 청구서</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"Redis Sentinel과 Cluster의 차이는? Cluster에서 멀티 키 연산의 제약(해시 슬롯)은?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — Sentinel은 <b>"한 대의 마스터"를 감시하다가 죽으면 복제본을 승격시키는 자동 failover 장치(고가용성)</b>이고, Cluster는 데이터를 <b>16384개 해시 슬롯</b>으로 쪼개 여러 마스터에 나눠 담는 <b>샤딩 + 고가용성</b> 체계다. 즉 Sentinel은 <b>죽어도 서비스가 이어지게</b>, Cluster는 <b>한 대에 다 안 들어가는 데이터·쓰기량을 수평 확장</b>하게 해준다. 대가로 Cluster에서는 여러 키를 한 번에 다루는 연산(<code>MGET</code>, 트랜잭션, Lua)이 <b>같은 슬롯의 키끼리만</b> 가능해진다 — <b>인프라 확장이 애플리케이션 코드를 바꾸는 대표 사례</b>다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>둘은 다른 문제를 푼다</b> — Sentinel은 <b>가용성</b>(데이터는 여전히 마스터 1대에 전부, 서버만 여러 대), Cluster는 <b>용량·쓰기 처리량</b>(데이터를 여러 마스터에 분할). Cluster는 failover까지 내장하므로 <b>Sentinel의 일을 포함</b>한다.</div></li>
+    <li><span class="n">2</span><div><b>해시 슬롯은 간접 계층</b> — <code>hash % 노드수</code>는 노드를 늘리는 순간 <b>키의 75%가 이사</b>한다. 그래서 <b>키 → 고정 16384 슬롯 → 노드</b>로 한 겹을 끼워, 노드가 바뀌어도 <b>뒤쪽 화살표(슬롯 배정)만</b> 고치게 만든다.</div></li>
+    <li><span class="n">3</span><div><b>대가는 CROSSSLOT</b> — 원자적 멀티 키 연산은 <b>같은 슬롯일 때만</b> 된다. 해시 태그 <code>{}</code>로 묶거나 앱에서 쪼개야 하고, 그래서 <b>전환은 인프라 작업이 아니라 애플리케이션 프로젝트</b>다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">가용성이냐 확장이냐 — 문제부터 구분</a></li>
+    <li><a href="#s2">Sentinel — 정족수와 자동 failover</a></li>
+    <li><a href="#s3">스플릿 브레인 — failover가 만드는 위험</a></li>
+    <li><a href="#s4">왜 해시 슬롯인가 — mod N의 재배치 폭발</a></li>
+    <li><a href="#s5">슬롯 계산과 배정 (CRC16 mod 16384)</a></li>
+    <li><a href="#s6">MOVED와 ASK — 엉뚱한 노드에 물었을 때</a></li>
+    <li><a href="#s7">리샤딩과 내장 failover</a></li>
+    <li><a href="#s8">CROSSSLOT — 인프라가 코드를 바꾸는 지점</a></li>
+    <li><a href="#s9">해법 1 — 해시 태그로 같은 슬롯에</a></li>
+    <li><a href="#s10">해법 2 — 앱에서 쪼개기 · 그 외 깨지는 것들</a></li>
+    <li><a href="#s11">선택 기준 — 언제 무엇을 쓰나</a></li>
+    <li><a href="#s12">전환 점검 4단계 (시니어 변별)</a></li>
+    <li><a href="#s13">꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0. 질문 + 의도 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "Redis Sentinel과 Cluster의 차이는? Cluster에서 멀티 키 연산의 제약(해시 슬롯)은?"</p>
+  <p><b>출제 의도</b>: Cluster 전환 시 멀티 키 연산(<code>MGET</code>, 트랜잭션)이 깨지는 것은 <b>"인프라 확장이 애플리케이션 코드를 바꾸는"</b> 사례다. 확장 계획을 세울 때 이 제약을 <b>미리 아는 사람</b>과 <b>전환 후에 아는 사람</b>의 차이는 크다 — 두 구성의 목적 차이(가용성 vs 확장)를 구분하고, 전환의 비용을 <b>코드 수준까지 내려가</b> 말할 수 있는지 본다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① "둘 다 Redis 여러 대로 묶는 것" 이라는 <b>뭉뚱그림</b> → 1절에서 <b>데이터가 나뉘는가</b>를 기준으로 두 구조를 나란히 도식화한다.<br>
+    ② "해시 슬롯은 그냥 Redis가 알아서 나누는 것" 이라는 <b>블랙박스 이해</b> → 4절에서 <code>mod N</code>이 왜 안 되는지를 숫자로 깔고, 슬롯이 <b>간접 계층</b>임을 보인다.<br>
+    ③ "Cluster로 가면 서버만 늘리면 된다" 는 <b>비용 과소평가</b> → 8~12절에서 <b>CROSSSLOT → 해시 태그 → 키 마이그레이션</b>으로 이어지는 청구서를 따라간다.
+  </div>
+</div>
+
+<!-- ===================== 1. 문제 구분 ===================== -->
+<h2 id="s1">1. 먼저 문제를 구분한다 — 가용성이냐 확장이냐</h2>
+
+<p>Sentinel과 Cluster를 "둘 다 Redis를 여러 대로 묶는 것"으로 뭉뚱그리면 이 질문에 답할 수 없다. <b>둘은 애초에 다른 문제를 푼다.</b> 각각이 던지는 질문 자체가 다르다.</p>
+
+<div class="vs">
+  <div class="col a">
+    <h4>Sentinel이 던지는 질문</h4>
+    <p style="margin:0 0 8px">"마스터가 죽으면 <b>누가 그것을 알아채고</b>, 복제본 중 하나를 <b>자동으로 승격</b>시키고, 클라이언트에게 <b>새 주소를 알려주는가</b>?"</p>
+    <p style="margin:0"><b>데이터는 여전히 마스터 한 대에 전부 들어 있다.</b> 서버를 여러 대 띄우지만 데이터를 나누지는 않는다. → <b>가용성(availability)</b> 문제.</p>
+  </div>
+  <div class="col b">
+    <h4>Cluster가 던지는 질문</h4>
+    <p style="margin:0 0 8px">"데이터가 <b>한 대의 메모리에 안 들어가거나</b>, 쓰기가 <b>한 대의 처리량을 넘으면</b> 어떻게 하는가?"</p>
+    <p style="margin:0">답은 데이터를 여러 마스터에 <b>나눠 담는 것(샤딩, sharding)</b>이다. 각 마스터에 복제본을 붙여 failover까지 자체 처리하므로 <b>Cluster는 Sentinel이 하던 일을 포함</b>한다.</p>
+  </div>
+</div>
+
+<div class="callout info"><span class="t">비유 — 주방장이 쓰러지는 문제 vs 주문이 넘치는 문제</span>
+  <b>Sentinel</b>은 주방장 한 명에 <b>대기 주방장</b>을 두고, <b>감독관들</b>이 주방장이 쓰러지는지 지켜보는 구조다. 쓰러지면 대기 주방장이 즉시 자리를 잇는다. 하지만 <b>일은 여전히 한 명이 다 한다</b> — 주문이 두 배로 늘어도 처리량은 그대로다.<br>
+  <b>Cluster</b>는 <b>주방을 여러 개로 나누고 메뉴(키)마다 담당 주방을 정해두는</b> 구조다. 주방이 늘어난 만큼 처리량이 는다. 대신 <b>여러 주방의 재료를 한 접시에 담는 요리(멀티 키 연산)</b>가 어려워진다 — 이 제약이 8절부터의 주제다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="Sentinel 구조와 Cluster 구조를 나란히 비교한 다이어그램">
+    <defs>
+      <marker id="ag" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+      <marker id="ab" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="ao" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <!-- divider -->
+    <line x1="560" y1="16" x2="560" y2="384" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6 6"/>
+
+    <!-- ===== LEFT : Sentinel ===== -->
+    <rect x="20" y="16" width="510" height="30" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="275" y="36" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">Sentinel — 데이터는 나뉘지 않는다 (가용성)</text>
+
+    <rect x="36" y="66" width="120" height="44" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="96" y="93" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">애플리케이션</text>
+
+    <!-- sentinels -->
+    <rect x="200" y="60" width="76" height="34" rx="8" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="238" y="82" font-size="12.5" fill="#9a3412" text-anchor="middle" font-weight="700">S1</text>
+    <rect x="286" y="60" width="76" height="34" rx="8" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="324" y="82" font-size="12.5" fill="#9a3412" text-anchor="middle" font-weight="700">S2</text>
+    <rect x="372" y="60" width="76" height="34" rx="8" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="410" y="82" font-size="12.5" fill="#9a3412" text-anchor="middle" font-weight="700">S3</text>
+    <text x="324" y="112" font-size="11.5" fill="#9a3412" text-anchor="middle">Sentinel 3대 — 데이터를 갖지 않는 감시 프로세스</text>
+
+    <path d="M156,80 L194,80" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#ab)"/>
+    <text x="175" y="70" font-size="10.5" fill="#2563eb" text-anchor="middle">①</text>
+
+    <!-- master/replica -->
+    <rect x="150" y="188" width="150" height="62" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="225" y="212" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">마스터 (M)</text>
+    <text x="225" y="233" font-size="11.5" fill="#1d4ed8" text-anchor="middle">전체 데이터 100%</text>
+
+    <rect x="350" y="188" width="150" height="62" rx="10" fill="#f8fafc" stroke="#9ca3af" stroke-width="1.6"/>
+    <text x="425" y="212" font-size="14" fill="#374151" text-anchor="middle" font-weight="700">복제본 (R)</text>
+    <text x="425" y="233" font-size="11.5" fill="#374151" text-anchor="middle">같은 데이터 100% 사본</text>
+
+    <path d="M300,219 L344,219" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ag)"/>
+    <text x="322" y="210" font-size="10.5" fill="#6b7280" text-anchor="middle">복제</text>
+
+    <path d="M238,100 L228,182" fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ag)"/>
+    <path d="M410,100 L424,182" fill="none" stroke="#f97316" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ag)"/>
+    <text x="330" y="150" font-size="11" fill="#c2410c" text-anchor="middle">감시</text>
+
+    <path d="M96,110 C96,170 110,200 144,214" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#ab)"/>
+    <text x="80" y="170" font-size="10.5" fill="#2563eb" text-anchor="middle">②</text>
+
+    <rect x="36" y="284" width="480" height="94" rx="10" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="52" y="306" font-size="12" fill="#1f2937" font-weight="700">① 앱은 마스터 IP가 아니라 Sentinel에게 "지금 마스터 누구야?"를 묻는다</text>
+    <text x="52" y="326" font-size="12" fill="#1f2937" font-weight="700">② 받은 주소로 접속 → failover 후에도 재배포 없이 새 마스터를 찾아간다</text>
+    <text x="52" y="352" font-size="12" fill="#dc2626" font-weight="700">한계: 쓰기·메모리는 여전히 마스터 한 대의 한계를 못 넘는다</text>
+    <text x="52" y="370" font-size="11.5" fill="#6b7280">읽기는 복제본으로 분산 가능(복제 지연 감수) — 쓰기 확장은 불가</text>
+
+    <!-- ===== RIGHT : Cluster ===== -->
+    <rect x="590" y="16" width="510" height="30" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="845" y="36" font-size="14" fill="#166534" text-anchor="middle" font-weight="700">Cluster — 데이터가 슬롯 단위로 나뉜다 (확장 + 가용성)</text>
+
+    <rect x="600" y="66" width="120" height="44" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="660" y="86" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">애플리케이션</text>
+    <text x="660" y="103" font-size="10.5" fill="#6b7280" text-anchor="middle">슬롯 배정표 캐싱</text>
+
+    <path d="M720,88 L768,88" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#ao)"/>
+    <rect x="774" y="66" width="316" height="44" rx="8" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="932" y="85" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">slot = CRC16(key) mod 16384</text>
+    <text x="932" y="102" font-size="11" fill="#166534" text-anchor="middle">계산해서 해당 노드로 곧장 — 중간 홉 없음</text>
+
+    <!-- three shards -->
+    <rect x="600" y="150" width="150" height="58" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="675" y="172" font-size="13.5" fill="#166534" text-anchor="middle" font-weight="700">마스터 A</text>
+    <text x="675" y="192" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">슬롯 0 ~ 5460</text>
+    <rect x="768" y="150" width="150" height="58" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="843" y="172" font-size="13.5" fill="#166534" text-anchor="middle" font-weight="700">마스터 B</text>
+    <text x="843" y="192" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">슬롯 5461 ~ 10922</text>
+    <rect x="936" y="150" width="154" height="58" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="1013" y="172" font-size="13.5" fill="#166534" text-anchor="middle" font-weight="700">마스터 C</text>
+    <text x="1013" y="192" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">슬롯 10923 ~ 16383</text>
+
+    <path d="M675,208 L675,238" fill="none" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ag)"/>
+    <path d="M843,208 L843,238" fill="none" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ag)"/>
+    <path d="M1013,208 L1013,238" fill="none" stroke="#6b7280" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="600" y="244" width="150" height="40" rx="8" fill="#f8fafc" stroke="#9ca3af"/>
+    <text x="675" y="269" font-size="12" fill="#374151" text-anchor="middle">복제본 A'</text>
+    <rect x="768" y="244" width="150" height="40" rx="8" fill="#f8fafc" stroke="#9ca3af"/>
+    <text x="843" y="269" font-size="12" fill="#374151" text-anchor="middle">복제본 B'</text>
+    <rect x="936" y="244" width="154" height="40" rx="8" fill="#f8fafc" stroke="#9ca3af"/>
+    <text x="1013" y="269" font-size="12" fill="#374151" text-anchor="middle">복제본 C'</text>
+
+    <rect x="600" y="300" width="490" height="78" rx="10" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="616" y="322" font-size="12" fill="#1f2937" font-weight="700">노드들이 서로를 감시하므로 별도 Sentinel 프로세스가 없다 (failover 내장)</text>
+    <text x="616" y="342" font-size="12" fill="#16a34a" font-weight="700">얻는 것: 메모리·쓰기 처리량이 마스터 수만큼 늘어난다</text>
+    <text x="616" y="362" font-size="12" fill="#dc2626" font-weight="700">치르는 것: 멀티 키 연산은 같은 슬롯끼리만 (CROSSSLOT) + 복제본까지 노드 수 2배</text>
+  </svg>
+  <figcaption><b>한 장으로 답하는 그림.</b> 왼쪽은 서버가 3대여도 <b>데이터는 한 벌</b>이고, 오른쪽은 <b>데이터 자체가 슬롯 범위로 갈라져</b> 있다. "무엇이 여러 개인가 — 서버인가 데이터인가"가 두 구성을 가르는 한 문장이다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>한 문장으로 구분하는 법</h4>
+  <div class="rule">Sentinel = <b>같은 데이터를 여러 대가 들고 있다</b> (복제) &nbsp;·&nbsp; Cluster = <b>다른 데이터를 여러 대가 나눠 들고 있다</b> (샤딩 + 복제)</div>
+  <p style="margin:8px 0 0">그래서 <b>Sentinel은 한 대가 감당할 수 있는 양 자체를 늘려주지 않는다.</b> 마스터가 죽어도 서비스가 이어지게 할 뿐이다. 이 문장이 11절 선택 기준의 뿌리다.</p>
+</div>
+
+<!-- ===================== 2. Sentinel ===================== -->
+<h2 id="s2">2. Sentinel — 감시자 여러 대, 정족수, 자동 failover</h2>
+
+<p>Sentinel은 Redis 본체가 아니라 <b>별도의 감시 프로세스들</b>이다. 데이터를 저장하지 않고, 마스터와 복제본을 지켜보는 일만 한다. 보통 <b>3대 이상 홀수로</b> 띄우는데, <b>왜 여러 대이고 왜 홀수인지</b>가 이 절의 핵심이다.</p>
+
+<h3>2-1. 왜 감시자가 여러 대인가 — 한 대의 시야는 믿을 수 없다</h3>
+
+<p>감시자가 한 대뿐이라면, 그 감시자가 "마스터가 응답이 없다"고 판단했을 때 <b>그것이 정말 마스터가 죽은 것인지, 아니면 감시자와 마스터 사이의 네트워크만 끊긴 것인지 구분할 방법이 없다.</b> 마스터는 멀쩡히 살아서 다른 모든 클라이언트의 요청을 처리하고 있는데, 이 감시자 하나가 자기 네트워크 문제로 오판해 <b>멀쩡한 마스터를 끌어내리고</b> failover를 일으킬 수 있다.</p>
+
+<div class="rule red">한 대의 시야는 그 한 대의 네트워크 상태와 구분되지 않는다</div>
+
+<p>그래서 Sentinel은 판정을 <b>두 단계</b>로 나눈다.</p>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k" style="font-family:inherit">SDOWN — 주관적 다운</div>
+    <div class="s">Subjectively Down</div>
+    <div class="d">"<b>내가 보기에</b> 마스터가 응답이 없다." 감시자 한 대의 <b>개인 의견</b>이다. 이것만으로는 아무 일도 일어나지 않는다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">ODOWN — 객관적 다운</div>
+    <div class="s">Objectively Down</div>
+    <div class="d">감시자들끼리 "너도 안 보이니?"라고 물어서 <b>정해진 수 이상이 동의</b>했을 때 내려지는 판정. <b>여기부터 failover가 시작</b>된다.</div>
+  </div>
+</div>
+
+<p>여기서 그 "정해진 수"가 <b>정족수(quorum)</b>다. 즉 <b>정족수란 마스터가 죽었다고 결론 내리기 위해 동의해야 하는 최소 감시자 수</b>다. Sentinel 3대에 quorum 2로 설정했다면, 두 대 이상이 "안 보인다"고 해야 failover가 시작된다. <b>한 대만의 오판으로는 아무 일도 안 일어난다.</b></p>
+
+<h3>2-2. 여기에 한 겹이 더 있다 — 판정과 실행은 다른 문턱을 넘는다</h3>
+
+<p>객관적 다운 판정과 <b>별개로</b>, 실제 failover를 수행할 <b>Sentinel 리더를 뽑을 때는 전체 Sentinel의 과반</b>이 필요하다. 그래서 quorum을 아무리 낮게 잡아도 <b>Sentinel 다수가 서로를 못 보는 상황에서는 failover가 진행되지 않는다.</b></p>
+
+<p><b>홀수로 띄우는 이유가 여기 있다</b> — 네트워크가 둘로 갈렸을 때 <b>한쪽만 과반</b>이 되도록 만들어, 양쪽이 동시에 failover를 벌이는 일을 줄이기 위해서다.</p>
+
+<div class="memo">
+  <h4>암기 — 문턱이 두 개다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">판정의 문턱 = quorum</div><div class="d">"죽었다"고 <b>결론</b>내는 데 필요한 동의 수. 설정값이다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">실행의 문턱 = 전체의 과반</div><div class="d">리더를 뽑아 <b>실제로 승격시키는</b> 데 필요한 수. 설정으로 못 낮춘다.</div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0"><b>"판정은 정족수, 실행은 과반"</b> — 그래서 quorum을 1로 낮춰도 소수 구획은 failover하지 못한다</div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="Sentinel의 감시-합의-승격-안내 4단계 흐름도와 두 개의 판정 문턱">
+    <defs>
+      <marker id="s2a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="s2g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+    </defs>
+
+    <rect x="16" y="70" width="196" height="96" rx="12" fill="#f8fafc" stroke="#e5e7eb" stroke-width="1.6"/>
+    <text x="114" y="96" font-size="14" fill="#1f2937" text-anchor="middle" font-weight="700">① 감시</text>
+    <text x="114" y="118" font-size="11.5" fill="#6b7280" text-anchor="middle">마스터·복제본에 주기적 요청</text>
+    <text x="114" y="136" font-size="11.5" fill="#6b7280" text-anchor="middle">응답 없음 →</text>
+    <text x="114" y="155" font-size="12" fill="#d97706" text-anchor="middle" font-weight="700">SDOWN (내 개인 의견)</text>
+
+    <path d="M212,118 L254,118" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#s2a)"/>
+
+    <rect x="260" y="70" width="212" height="96" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="366" y="96" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">② 합의 — 문턱 1</text>
+    <text x="366" y="118" font-size="11.5" fill="#1d4ed8" text-anchor="middle">다른 Sentinel에게 "너도 안 보여?"</text>
+    <text x="366" y="139" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">quorum 이상 동의 → ODOWN</text>
+    <text x="366" y="157" font-size="11" fill="#6b7280" text-anchor="middle">미만이면 여기서 끝 (오판 차단)</text>
+
+    <path d="M472,118 L514,118" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#s2a)"/>
+
+    <rect x="520" y="70" width="228" height="96" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="634" y="96" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">③ 승격 — 문턱 2</text>
+    <text x="634" y="118" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">전체 Sentinel 과반으로 리더 선출</text>
+    <text x="634" y="139" font-size="11.5" fill="#1d4ed8" text-anchor="middle">리더가 복제본 하나를 새 마스터로</text>
+    <text x="634" y="157" font-size="11.5" fill="#1d4ed8" text-anchor="middle">나머지 복제본을 새 마스터에 재부착</text>
+
+    <path d="M748,118 L790,118" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#s2a)"/>
+
+    <rect x="796" y="70" width="308" height="96" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="950" y="96" font-size="14" fill="#166534" text-anchor="middle" font-weight="700">④ 안내</text>
+    <text x="950" y="118" font-size="11.5" fill="#166534" text-anchor="middle">앱은 Sentinel에게 "지금 마스터 누구야?"를 묻는다</text>
+    <text x="950" y="139" font-size="11.5" fill="#166534" text-anchor="middle">→ 재배포·설정 변경 없이 새 마스터로 붙는다</text>
+    <text x="950" y="157" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">앱에 마스터 IP를 박아두면 ①~③이 전부 무의미</text>
+
+    <!-- bottom: threshold explain -->
+    <rect x="16" y="196" width="540" height="112" rx="12" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="36" y="220" font-size="13" fill="#9a3412" font-weight="700">문턱 1 (quorum) — "죽었다고 판정할 것인가"</text>
+    <text x="36" y="242" font-size="11.5" fill="#7c2d12">설정값. 낮추면 판정이 빨라지고 오판 위험이 오른다.</text>
+    <text x="36" y="266" font-size="13" fill="#9a3412" font-weight="700">문턱 2 (전체의 과반) — "실제로 승격시킬 것인가"</text>
+    <text x="36" y="288" font-size="11.5" fill="#7c2d12">설정으로 못 낮춘다. 소수 구획에 갇힌 Sentinel들은 여기서 막힌다.</text>
+
+    <rect x="576" y="196" width="528" height="112" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="596" y="220" font-size="13" fill="#166534" font-weight="700">그래서 홀수 — 네트워크가 갈려도 과반은 한쪽에만 생긴다</text>
+    <text x="596" y="244" class="mono" font-size="12" fill="#166534">3대 → 과반 2 : 1대가 죽어도 남은 2대로 failover 가능</text>
+    <text x="596" y="266" class="mono" font-size="12" fill="#dc2626">2대 → 과반 2 : 1대가 죽으면 과반을 못 채워 failover 불가</text>
+    <text x="596" y="290" font-size="11.5" fill="#166534">감시자를 2대만 두는 것은 "감시자를 늘렸다"가 아니라 "고장 지점을 늘렸다"에 가깝다</text>
+  </svg>
+  <figcaption>4단계 중 실무에서 가장 자주 빠뜨리는 것이 <b>④ 안내</b>다. <b>Sentinel을 쓴다는 것은 클라이언트 설정도 바꾼다는 뜻</b>이다 — 애플리케이션에 마스터 IP를 직접 박아두면 failover가 아무 소용이 없다. Sentinel 주소 목록과 <b>마스터 이름(master name)</b>을 설정하는 클라이언트 구성이 함께 가야 한다.</figcaption>
+</figure>
+
+<div class="callout trap"><span class="t">Sentinel의 한계는 명확하다</span>
+  쓰기와 메모리는 <b>여전히 마스터 한 대의 한계</b>를 넘지 못한다. 읽기는 복제본으로 분산할 수 있지만(복제 지연을 감수한다면), <b>쓰기 확장은 안 된다.</b> 마스터가 죽어도 서비스가 이어지게 할 뿐, <b>마스터가 감당할 수 있는 양 자체를 늘려주지는 않기 때문</b>이다.
+</div>
+
+<!-- ===================== 3. 스플릿 브레인 ===================== -->
+<h2 id="s3">3. 스플릿 브레인 — failover가 만들어내는 위험</h2>
+
+<p>Sentinel을 이야기할 때 반드시 따라오는 개념이 있다. <b>스플릿 브레인(split-brain, 갈라진 뇌)이란 네트워크가 둘로 갈려서 양쪽이 각자 자기 마스터를 갖게 되는 상황</b>이다. 하나여야 할 뇌가 둘이 됐다는 뜻의 이름이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 380" role="img" aria-label="스플릿 브레인이 발생하고 복구되며 데이터가 유실되는 3단계 타임라인">
+    <defs>
+      <marker id="s3g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+      <marker id="s3r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <!-- panel 1 -->
+    <rect x="14" y="14" width="350" height="300" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="189" y="40" font-size="14" fill="#166534" text-anchor="middle" font-weight="700">① 정상</text>
+    <rect x="40" y="62" width="110" height="38" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="95" y="86" font-size="12" fill="#374151" text-anchor="middle">클라이언트</text>
+    <path d="M150,81 L196,81" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s3g)"/>
+    <rect x="202" y="60" width="120" height="42" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="262" y="86" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">M (마스터)</text>
+    <path d="M262,102 L262,146" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s3g)"/>
+    <text x="292" y="128" font-size="11" fill="#6b7280">복제</text>
+    <rect x="202" y="152" width="120" height="40" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="262" y="177" font-size="13" fill="#374151" text-anchor="middle">R (복제본)</text>
+    <rect x="40" y="216" width="282" height="76" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="181" y="240" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">S1 S2 S3 가 M과 R을 모두 본다</text>
+    <text x="181" y="262" font-size="11.5" fill="#166534" text-anchor="middle">마스터는 하나, 쓰기 경로도 하나</text>
+    <text x="181" y="282" font-size="11.5" fill="#6b7280" text-anchor="middle">모든 정합성이 이 전제 위에 서 있다</text>
+
+    <!-- panel 2 -->
+    <rect x="384" y="14" width="350" height="300" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="559" y="40" font-size="14" fill="#dc2626" text-anchor="middle" font-weight="700">② 네트워크가 둘로 갈린 순간</text>
+    <line x1="559" y1="52" x2="559" y2="296" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="7 5"/>
+
+    <rect x="400" y="62" width="140" height="38" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="470" y="86" font-size="11.5" fill="#374151" text-anchor="middle">일부 클라이언트</text>
+    <path d="M470,100 L470,128" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#s3r)"/>
+    <rect x="400" y="134" width="140" height="46" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="470" y="153" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">M (구 마스터)</text>
+    <text x="470" y="171" font-size="10.5" fill="#dc2626" text-anchor="middle">자기가 고립된 줄 모른다</text>
+    <text x="470" y="204" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">쓰기 A, B, C 를 받고</text>
+    <text x="470" y="222" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">전부 OK 로 응답한다</text>
+
+    <rect x="578" y="62" width="140" height="38" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="648" y="86" font-size="11.5" fill="#374151" text-anchor="middle">S1 S2 S3 (과반)</text>
+    <path d="M648,100 L648,128" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s3g)"/>
+    <rect x="578" y="134" width="140" height="46" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="648" y="153" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">M' (승격된 R)</text>
+    <text x="648" y="171" font-size="10.5" fill="#166534" text-anchor="middle">정식 마스터가 된다</text>
+    <text x="648" y="204" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">나머지 클라이언트의</text>
+    <text x="648" y="222" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">쓰기 X, Y 를 받는다</text>
+
+    <rect x="400" y="246" width="318" height="46" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="559" y="266" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">같은 순간 마스터가 둘</text>
+    <text x="559" y="284" font-size="11.5" fill="#dc2626" text-anchor="middle">양쪽에 서로 다른 쓰기가 쌓인다</text>
+
+    <!-- panel 3 -->
+    <rect x="754" y="14" width="352" height="300" rx="12" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="930" y="40" font-size="14" fill="#92400e" text-anchor="middle" font-weight="700">③ 네트워크 복구</text>
+
+    <rect x="780" y="62" width="140" height="46" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="850" y="82" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">M' (정본)</text>
+    <text x="850" y="100" font-size="10.5" fill="#166534" text-anchor="middle">데이터 X, Y</text>
+    <rect x="944" y="62" width="140" height="46" rx="8" fill="#f8fafc" stroke="#9ca3af" stroke-width="1.6"/>
+    <text x="1014" y="82" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">M → 복제본으로 강등</text>
+    <text x="1014" y="100" font-size="10.5" fill="#374151" text-anchor="middle">데이터 A, B, C 보유</text>
+    <path d="M920,85 L938,85" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s3g)"/>
+
+    <path d="M1014,108 L1014,140" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#s3r)"/>
+    <rect x="900" y="146" width="190" height="44" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="995" y="166" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">M' 의 데이터를 받아</text>
+    <text x="995" y="183" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">자기 데이터를 덮어쓴다</text>
+
+    <rect x="780" y="212" width="310" height="80" rx="10" fill="#fff" stroke="#fde68a"/>
+    <text x="935" y="236" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">A, B, C 는 조용히 사라진다</text>
+    <text x="935" y="258" font-size="11.5" fill="#92400e" text-anchor="middle">클라이언트는 OK를 받았으므로 성공한 줄 안다</text>
+    <text x="935" y="278" font-size="11.5" fill="#92400e" text-anchor="middle">두 마스터의 데이터를 합쳐줄 방법은 없다</text>
+  </svg>
+  <figcaption>마지막 패널이 핵심이다. <b>갈라진 동안 구 마스터에 쓴 데이터는, 네트워크가 복구되는 순간 조용히 사라진다.</b> 에러가 아니라 <b>정상 응답을 받은 쓰기</b>가 없어지는 것이라 애플리케이션 로그에도 흔적이 남지 않는다. 한쪽을 정본으로 정하면 다른 쪽은 버려질 수밖에 없다 — 병합할 방법이 없기 때문이다.</figcaption>
+</figure>
+
+<h3>3-1. 완화책 — <code>min-replicas-to-write</code>, 그리고 그 대가</h3>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k">min-replicas-to-write</div>
+    <div class="d"><b>"복제본이 N대 이상 붙어 있을 때만 쓰기를 받는다"</b>는 설정. 고립된 구 마스터는 복제본을 잃은 상태이므로 이 조건에 걸려 <b>스스로 쓰기를 거부</b>하게 된다.</div>
+  </div>
+  <div class="tile">
+    <div class="k">min-replicas-max-lag</div>
+    <div class="d">함께 쓰는 짝. <b>"몇 초 이내에 응답한 복제본만 살아 있는 것으로 센다"</b>를 정한다. 연결만 남고 응답하지 않는 복제본을 머릿수에서 빼는 장치다.</div>
+  </div>
+</div>
+
+<p>이 둘이 걸려 있으면 <b>갈라진 동안 고립된 쪽에 쌓이는 쓰기 자체가 없어져</b> 유실 폭이 줄어든다. 다만 <b>대가를 함께 말해야</b> 답이 완성된다.</p>
+
+<div class="memo red">
+  <h4>이 설정은 유실을 없애는 것이 아니라 "유실을 에러로 바꾸는" 것이다</h4>
+  <p style="margin:0"><b>조용한 유실 → 눈에 보이는 쓰기 실패</b>로 형태만 바뀔 뿐, 요청이 다 성공하게 되지는 않는다. 그래서 애플리케이션 쪽에는 <b>이 실패를 재시도로 견디는 설계</b>가 반드시 함께 가야 한다. "인프라 설정 하나로 해결됩니다"라고 답하면 절반짜리다.</p>
+</div>
+
+<!-- ===================== 4. 왜 해시 슬롯인가 ===================== -->
+<h2 id="s4">4. 왜 해시 슬롯인가 — 노드 수로 나누면 안 되는 이유</h2>
+
+<p>Cluster의 문제는 단순해 보인다. 키를 여러 노드에 나눠 담아야 하니, <b>어떤 키가 어느 노드로 갈지 정하는 규칙</b>이 필요하다. 가장 먼저 떠오르는 방법은 <b>키를 정수로 바꿔 노드 수로 나눈 나머지를 쓰는 것</b>이다.</p>
+
+<div class="codehead bad"><span class="tag">naive</span> 계산은 빠르고 분포도 균등하다 — 노드 수가 고정이라면</div>
+<pre><code>노드 번호 = hash(key) mod N     <span class="cm"># N = 노드 수</span>
+
+<span class="cm"># 노드가 3대면 mod 3 으로 0, 1, 2번 노드에 고르게 흩어진다.</span>
+<span class="ln-bad"><span class="cm"># 그런데 노드를 하나 추가하는 순간 규칙 자체가 바뀐다 → 거의 모든 키의 소속이 바뀐다</span></span></code></pre>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 356" role="img" aria-label="mod 3에서 mod 4로 바뀌면 12개 중 9개의 키가 다른 노드로 이동한다는 것을 보여주는 표">
+    <text x="20" y="34" font-size="14" fill="#1f2937" font-weight="700" text-anchor="start">노드를 3대 → 4대로 늘리면 규칙이 mod 3 에서 mod 4 로 바뀐다. 해시값을 12로 나눈 나머지 기준으로 훑어보자.</text>
+    <text x="85.0" y="76" font-size="12.5" fill="#6b7280" text-anchor="middle" font-weight="700">h mod 12</text>
+    <text x="85.0" y="122" font-size="12.5" fill="#2563eb" text-anchor="middle" font-weight="700">3대일 때 (mod 3)</text>
+    <text x="85.0" y="168" font-size="12.5" fill="#16a34a" text-anchor="middle" font-weight="700">4대일 때 (mod 4)</text>
+    <text x="85.0" y="214" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="700">소속이 그대로?</text>
+    <rect x="150" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="184.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">0</text>
+    <rect x="150" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="184.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">0</text>
+    <rect x="150" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="184.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">0</text>
+    <rect x="150" y="196" width="69" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="184.5" y="215" font-size="13" fill="#16a34a" text-anchor="middle" font-weight="700">O</text>
+    <rect x="225" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="259.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">1</text>
+    <rect x="225" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="259.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="225" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="259.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">1</text>
+    <rect x="225" y="196" width="69" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="259.5" y="215" font-size="13" fill="#16a34a" text-anchor="middle" font-weight="700">O</text>
+    <rect x="300" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="334.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">2</text>
+    <rect x="300" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="334.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">2</text>
+    <rect x="300" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="334.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">2</text>
+    <rect x="300" y="196" width="69" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="334.5" y="215" font-size="13" fill="#16a34a" text-anchor="middle" font-weight="700">O</text>
+    <rect x="375" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="409.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">3</text>
+    <rect x="375" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="409.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">0</text>
+    <rect x="375" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="409.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">3</text>
+    <rect x="375" y="196" width="69" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="409.5" y="215" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">X</text>
+    <rect x="450" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="484.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">4</text>
+    <rect x="450" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="484.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="450" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="484.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">0</text>
+    <rect x="450" y="196" width="69" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="484.5" y="215" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">X</text>
+    <rect x="525" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="559.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">5</text>
+    <rect x="525" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="559.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">2</text>
+    <rect x="525" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="559.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">1</text>
+    <rect x="525" y="196" width="69" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="559.5" y="215" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">X</text>
+    <rect x="600" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="634.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">6</text>
+    <rect x="600" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="634.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">0</text>
+    <rect x="600" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="634.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">2</text>
+    <rect x="600" y="196" width="69" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="634.5" y="215" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">X</text>
+    <rect x="675" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="709.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">7</text>
+    <rect x="675" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="709.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="675" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="709.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">3</text>
+    <rect x="675" y="196" width="69" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="709.5" y="215" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">X</text>
+    <rect x="750" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="784.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">8</text>
+    <rect x="750" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="784.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">2</text>
+    <rect x="750" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="784.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">0</text>
+    <rect x="750" y="196" width="69" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="784.5" y="215" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">X</text>
+    <rect x="825" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="859.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">9</text>
+    <rect x="825" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="859.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">0</text>
+    <rect x="825" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="859.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">1</text>
+    <rect x="825" y="196" width="69" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="859.5" y="215" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">X</text>
+    <rect x="900" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="934.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">10</text>
+    <rect x="900" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="934.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="900" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="934.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">2</text>
+    <rect x="900" y="196" width="69" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="934.5" y="215" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">X</text>
+    <rect x="975" y="58" width="69" height="26" rx="6" fill="#f1f3f7" stroke="#d1d5db" stroke-width="1.2"/>
+    <text x="1009.5" y="76" class="mono" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">11</text>
+    <rect x="975" y="104" width="69" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <text x="1009.5" y="122" class="mono" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">2</text>
+    <rect x="975" y="150" width="69" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.2"/>
+    <text x="1009.5" y="168" class="mono" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">3</text>
+    <rect x="975" y="196" width="69" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="1009.5" y="215" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">X</text>
+    <path d="M375,244 L1044,244" fill="none" stroke="#dc2626" stroke-width="2"/>
+    <text x="712.5" y="266" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">이 9칸 = 다른 노드로 이사</text>
+    <rect x="20" y="288" width="1080" height="56" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="560" y="312" font-size="15" fill="#dc2626" text-anchor="middle" font-weight="700">12개 중 3개, 즉 25%만 제자리에 남고 75%가 다른 노드로 옮겨간다</text>
+    <text x="560" y="333" font-size="12" fill="#7f1d1d" text-anchor="middle" font-weight="400">캐시 입장에서는 전체 데이터의 4분의 3이 한꺼번에 무효화된다는 뜻 — 노드를 늘려 여유를 만들려던 순간이 미스 폭주로 DB를 때리는 순간이 된다</text>
+  </svg>
+  <figcaption>이 표가 <b>해시 슬롯의 존재 이유 전체</b>다. 노드 증설이 <b>가장 필요한 순간</b>에 <b>가장 위험한 작업</b>이 되어버리는 구조라면, 그 매핑 방식은 확장 가능한 시스템의 기반이 될 수 없다.</figcaption>
+</figure>
+
+<p><b>그래서 Redis Cluster는 키를 노드에 직접 매핑하지 않는다.</b> 대신 중간에 <b>한 겹</b>을 끼운다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="키를 노드에 직접 매핑하는 방식과 슬롯을 거치는 간접 계층 방식의 비교">
+    <defs>
+      <marker id="s4r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="s4b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="s4o" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <!-- bad -->
+    <rect x="16" y="16" width="1088" height="112" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="40" y="44" font-size="13.5" fill="#dc2626" font-weight="700" text-anchor="start">나쁜 방식 — 키를 노드에 직접 매핑</text>
+    <rect x="60" y="60" width="130" height="46" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="125" y="89" font-size="14" fill="#374151" text-anchor="middle" font-weight="700">키</text>
+    <path d="M190,83 L560,83" fill="none" stroke="#dc2626" stroke-width="2.2" marker-end="url(#s4r)"/>
+    <text x="375" y="74" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">노드 수로 나눔 (mod N)</text>
+    <text x="375" y="102" font-size="11.5" fill="#7f1d1d" text-anchor="middle">노드 수가 바뀌면 이 화살표 전체가 다시 계산된다 → 매핑 전면 재배치</text>
+    <rect x="572" y="60" width="130" height="46" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="637" y="89" font-size="14" fill="#374151" text-anchor="middle" font-weight="700">노드</text>
+    <text x="730" y="78" font-size="12" fill="#dc2626" text-anchor="start" font-weight="700">화살표가 하나뿐이라</text>
+    <text x="730" y="98" font-size="12" fill="#dc2626" text-anchor="start" font-weight="700">변화가 어디에도 갇히지 않는다</text>
+
+    <!-- good -->
+    <rect x="16" y="146" width="1088" height="140" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="40" y="174" font-size="13.5" fill="#166534" font-weight="700" text-anchor="start">Cluster — 사이에 고정 크기 계층을 하나 끼운다</text>
+    <rect x="60" y="192" width="130" height="52" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="125" y="224" font-size="14" fill="#374151" text-anchor="middle" font-weight="700">키</text>
+    <path d="M190,218 L392,218" fill="none" stroke="#2563eb" stroke-width="2.2" marker-end="url(#s4b)"/>
+    <text x="291" y="209" class="mono" font-size="12" fill="#2563eb" text-anchor="middle" font-weight="700">CRC16(key) mod 16384</text>
+    <text x="291" y="238" font-size="12" fill="#2563eb" text-anchor="middle" font-weight="700">이 화살표는 절대 안 바뀐다</text>
+    <rect x="404" y="186" width="210" height="64" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="509" y="212" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">슬롯 (16384개 고정)</text>
+    <text x="509" y="234" font-size="11.5" fill="#1d4ed8" text-anchor="middle">노드가 3대든 30대든 개수 불변</text>
+    <path d="M614,218 L816,218" fill="none" stroke="#16a34a" stroke-width="2.2" marker-end="url(#s4o)"/>
+    <text x="715" y="209" font-size="12" fill="#16a34a" text-anchor="middle" font-weight="700">슬롯 → 노드 배정표</text>
+    <text x="715" y="238" font-size="12" fill="#16a34a" text-anchor="middle" font-weight="700">노드가 늘면 여기만 고친다</text>
+    <rect x="828" y="192" width="130" height="52" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="893" y="224" font-size="14" fill="#374151" text-anchor="middle" font-weight="700">노드</text>
+    <text x="980" y="212" font-size="12" fill="#166534" text-anchor="start" font-weight="700">변화가 뒤쪽</text>
+    <text x="980" y="230" font-size="12" fill="#166534" text-anchor="start" font-weight="700">화살표에 갇힌다</text>
+    <text x="560" y="272" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">노드를 추가하면 기존 노드의 슬롯 일부만 넘어가고, 넘어간 슬롯에 속한 키만 이사한다 — 나머지는 계산 결과도 소속도 그대로</text>
+  </svg>
+  <figcaption>이 중간 계층이 <b>해시 슬롯(hash slot)</b>이다. <b>키를 노드에 바로 매핑하는 대신, 개수가 절대 변하지 않는 16384개의 슬롯 중 하나에 먼저 매핑하고, 그 슬롯들을 노드에 나눠 배정한다.</b></figcaption>
+</figure>
+
+<div class="memo">
+  <h4>해시 슬롯을 한 문장으로 외운다</h4>
+  <div class="rule">간접 계층을 하나 끼워서 <b>변화의 범위를 가둔다</b></div>
+  <p style="margin:8px 0 0"><b>비유 — 우편번호.</b> 택배사가 주소(키)를 배송센터(노드)에 직접 대응시켜 두면, 센터를 하나 새로 지을 때마다 <b>전국 모든 주소의 담당 센터를 다시 계산</b>해야 한다. 그래서 실제로는 주소를 <b>우편번호</b>에 먼저 매핑하고, 우편번호 구간을 센터에 배정한다. 센터가 늘면 <b>우편번호 구간 배정표만</b> 고치면 되고, 주소 → 우편번호 규칙은 손대지 않는다. 16384개 슬롯이 바로 이 우편번호다.</p>
+</div>
+
+<!-- ===================== 5. 슬롯 계산과 배정 ===================== -->
+<h2 id="s5">5. 슬롯 계산과 배정 — 조회가 아니라 계산으로 찾는다</h2>
+
+<div class="codehead plain"><span class="tag">공식</span> 이 한 줄이 Cluster 라우팅의 전부다</div>
+<pre><code>슬롯 번호 = <span class="fn">CRC16</span>(key) mod 16384      <span class="cm"># 결과 범위: 0 ~ 16383</span></code></pre>
+
+<p><b>CRC16은 임의의 문자열을 16비트 정수 하나로 바꾸는 체크섬 함수</b>다. 원래는 데이터 전송 오류를 검출하려고 만든 계산식인데, <b>빠르고 결과가 고르게 흩어져서</b> 여기서는 <b>키를 숫자로 바꾸는 용도</b>로 쓰인다. 암호학적 해시가 아니므로 보안 목적은 없고, 필요한 성질은 <b>"같은 키는 항상 같은 숫자, 다른 키는 되도록 다른 숫자"</b>뿐이다. 16비트 정수의 범위는 0~65535인데 여기에 <code>mod 16384</code>를 하니 결과가 슬롯 번호가 된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 250" role="img" aria-label="16384개 슬롯을 세 마스터가 범위로 나눠 갖는 구조와 클라이언트의 배정표 캐싱">
+    <defs>
+      <marker id="s5b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="20" y="32" font-size="13.5" fill="#1f2937" font-weight="700" text-anchor="start">슬롯 16384개를 마스터들이 범위로 나눠 갖는다 (3대 예시)</text>
+
+    <rect x="20" y="48" width="360" height="52" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="200" y="70" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">마스터 A</text>
+    <text x="200" y="90" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle">슬롯 0 ~ 5460 (5461개)</text>
+
+    <rect x="384" y="48" width="360" height="52" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="564" y="70" font-size="13.5" fill="#166534" text-anchor="middle" font-weight="700">마스터 B</text>
+    <text x="564" y="90" class="mono" font-size="12" fill="#166534" text-anchor="middle">슬롯 5461 ~ 10922 (5462개)</text>
+
+    <rect x="748" y="48" width="352" height="52" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+    <text x="924" y="70" font-size="13.5" fill="#92400e" text-anchor="middle" font-weight="700">마스터 C</text>
+    <text x="924" y="90" class="mono" font-size="12" fill="#92400e" text-anchor="middle">슬롯 10923 ~ 16383 (5461개)</text>
+
+    <text x="20" y="122" class="mono" font-size="11.5" fill="#6b7280" text-anchor="start">0</text>
+    <text x="560" y="122" class="mono" font-size="11.5" fill="#6b7280" text-anchor="middle">합계 16384개 — 빈 슬롯이 하나라도 있으면 그 슬롯의 키는 서비스되지 않는다</text>
+    <text x="1100" y="122" class="mono" font-size="11.5" fill="#6b7280" text-anchor="end">16383</text>
+
+    <rect x="20" y="142" width="1080" height="92" rx="12" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="44" y="166" font-size="13" fill="#1f2937" font-weight="700" text-anchor="start">키가 어디 있는지는 "조회"가 아니라 "계산"으로 결정된다</text>
+    <text x="44" y="188" font-size="12" fill="#374151" text-anchor="start">중앙에 "어느 키가 어디 있는지"를 적어둔 인덱스 서버가 없다. 클러스터를 지원하는 클라이언트는 접속할 때 슬롯 → 노드 배정표를 받아 캐싱해 두고,</text>
+    <text x="44" y="208" font-size="12" fill="#374151" text-anchor="start">명령을 보낼 때마다 키로 슬롯을 계산해 해당 노드로 곧장 보낸다.</text>
+    <text x="44" y="228" font-size="12" fill="#2563eb" text-anchor="start" font-weight="700">→ 프록시도 조회 서버도 없으므로 중간 홉이 0이다. 대신 배정표가 낡을 수 있고, 그 낡음을 고치는 장치가 다음 절의 MOVED / ASK 다.</text>
+  </svg>
+  <figcaption>슬롯 배정은 <b>범위(range)</b>로 관리된다. 그래서 노드 증설은 "몇 번부터 몇 번까지의 슬롯을 새 노드에게 넘긴다"는 <b>구간 이전 작업</b>이 된다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>숫자 세 개만 외운다</h4>
+  <div class="grid g3">
+    <div class="tile big"><div class="k">16384</div><div class="s">슬롯 개수 (고정)</div><div class="d">2<sup>14</sup> — 클러스터의 상수. 노드 수와 무관하다</div></div>
+    <div class="tile big"><div class="k">0 ~ 16383</div><div class="s">슬롯 번호 범위</div><div class="d">모든 슬롯에 주인이 있어야 클러스터가 정상 상태다</div></div>
+    <div class="tile big"><div class="k">CRC16</div><div class="s">키 → 숫자 변환</div><div class="d">체크섬 함수. 빠르고 고르게 흩어지는 것이 채택 이유</div></div>
+  </div>
+</div>
+
+<!-- ===================== 6. MOVED / ASK ===================== -->
+<h2 id="s6">6. MOVED와 ASK — 클라이언트가 엉뚱한 노드에 물었을 때</h2>
+
+<p>클라이언트가 캐싱한 배정표는 <b>낡을 수 있다.</b> 리샤딩으로 슬롯이 옮겨갔는데 클라이언트가 아직 모르면, <b>그 키를 더 이상 갖고 있지 않은 노드</b>에 명령을 보내게 된다. 이때 노드는 에러를 내고 마는 대신 <b>"그 키는 저쪽에 있다"고 알려준다.</b> 응답이 두 종류인데, <b>둘의 차이가 이 절의 전부</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 420" role="img" aria-label="MOVED 리다이렉션과 ASK 리다이렉션의 처리 흐름 비교">
+    <defs>
+      <marker id="s6b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="s6o" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="s6w" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+
+    <!-- MOVED -->
+    <rect x="16" y="14" width="1088" height="182" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.6"/>
+    <text x="40" y="42" font-size="14" fill="#1d4ed8" font-weight="700" text-anchor="start">MOVED — 이사 완료. 주소록을 고쳐라 (영구 안내)</text>
+
+    <rect x="40" y="60" width="130" height="52" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="105" y="84" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">클라이언트</text>
+    <text x="105" y="102" font-size="10.5" fill="#6b7280" text-anchor="middle">낡은 배정표 보유</text>
+
+    <path d="M170,74 L318,74" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#s6b)"/>
+    <text x="244" y="66" class="mono" font-size="11.5" fill="#2563eb" text-anchor="middle">① GET k</text>
+    <path d="M318,100 L170,100" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#s6b)"/>
+    <text x="244" y="116" class="mono" font-size="11.5" fill="#dc2626" text-anchor="middle">② MOVED 3999 B:6379</text>
+
+    <rect x="324" y="52" width="150" height="68" rx="10" fill="#f8fafc" stroke="#9ca3af" stroke-width="1.6"/>
+    <text x="399" y="78" font-size="13" fill="#374151" text-anchor="middle" font-weight="700">노드 A</text>
+    <text x="399" y="98" font-size="11" fill="#6b7280" text-anchor="middle">이 슬롯은 이제 내 것이</text>
+    <text x="399" y="112" font-size="11" fill="#6b7280" text-anchor="middle">아니다</text>
+
+    <path d="M105,112 L105,148" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#s6o)"/>
+    <rect x="40" y="152" width="360" height="34" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="220" y="174" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">③ 배정표를 갱신한다 — "슬롯 3999는 B 소유"</text>
+
+    <path d="M474,86 L616,86" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#s6b)"/>
+    <text x="545" y="78" class="mono" font-size="11.5" fill="#2563eb" text-anchor="middle">④ GET k (재요청)</text>
+    <rect x="622" y="52" width="150" height="68" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="697" y="78" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">노드 B</text>
+    <text x="697" y="100" font-size="11" fill="#1d4ed8" text-anchor="middle">슬롯 3999 새 주인</text>
+
+    <rect x="800" y="52" width="288" height="134" rx="10" fill="#fff" stroke="#bfdbfe"/>
+    <text x="824" y="76" font-size="12.5" fill="#1d4ed8" font-weight="700" text-anchor="start">핵심: 배정표를 갱신하므로</text>
+    <text x="824" y="98" font-size="12" fill="#374151" text-anchor="start">같은 슬롯의 다음 요청부터는 처음부터</text>
+    <text x="824" y="116" font-size="12" fill="#374151" text-anchor="start">올바른 노드로 간다 (리다이렉션 1회로 끝)</text>
+    <text x="824" y="146" font-size="12" fill="#dc2626" font-weight="700" text-anchor="start">MOVED가 계속 쏟아진다면 클라이언트가</text>
+    <text x="824" y="164" font-size="12" fill="#dc2626" font-weight="700" text-anchor="start">배정표 갱신을 안 하고 있다는 신호다</text>
+
+    <!-- ASK -->
+    <rect x="16" y="212" width="1088" height="196" rx="12" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="40" y="240" font-size="14" fill="#92400e" font-weight="700" text-anchor="start">ASK — 이사 중. 이번 건만 새 주소로 가라 (일회성 안내)</text>
+
+    <rect x="40" y="258" width="130" height="52" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="105" y="282" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">클라이언트</text>
+    <text x="105" y="300" font-size="10.5" fill="#6b7280" text-anchor="middle">배정표는 최신이다</text>
+
+    <path d="M170,272 L318,272" fill="none" stroke="#d97706" stroke-width="2" marker-end="url(#s6w)"/>
+    <text x="244" y="264" class="mono" font-size="11.5" fill="#92400e" text-anchor="middle">① GET k</text>
+    <path d="M318,298 L170,298" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#s6w)"/>
+    <text x="244" y="314" class="mono" font-size="11.5" fill="#dc2626" text-anchor="middle">② ASK 3999 B:6379</text>
+
+    <rect x="324" y="250" width="150" height="86" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="1.8"/>
+    <text x="399" y="274" font-size="13" fill="#92400e" text-anchor="middle" font-weight="700">노드 A (이전 중)</text>
+    <text x="399" y="294" font-size="10.5" fill="#92400e" text-anchor="middle">슬롯은 아직 내 소유지만</text>
+    <text x="399" y="310" font-size="10.5" fill="#92400e" text-anchor="middle">그 키는 이미 옮겨갔다</text>
+    <text x="399" y="326" font-size="10.5" fill="#dc2626" text-anchor="middle" font-weight="700">같은 슬롯에 두 상태가 섞임</text>
+
+    <path d="M474,284 L616,284" fill="none" stroke="#d97706" stroke-width="2" marker-end="url(#s6w)"/>
+    <text x="545" y="276" class="mono" font-size="11.5" fill="#92400e" text-anchor="middle">③ ASKING + GET k</text>
+    <text x="545" y="298" font-size="10.5" fill="#92400e" text-anchor="middle">"ASK로 온 요청"임을 밝힌다</text>
+    <rect x="622" y="250" width="150" height="86" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="1.8"/>
+    <text x="697" y="282" font-size="13" fill="#92400e" text-anchor="middle" font-weight="700">노드 B (수신 중)</text>
+    <text x="697" y="304" font-size="10.5" fill="#92400e" text-anchor="middle">ASKING이 있어야 응답한다</text>
+
+    <rect x="40" y="352" width="732" height="44" rx="8" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="406" y="371" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">④ 배정표는 그대로 둔다 — 여기서 갱신하면 아직 안 옮겨간 키를 물으러 B에 갔다가 못 찾는다</text>
+    <text x="406" y="390" font-size="11.5" fill="#7f1d1d" text-anchor="middle">슬롯 이동은 키를 하나씩 옮기는 과정이라, 이동 중에는 A에 남은 키와 B로 간 키가 한 슬롯 안에 공존한다</text>
+
+    <rect x="800" y="250" width="288" height="146" rx="10" fill="#fff" stroke="#fde68a"/>
+    <text x="824" y="274" font-size="12.5" fill="#92400e" font-weight="700" text-anchor="start">ASK는 "예외 통행증" 이다</text>
+    <text x="824" y="296" font-size="12" fill="#374151" text-anchor="start">이번 한 번만 목적지로 보내고,</text>
+    <text x="824" y="314" font-size="12" fill="#374151" text-anchor="start">주소록(배정표)은 손대지 않는다.</text>
+    <text x="824" y="344" font-size="12" fill="#16a34a" font-weight="700" text-anchor="start">이동이 완전히 끝나면 그때부터</text>
+    <text x="824" y="362" font-size="12" fill="#16a34a" font-weight="700" text-anchor="start">MOVED가 나오면서 정식 갱신된다</text>
+    <text x="824" y="386" font-size="11.5" fill="#6b7280" text-anchor="start">덕분에 리샤딩 중에도 서비스가 계속된다</text>
+  </svg>
+  <figcaption>두 응답의 차이는 <b>"배정표를 고치는가"</b> 하나다. 이동 중인 슬롯에 대해 배정표를 미리 고쳐 버리면 <b>아직 안 옮겨간 키를 못 찾는 사고</b>가 나므로, Redis는 <b>영구 안내(MOVED)</b>와 <b>일회성 안내(ASK)</b>를 분리했다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>MOVED / ASK 한 줄 암기</h4>
+  <div class="rule"><code>MOVED</code> = <b>이사 완료, 주소록을 고쳐라</b> &nbsp;/&nbsp; <code>ASK</code> = <b>이사 중, 이번 건만 새 주소로 가라</b></div>
+  <p style="margin:8px 0 0"><b>연상법</b> — <b>M</b>OVED는 <b>M</b>ap을 고친다(<b>M</b>odify the map). <b>A</b>SK는 <b>A</b> once, 딱 한 번만 물어본다. 앞 글자로 붙여두면 시험장에서 헷갈리지 않는다.</p>
+  <div class="scroll" style="margin-bottom:0"><table>
+    <thead><tr><th></th><th>의미</th><th>언제 나오나</th><th>배정표 갱신</th><th>클라이언트 동작</th></tr></thead>
+    <tbody>
+      <tr><td><code>MOVED</code></td><td>이 슬롯은 이제 저 노드 소유다</td><td>슬롯 이전이 <b>끝난 뒤</b></td><td class="good">한다 (영구)</td><td>배정표 갱신 후 새 노드로 재요청</td></tr>
+      <tr><td><code>ASK</code></td><td>슬롯은 여기지만 <b>그 키</b>는 저쪽으로 갔다</td><td>슬롯이 <b>이동하는 중</b></td><td class="bad">하지 않는다 (일회성)</td><td><code>ASKING</code>을 붙여 이번 요청만 목적지로</td></tr>
+    </tbody>
+  </table></div>
+</div>
+
+<!-- ===================== 7. 리샤딩 / 내장 failover ===================== -->
+<h2 id="s7">7. 리샤딩과 내장 failover — 노드를 늘리고 줄이는 일</h2>
+
+<p><b>리샤딩(resharding)은 슬롯을 노드 사이에서 옮기는 작업</b>이다. 노드를 추가하면 기존 노드들에게서 슬롯을 조금씩 떼어 새 노드에 주고, 노드를 빼면 그 노드의 슬롯을 남은 노드들에 나눠준다. 4절에서 본 대로 <b>이동하는 슬롯에 속한 키만 영향을 받고</b>, 나머지는 그대로다. 이동 중에도 클러스터는 <code>ASK</code> 리다이렉션 덕분에 <b>계속 서비스한다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 232" role="img" aria-label="노드 D를 추가할 때 기존 세 노드가 슬롯 일부씩만 넘겨주는 리샤딩 구조">
+    <defs>
+      <marker id="s7o" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="20" y="28" font-size="13" fill="#6b7280" font-weight="700" text-anchor="start">before — 3대</text>
+    <rect x="20" y="40" width="360" height="40" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="200" y="65" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">A : 0 ~ 5460</text>
+    <rect x="384" y="40" width="360" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="564" y="65" class="mono" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">B : 5461 ~ 10922</text>
+    <rect x="748" y="40" width="352" height="40" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+    <text x="924" y="65" class="mono" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">C : 10923 ~ 16383</text>
+
+    <path d="M290,84 L560,120" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#s7o)"/>
+    <path d="M654,84 L580,120" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#s7o)"/>
+    <path d="M1012,84 L600,120" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#s7o)"/>
+    <text x="760" y="104" font-size="11.5" fill="#16a34a" text-anchor="middle" font-weight="700">각 노드가 슬롯 약 1365개씩만 넘긴다 (이 슬롯에 속한 키만 이사)</text>
+
+    <text x="20" y="152" font-size="13" fill="#6b7280" font-weight="700" text-anchor="start">after — 4대</text>
+    <rect x="20" y="164" width="270" height="40" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="155" y="189" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">A : 4096개</text>
+    <rect x="294" y="164" width="270" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="429" y="189" class="mono" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">B : 4096개</text>
+    <rect x="568" y="164" width="270" height="40" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+    <text x="703" y="189" class="mono" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">C : 4096개</text>
+    <rect x="842" y="164" width="258" height="40" rx="8" fill="#f3e8ff" stroke="#7c3aed" stroke-width="2"/>
+    <text x="971" y="189" class="mono" font-size="12" fill="#6d28d9" text-anchor="middle" font-weight="700">D (신규) : 4096개</text>
+    <text x="560" y="224" font-size="11.5" fill="#6b7280" text-anchor="middle">키 → 슬롯 계산식은 한 글자도 바뀌지 않았다. 바뀐 것은 슬롯 → 노드 배정표뿐이다.</text>
+  </svg>
+  <figcaption>4절의 <code>mod N</code> 방식이었다면 이 그림에서 <b>키의 75%</b>가 움직였을 것이다. 슬롯 계층 덕분에 실제로 움직이는 것은 <b>넘겨준 슬롯에 속한 키</b>뿐이다.</figcaption>
+</figure>
+
+<h3>7-1. failover는 Cluster가 자체 수행한다</h3>
+
+<p>각 마스터에 복제본을 붙여두면, 마스터가 응답하지 않을 때 <b>다른 마스터들이 그 사실에 동의하고 복제본을 승격</b>시킨다. Sentinel 같은 별도 프로세스가 필요 없다 — <b>노드들이 서로를 감시하는 역할까지 겸하기 때문</b>이다. 그래서 <b>Cluster는 샤딩 + Sentinel 역할까지 내장한 구성</b>이라고 말한다.</p>
+
+<div class="memo red">
+  <h4>여기서 조심할 것 — 복제본 없는 마스터는 "부분 서비스 불가"의 씨앗이다</h4>
+  <p style="margin:0 0 8px"><b>어떤 마스터의 슬롯을 아무도 담당하지 않게 되면, 그 슬롯에 속한 키에 대한 요청은 전부 실패한다.</b> 마스터 하나가 죽었는데 복제본이 없으면 <b>클러스터의 일부 키 공간이 통째로 서비스 불가</b>가 된다는 뜻이다. "노드가 3대 중 1대만 죽었으니 2/3는 돌아가겠지"가 아니라, <b>담당자가 사라진 슬롯 범위는 조회도 쓰기도 안 된다.</b></p>
+  <div class="rule red" style="margin-bottom:0">Cluster를 쓴다는 것 = <b>마스터 대수만큼 복제본도 함께 늘어난다</b>는 뜻 (마스터 3대 → 최소 6대) — 이것이 운영 비용의 실체</div>
+</div>
+
+<!-- ===================== 8. CROSSSLOT ===================== -->
+<h2 id="s8">8. CROSSSLOT — 인프라가 코드를 바꾸는 지점 <span class="badge core">면접의 핵심</span></h2>
+
+<p>여러 키를 <b>원자적으로</b> 다루는 연산은 Cluster에서 <b>모든 키가 같은 슬롯에 있을 때만</b> 가능하다. 이유는 근본적이다. 슬롯이 다르면 키가 <b>서로 다른 노드</b>에 있고, <b>서로 다른 노드에 흩어진 데이터를 하나의 원자 연산으로 묶을 방법이 없다.</b> 노드 A와 노드 B에 걸친 "전부 성공 아니면 전부 실패"를 만들려면 분산 트랜잭션이 필요한데, Redis는 그런 것을 제공하지 않는다. <b>그래서 아예 시도조차 하지 않고 에러로 거절한다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="키 세 개가 서로 다른 슬롯으로 흩어져 MGET이 CROSSSLOT 에러가 나는 과정">
+    <defs>
+      <marker id="s8r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="s8g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+    </defs>
+
+    <rect x="16" y="16" width="1088" height="30" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="560" y="36" class="mono" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">MGET user:1:name  user:2:name  user:3:name</text>
+
+    <!-- three keys -->
+    <rect x="90" y="70" width="240" height="38" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="210" y="94" class="mono" font-size="12" fill="#374151" text-anchor="middle">user:1:name</text>
+    <rect x="440" y="70" width="240" height="38" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="560" y="94" class="mono" font-size="12" fill="#374151" text-anchor="middle">user:2:name</text>
+    <rect x="790" y="70" width="240" height="38" rx="8" fill="#fff" stroke="#9ca3af"/>
+    <text x="910" y="94" class="mono" font-size="12" fill="#374151" text-anchor="middle">user:3:name</text>
+
+    <path d="M210,108 L210,142" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s8g)"/>
+    <path d="M560,108 L560,142" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s8g)"/>
+    <path d="M910,108 L910,142" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s8g)"/>
+    <text x="335" y="130" class="mono" font-size="11" fill="#6b7280" text-anchor="middle">CRC16(키 전체) mod 16384</text>
+
+    <rect x="120" y="148" width="180" height="36" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="210" y="171" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">슬롯 P</text>
+    <rect x="470" y="148" width="180" height="36" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="560" y="171" class="mono" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">슬롯 Q</text>
+    <rect x="820" y="148" width="180" height="36" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+    <text x="910" y="171" class="mono" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">슬롯 R</text>
+
+    <path d="M210,184 L210,214" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s8g)"/>
+    <path d="M560,184 L560,214" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s8g)"/>
+    <path d="M910,184 L910,214" fill="none" stroke="#6b7280" stroke-width="1.8" marker-end="url(#s8g)"/>
+
+    <rect x="120" y="220" width="180" height="42" rx="8" fill="#f8fafc" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="210" y="246" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">노드 A</text>
+    <rect x="470" y="220" width="180" height="42" rx="8" fill="#f8fafc" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="560" y="246" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">노드 B</text>
+    <rect x="820" y="220" width="180" height="42" rx="8" fill="#f8fafc" stroke="#d97706" stroke-width="1.6"/>
+    <text x="910" y="246" font-size="13" fill="#92400e" text-anchor="middle" font-weight="700">노드 C</text>
+
+    <rect x="120" y="282" width="880" height="36" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="560" y="305" class="mono" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">(error) CROSSSLOT Keys in request don't hash to the same slot</text>
+    <path d="M210,262 L280,278" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#s8r)"/>
+    <path d="M910,262 L840,278" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#s8r)"/>
+  </svg>
+  <figcaption><b>서버를 늘렸을 뿐인데 멀쩡히 돌던 애플리케이션 코드가 런타임 에러를 뱉기 시작한다.</b> 이것이 이 질문의 본체이자, 출제 의도가 말하는 "인프라 변경이 코드 변경을 강제한다"의 정확한 지점이다.</figcaption>
+</figure>
+
+<div class="codehead bad"><span class="tag">before</span> 단일 Redis(Sentinel 구성)에서는 잘 돌던 코드</div>
+<pre><code><span class="cm">// Sentinel 구성: 데이터가 마스터 한 대에 다 있으므로 아무 문제 없다</span>
+<span class="ln-bad">mget(<span class="st">"user:1:name"</span>, <span class="st">"user:2:name"</span>, <span class="st">"user:3:name"</span>);<span class="note">Cluster에서 폭발</span></span>
+<span class="cm">//   (error) CROSSSLOT Keys in request don't hash to the same slot</span>
+
+<span class="cm">// 같은 제약을 받는 것들 — 전부 "여러 키를 한 번에" 다루는 연산이다</span>
+<span class="cm">//   MULTI / EXEC 트랜잭션, Lua 스크립트(KEYS가 여러 개), SINTERSTORE, RENAME ...</span></code></pre>
+
+<div class="memo red">
+  <h4>Cluster 전환 시 깨지는 멀티 키 연산 — 코드 검색용 목록</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">MGET / MSET</div><div class="d">여러 키를 한 번에 읽고 쓰기</div></div>
+    <div class="tile red"><div class="k">MULTI / EXEC</div><div class="d">여러 키에 걸친 트랜잭션</div></div>
+    <div class="tile red"><div class="k">Lua (KEYS 다수)</div><div class="d">스크립트가 건드리는 키가 여러 슬롯</div></div>
+    <div class="tile red"><div class="k">RENAME</div><div class="d">원본 키와 대상 키가 다른 슬롯</div></div>
+    <div class="tile red"><div class="k">SINTERSTORE 등</div><div class="d">집합 연산 + 결과 저장 (SUNIONSTORE, SDIFFSTORE)</div></div>
+    <div class="tile red"><div class="k">ZUNIONSTORE 등</div><div class="d">여러 Sorted Set을 묶는 연산</div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>기억할 규칙 하나</b> — <b>"명령 하나가 키를 두 개 이상 만진다면 전부 의심 대상"</b>이다. 개별 명령 이름을 외우기보다 이 규칙으로 코드베이스를 훑는 편이 빠지는 것이 없다.</p>
+</div>
+
+<!-- ===================== 9. 해시 태그 ===================== -->
+<h2 id="s9">9. 해법 1 — 해시 태그로 같은 슬롯에 모으기</h2>
+
+<p>Redis는 이 제약을 우회할 문법을 제공한다. <b>키 이름에 중괄호 <code>{}</code>가 있으면, 슬롯 계산에 키 전체가 아니라 중괄호 안쪽만 사용한다.</b> 이 중괄호 부분을 <b>해시 태그(hash tag)</b>라고 부른다.</p>
+
+<div class="memo green">
+  <h4>해시 태그 규칙 — 조건을 정확히 외운다</h4>
+  <p style="margin:0 0 8px">키에 <code>{</code>가 있고 <b>그 뒤에</b> <code>}</code>가 있으며 <b>그 사이 내용이 비어 있지 않으면</b>, 그 사이의 문자열만 CRC16에 넣는다. 조건에 안 맞으면(중괄호가 없거나, 짝이 없거나, <b>안이 비었으면</b>) <b>키 전체</b>를 해싱한다.</p>
+  <div class="scroll" style="margin-bottom:0"><table>
+    <thead><tr><th>키</th><th>실제로 해싱되는 문자열</th><th>이유</th></tr></thead>
+    <tbody>
+      <tr class="hl"><td><code>{user:42}:cart</code></td><td><code>user:42</code></td><td>정상적인 해시 태그</td></tr>
+      <tr><td><code>user:42:cart</code></td><td><code>user:42:cart</code></td><td>중괄호가 없다 → 키 전체</td></tr>
+      <tr><td><code>{}:cart</code></td><td><code>{}:cart</code></td><td>중괄호 안이 비었다 → 키 전체</td></tr>
+      <tr><td><code>{user}:{42}</code></td><td><code>user</code></td><td>첫 <code>{</code>와 그 뒤 첫 <code>}</code> 사이만 본다</td></tr>
+    </tbody>
+  </table></div>
+</div>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 슬롯이 제각각</div>
+<pre><code><span class="cm">// 같은 사용자의 데이터인데도</span>
+<span class="cm">// 키 전체를 해싱하므로 소속이 흩어진다</span>
+<span class="ln-bad"><span class="st">"user:42:cart"</span>  <span class="cm">// CRC16(전체) → 슬롯 X</span></span>
+<span class="ln-bad"><span class="st">"user:42:wish"</span>  <span class="cm">// CRC16(전체) → 슬롯 Y</span></span>
+
+<span class="cm">// → MGET, MULTI, Lua로 함께 다룰 수 없다</span>
+<span class="cm">//    (error) CROSSSLOT ...</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 중괄호 안쪽만 해싱</div>
+<pre><code><span class="cm">// 두 키가 반드시 같은 슬롯에 놓인다</span>
+<span class="cm">// = 반드시 같은 노드에 있다</span>
+<span class="ln-good"><span class="st">"{user:42}:cart"</span>  <span class="cm">// CRC16("user:42") → 슬롯 S</span></span>
+<span class="ln-good"><span class="st">"{user:42}:wish"</span>  <span class="cm">// CRC16("user:42") → 슬롯 S</span></span>
+
+<span class="cm">// → MULTI/EXEC, Lua로 원자적으로 다룰 수 있다</span>
+<span class="cm">//    (스크립트의 KEYS도 같은 슬롯이 된다)</span></code></pre>
+  </div>
+</div>
+
+<p>핵심은 <b>"함께 원자적으로 다뤄야 하는 키들을 의도적으로 같은 슬롯에 배치하는" 설계 도구</b>라는 것이다. 슬롯 배치를 <b>우연에 맡기지 않고 키 이름으로 통제한다.</b></p>
+
+<h3>9-1. 태그를 굵게 잡으면 샤딩 자체가 무의미해진다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 250" role="img" aria-label="해시 태그를 너무 넓게 잡으면 모든 키가 한 슬롯에 몰려 핫스팟이 되는 구조">
+    <defs>
+      <marker id="s9r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="s9o" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <rect x="16" y="14" width="536" height="222" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="284" y="40" font-size="13.5" fill="#dc2626" text-anchor="middle" font-weight="700">태그를 서비스 단위로 잡으면 — 핫스팟</text>
+    <text x="284" y="66" class="mono" font-size="12" fill="#7f1d1d" text-anchor="middle">{service}:user:1  {service}:user:2  {service}:order:9 ...</text>
+    <path d="M284,76 L284,104" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#s9r)"/>
+    <rect x="184" y="110" width="200" height="36" rx="8" fill="#fff" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="284" y="133" class="mono" font-size="12" fill="#dc2626" text-anchor="middle" font-weight="700">전부 같은 슬롯 하나</text>
+    <path d="M284,146 L284,172" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#s9r)"/>
+    <rect x="60" y="178" width="140" height="40" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+    <text x="130" y="203" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">노드 A (과부하)</text>
+    <rect x="216" y="178" width="128" height="40" rx="8" fill="#f8fafc" stroke="#d1d5db"/>
+    <text x="280" y="203" font-size="12" fill="#9ca3af" text-anchor="middle">노드 B (한가)</text>
+    <rect x="360" y="178" width="128" height="40" rx="8" fill="#f8fafc" stroke="#d1d5db"/>
+    <text x="424" y="203" font-size="12" fill="#9ca3af" text-anchor="middle">노드 C (한가)</text>
+    <text x="284" y="236" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">노드를 10대로 늘려도 데이터·트래픽은 한 대에 집중</text>
+
+    <rect x="568" y="14" width="536" height="222" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="836" y="40" font-size="13.5" fill="#166534" text-anchor="middle" font-weight="700">태그를 원자성 최소 단위로 잡으면 — 고른 분산</text>
+    <text x="836" y="66" class="mono" font-size="12" fill="#166534" text-anchor="middle">{user:1}:cart  {user:2}:cart  {order:9}:items ...</text>
+    <path d="M700,76 L640,104" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#s9o)"/>
+    <path d="M836,76 L836,104" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#s9o)"/>
+    <path d="M972,76 L1032,104" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#s9o)"/>
+    <rect x="580" y="110" width="112" height="36" rx="8" fill="#fff" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="636" y="133" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">슬롯 P</text>
+    <rect x="780" y="110" width="112" height="36" rx="8" fill="#fff" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="836" y="133" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">슬롯 Q</text>
+    <rect x="980" y="110" width="112" height="36" rx="8" fill="#fff" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="1036" y="133" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">슬롯 R</text>
+    <path d="M636,146 L636,172" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#s9o)"/>
+    <path d="M836,146 L836,172" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#s9o)"/>
+    <path d="M1036,146 L1036,172" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#s9o)"/>
+    <rect x="580" y="178" width="112" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="636" y="203" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">노드 A</text>
+    <rect x="780" y="178" width="112" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="836" y="203" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">노드 B</text>
+    <rect x="980" y="178" width="112" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="1036" y="203" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">노드 C</text>
+    <text x="836" y="236" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">사용자·주문 단위로 흩어지되, 한 묶음은 한 노드에 모인다</text>
+  </svg>
+  <figcaption>모든 키를 <code>{service}:...</code>로 만들면 전부 같은 문자열을 해싱하므로 <b>모든 데이터가 슬롯 하나에 몰린다.</b> 슬롯 하나는 노드 하나에 있으니 <b>샤딩하려고 Cluster로 갔는데 샤딩이 안 되는 결과</b>다. 이렇게 특정 노드에만 부하가 쏠리는 상태를 <b>핫스팟(hot spot)</b>이라고 한다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>해시 태그의 유일한 원칙</h4>
+  <div class="rule ok">원자성이 <b>꼭 필요한 최소 단위</b>로만 묶는다</div>
+  <p style="margin:8px 0 0">그 단위는 <b>"한 번의 연산에 같이 들어가는 묶음"</b>이다 — 사용자 1명, 주문 1건, 상품 1개. 태그가 커질수록 <b>원자성은 편해지고 분산은 무너진다.</b> 이 둘은 정확히 반대 방향으로 당기는 힘이라, 태그 설계는 <b>어디까지 원자성이 필요한가</b>를 정하는 작업과 같다.</p>
+</div>
+
+<!-- ===================== 10. 해법 2 ===================== -->
+<h2 id="s10">10. 해법 2 — 애플리케이션에서 쪼개기, 그리고 그 외 깨지는 것들</h2>
+
+<p>모든 멀티 키 연산에 해시 태그를 붙일 필요는 없다. <b>먼저 물어야 할 것은 "이 연산에 원자성이 정말 필요한가"</b>다. 여기서 답이 갈린다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 250" role="img" aria-label="원자성이 필요한지에 따라 해시 태그와 앱 분할 중 무엇을 고를지 나뉘는 판단 흐름">
+    <defs>
+      <marker id="s10a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <rect x="290" y="14" width="320" height="46" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="450" y="43" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">이 연산에 원자성이 필요한가?</text>
+
+    <path d="M380,60 L200,96" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#s10a)"/>
+    <text x="252" y="80" font-size="12.5" fill="#2563eb" text-anchor="middle" font-weight="700">아니오</text>
+    <path d="M520,60 L700,96" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#s10a)"/>
+    <text x="648" y="80" font-size="12.5" fill="#2563eb" text-anchor="middle" font-weight="700">예</text>
+
+    <rect x="30" y="102" width="340" height="120" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="200" y="126" font-size="13.5" fill="#166534" text-anchor="middle" font-weight="700">앱에서 쪼갠다 (같은 슬롯 불필요)</text>
+    <text x="200" y="150" font-size="11.5" fill="#166534" text-anchor="middle">키를 슬롯별로 그룹핑 → 노드마다 병렬 요청</text>
+    <text x="200" y="170" font-size="11.5" fill="#166534" text-anchor="middle">→ 결과를 순서대로 합쳐 반환</text>
+    <text x="200" y="196" font-size="11.5" fill="#374151" text-anchor="middle">좋은 클러스터 클라이언트는 MGET에 대해</text>
+    <text x="200" y="212" font-size="11.5" fill="#374151" text-anchor="middle">이 작업을 대신 해준다</text>
+
+    <rect x="530" y="102" width="340" height="120" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="700" y="126" font-size="13.5" fill="#92400e" text-anchor="middle" font-weight="700">해시 태그로 같은 슬롯에 모은다</text>
+    <text x="700" y="150" font-size="11.5" fill="#92400e" text-anchor="middle">단, 묶을 수 없을 만큼 범위가 넓다면</text>
+    <text x="700" y="172" font-size="12" fill="#dc2626" text-anchor="middle" font-weight="700">그 연산은 Redis가 아니라</text>
+    <text x="700" y="190" font-size="12" fill="#dc2626" text-anchor="middle" font-weight="700">DB 트랜잭션에 있어야 한다는 신호</text>
+    <text x="700" y="212" font-size="11.5" fill="#6b7280" text-anchor="middle">설계를 다시 보라는 뜻이다</text>
+  </svg>
+  <figcaption><b>원자성이 필요 없다면 굳이 같은 슬롯에 모을 이유가 없다.</b> 태그는 공짜가 아니라 <b>분산을 포기하는 대가</b>를 치르는 도구이므로, 먼저 "쪼개도 되는가"를 묻는 순서가 맞다.</figcaption>
+</figure>
+
+<div class="callout warn"><span class="t">라이브러리가 MGET을 대신 쪼개준다면 CROSSSLOT은 사라진 것인가</span>
+  <b>아니다. 에러가 사라졌을 뿐 원자성은 돌아오지 않는다.</b> 노드별로 나눠 보낸 요청은 <b>각각 다른 시점에 처리</b>되므로, 그 사이에 다른 클라이언트가 값을 바꾸면 <b>서로 다른 시점의 값이 한 결과에 섞인다.</b> 조회라면 대부분 괜찮지만, "이 값들이 같은 순간의 상태여야 한다"는 요구가 있는 곳이라면 라이브러리의 분할 실행은 <b>해결이 아니라 은폐</b>다.
+</div>
+
+<h3>10-1. (가산점 포인트) 그 외 Cluster 전환 시 깨지는 것들 <span class="badge bonus">가산점</span></h3>
+
+<p>CROSSSLOT만 이야기하면 절반이다. <b>멀티 키가 아닌데도 깨지는 것들</b>이 있고, 이것들은 대개 <b>배치와 운영 스크립트</b>에 숨어 있어 배포 후에야 발견된다.</p>
+
+<div class="grid g3">
+  <div class="tile red">
+    <div class="k">SELECT (DB 번호)</div>
+    <div class="d"><b>0번만 지원한다.</b> 단일 Redis에서 "개발용은 1번 DB, 캐시는 2번 DB" 식으로 논리적 분리를 해뒀다면 <b>그 구조가 통째로 사라진다.</b> 접두어(prefix)로 대체해야 한다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k">SCAN (키스페이스 순회)</div>
+    <div class="d">한 노드에 <code>SCAN</code>을 걸면 <b>그 노드가 가진 슬롯의 키만</b> 나온다. 전체를 훑는 배치가 있다면 <b>노드 목록을 받아 순회</b>하도록 고쳐야 한다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k">파이프라인</div>
+    <div class="d">여러 명령을 몰아 보내는 파이프라인은 <b>한 노드에 대해서만</b> 성립한다. 키가 흩어져 있으면 노드별로 쪼개져 <b>왕복 절감 효과가 줄어든다.</b></div>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>이 셋의 공통점 — "전체를 하나로 보던 가정"이 깨진 것이다</h4>
+  <p style="margin:0">단일 Redis에서는 <b>인스턴스 = 하나의 키 공간 = 하나의 접속</b>이었다. Cluster에서는 그 셋이 전부 <b>노드 수만큼 쪼개진다.</b> 그래서 "전체를 대상으로" 무언가를 하던 코드(DB 번호로 나누기, 전수 순회, 한 번에 몰아 보내기)가 전부 손봐야 할 목록에 오른다. <b>CROSSSLOT은 이 붕괴가 가장 시끄럽게 드러나는 한 지점일 뿐이다.</b></p>
+</div>
+
+<!-- ===================== 11. 선택 기준 ===================== -->
+<h2 id="s11">11. 선택 기준 — 언제 무엇을 쓰나</h2>
+
+<p>판단 기준은 <b>"한 대로 감당이 되는가"</b> 하나다. 이 질문 하나로 대부분이 갈린다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="한 대로 감당되는지에 따라 Sentinel과 Cluster를 고르는 판단 흐름도">
+    <defs>
+      <marker id="s11a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <rect x="380" y="14" width="360" height="48" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="44" font-size="14.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">메모리 또는 쓰기량이 한 대의 한계를 넘는가?</text>
+
+    <path d="M470,62 L280,104" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#s11a)"/>
+    <text x="340" y="84" font-size="12.5" fill="#16a34a" text-anchor="middle" font-weight="700">아니오 (대부분의 서비스)</text>
+    <path d="M650,62 L840,104" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#s11a)"/>
+    <text x="790" y="84" font-size="12.5" fill="#d97706" text-anchor="middle" font-weight="700">예</text>
+
+    <rect x="40" y="110" width="480" height="170" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="280" y="138" font-size="15" fill="#166534" text-anchor="middle" font-weight="700">Sentinel</text>
+    <text x="280" y="162" font-size="12" fill="#166534" text-anchor="middle">구성: 마스터 1대 + 복제본 + Sentinel 3대(홀수)</text>
+    <rect x="64" y="176" width="432" height="30" rx="6" fill="#fff" stroke="#bbf7d0"/>
+    <text x="280" y="196" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">멀티 키 연산 · 트랜잭션 · Lua를 제약 없이 쓸 수 있다</text>
+    <rect x="64" y="212" width="432" height="30" rx="6" fill="#fff" stroke="#bbf7d0"/>
+    <text x="280" y="232" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">운영이 단순하다 — 이 자유는 생각보다 값어치가 크다</text>
+    <text x="280" y="264" font-size="11.5" fill="#6b7280" text-anchor="middle">읽기만 많다면 여기에 복제본을 더 붙여 읽기를 분산한다 (복제 지연 감수)</text>
+
+    <rect x="600" y="110" width="480" height="170" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="840" y="138" font-size="15" fill="#92400e" text-anchor="middle" font-weight="700">Cluster</text>
+    <text x="840" y="162" font-size="12" fill="#92400e" text-anchor="middle">구성: 마스터 N대 + 각 마스터마다 복제본</text>
+    <rect x="624" y="176" width="432" height="30" rx="6" fill="#fff" stroke="#fde68a"/>
+    <text x="840" y="196" font-size="12" fill="#dc2626" text-anchor="middle" font-weight="700">전환 전 코드베이스에서 멀티 키 연산을 전수 조사한다</text>
+    <rect x="624" y="212" width="432" height="30" rx="6" fill="#fff" stroke="#fde68a"/>
+    <text x="840" y="232" font-size="12" fill="#dc2626" text-anchor="middle" font-weight="700">조사 없이 전환하면 배포 후 런타임 에러로 하나씩 발견한다</text>
+    <text x="840" y="264" font-size="11.5" fill="#6b7280" text-anchor="middle">복제본까지 포함해 노드 수가 2배가 된다는 운영 비용도 함께 계산한다</text>
+  </svg>
+  <figcaption>주의할 점은 <b>이 갈림길의 왼쪽이 "덜 좋은 선택"이 아니라는 것</b>이다. Sentinel은 <b>제약이 없다는 강점</b>을 가진 구성이고, Cluster는 <b>제약을 사서 확장을 얻는</b> 구성이다.</figcaption>
+</figure>
+
+<div class="scroll"><table>
+  <thead><tr><th></th><th>Sentinel</th><th>Cluster</th></tr></thead>
+  <tbody>
+    <tr><td><b>푸는 문제</b></td><td>가용성 (자동 failover)</td><td>용량·쓰기 확장 <b>+ 가용성</b></td></tr>
+    <tr><td><b>데이터 배치</b></td><td>마스터 1대에 전부 (복제본은 사본)</td><td>16384 슬롯으로 나눠 여러 마스터에</td></tr>
+    <tr><td><b>쓰기 확장</b></td><td class="bad">불가 (마스터 1대 한계)</td><td class="good">마스터 수만큼</td></tr>
+    <tr><td><b>메모리 확장</b></td><td class="bad">불가</td><td class="good">마스터 수만큼</td></tr>
+    <tr><td><b>failover 주체</b></td><td>별도 Sentinel 프로세스(홀수 대)</td><td>노드들이 서로 감시 (내장)</td></tr>
+    <tr class="hl"><td><b>멀티 키 연산</b></td><td class="good">제약 없음</td><td class="bad">같은 슬롯일 때만 (CROSSSLOT)</td></tr>
+    <tr><td><b>DB 번호(<code>SELECT</code>)</b></td><td class="good">여러 개 사용 가능</td><td class="bad">0번만</td></tr>
+    <tr><td><b>키스페이스 순회</b></td><td class="good"><code>SCAN</code> 한 번으로 전체</td><td class="bad">노드별로 각각 순회</td></tr>
+    <tr><td><b>클라이언트 요건</b></td><td>Sentinel 주소 목록 + 마스터 이름</td><td>클러스터 프로토콜(<code>MOVED</code>/<code>ASK</code>) 지원</td></tr>
+    <tr><td><b>최소 노드 수 감각</b></td><td>마스터1 + 복제본1 + Sentinel3</td><td>마스터3 + 복제본3 (권장)</td></tr>
+  </tbody>
+</table></div>
+
+<h3>11-1. 양쪽으로 흔한 실수</h3>
+
+<div class="vs">
+  <div class="col a">
+    <h4><span class="badge trap">함정</span> "확장 대비"로 처음부터 Cluster를 까는 것</h4>
+    <p style="margin:0">아직 필요 없는 복잡도(노드 대수, 복제본, 리샤딩 운영, 멀티 키 제약)를 <b>미리 사는 셈</b>이다. 트래픽이 그 지점에 도달하지 않으면 <b>그 비용은 영영 회수되지 않는다.</b></p>
+  </div>
+  <div class="col b">
+    <h4><span class="badge trap">함정</span> 반대의 실수 — 전환이 재개발이 되는 것</h4>
+    <p style="margin:0">Sentinel에서 멀티 키 연산을 마음껏 쓰다가, 나중의 Cluster 전환이 <b>사실상 재개발</b>이 된다. <b>이쪽이 더 아프다</b> — 이미 쌓인 키와 코드를 전부 되돌려야 하기 때문이다.</p>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4><span class="badge bonus">가산점</span> 절충안 — 지금은 Sentinel이어도 키 이름은 미리 Cluster용으로</h4>
+  <p style="margin:0 0 8px"><b>키 설계 단계에서부터 해시 태그 규칙을 잡아두면 전환 비용이 크게 줄어든다.</b> 지금 당장은 Sentinel이라 아무 효과가 없는 <code>{user:42}:cart</code> 같은 키 이름을 <b>미리 쓰는 것</b>이다.</p>
+  <div class="rule ok">비용은 거의 0인데, 나중에 <b>키 마이그레이션이라는 가장 무거운 작업</b>을 건너뛸 수 있다</div>
+  <p style="margin:8px 0 0">단일 Redis에서 <code>{}</code>는 그냥 이름의 일부일 뿐 아무 동작도 하지 않는다. 즉 <b>지금은 무해하고 나중에 유효해지는 결정</b>이다 — 이런 선택을 골라낼 줄 아는 것이 설계 감각이다.</p>
+</div>
+
+<!-- ===================== 12. 전환 점검 ===================== -->
+<h2 id="s12">12. Sentinel → Cluster 전환, 무엇부터 점검하나 <span class="badge senior">시니어 변별</span></h2>
+
+<p>네 갈래로 답한다. <b>순서 자체가 "이것은 인프라 작업이 아니다"라는 메시지를 담고 있다.</b></p>
+
+<div class="step"><span class="n">1</span><div class="body">
+  <b>코드 전수 조사</b> — <code>MGET</code>/<code>MSET</code>, <code>MULTI</code>/<code>EXEC</code>, Lua 스크립트, <code>RENAME</code>, <code>SINTERSTORE</code> 등 멀티 키 연산 사용처를 전부 찾는다. <b>같은 슬롯 보장이 없으면 전부 CROSSSLOT으로 깨진다.</b> 이것이 가장 먼저인 이유는, <b>여기서 나온 목록이 뒤의 작업 범위를 결정하기 때문</b>이다.
+</div></div>
+<div class="step red"><span class="n">2</span><div class="body">
+  <b>키 설계 변경 (= 사실상 마이그레이션)</b> — 원자성이 필요한 묶음에 해시 태그를 도입한다. 그런데 <b>태그를 붙이면 키 이름이 바뀌고, 키 이름이 바뀌면 슬롯이 바뀐다.</b> 기존 키를 읽어 새 이름으로 다시 쓰는 작업과, 그동안 <b>양쪽 키를 함께 다루는 과도기 코드</b>가 필요하다. <b>전환 프로젝트에서 가장 무거운 부분이 여기다.</b>
+</div></div>
+<div class="step"><span class="n">3</span><div class="body">
+  <b>클라이언트 교체와 설정</b> — 쓰는 클라이언트가 <b>클러스터 프로토콜(<code>MOVED</code>/<code>ASK</code>)을 이해하는지</b>, <b>슬롯 배정표를 캐싱하고 갱신하는지</b>, <code>MGET</code>과 파이프라인을 <b>노드별로 분할 실행</b>해 주는지 확인한다. 라이브러리 버전과 설정을 함께 봐야 한다.
+</div></div>
+<div class="step ok"><span class="n">4</span><div class="body">
+  <b>운영 체계 재구성</b> — <code>SELECT</code>로 다중 DB를 쓰던 곳을 접두어 방식으로 걷어내고, 키스페이스를 순회하는 배치(<code>SCAN</code>)를 <b>노드별 실행</b>으로 고치고, 모니터링·알림을 <b>노드 단위로</b> 재구성한다. 백업과 장애 대응 절차도 <b>노드 수만큼 늘어난다.</b>
+</div></div>
+
+<div class="memo">
+  <h4>순서를 통째로 외우는 장치</h4>
+  <div class="rule"><b>코 → 키 → 클 → 운</b> &nbsp;:&nbsp; <b>코</b>드 전수 조사 → <b>키</b> 설계(마이그레이션) → <b>클</b>라이언트 → <b>운</b>영 체계</div>
+  <p style="margin:8px 0 0">이 순서가 뒤집히면(먼저 노드를 띄우고 나중에 코드를 본다면) <b>운영 중인 클러스터 위에서 키 마이그레이션을 하게 된다.</b> 앞의 두 단계가 뒤의 두 단계를 위한 <b>범위 산정</b>이라는 점이 이 순서의 이유다.</p>
+</div>
+
+<div class="rule red">마무리 문장: <b>"전환은 인프라 작업이 아니라 애플리케이션 프로젝트다."</b></div>
+
+<!-- ===================== 13. 꼬리질문 ===================== -->
+<h2 id="s13">13. 꼬리질문 셀프 테스트</h2>
+<p class="sub">질문만 먼저 읽고 <b>소리 내어 답해 본 뒤</b> 펼쳐서 맞춰 본다. 답을 눈으로 읽는 것보다 인출 훈련이 훨씬 오래 간다.</p>
+<div class="tools">
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=true})">모두 펼치기</button>
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=false})">모두 접기</button>
+</div>
+
+<details class="q"><summary>failover가 일어나는 몇 초 동안 쓰기는 어떻게 되나요?<span class="hint">힌트: 두 가지가 일어난다. 구분해서 답한다</span></summary><div class="a">
+  <p><b>실패와 유실, 두 가지가 일어난다.</b> 이 둘을 구분해 답하는 것이 포인트다.</p>
+  <p><b>① 실패</b>는 예상 가능한 쪽이다. 새 마스터가 승격될 때까지의 짧은 시간 동안 쓰기는 <b>에러나 타임아웃</b>을 받는다. 클라이언트가 새 마스터 주소를 알아내는 데도 시간이 조금 더 걸린다.</p>
+  <p><b>② 더 위험한 것은 유실이다.</b> Redis 복제는 <b>비동기</b>다 — 마스터는 복제본의 확인을 기다리지 않고 클라이언트에게 <b>먼저 OK를 응답</b>한다. 그래서 <b>마스터가 받아서 OK까지 응답했지만 복제본에는 아직 도착하지 않은 쓰기</b>가 항상 존재하고, 그 상태에서 마스터가 죽어 복제본이 승격되면 그 쓰기들은 사라진다. <b>클라이언트는 성공 응답을 받았는데 데이터는 없는</b> 상태가 된다.</p>
+  <p>여기에 <b>스플릿 브레인</b>까지 얹으면 답이 완성된다(3절). 네트워크 분리로 구 마스터가 잠시 살아서 쓰기를 계속 받으면 마스터가 둘이 되고, 복구 시 한쪽 데이터가 통째로 버려진다.</p>
+  <p>완화책으로 <code>min-replicas-to-write</code>(복제본 N대가 살아 있을 때만 쓰기 허용)를 언급하면 좋고, 마지막으로 <b>"이 몇 초의 실패·유실을 견디는 재시도·멱등 설계가 애플리케이션 쪽에 필요하다"</b>까지 가면 강하다.</p>
+  <div class="rule red">인프라는 100%를 보장하지 못한다 — 그것을 전제로 애플리케이션을 설계하는 태도를 보여주는 대목</div>
+</div></details>
+
+<details class="q"><summary>해시 태그를 쓰면 다 해결되나요?<span class="hint">힌트: 슬롯은 통째로만 움직인다</span></summary><div class="a">
+  <p><b>아니다.</b> 태그로 묶인 키들은 같은 슬롯에 들어가고, <b>슬롯은 통째로만 이동하므로 그 묶음은 영원히 같은 노드에 산다.</b></p>
+  <p>여기서 두 가지 문제가 나온다. 묶음이 커지면 <b>그 노드만 메모리와 트래픽이 몰리는 핫스팟</b>이 되고, 더 나쁜 것은 <b>그것을 리샤딩으로 쪼갤 수 없다</b>는 점이다. 리샤딩은 <b>슬롯 단위</b>로만 데이터를 옮기는데 그 키들은 전부 한 슬롯 안에 있으니, <b>노드를 아무리 늘려도 나뉘지 않는다.</b> 해결하려면 키 이름 자체를 바꿔야 하고, 그것은 곧 마이그레이션이다.</p>
+  <p>그래서 원칙은 둘이다. <b>원자성이 필요한 최소 단위로만 묶는다.</b> 그리고 <b>큰 집계는 태그로 묶지 말고 애플리케이션에서 합친다.</b></p>
+  <div class="rule">해시 태그는 "분산을 포기하는 대가로 원자성을 사는" 거래 — 공짜 옵션이 아니다</div>
+</div></details>
+
+<details class="q"><summary>Cluster에서 MULTI/EXEC 트랜잭션과 Lua는 못 쓰나요?<span class="hint">힌트: 조건부로 가능하다 → 그 조건을 설계로 만든다</span></summary><div class="a">
+  <p><b>쓸 수 있다 — 단, 관련된 키가 전부 같은 슬롯일 때만.</b> Lua 스크립트도 <code>KEYS</code>로 넘기는 키들이 같은 슬롯이어야 한다.</p>
+  <p>여기서 한 걸음 더 나가면 좋다. 분산 락, 선착순 발급처럼 <b>원자성이 본질인 설계</b>는 Cluster 전제라면 처음부터 <b>"연산 단위 = 슬롯 단위"</b>가 되도록 키를 설계해야 한다. 예를 들어 한 상품의 재고와 발급 이력을 Lua로 함께 다뤄야 한다면, 두 키를 <code>{product:77}:stock</code>과 <code>{product:77}:issued</code>처럼 <b>같은 태그로 묶어두는 것이 설계의 출발점</b>이다.</p>
+  <div class="rule ok">키 이름이 곧 <b>원자성 경계</b>가 된다 — 이 감각을 보여주면 변별된다</div>
+</div></details>
+
+<details class="q"><summary>읽기 확장만 필요하면 어떤 구성이 낫나요?<span class="hint">힌트: 쓰기가 한 대로 되는지부터 본다 → 조건 하나가 붙는다</span></summary><div class="a">
+  <p><b>쓰기는 한 대로 충분하고 읽기만 많다면 Cluster까지 갈 필요가 없다.</b> Sentinel 구성에 복제본을 붙이고 읽기를 복제본으로 분산하는 편이 훨씬 단순하다. <b>멀티 키 연산 제약도 없다.</b></p>
+  <p>단, 조건이 하나 붙는다. <b>복제는 비동기라 방금 쓴 값이 복제본에서 아직 안 보일 수 있다</b>(복제 지연). "내가 방금 쓴 글이 목록에 없어요" 같은 문의로 이어지는 지점이다.</p>
+  <p>그래서 <b>읽기 분산 대상은 지연을 허용하는 조회로 한정한다</b>고 답한다. 인기 목록·통계·추천처럼 몇백 밀리초 늦어도 되는 조회는 복제본으로 보내고, <b>"방금 내가 한 행동의 결과를 확인하는 조회"는 마스터로 보낸다.</b> 이 분류를 코드에서 어떻게 하는지(읽기 전용 커넥션을 따로 두는 등)까지 말하면 실무 감각이 드러난다.</p>
+  <p class="sub">덧붙일 거리 — Cluster에서도 복제본 읽기는 <b>기본이 아니다.</b> 복제본에 붙은 연결에서 <code>READONLY</code>를 선언해야 그 복제본이 자기 마스터가 담당하는 슬롯의 읽기를 처리한다. 선언하지 않으면 마스터로 가라는 <code>MOVED</code>가 돌아온다.</p>
+</div></details>
+
+<details class="q"><summary>Sentinel 구성에서 Cluster로 전환한다면 무엇부터 점검하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 네 갈래. 순서 자체가 메시지다</span></summary><div class="a">
+  <p><b>1. 코드 전수 조사</b> — 멀티 키 연산 사용처를 전부 찾는다. <b>여기서 나온 목록이 뒤의 작업 범위를 결정</b>하므로 가장 먼저다.</p>
+  <p><b>2. 키 설계 변경</b> — 해시 태그를 도입한다. <b>태그를 붙이면 키 이름이 바뀌고, 이름이 바뀌면 슬롯이 바뀐다 — 즉 사실상 키 마이그레이션</b>이다. 과도기에 양쪽 키를 함께 다루는 코드까지 필요하다. <b>전환에서 가장 무거운 부분.</b></p>
+  <p><b>3. 클라이언트 교체와 설정</b> — <code>MOVED</code>/<code>ASK</code> 처리, 슬롯 배정표 캐싱·갱신, <code>MGET</code>·파이프라인의 노드별 분할 실행 지원 여부를 확인한다.</p>
+  <p><b>4. 운영 체계 재구성</b> — <code>SELECT</code> 제거(접두어로 대체), <code>SCAN</code> 배치의 노드별 실행, 노드 단위 모니터링·백업·장애 대응 절차.</p>
+  <div class="rule red">마무리: <b>"전환은 인프라 작업이 아니라 애플리케이션 프로젝트다."</b></div>
+</div></details>
+
+<details class="q"><summary>슬롯이 왜 하필 16384개인가요?<span class="hint">힌트: 이 질문의 정답은 "아는 만큼만 말하는 것"이다</span></summary><div class="a">
+  <p><b>확신 없는 이유를 지어내지 않는 것이 이 질문의 정답이다.</b> 말할 수 있는 사실은 이것이다.</p>
+  <p>Cluster의 노드들은 서로 상태를 주고받는 통신(클러스터 버스)에서 <b>"어느 노드가 어떤 슬롯을 갖고 있는지"를 비트맵으로 실어 보낸다.</b> 슬롯 하나당 1비트이므로 <b>16384비트 = 2048바이트, 즉 2KB</b>다. <b>슬롯 수를 크게 잡을수록 이 정보가 커지고 노드 간 통신 부담이 늘어난다</b>는 점과 관련이 있다.</p>
+  <p>여기까지만 말하고, 그 이상의 구체적 근거를 확신 없이 덧붙이지 않는 편이 낫다.</p>
+  <div class="rule">"정확히 아는 부분과 모르는 부분을 구분해 말하는 것" 자체가 면접에서는 <b>감점이 아니라 신뢰 요인</b>이다</div>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>Sentinel을 2대만 띄우면 무엇이 문제인가요? <span class="badge trap">약점 겨냥</span><span class="hint">힌트: 문턱이 두 개였다</span></summary><div class="a">
+  <p><b>failover를 실행할 수 없는 구성</b>이 되기 쉽다. 판정(quorum)은 설정으로 낮출 수 있지만, <b>실제 승격을 수행할 리더를 뽑는 데는 전체 Sentinel의 과반</b>이 필요하기 때문이다.</p>
+  <p>2대라면 과반은 <b>2</b>다. 즉 <b>Sentinel 한 대만 죽어도(또는 두 대가 서로 못 보게 되어도) 남은 한 대로는 과반을 못 채워 failover가 진행되지 않는다.</b> 감시자를 하나 늘렸지만 <b>고장 지점만 늘린 셈</b>이다.</p>
+  <p>3대면 과반이 2이므로 한 대가 죽어도 남은 2대로 승격이 가능하다. <b>"홀수로 3대 이상"</b>이 관례가 된 이유가 이것이고, 실무에서는 <b>세 대를 서로 다른 장애 도메인(호스트·랙·가용영역)에 흩어 놓는 것</b>까지 함께 말하면 좋다 — 3대를 한 서버에 띄우면 대수만 3이지 고장은 하나다.</p>
+</div></details>
+
+<details class="q"><summary>quorum을 1로 낮추면 failover가 빨라지나요?<span class="hint">힌트: 빨라지는 것과 위험해지는 것을 나눠 말한다</span></summary><div class="a">
+  <p><b>판정은 빨라지지만, 실행은 빨라지지 않는다.</b> quorum은 <b>ODOWN(죽었다고 결론 내기)</b>의 문턱일 뿐이고, 그 뒤 <b>리더 선출은 여전히 전체의 과반</b>을 요구하기 때문이다. 그래서 quorum을 1로 낮춰도 <b>소수 구획에 갇힌 Sentinel은 failover를 못 한다.</b></p>
+  <p>대신 <b>위험은 확실히 커진다.</b> 감시자 <b>한 대의 네트워크 문제</b>만으로 ODOWN이 선언되므로, 멀쩡한 마스터를 끌어내리는 <b>불필요한 failover</b>가 늘어난다. 그리고 모든 failover에는 <b>비동기 복제로 인한 유실 구간</b>이 딸려 있다(첫 꼬리질문).</p>
+  <div class="rule red">불필요한 failover는 "무해한 오작동"이 아니라 <b>매번 유실 가능성을 동반하는 사건</b>이다</div>
+</div></details>
+
+<details class="q"><summary>Cluster에서도 스플릿 브레인이 생기나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 완전히 막히지는 않지만 창이 닫힌다</span></summary><div class="a">
+  <p><b>구조는 비슷하되, 소수 구획이 스스로 멈추는 장치가 들어 있다.</b> 네트워크가 갈리면 다수 구획의 마스터들이 합의해 <b>고립된 마스터의 복제본을 승격</b>시킨다. 그동안 고립된 구 마스터가 계속 쓰기를 받으면 Sentinel과 같은 그림이 된다.</p>
+  <p>차이는 이것이다. <b>다수 구획과 통신하지 못하는 마스터는 <code>cluster-node-timeout</code>이 지나면 스스로 요청을 거부</b>한다. 자기가 소수 쪽에 있다는 것을 <b>노드 간 통신 두절로 감지</b>하기 때문이다. 그래서 <b>유실이 쌓일 수 있는 창(window)이 그 타임아웃 안쪽으로 제한</b>된다.</p>
+  <p>다만 <b>그 창 안에서 받은 쓰기는 여전히 사라질 수 있다.</b> 복제가 비동기인 이상 "OK를 받았지만 승격된 새 마스터에는 없는 쓰기"는 어느 구성에서도 남는다. <b>"완전히 막았다"가 아니라 "노출 시간을 설정으로 통제한다"가 정확한 답</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>클라이언트 라이브러리가 MGET을 알아서 쪼개준다면, CROSSSLOT은 더 이상 문제가 아니지 않나요? <span class="badge trap">함정</span><span class="hint">힌트: 사라진 것은 에러이지 보장이 아니다</span></summary><div class="a">
+  <p><b>사라진 것은 에러이지 원자성이 아니다.</b> 라이브러리는 키를 슬롯별로 그룹핑해 노드마다 요청하고 결과를 순서대로 합쳐 준다. 편의는 얻지만, 그 요청들은 <b>서로 다른 시점에 각각 처리</b>된다.</p>
+  <p>그래서 <b>결과에 서로 다른 순간의 값이 섞일 수 있다.</b> 단순 조회라면 대개 문제가 없지만, "이 값들이 <b>같은 순간의 상태</b>여야 한다"는 요구가 있는 곳(잔액과 한도, 재고와 예약 수)에서는 <b>해결이 아니라 은폐</b>다.</p>
+  <p>덧붙일 것 — 쓰기 쪽은 더 명확하다. <code>MSET</code>을 노드별로 쪼개면 <b>일부 노드만 성공하고 일부는 실패하는 부분 성공</b>이 가능해진다. 단일 Redis에서는 존재하지 않던 상태다. <b>원자성이 필요하면 해시 태그로 같은 슬롯에 모으거나, 그 연산을 DB로 옮겨야 한다.</b></p>
+</div></details>
+
+<details class="q"><summary>키에 중괄호가 여러 개 있으면 어디가 해시 태그인가요? <code>{}</code>만 있으면요?<span class="hint">힌트: 규칙을 조건 그대로 적용한다</span></summary><div class="a">
+  <p>규칙은 <b>"첫 <code>{</code>와 그 뒤에 나오는 첫 <code>}</code> 사이, 단 그 사이가 비어 있지 않을 것"</b>이다.</p>
+  <ul class="tight">
+    <li><code>{user}:{42}</code> → <b><code>user</code></b>만 해싱한다. 뒤의 <code>{42}</code>는 보지 않는다.</li>
+    <li><code>{}:cart</code> → 중괄호 사이가 비었으므로 규칙에 해당하지 않는다 → <b>키 전체</b>를 해싱한다.</li>
+    <li><code>{user:42</code> (닫는 괄호 없음) → 짝이 없으므로 <b>키 전체</b>를 해싱한다.</li>
+  </ul>
+  <p>실무적 함의가 하나 있다. <b>키에 사용자 입력이 섞여 들어가면 의도치 않은 태그가 만들어질 수 있다.</b> 검색어나 파일명처럼 중괄호가 들어갈 수 있는 값을 키에 그대로 붙이면, 우연히 같은 태그를 공유해 <b>특정 슬롯으로 몰리는 사고</b>가 난다. 키 조립 지점을 <b>한 곳으로 모으고 입력값을 정제</b>하는 것이 방어책이다.</p>
+</div></details>
+
+<details class="q"><summary>Lua 스크립트에서 KEYS로 선언하지 않고 스크립트 안에서 키 이름을 만들어 쓰면 어떻게 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 라우팅은 실행 전에 결정된다</span></summary><div class="a">
+  <p><b>Cluster에서는 성립할 수 없는 코드다.</b> 클러스터에서 명령을 어느 노드로 보낼지는 <b>실행 전에 키 이름으로 결정</b>된다. 스크립트가 실행 도중 키 이름을 만들어 낸다면, 클러스터는 그 키가 <b>이 노드의 슬롯인지 검증할 방법이 없다.</b></p>
+  <p>그래서 <b>스크립트가 만지는 키는 전부 <code>KEYS</code>로 선언</b>해야 하고, 그 키들이 <b>모두 같은 슬롯</b>이어야 한다. 선언하지 않은 키에 접근하는 스크립트는 클러스터 환경에서 <b>거부되거나, 단일 인스턴스에서는 돌지만 클러스터에서만 깨지는</b> 형태가 된다 — 테스트 환경이 단일 Redis라면 <b>운영에서만 터지는</b> 전형적인 케이스다.</p>
+  <p>실무 결론은 명확하다. <b>Cluster를 쓸 계획이 있다면 Lua는 처음부터 "KEYS 선언 + 같은 해시 태그"를 규약으로 잡는다.</b> 나중에 고치는 것보다 훨씬 싸다.</p>
+</div></details>
+
+<details class="q"><summary>클라이언트는 슬롯 배정표를 어떻게 얻고 언제 갱신하나요?<span class="hint">힌트: 최초 조회 + 리다이렉션 신호</span></summary><div class="a">
+  <p><b>접속 시 클러스터에 물어서 받아 캐싱한다.</b> <code>CLUSTER SLOTS</code>나 <code>CLUSTER NODES</code> 같은 명령으로 <b>"어느 슬롯 범위를 어느 노드가 담당하는지"</b>를 받아 메모리에 들고 있다가, 명령마다 키로 슬롯을 계산해 곧장 해당 노드로 보낸다.</p>
+  <p>갱신 계기는 <b><code>MOVED</code> 응답</b>이다. 배정이 바뀌었다는 신호이므로 클라이언트는 배정표를 다시 받아 온다(<code>ASK</code>는 <b>갱신 계기가 아니다</b> — 6절). 그래서 <b><code>MOVED</code>가 계속 쏟아진다면 클라이언트가 갱신을 제대로 하지 않고 있다는 뜻</b>이고, 매 요청이 <b>2회 왕복</b>이 되어 지연이 눈에 띄게 오른다.</p>
+  <p>이것이 12절 3단계에서 <b>"클라이언트 라이브러리를 확인하라"</b>고 한 이유다. 클러스터 지원이 없는 라이브러리는 <code>MOVED</code>를 <b>그냥 에러로</b> 애플리케이션에 던져 버린다.</p>
+</div></details>
+
+<details class="q"><summary>Cluster에서 노드 하나가 죽었는데 어떤 키는 되고 어떤 키는 에러가 납니다. 왜죠?<span class="hint">힌트: 실패의 단위가 인스턴스가 아니다</span></summary><div class="a">
+  <p><b>죽은 마스터가 담당하던 슬롯 범위만 서비스 불가</b>가 됐기 때문이다. Cluster에서 장애의 단위는 <b>인스턴스 전체가 아니라 슬롯 구간</b>이다. 그 구간에 속한 키만 실패하고 나머지는 정상 동작하므로, <b>"일부 기능만 죽은" 것처럼 보인다.</b></p>
+  <p>원인은 둘 중 하나다. <b>① 그 마스터에 복제본이 없었다</b> — 승격시킬 대상이 없으니 슬롯이 주인을 잃는다. <b>② 복제본이 있었지만 승격이 아직 진행 중이다</b> — 이 경우는 잠시 뒤 회복된다.</p>
+  <p>여기서 답을 <b>운영 결론까지</b> 끌고 가면 좋다. <b>Cluster의 가용성은 "마스터 수"가 아니라 "모든 슬롯에 대기 후보가 있는가"로 결정된다.</b> 그래서 마스터를 늘릴 때는 <b>복제본도 같이 늘어야 하고</b>, 모니터링도 인스턴스 생사가 아니라 <b>슬롯 커버리지(빈 슬롯이 있는가)</b>를 봐야 한다.</p>
+</div></details>
+
+<details class="q"><summary>Cluster를 쓰면 트래픽이 자동으로 고르게 분산되나요? <span class="badge trap">함정</span><span class="hint">힌트: 슬롯이 고르다는 것과 부하가 고르다는 것은 다르다</span></summary><div class="a">
+  <p><b>슬롯 개수가 고른 것과 부하가 고른 것은 다르다.</b> CRC16은 키를 고르게 흩어주지만, 그것은 <b>키의 개수</b> 기준이다. 실제 부하는 <b>어떤 키가 얼마나 자주 읽히고 얼마나 큰가</b>에 달려 있다.</p>
+  <p>그래서 쏠림은 세 방향에서 생긴다. <b>① 핫 키</b> — 전체 트래픽의 상당량이 특정 키 하나(인기 상품, 메인 배너)에 몰리면 그 키가 있는 노드만 뜨거워진다. 이 경우 <b>슬롯을 옮겨도 해결되지 않는다</b> — 키 하나는 쪼갤 수 없기 때문이다. <b>② 과도한 해시 태그</b>(9절) — 태그를 넓게 잡아 인위적으로 한 슬롯에 몰아 넣은 경우. <b>③ 큰 값</b> — 개수는 같아도 값 크기가 크게 다르면 메모리 사용이 기운다.</p>
+  <p>정리하면 <b>Cluster는 "키 공간을 나누는 장치"이지 "부하를 균등하게 만드는 장치"가 아니다.</b> 균등은 <b>키 설계와 접근 패턴</b>이 만든다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  Sentinel은 감시자 여러 대가 <b>정족수로 합의</b>해 마스터 한 대의 죽음을 자동 failover로 견디게 하는 <b>가용성</b> 장치, Cluster는 <code>hash % 노드수</code>의 <b>재배치 폭발</b>을 피하려고 <b>키 → 16384개 고정 슬롯 → 노드</b>라는 간접 계층을 두어 메모리·쓰기를 <b>수평 확장</b>하는 장치다 — 그리고 Cluster의 대가는 <b>"같은 슬롯의 키끼리만 멀티 키 연산이 된다"</b>는 제약이라, 확장 계획은 서버 증설이 아니라 <b>해시 태그를 포함한 키 설계와 코드 전수 조사</b>에서 시작해야 한다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/05-redis-caching/09-sentinel-vs-cluster-hash-slot.md</code> · 관련 문서: Redis 영속화 RDB vs AOF(08) · KEYS vs SCAN(12) · Hot key 문제(13) · 캐시 키 설계와 버저닝(15)</p>
+</main>
+</body>
+</html>

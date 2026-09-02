@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local cache(Caffeine) + Redis 2단 캐시 — 속도를 얻고 일관성을 지불하는 거래</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --text:#1f2937; --muted:#6b7280;
+    --accent:#2563eb; --accent-soft:#dbeafe; --warn:#dc2626; --warn-soft:#fee2e2;
+    --ok:#16a34a; --ok-soft:#dcfce7; --amber:#d97706; --amber-soft:#fef3c7;
+    --violet:#7c3aed; --violet-soft:#ede9fe;
+    --code-bg:#1e293b; --code-text:#e2e8f0; --line:#e5e7eb;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    font-size:16px;line-height:1.7;word-break:keep-all}
+  main{max-width:960px;margin:0 auto;padding:24px 16px 80px}
+  h1{font-size:1.6rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+  h2{font-size:1.3rem;margin:56px 0 16px;padding-top:8px;color:var(--accent);
+    border-top:3px solid var(--accent-soft)}
+  h3{font-size:1.08rem;margin:28px 0 10px}
+  p{margin:0 0 14px}
+  a{color:var(--accent)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;
+    background:#e8ecf3;padding:1px 5px;border-radius:4px}
+  pre{background:var(--code-bg);color:var(--code-text);padding:16px;border-radius:10px;
+    overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.82rem;line-height:1.6;margin:0 0 16px}
+  pre code{background:none;padding:0;color:inherit;font-size:inherit}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;margin:0 0 16px}
+  .kicker{font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:6px}
+  .hero{background:var(--card);border:2px solid var(--accent);border-radius:16px;
+    padding:24px 24px 20px;margin:20px 0 20px}
+  .hero .sub{color:var(--muted);font-size:.95rem;margin-bottom:14px}
+  .hero .point{font-size:1.02rem;line-height:1.8}
+  .hero .point b{color:var(--accent)}
+  .toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;
+    list-style:none;padding:0;margin:0}
+  .toc li a{display:block;background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:10px 12px;text-decoration:none;color:var(--text);font-size:.92rem}
+  .toc li a:hover{border-color:var(--accent)}
+  .toc .n{color:var(--accent);font-weight:700;margin-right:6px}
+  .callout{border-left:5px solid var(--accent);background:var(--card);padding:14px 18px;
+    border-radius:0 10px 10px 0;margin:0 0 16px}
+  .callout.warn{border-color:var(--warn);background:#fff7f7}
+  .callout.ok{border-color:var(--ok);background:#f6fdf8}
+  .callout.gap{border-color:var(--amber);background:#fffbeb}
+  .callout .t{font-weight:700;margin-bottom:4px}
+  .badge{display:inline-block;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;
+    vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+  .badge.senior{background:var(--warn);color:#fff}
+  .badge.bonus{background:var(--ok);color:#fff}
+  .badge.gap{background:var(--amber);color:#fff}
+  .badge.blue{background:var(--accent);color:#fff}
+  .badge.extra{background:#6b7280;color:#fff}
+  .fig{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;
+    margin:0 0 16px;overflow-x:auto}
+  .fig svg{display:block;min-width:560px;width:100%;height:auto}
+  .fig .cap{font-size:.85rem;color:var(--muted);margin-top:8px;text-align:center}
+  .wide{width:min(1180px,calc(100vw - 40px));margin-left:50%;transform:translateX(-50%)}
+  .fig.wide svg{min-width:900px}
+  .memo{background:var(--card);border:2px solid var(--accent);border-radius:14px;padding:18px 20px;margin:0 0 16px}
+  .memo .kicker{color:var(--accent)}
+  .memo.warn{border-color:var(--warn)} .memo.warn .kicker{color:var(--warn)}
+  .memo.ok{border-color:var(--ok)} .memo.ok .kicker{color:var(--ok)}
+  .memo.gap{border-color:var(--amber)} .memo.gap .kicker{color:var(--amber)}
+  .memo.vio{border-color:var(--violet)} .memo.vio .kicker{color:var(--violet)}
+  .memo .big{font-size:1.15rem;font-weight:700;line-height:1.55;margin:4px 0 6px}
+  .rule{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px dashed var(--line)}
+  .rule:first-of-type{border-top:none}
+  .rule .num{flex:0 0 34px;height:34px;border-radius:50%;background:var(--accent);color:#fff;
+    font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.95rem}
+  .rule.w .num{background:var(--warn)}
+  .rule.v .num{background:var(--violet)}
+  .rule.g .num{background:var(--ok)}
+  .rule .body b{display:block}
+  .rule .body span{font-size:.92rem;color:var(--muted)}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:0 0 16px}
+  .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:0 0 16px}
+  .mini{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .mini .h{font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mini .tag{font-size:.7rem;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--accent-soft);color:var(--accent)}
+  .mini .tag.warn{background:var(--warn-soft);color:var(--warn)}
+  .mini .tag.ok{background:var(--ok-soft);color:var(--ok)}
+  .mini .tag.gap{background:var(--amber-soft);color:var(--amber)}
+  .mini p{font-size:.92rem;margin:0}
+  .mini ul{margin:4px 0 0;padding-left:18px;font-size:.9rem}
+  .tbl{overflow-x:auto;margin:0 0 16px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:.9rem}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:#f1f4f9;font-weight:700;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.ok{color:var(--ok);font-weight:700} td.warn{color:var(--warn);font-weight:700} td.mid{color:var(--amber);font-weight:700}
+  .ba{display:grid;grid-template-columns:1fr;gap:12px;margin:0 0 16px}
+  @media(min-width:700px){.ba{grid-template-columns:1fr 1fr}}
+  .ba .col{background:var(--card);border-radius:12px;border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column}
+  .ba .head{padding:8px 14px;font-weight:700;font-size:.9rem;color:#fff}
+  .ba .head.bad{background:var(--warn)} .ba .head.good{background:var(--ok)}
+  .ba pre{border-radius:0;margin:0;flex:1}
+  .ba.single{grid-template-columns:1fr}
+  .hl-bad{background:rgba(220,38,38,.28);display:inline-block;width:100%}
+  .hl-good{background:rgba(22,163,74,.28);display:inline-block;width:100%}
+  .cmt{color:#94a3b8}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:0}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;position:relative;padding-right:40px}
+  details summary::-webkit-details-marker{display:none}
+  details summary::after{content:"+";position:absolute;right:16px;top:10px;font-size:1.4rem;color:var(--accent);font-weight:400}
+  details[open] summary::after{content:"−"}
+  details .ans{padding:0 18px 16px;border-top:1px dashed var(--line);padding-top:12px;font-size:.95rem}
+  details .ans .key{font-weight:700;color:var(--accent)}
+  details .ans ol,details .ans ul{margin:6px 0 8px;padding-left:20px}
+  .banner{margin-top:56px;background:var(--accent);color:#fff;border-radius:16px;padding:24px 26px;font-size:1.05rem;line-height:1.8}
+  .banner .kicker{color:#bfdbfe}
+  .banner b{color:#fff;background:rgba(255,255,255,.18);padding:0 4px;border-radius:4px}
+  .small{font-size:.88rem;color:var(--muted)}
+  .qa{font-size:.92rem;color:var(--muted)}
+  .kv{display:flex;gap:10px;align-items:baseline;font-size:.94rem;padding:7px 0;border-top:1px dashed var(--line)}
+  .kv:first-child{border-top:none}
+  .kv .k{flex:0 0 132px;font-weight:700;color:var(--muted);font-size:.86rem;text-align:right}
+
+  /* ---- 이 페이지 전용 ---- */
+  .chant{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 16px}
+  .chant .c{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 10px;text-align:center}
+  .chant .c .syl{font-size:2rem;font-weight:900;line-height:1.1;color:var(--accent)}
+  .chant .c .eng{font-size:.76rem;color:var(--muted);margin:2px 0 8px}
+  .chant .c .q{font-size:.86rem;font-weight:700;padding:6px 6px;border-radius:8px;background:#f8fafc;border:1px dashed var(--line)}
+  .flow3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0 4px}
+  .flow2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 4px}
+  .flow3 .st,.flow2 .st{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:10px 8px;text-align:center;font-size:.84rem}
+  .flow3 .st b,.flow2 .st b{display:block;font-size:.95rem;color:var(--accent)}
+  .flow2 .st.get{background:var(--ok-soft);border-color:var(--ok)} .flow2 .st.get b{color:var(--ok)}
+  .flow2 .st.pay{background:var(--warn-soft);border-color:var(--warn)} .flow2 .st.pay b{color:var(--warn)}
+  .rq{display:block;width:100%;text-align:left;font:inherit;font-size:.93rem;background:var(--card);border:1px solid var(--line);
+    border-radius:10px;padding:10px 14px;margin-bottom:8px;cursor:pointer;position:relative;padding-right:230px}
+  .rq:hover{border-color:var(--accent)}
+  .rq .a{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:none;font-weight:800;font-size:.86rem;text-align:right;max-width:214px}
+  .rq.open .a{display:inline-block}
+  .rq .a.no{color:var(--warn)} .rq .a.yes{color:var(--ok)} .rq .a.maybe{color:var(--amber)}
+  .rq:not(.open)::after{content:"2단 캐시, 되나?";position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#cbd5e1;font-size:.8rem;font-weight:700}
+  .drillbar{display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap}
+  .drillbar button{font:inherit;font-size:.88rem;font-weight:700;padding:7px 14px;border-radius:8px;border:1px solid var(--accent);
+    background:var(--card);color:var(--accent);cursor:pointer}
+  .drillbar button:hover{background:var(--accent-soft)}
+</style>
+</head>
+<body>
+<main>
+
+<div class="kicker">05 · Redis / 캐싱 — 고난이도 ⭐⭐⭐ · 2단 캐시(L1 Caffeine + L2 Redis)</div>
+<h1>Local cache(Caffeine) + Redis 2단 캐시 — 속도를 얻고 일관성을 지불하는 거래</h1>
+<p class="small">원본: <code>interview-questions/knowledge/05-redis-caching/20-two-tier-cache-caffeine-redis.md</code></p>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="kicker">30초 카드 — 구조 · 대가 · 전파 · 안전망</div>
+  <div class="sub">질문: "Local cache(Caffeine) + Redis 2단 캐시 구조의 장단점과 무효화 전파 방법은?" — <b>구조 한 줄 → 대가 한 줄 → 전파 한 줄 → 안전망 한 줄</b> 순서로 말하면 첫 답변이 끝난다.</div>
+
+  <div class="flow3">
+    <div class="st"><b>L1 · Caffeine</b>같은 JVM 힙 · 네트워크 0회</div>
+    <div class="st"><b>L2 · Redis</b>네트워크 건너 · 공유</div>
+    <div class="st"><b>원본 · DB</b>가장 멀다</div>
+  </div>
+
+  <div class="flow2">
+    <div class="st get"><b>얻는 것</b>왕복 제거 · Redis 부하/hot key 완화 · 장애 완충</div>
+    <div class="st pay"><b>지불하는 것</b>노드마다 값이 다를 수 있다 · 무효화가 분산 문제가 된다</div>
+  </div>
+
+  <div class="kicker" style="margin-top:16px">핵심 관전 포인트 — 그대로 말하기</div>
+  <div class="point">
+    2단 캐시는 <b>L1(Caffeine, JVM 힙 안 — 네트워크 없이 나노초~마이크로초)</b>과 <b>L2(Redis, 공유 저장소 — 네트워크 왕복 포함 밀리초 미만)</b>를 겹쳐서,
+    <b>Redis 왕복조차 아까운 초고빈도 읽기를 로컬에서 끝내는</b> 구조다.
+    대가는 <b>"노드마다 다른 값을 들고 있을 수 있다"</b>는 인스턴스 간 불일치이고, 무효화는 <b>Redis pub/sub 브로드캐스트</b>로 전파하는 것이 정석이다.
+    단 pub/sub은 <b>메시지 유실 시 재전달이 없으므로</b> 무효화 전파는 불완전하며, <b>짧은 로컬 TTL을 최후의 안전망</b>으로 반드시 함께 둬야 한다.
+    이 복잡도를 감수할 만한 데이터(<b>초고빈도 읽기 + 변경 드묾 + 짧은 불일치 허용</b>)인지 판별하는 것이 설계의 핵심이다.
+  </div>
+</section>
+
+<div class="callout gap">
+  <div class="t">출제 의도 — 빠른 구조를 아는지가 아니라, <u>복잡도를 추가하는 결정</u>을 어떻게 내리는지를 본다</div>
+  <div class="qa">
+    채점 포인트가 둘이다. ① <b>로컬 캐시의 노드 간 불일치라는 새 문제를 감수할 만큼 이득이 큰 상황(초고빈도 읽기)을 판별</b>할 수 있는가.
+    ② <b>pub/sub 무효화 같은 해법의 불완전함</b>(메시지 유실 시 불일치가 TTL까지 지속)까지 짚을 수 있는가.
+    그래서 이 페이지의 무게중심은 "빨라진다"(<a href="#s2">§2</a>)가 아니라 <a href="#s4">§4 불일치</a>·<a href="#s7">§7 pub/sub의 급소</a>·<a href="#s10">§10 도입 판단</a>에 있다.
+  </div>
+</div>
+
+<ul class="toc">
+  <li><a href="#s1"><span class="n">1</span>L1·L2 — 번호는 거리다</a></li>
+  <li><a href="#s2"><span class="n">2</span>조회는 내려가고 채우기는 올라온다 ★</a></li>
+  <li><a href="#s3"><span class="n">3</span>before/after — 플래그 조회</a></li>
+  <li><a href="#s4"><span class="n">4</span>대가 ① 인스턴스 간 불일치 ★</a></li>
+  <li><a href="#s5"><span class="n">5</span>대가 ② 메모리·복잡도·디버깅</a></li>
+  <li><a href="#s6"><span class="n">6</span>무효화 전파 — pub/sub 정석</a></li>
+  <li><a href="#s7"><span class="n">7</span>급소 — pub/sub은 유실되면 끝 ★</a></li>
+  <li><a href="#s8"><span class="n">8</span>TTL 설계 — L1 &lt; L2</a></li>
+  <li><a href="#s9"><span class="n">9</span>다른 전파 방법 비교</a></li>
+  <li><a href="#s10"><span class="n">10</span>도입 판단 — 많·안·짧·작 ★</a></li>
+  <li><a href="#s11"><span class="n">11</span>실무 — "저장했는데 적용이 안 돼요"</a></li>
+  <li><a href="#s12"><span class="n">12</span>꼬리질문 셀프 테스트</a></li>
+</ul>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. L1·L2 — 번호는 "빠르기 등급"이 아니라 "요청 지점으로부터의 거리"다</h2>
+
+<p>이 주제에서 L1, L2라는 표기가 설명 없이 튀어나오는 경우가 많은데, 이 이름은 <b>CPU 캐시 계층</b>에서 빌려온 관례다. CPU는 연산 장치 바로 옆에 아주 작고 아주 빠른 메모리를 두고, 그 바깥에 조금 더 크고 느린 메모리를 둔다. <b>연산 장치에 가장 가까운 것이 레벨 1이고, 멀어질수록 번호가 커진다.</b></p>
+
+<p>애플리케이션 캐시도 이 관례를 그대로 쓴다. 여기서 "요청 지점"은 <b>요청을 처리하는 우리 애플리케이션 코드</b>다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 400" role="img" aria-label="애플리케이션 코드로부터의 거리로 본 L1 L2 DB 계층과 지연 시간 로그 스케일 비교">
+  <defs>
+    <marker id="a-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+    <marker id="a-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker>
+  </defs>
+
+  <text x="20" y="24" font-size="13" font-weight="800" fill="#2563eb">① 거리 — 번호는 "요청 지점으로부터 몇 걸음인가"를 뜻한다</text>
+
+  <rect x="24" y="44" width="330" height="98" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="189" y="68" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">같은 JVM 프로세스</text>
+  <rect x="42" y="80" width="140" height="48" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="112" y="100" text-anchor="middle" font-size="11.5" font-weight="700">요청 처리 코드</text>
+  <text x="112" y="118" text-anchor="middle" font-size="10.5" fill="#6b7280">= 기준점</text>
+  <rect x="200" y="80" width="138" height="48" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="269" y="100" text-anchor="middle" font-size="12" font-weight="800" fill="#2563eb">L1 · Caffeine</text>
+  <text x="269" y="118" text-anchor="middle" font-size="10.5" fill="#6b7280">힙 안 · 참조 하나</text>
+  <line x1="184" y1="104" x2="196" y2="104" stroke="#2563eb" stroke-width="2" marker-end="url(#a-b)"/>
+
+  <line x1="392" y1="34" x2="392" y2="180" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 5"/>
+  <text x="392" y="196" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">네트워크 경계</text>
+  <text x="392" y="24" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">이 선을 넘느냐가 전부다</text>
+
+  <rect x="430" y="66" width="230" height="76" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="545" y="92" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">L2 · Redis</text>
+  <text x="545" y="112" text-anchor="middle" font-size="10.5" fill="#6b7280">다른 서버의 메모리</text>
+  <text x="545" y="130" text-anchor="middle" font-size="10.5" fill="#6b7280">전 인스턴스가 공유한다</text>
+  <line x1="356" y1="104" x2="424" y2="104" stroke="#2563eb" stroke-width="2" marker-end="url(#a-b)"/>
+
+  <rect x="710" y="66" width="230" height="76" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/>
+  <text x="825" y="92" text-anchor="middle" font-size="12.5" font-weight="800" fill="#6b7280">원본 · PostgreSQL</text>
+  <text x="825" y="112" text-anchor="middle" font-size="10.5" fill="#6b7280">네트워크 + 디스크</text>
+  <text x="825" y="130" text-anchor="middle" font-size="10.5" fill="#6b7280">가장 멀다</text>
+  <line x1="662" y1="104" x2="704" y2="104" stroke="#6b7280" stroke-width="2" marker-end="url(#a-g)"/>
+
+  <rect x="972" y="56" width="168" height="96" rx="10" fill="#f8fafc" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="1056" y="82" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">한 줄로</text>
+  <text x="1056" y="106" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1f2937">L1 = 네트워크 없는 캐시</text>
+  <text x="1056" y="126" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1f2937">L2 = 네트워크 있는 캐시</text>
+
+  <text x="20" y="222" font-size="13" font-weight="800" fill="#2563eb">② 지연 — 자릿수로 나란히 놓으면 왜 한 겹을 더 얹는지가 보인다 (가로축 로그 스케일)</text>
+
+  <line x1="100" y1="352" x2="1120" y2="352" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="240" y1="352" x2="240" y2="358" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="380" y1="352" x2="380" y2="358" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="520" y1="352" x2="520" y2="358" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="660" y1="352" x2="660" y2="358" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="800" y1="352" x2="800" y2="358" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="940" y1="352" x2="940" y2="358" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="1080" y1="352" x2="1080" y2="358" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="240" y="372" text-anchor="middle" font-size="10.5" fill="#6b7280">0.0001ms</text>
+  <text x="380" y="372" text-anchor="middle" font-size="10.5" fill="#6b7280">0.001</text>
+  <text x="520" y="372" text-anchor="middle" font-size="10.5" fill="#6b7280">0.01</text>
+  <text x="660" y="372" text-anchor="middle" font-size="10.5" fill="#6b7280">0.1</text>
+  <text x="800" y="372" text-anchor="middle" font-size="10.5" fill="#6b7280">1ms</text>
+  <text x="940" y="372" text-anchor="middle" font-size="10.5" fill="#6b7280">10ms</text>
+  <text x="1080" y="372" text-anchor="middle" font-size="10.5" fill="#6b7280">100ms</text>
+
+  <text x="92" y="272" text-anchor="end" font-size="12" font-weight="800" fill="#16a34a">L1 Caffeine</text>
+  <rect x="100" y="256" width="140" height="22" fill="#16a34a"/>
+  <text x="252" y="272" font-size="11" fill="#1f2937">수십~수백 <tspan font-weight="800">나노초</tspan> — 힙에서 참조 하나 따라가기</text>
+
+  <text x="92" y="306" text-anchor="end" font-size="12" font-weight="800" fill="#2563eb">L2 Redis</text>
+  <rect x="100" y="290" width="658" height="22" fill="#2563eb"/>
+  <text x="770" y="306" font-size="11" fill="#1f2937">0.5ms 안팎 — <tspan font-weight="800">대부분이 오가는 데</tspan> 쓰인다</text>
+
+  <text x="92" y="340" text-anchor="end" font-size="12" font-weight="800" fill="#dc2626">DB</text>
+  <rect x="100" y="324" width="798" height="22" fill="#dc2626"/>
+  <rect x="898" y="324" width="222" height="22" fill="#dc2626" opacity="0.35"/>
+  <text x="912" y="340" font-size="11" fill="#1f2937">수 ms ~ 수백 ms</text>
+
+  <line x1="240" y1="248" x2="758" y2="248" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="500" y="242" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">세 자릿수 이상의 차이 (0.0001ms 대 0.5ms)</text>
+</svg>
+<div class="cap">막대 길이가 아니라 <b>눈금 사이의 간격</b>을 보라 — 한 칸이 10배다. <b>DB → Redis로 옮겨서 얻은 것만큼의 이득이, Redis → 로컬로 옮길 때 한 번 더 남아 있다.</b></div>
+</div>
+
+<div class="memo">
+  <div class="kicker">이 한 줄에서 모든 장단점이 나온다</div>
+  <div class="big">L1은 <u>네트워크가 없는 캐시</u>, L2는 <u>네트워크가 있는 캐시</u>.</div>
+  <p style="margin:0;font-size:.94rem">장점(왕복 제거)도 여기서 나오고 단점(<b>네트워크가 없으니 다른 노드와 이야기할 수단도 없다</b> → 불일치)도 똑같이 여기서 나온다. 하나의 성질이 이득과 대가를 동시에 만든다는 것이 이 구조를 이해하는 열쇠다.</p>
+</div>
+
+<h3>1-1. Caffeine이 무엇이고, 왜 <code>HashMap</code>이면 안 되는가</h3>
+
+<p><b>Caffeine은 자바용 로컬(local) 캐시 라이브러리다.</b> "로컬"이 핵심인데, 캐시된 데이터가 <b>애플리케이션 프로세스 자신의 힙 메모리 안에</b> 들어 있다는 뜻이다. 조회에 네트워크가 전혀 개입하지 않아, 코드 입장에서는 <code>HashMap.get()</code>과 같은 층위의 연산이다.</p>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">그냥 <code>HashMap</code>을 쓰면 <span class="tag warn">캐시가 아니다</span></div>
+    <ul>
+      <li><b>크기 상한이 없다</b> — 무한히 쌓여 힙이 터진다</li>
+      <li><b>만료가 없다</b> — 낡은 값이 영원히 산다</li>
+    </ul>
+  </div>
+  <div class="mini" style="border-color:#16a34a">
+    <div class="h">Caffeine이 더해 주는 것 <span class="tag ok">그래서 캐시다</span></div>
+    <ul>
+      <li><code>maximumSize</code> · <code>expireAfterWrite</code></li>
+      <li>무엇을 먼저 버릴지 정하는 <b>축출 정책</b>, <b>히트율 통계</b></li>
+      <li>Spring 캐시 추상화(<code>@Cacheable</code>)의 흔한 구현체</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 조회는 가까운 쪽부터 내려가고, 채우기는 먼 쪽부터 올라온다</h2>
+
+<p>2단 캐시의 동작은 <b>두 방향으로</b> 읽어야 한다. 찾을 때는 가까운 곳부터 아래로 내려가고, <b>찾은 값을 채울 때는 먼 곳부터 역순으로 올라온다.</b> 이 두 번째 방향이 면접에서 자주 빠지는 부분이다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 452" role="img" aria-label="2단 캐시의 조회 방향과 채우기 방향 — 조회는 L1에서 DB로 내려가고 채우기는 DB에서 L1으로 올라온다">
+  <defs>
+    <marker id="b-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="b-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+    <marker id="b-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+  </defs>
+
+  <line x1="588" y1="16" x2="588" y2="436" stroke="#e5e7eb" stroke-width="2" stroke-dasharray="8 6"/>
+
+  <text x="290" y="30" text-anchor="middle" font-size="13.5" font-weight="800" fill="#2563eb">① 조회 — 가까운 쪽부터 아래로</text>
+
+  <rect x="40" y="56" width="300" height="62" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="190" y="80" text-anchor="middle" font-size="13" font-weight="800" fill="#2563eb">L1 · Caffeine (JVM 힙)</text>
+  <text x="190" y="102" text-anchor="middle" font-size="10.5" fill="#6b7280">인스턴스마다 따로 · 서로 모른다</text>
+
+  <rect x="40" y="176" width="300" height="62" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="190" y="200" text-anchor="middle" font-size="13" font-weight="800" fill="#2563eb">L2 · Redis (공유)</text>
+  <text x="190" y="222" text-anchor="middle" font-size="10.5" fill="#6b7280">전 인스턴스가 같은 것을 본다</text>
+
+  <rect x="40" y="296" width="300" height="62" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/>
+  <text x="190" y="320" text-anchor="middle" font-size="13" font-weight="800" fill="#6b7280">원본 · DB</text>
+  <text x="190" y="342" text-anchor="middle" font-size="10.5" fill="#6b7280">여기까지 오면 가장 비싸다</text>
+
+  <line x1="190" y1="118" x2="190" y2="170" stroke="#dc2626" stroke-width="2.2" marker-end="url(#b-r)"/>
+  <text x="204" y="150" font-size="11.5" font-weight="800" fill="#dc2626">미스</text>
+  <line x1="190" y1="238" x2="190" y2="290" stroke="#dc2626" stroke-width="2.2" marker-end="url(#b-r)"/>
+  <text x="204" y="270" font-size="11.5" font-weight="800" fill="#dc2626">미스</text>
+
+  <line x1="340" y1="80" x2="392" y2="80" stroke="#16a34a" stroke-width="2.2" marker-end="url(#b-g)"/>
+  <rect x="398" y="58" width="166" height="46" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="481" y="78" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">히트 → 즉시 반환</text>
+  <text x="481" y="96" text-anchor="middle" font-size="11" font-weight="700" fill="#1f2937">네트워크 0회</text>
+
+  <line x1="340" y1="200" x2="392" y2="200" stroke="#16a34a" stroke-width="2.2" marker-end="url(#b-g)"/>
+  <rect x="398" y="178" width="166" height="46" rx="8" fill="#f8fafc" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="481" y="198" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">히트 → L1 채우고 반환</text>
+  <text x="481" y="216" text-anchor="middle" font-size="11" font-weight="700" fill="#1f2937">네트워크 1회</text>
+
+  <line x1="340" y1="320" x2="392" y2="320" stroke="#6b7280" stroke-width="2.2" marker-end="url(#b-g)"/>
+  <rect x="398" y="298" width="166" height="46" rx="8" fill="#f8fafc" stroke="#6b7280" stroke-width="1.5"/>
+  <text x="481" y="318" text-anchor="middle" font-size="11.5" font-weight="800" fill="#6b7280">DB 조회</text>
+  <text x="481" y="336" text-anchor="middle" font-size="11" font-weight="700" fill="#1f2937">네트워크 1회 + DB 1회</text>
+
+  <rect x="40" y="380" width="524" height="52" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="302" y="402" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">L1 히트율 95% = 요청의 95%가 네트워크를 한 번도 타지 않는다</text>
+  <text x="302" y="421" text-anchor="middle" font-size="11.5" fill="#1f2937">남은 5%만 Redis로 → Redis가 받는 트래픽 자체가 <tspan font-weight="800">20분의 1</tspan></text>
+
+  <text x="872" y="30" text-anchor="middle" font-size="13.5" font-weight="800" fill="#16a34a">② 채우기 — 먼 쪽부터 역순으로 위로</text>
+
+  <rect x="640" y="296" width="300" height="62" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="2"/>
+  <text x="790" y="320" text-anchor="middle" font-size="13" font-weight="800" fill="#6b7280">DB에서 읽은 값</text>
+  <text x="790" y="342" text-anchor="middle" font-size="10.5" fill="#6b7280">여기서부터 거슬러 올라간다</text>
+
+  <rect x="640" y="176" width="300" height="62" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="790" y="200" text-anchor="middle" font-size="13" font-weight="800" fill="#16a34a">L2 · Redis에 먼저 쓴다</text>
+  <text x="790" y="222" text-anchor="middle" font-size="10.5" fill="#1f2937">그래야 다른 인스턴스도 받아 간다</text>
+
+  <rect x="640" y="56" width="300" height="62" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="790" y="80" text-anchor="middle" font-size="13" font-weight="800" fill="#16a34a">L1 · Caffeine에 쓴다</text>
+  <text x="790" y="102" text-anchor="middle" font-size="10.5" fill="#1f2937">이 인스턴스의 다음 조회를 위해</text>
+
+  <line x1="790" y1="296" x2="790" y2="244" stroke="#16a34a" stroke-width="2.4" marker-end="url(#b-g)"/>
+  <text x="804" y="276" font-size="11.5" font-weight="800" fill="#16a34a">(1)</text>
+  <line x1="790" y1="176" x2="790" y2="124" stroke="#16a34a" stroke-width="2.4" marker-end="url(#b-g)"/>
+  <text x="804" y="156" font-size="11.5" font-weight="800" fill="#16a34a">(2)</text>
+  <line x1="940" y1="80" x2="996" y2="80" stroke="#16a34a" stroke-width="2.4" marker-end="url(#b-g)"/>
+  <rect x="1002" y="58" width="118" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="1061" y="86" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">응답</text>
+
+  <rect x="640" y="380" width="480" height="52" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="6 4"/>
+  <text x="880" y="402" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">L2를 건너뛰고 L1만 채우면?</text>
+  <text x="880" y="421" text-anchor="middle" font-size="11.5" fill="#1f2937">다른 인스턴스는 여전히 L2 미스 → <tspan font-weight="800">각자 DB를 때린다</tspan></text>
+</svg>
+<div class="cap">채우기가 <b>역순</b>인 이유가 오른쪽 아래 빨간 상자다 — L2를 먼저 채워 놓아야 뒤에 오는 <b>다른 인스턴스의 요청</b>이 DB까지 내려가지 않는다.</div>
+</div>
+
+<div class="memo ok">
+  <div class="kicker">기대 효과는 곱으로 나타난다</div>
+  <div class="big">L1 히트율 95% → <u>응답 시간에서 왕복이 사라지고</u>, 동시에 <u>Redis 트래픽이 1/20</u>이 된다.</div>
+  <p style="margin:0;font-size:.94rem">한 번의 도입이 <b>지연(클라이언트 쪽 이득)</b>과 <b>부하(서버 쪽 이득)</b>를 동시에 줄인다는 점이 2단 캐시의 매력이다. 이 매력 때문에 대가를 과소평가하기 쉽다는 것이 <a href="#s4">§4</a>의 주제다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. before/after — "요청마다 20번 읽히는 기능 플래그"</h2>
+
+<p>가장 좋은 후보는 <b>요청마다 반드시 읽히는 데이터</b>다. 요청 하나를 처리하며 20번 읽히는 설정값이라면, 2단 캐시가 없애는 것은 왕복 1회가 아니라 <b>왕복 20회</b>다. 전형적인 대상은 시스템 설정, 기능 플래그, 권한/역할 정의, 카테고리 트리, 공통 코드 테이블처럼 <b>읽기가 폭발적으로 많고 · 잘 안 바뀌고 · 크기가 작은</b> 데이터다.</p>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">✕ before — 모든 조회가 Redis 왕복</div>
+<pre><code>public boolean isFeatureEnabled(String featureKey) {
+<span class="hl-bad">    return redisTemplate.opsForValue()</span>
+<span class="hl-bad">            .get("feature:" + featureKey) != null;   // 네트워크 1회</span>
+}
+
+<span class="cmt">// 요청당 이런 조회가 20번이면 요청당 Redis 왕복 20회.</span>
+<span class="cmt">// 왕복 0.5ms 기준 → 요청당 10ms를 네트워크에서만 쓴다.</span>
+<span class="cmt">// Redis도 (인스턴스 수 x 초당 요청 수 x 20)만큼의 명령을 받는다.</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">✓ after — 대부분의 조회가 JVM 안에서 끝난다</div>
+<pre><code>private final Cache&lt;String, Boolean&gt; localCache = Caffeine.newBuilder()
+<span class="hl-good">        .maximumSize(10_000)                        // ① 힙 방어</span>
+<span class="hl-good">        .expireAfterWrite(Duration.ofSeconds(30))   // ② 불일치의 상한</span>
+        .build();
+
+public boolean isFeatureEnabled(String featureKey) {
+<span class="cmt">    // get(key, loader)는 L1에 없을 때만 loader를 부른다.</span>
+<span class="cmt">    // 즉 L2(Redis) 왕복은 L1 미스일 때만 발생한다.</span>
+<span class="hl-good">    return localCache.get(featureKey, key -&gt;</span>
+<span class="hl-good">            redisTemplate.opsForValue().get("feature:" + key) != null);</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">① <code>maximumSize</code> <span class="tag warn">빠지면 OOM</span></div>
+    <p>이 한 줄이 없으면 캐시가 <b>힙을 무한히 먹는다.</b> 로컬 캐시로 인한 OOM은 대부분 이 줄이 빠져서 생긴다. 캐시는 "있으면 좋은 것"이므로 <b>버려도 되는 크기</b>로 상한을 두는 것이 기본이다.</p>
+  </div>
+  <div class="mini" style="border-color:#d97706">
+    <div class="h">② <code>expireAfterWrite(30s)</code> <span class="tag gap">성능 값이 아니다</span></div>
+    <p>이 30초는 튜닝 파라미터가 아니라 <b>"인스턴스 간 값이 어긋난 채로 있을 수 있는 최대 시간"</b>이다. 무효화 전파가 전부 실패해도 30초 뒤에는 맞는 값으로 돌아온다는 <b>약속</b>이다(<a href="#s7">§7</a>).</p>
+  </div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 지불하는 것 ① — 인스턴스 간 불일치 (가장 큰 비용)</h2>
+
+<div class="callout warn">
+  <div class="t">이 구조의 본질적 대가는 하나로 압축된다</div>
+  <div class="qa"><b>L1은 인스턴스마다 따로 있고, 서로 모른다.</b> 서버 A에서 데이터가 바뀌면 A는 자기 L1을 갱신할 수 있지만, <b>B에서는 아무 일도 일어나지 않았다.</b> 무효화가 B까지 전파되기 전까지 B의 힙에는 옛 값이 그대로 살아 있다.</div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 448" role="img" aria-label="서버 A와 서버 B의 타임라인 — A에서 값을 바꿔도 B의 L1에는 옛 값이 남아 같은 요청이 다른 답을 받는다">
+  <defs>
+    <marker id="c-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+  </defs>
+
+  <text x="221" y="26" text-anchor="middle" font-size="12" font-weight="800" fill="#6b7280">t0 · 평온</text>
+  <text x="483" y="26" text-anchor="middle" font-size="12" font-weight="800" fill="#2563eb">t1 · A에서 변경</text>
+  <text x="745" y="26" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">t2 · 같은 요청, 다른 답</text>
+  <text x="1007" y="26" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">t3 · 계속된다</text>
+
+  <rect x="90" y="40" width="1050" height="110" rx="10" fill="#f8fafc" stroke="#2563eb" stroke-width="1.8"/>
+  <rect x="90" y="164" width="1050" height="110" rx="10" fill="#f8fafc" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="52" y="92" text-anchor="middle" font-size="13" font-weight="800" fill="#2563eb">서버 A</text>
+  <text x="52" y="110" text-anchor="middle" font-size="10" fill="#6b7280">변경이</text>
+  <text x="52" y="124" text-anchor="middle" font-size="10" fill="#6b7280">일어난 곳</text>
+  <text x="52" y="216" text-anchor="middle" font-size="13" font-weight="800" fill="#dc2626">서버 B</text>
+  <text x="52" y="234" text-anchor="middle" font-size="10" fill="#6b7280">아무것도</text>
+  <text x="52" y="248" text-anchor="middle" font-size="10" fill="#6b7280">모르는 곳</text>
+
+  <line x1="352" y1="40" x2="352" y2="274" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <line x1="614" y1="40" x2="614" y2="274" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <line x1="876" y1="40" x2="876" y2="274" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+
+  <text x="221" y="80" text-anchor="middle" font-size="11.5" fill="#1f2937">L1["feature:new-editor"]</text>
+  <rect x="161" y="90" width="120" height="26" rx="6" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="221" y="108" text-anchor="middle" font-size="12" font-weight="800" fill="#1f2937">false</text>
+  <text x="221" y="136" text-anchor="middle" font-size="10.5" fill="#6b7280">두 서버가 같은 값을 들고 있다</text>
+
+  <text x="483" y="62" text-anchor="middle" font-size="11" fill="#1f2937">(1) DB 커밋 → true</text>
+  <text x="483" y="80" text-anchor="middle" font-size="11" fill="#1f2937">(2) L2(Redis) 키 삭제</text>
+  <text x="483" y="98" text-anchor="middle" font-size="11" fill="#1f2937">(3) A의 L1 무효화</text>
+  <rect x="413" y="108" width="140" height="26" rx="6" fill="#ffffff" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="483" y="126" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">L1: (비어 있음)</text>
+
+  <text x="745" y="66" text-anchor="middle" font-size="11" fill="#1f2937">사용자 요청이 A로</text>
+  <text x="745" y="84" text-anchor="middle" font-size="11" fill="#1f2937">L1 미스 → L2/DB 조회</text>
+  <rect x="675" y="94" width="140" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="745" y="112" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">true</text>
+  <text x="745" y="138" text-anchor="middle" font-size="10.5" font-weight="700" fill="#16a34a">새 기능 보임</text>
+
+  <text x="1007" y="86" text-anchor="middle" font-size="11" fill="#1f2937">정상 동작</text>
+  <text x="1007" y="106" text-anchor="middle" font-size="11" fill="#6b7280">(L1에 true를 채웠다)</text>
+
+  <text x="221" y="204" text-anchor="middle" font-size="11.5" fill="#1f2937">L1["feature:new-editor"]</text>
+  <rect x="161" y="214" width="120" height="26" rx="6" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="221" y="232" text-anchor="middle" font-size="12" font-weight="800" fill="#1f2937">false</text>
+
+  <rect x="413" y="196" width="140" height="26" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="483" y="214" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">false</text>
+  <text x="483" y="240" text-anchor="middle" font-size="10.5" fill="#dc2626">A에서 무슨 일이 있었는지</text>
+  <text x="483" y="256" text-anchor="middle" font-size="10.5" fill="#dc2626">알 방법이 없다</text>
+
+  <text x="745" y="190" text-anchor="middle" font-size="11" fill="#1f2937">사용자 요청이 B로</text>
+  <text x="745" y="208" text-anchor="middle" font-size="11" fill="#1f2937">L1 히트 (네트워크 0회)</text>
+  <rect x="675" y="218" width="140" height="26" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="745" y="236" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">false</text>
+  <text x="745" y="262" text-anchor="middle" font-size="10.5" font-weight="700" fill="#dc2626">새 기능 안 보임</text>
+
+  <text x="1007" y="200" text-anchor="middle" font-size="11" fill="#dc2626">전파가 도달하거나</text>
+  <text x="1007" y="218" text-anchor="middle" font-size="11" fill="#dc2626">L1 TTL이 만료될 때까지</text>
+  <text x="1007" y="238" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">계속 어긋난다</text>
+
+  <rect x="413" y="292" width="707" height="40" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="766" y="317" text-anchor="middle" font-size="13" font-weight="800" fill="#dc2626">불일치 창 — 상한은 오직 L1 TTL이 정한다</text>
+  <line x1="413" y1="282" x2="413" y2="292" stroke="#dc2626" stroke-width="2"/>
+  <line x1="1120" y1="282" x2="1120" y2="292" stroke="#dc2626" stroke-width="2"/>
+
+  <rect x="90" y="356" width="1030" height="72" rx="10" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
+  <text x="605" y="382" text-anchor="middle" font-size="13.5" font-weight="800" fill="#dc2626">핵심은 t2 — 완전히 동일한 요청이 로드밸런서의 분배에 따라 다른 답을 받는다</text>
+  <text x="605" y="406" text-anchor="middle" font-size="12" fill="#1f2937">이건 버그가 아니라 <tspan font-weight="800">이 구조가 원래 그런 것</tspan>이다. 인스턴스 4대면 새로고침 4번 중 대략 1번만 새 값이 보인다.</text>
+</svg>
+<div class="cap">사용자 눈에는 이것이 <b>"새로고침할 때마다 값이 바뀌었다 안 바뀌었다 한다"</b>로 보인다. 애플리케이션 로그는 전부 정상이라 원인을 찾기가 특히 어렵다.</div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">도입 결정의 진짜 의미</div>
+  <div class="big">2단 캐시를 얹는 결정은 곧<br><u>"이 데이터는 잠깐 어긋나도 되는가"</u>에 <u>예</u>라고 답하는 결정이다.</div>
+  <p style="margin:0;font-size:.94rem">그래서 판단의 <b>첫 질문은 성능이 아니라 불일치 허용치</b>다. 잔액·재고·권한 회수처럼 즉시 일관성이 필요한 데이터는 애초에 후보가 아니다. <b>성능 이득을 재기 전에 허용치를 먼저 묻는 순서</b> 자체가 면접에서 보려는 태도다.</p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 지불하는 것 ② — 메모리 · 중복 · 복잡도 · 디버깅</h2>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">JVM 메모리 점유와 GC 압박 <span class="tag warn">힙에 산다</span></div>
+    <p><code>maximumSize</code> 없이 쓰면 로컬 캐시가 <b>OOM의 직접적 원인</b>이 된다. 그 정도가 아니어도 <b>힙에 오래 살아남는 객체</b>가 늘면 GC가 훑을 양이 늘어 정지 시간이 길어진다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">메모리 중복 <span class="tag warn">인스턴스 수만큼 복제</span></div>
+    <p>인스턴스 20대면 같은 카테고리 트리가 힙에 <b>20벌</b> 존재한다. "크기가 작아야 한다"는 조건이 바로 여기서 나온다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">무효화 복잡도 <span class="tag warn">분산 문제가 된다</span></div>
+    <p>Redis 한 곳만 지우면 끝나던 일이 <b>전 인스턴스의 L1까지 지워야 하는 분산 문제</b>로 바뀐다. <a href="#s6">§6~§9</a> 전체가 이 한 줄의 비용이다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">디버깅 난이도 <span class="tag warn">계층이 하나 늘었다</span></div>
+    <p>"이 값이 L1 것인가, L2 것인가, DB 것인가"를 매번 따져야 한다. 게다가 <b>로컬 캐시는 밖에서 들여다볼 수단이 기본으로는 없어서</b>, 어느 인스턴스의 L1인지까지 좁혀야 한다.</p>
+  </div>
+</div>
+
+<div class="memo">
+  <div class="kicker">거래의 요약 — 한 문장</div>
+  <div class="big">속도와 부하를 얻고, <u>일관성과 단순함</u>을 판다.</div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 무효화 전파의 정석 — Redis pub/sub 브로드캐스트</h2>
+
+<p>무효화 전파의 정석은 <b>Redis의 pub/sub(발행/구독)</b>을 방송 채널로 쓰는 것이다. 어떤 클라이언트가 채널에 메시지를 발행(<code>PUBLISH</code>)하면, 그 채널을 구독(<code>SUBSCRIBE</code>)하고 있는 <b>모든 클라이언트</b>에게 Redis가 그 메시지를 뿌려준다. 데이터를 변경한 인스턴스가 L2를 지우고 채널에 키 이름을 발행하면, 전 인스턴스가 받아 각자의 L1에서 그 키를 지운다.</p>
+
+<div class="fig">
+<svg viewBox="0 0 900 380" role="img" aria-label="서버 A가 DB 커밋 후 L2를 삭제하고 채널에 발행하면 전 인스턴스가 각자 L1을 무효화한다">
+  <defs>
+    <marker id="d-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+    <marker id="d-v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#7c3aed"/></marker>
+  </defs>
+
+  <rect x="20" y="40" width="270" height="120" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="155" y="66" text-anchor="middle" font-size="13" font-weight="800" fill="#2563eb">서버 A — 데이터 변경</text>
+  <text x="40" y="92" font-size="11.5" fill="#1f2937"><tspan font-weight="800">(1)</tspan> DB 커밋</text>
+  <text x="40" y="116" font-size="11.5" fill="#1f2937"><tspan font-weight="800">(2)</tspan> Redis(L2) 키 삭제</text>
+  <text x="40" y="140" font-size="11.5" fill="#1f2937"><tspan font-weight="800">(3)</tspan> PUBLISH cache-invalidation</text>
+
+  <line x1="290" y1="100" x2="340" y2="100" stroke="#2563eb" stroke-width="2.4" marker-end="url(#d-b)"/>
+
+  <rect x="346" y="40" width="240" height="120" rx="12" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="466" y="66" text-anchor="middle" font-size="13" font-weight="800" fill="#2563eb">Redis</text>
+  <rect x="362" y="78" width="208" height="30" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.3"/>
+  <text x="466" y="98" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">L2 키 삭제됨 (먼저!)</text>
+  <rect x="362" y="116" width="208" height="30" rx="6" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.3"/>
+  <text x="466" y="136" text-anchor="middle" font-size="11" font-weight="700" fill="#7c3aed">채널 cache-invalidation</text>
+
+  <path d="M420 160 L 175 226" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#d-v)"/>
+  <path d="M466 160 L 466 226" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#d-v)"/>
+  <path d="M512 160 L 745 226" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#d-v)"/>
+  <text x="640" y="186" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">구독 중인 전원에게</text>
+
+  <rect x="60" y="232" width="230" height="72" rx="10" fill="#f8fafc" stroke="#7c3aed" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="175" y="256" text-anchor="middle" font-size="12" font-weight="800" fill="#7c3aed">서버 A (자기 자신)</text>
+  <text x="175" y="278" text-anchor="middle" font-size="10.5" fill="#1f2937">localCache.invalidate(key)</text>
+  <text x="175" y="296" text-anchor="middle" font-size="10" fill="#6b7280">이미 지운 키를 또 지운다 — 무해</text>
+
+  <rect x="336" y="232" width="230" height="72" rx="10" fill="#f8fafc" stroke="#7c3aed" stroke-width="2"/>
+  <text x="451" y="256" text-anchor="middle" font-size="12" font-weight="800" fill="#7c3aed">서버 B</text>
+  <text x="451" y="278" text-anchor="middle" font-size="10.5" fill="#1f2937">localCache.invalidate(key)</text>
+  <text x="451" y="296" text-anchor="middle" font-size="10" fill="#6b7280">옛 값이 사라진다</text>
+
+  <rect x="612" y="232" width="230" height="72" rx="10" fill="#f8fafc" stroke="#7c3aed" stroke-width="2"/>
+  <text x="727" y="256" text-anchor="middle" font-size="12" font-weight="800" fill="#7c3aed">서버 C</text>
+  <text x="727" y="278" text-anchor="middle" font-size="10.5" fill="#1f2937">localCache.invalidate(key)</text>
+  <text x="727" y="296" text-anchor="middle" font-size="10" fill="#6b7280">옛 값이 사라진다</text>
+
+  <rect x="60" y="322" width="782" height="42" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+  <text x="451" y="348" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">채우지 않고 지우기만 한다(evict) — 다음 조회가 L2/DB에서 최신 값을 가져온다</text>
+</svg>
+<div class="cap">발행자와 구독자는 별개의 역할이 아니라서 <b>A가 발행한 메시지는 A 자신에게도 배달된다.</b> 삭제는 멱등이라 대부분 그냥 받고 처리하면 된다.</div>
+</div>
+
+<div class="memo">
+  <div class="kicker">변경 지점에서 외울 3박자</div>
+  <div class="big">커밋 → 삭제 → 방송</div>
+  <p style="margin:0;font-size:.94rem"><b>(1) DB 커밋 · (2) L2 DEL · (3) PUBLISH.</b> 이 순서에서 <b>(2)와 (3)이 뒤집히면 무효화가 통째로 무력화된다</b> — 아래가 그 이유다.</p>
+</div>
+
+<h3>6-1. 순서 함정 — L2 삭제가 전파보다 <u>먼저</u>여야 한다</h3>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">✕ 전파 먼저 — 옛 값이 도로 들어앉는다</div>
+<pre><code>featureRepository.update(featureKey, enabled);
+<span class="hl-bad">redisTemplate.convertAndSend("cache-invalidation", key); // (2) 방송</span>
+<span class="hl-bad">redisTemplate.delete(key);                              // (3) L2 삭제</span>
+
+<span class="cmt">// 그 사이에 B에서 벌어지는 일:</span>
+<span class="cmt">//  1. 메시지 수신 → B가 자기 L1을 지운다</span>
+<span class="cmt">//  2. 곧장 다음 요청 → L1 미스 → L2를 읽는다</span>
+<span class="cmt">//  3. A가 아직 L2를 안 지웠다 → 옛 값을 읽어 L1에 도로 채운다</span>
+<span class="cmt">//  → 이 값은 다음 무효화나 TTL까지 살아남는다</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">✓ L2 삭제 먼저 — 경합이 성립하지 않는다</div>
+<pre><code>public void updateFeature(String featureKey, boolean enabled) {
+    featureRepository.update(featureKey, enabled);        <span class="cmt">// (1) DB</span>
+<span class="hl-good">    redisTemplate.delete("feature:" + featureKey);        // (2) L2 삭제</span>
+<span class="hl-good">    redisTemplate.convertAndSend("cache-invalidation",    // (3) 방송</span>
+<span class="hl-good">            "feature:" + featureKey);</span>
+}
+
+<span class="cmt">// B가 메시지를 받고 곧바로 L2를 읽어도, L2는 이미 비어 있다.</span>
+<span class="cmt">// → DB에서 새 값을 가져와 채운다.</span></code></pre>
+  </div>
+</div>
+
+<h3>6-2. 구독 측 — 지우기만 한다</h3>
+
+<pre><code>public void onInvalidationMessage(String key) {
+    <span class="cmt">// 새 값을 채우지 않고 지우기만 한다. 다음 조회가 L2/DB에서 최신 값을 가져온다.</span>
+    <span class="cmt">// 지우는 동작은 몇 번을 해도 결과가 같아서(멱등) 중복 수신·자기 수신에 안전하다.</span>
+    localCache.invalidate(key);
+}</code></pre>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#16a34a">
+    <div class="h">자기 메시지, 그냥 받고 처리 <span class="tag ok">기본값</span></div>
+    <p>A가 이미 지운 키를 한 번 더 지워도 <b>아무 해가 없다.</b> 대부분 이걸로 충분하다.</p>
+  </div>
+  <div class="mini">
+    <div class="h">발행자 ID로 자기 것 무시 <span class="tag">필요할 때만</span></div>
+    <p>인스턴스마다 고유 ID를 만들어 <code>{"key":"feature:x","from":"instance-7"}</code>로 보내고 <code>from</code>이 자기면 건너뛴다. <b>메시지가 아주 잦아 무효화 작업 자체가 부담일 때만</b> 필요한 최적화다.</p>
+  </div>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 급소 — Redis pub/sub은 유실되면 그걸로 끝이다 <span class="badge senior">이 질문의 채점 포인트</span></h2>
+
+<div class="callout warn">
+  <div class="t">Redis pub/sub은 메시지를 <u>저장하지 않는다</u></div>
+  <div class="qa">발행 시점에 <b>그 채널을 구독하고 있는 연결에만</b> 즉시 뿌리고, 뿌린 뒤에는 잊는다. 큐처럼 쌓아뒀다가 나중에 접속한 구독자에게 주는 일이 없고, 못 받은 구독자에게 <b>재전달하는 일도 없다.</b> 이런 전달 보장을 <b>at-most-once(최대 1회)</b>라고 부른다 — "많아야 한 번 도착한다", 즉 <b>0번 도착할 수도 있다</b>는 뜻이다.</div>
+</div>
+
+<div class="grid3">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">배포 중 재시작 <span class="tag warn">유실</span></div>
+    <p>롤링 배포로 인스턴스가 하나씩 내려갔다 올라오는 동안, <b>내려가 있던 서버는 구독자가 아니다.</b> 그 사이의 무효화는 이 서버에게 없었던 일이 된다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">네트워크 순단 <span class="tag warn">유실</span></div>
+    <p>커넥션이 흔들려 <b>재접속하는 몇 초 사이</b>의 메시지가 사라진다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">Redis 페일오버 <span class="tag warn">유실</span></div>
+    <p>마스터가 교체되는 동안 구독 연결이 끊겼다가 새 마스터로 재접속하는데, <b>그 틈의 메시지는 어디에도 없다.</b></p>
+  </div>
+</div>
+
+<p>메시지를 놓친 노드는 <b>자기 L1이 낡았다는 사실 자체를 알 방법이 없다.</b> 아무 신호도 못 받았으니 정상이라고 믿고 옛 값을 계속 서빙한다. 그리고 이 상태는 <b>그 키의 로컬 TTL이 다할 때까지 지속된다.</b> 바로 이것이 짧은 L1 TTL이 <b>선택이 아니라 필수</b>인 이유다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 348" role="img" aria-label="무효화 전파의 성공 경로와 유실 경로 — 유실 시 L1 TTL 만료가 정합성을 회복시킨다">
+  <defs>
+    <marker id="e-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+    <marker id="e-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="e-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#d97706"/></marker>
+  </defs>
+
+  <text x="20" y="30" font-size="13" font-weight="800" fill="#16a34a">전파 성공 경로 — "빠른 경로"</text>
+
+  <rect x="40" y="44" width="160" height="50" rx="9" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="120" y="74" text-anchor="middle" font-size="12" font-weight="700">변경 발생</text>
+  <line x1="200" y1="69" x2="234" y2="69" stroke="#16a34a" stroke-width="2.2" marker-end="url(#e-g)"/>
+  <rect x="240" y="44" width="160" height="50" rx="9" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="320" y="74" text-anchor="middle" font-size="12" font-weight="700">PUBLISH</text>
+  <line x1="400" y1="69" x2="434" y2="69" stroke="#16a34a" stroke-width="2.2" marker-end="url(#e-g)"/>
+  <rect x="440" y="44" width="160" height="50" rx="9" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="520" y="74" text-anchor="middle" font-size="12" font-weight="700">전원 수신</text>
+  <line x1="600" y1="69" x2="634" y2="69" stroke="#16a34a" stroke-width="2.2" marker-end="url(#e-g)"/>
+  <rect x="640" y="44" width="180" height="50" rx="9" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="730" y="74" text-anchor="middle" font-size="12" font-weight="700">각자 L1 무효화</text>
+  <line x1="820" y1="69" x2="854" y2="69" stroke="#16a34a" stroke-width="2.2" marker-end="url(#e-g)"/>
+  <rect x="860" y="44" width="270" height="50" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="995" y="74" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">수 밀리초 안에 정합</text>
+
+  <text x="20" y="140" font-size="13" font-weight="800" fill="#dc2626">전파 실패 경로 — 아무도 알아채지 못한다</text>
+
+  <rect x="40" y="154" width="160" height="50" rx="9" fill="#ffffff" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="120" y="184" text-anchor="middle" font-size="12" font-weight="700">변경 발생</text>
+  <line x1="200" y1="179" x2="234" y2="179" stroke="#dc2626" stroke-width="2.2" marker-end="url(#e-r)"/>
+  <rect x="240" y="154" width="160" height="50" rx="9" fill="#ffffff" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="320" y="184" text-anchor="middle" font-size="12" font-weight="700">PUBLISH</text>
+  <line x1="400" y1="179" x2="434" y2="179" stroke="#dc2626" stroke-width="2.2" marker-end="url(#e-r)"/>
+  <rect x="440" y="154" width="200" height="50" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="540" y="176" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">✕ 유실 (at-most-once)</text>
+  <text x="540" y="194" text-anchor="middle" font-size="10" fill="#6b7280">재시작 · 순단 · 페일오버</text>
+  <line x1="640" y1="179" x2="674" y2="179" stroke="#dc2626" stroke-width="2.2" marker-end="url(#e-r)"/>
+  <rect x="680" y="154" width="270" height="50" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="815" y="176" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">그 노드는 낡은 줄 모른다</text>
+  <text x="815" y="194" text-anchor="middle" font-size="10" fill="#6b7280">아무 신호도 못 받았으니 정상이라 믿는다</text>
+
+  <path d="M815 204 L 815 234" fill="none" stroke="#d97706" stroke-width="2.4" marker-end="url(#e-a)"/>
+
+  <rect x="440" y="240" width="400" height="50" rx="9" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="640" y="262" text-anchor="middle" font-size="12.5" font-weight="800" fill="#d97706">L1 TTL 만료 → 다음 조회가 L2/DB로</text>
+  <text x="640" y="280" text-anchor="middle" font-size="10.5" fill="#1f2937">최후의 안전망이 작동하는 지점</text>
+  <line x1="840" y1="265" x2="874" y2="265" stroke="#d97706" stroke-width="2.2" marker-end="url(#e-a)"/>
+  <rect x="880" y="240" width="250" height="50" rx="9" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+  <text x="1005" y="270" text-anchor="middle" font-size="12.5" font-weight="800" fill="#d97706">최대 TTL만큼 늦게 정합</text>
+
+  <rect x="40" y="306" width="1090" height="36" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="585" y="330" text-anchor="middle" font-size="13.5" font-weight="800" fill="#dc2626">불일치 지속 시간의 상한 = L1 TTL.  TTL이 없으면 상한도 없다.</text>
+</svg>
+<div class="cap">두 경로가 <b>같은 지점에서 출발해 다른 시간에 도착</b>한다는 점이 핵심이다 — 도착 자체를 보장하는 것은 위쪽(pub/sub)이 아니라 아래쪽(TTL)이다.</div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">역할 분리 — 이 한 문장이 답변의 급소다</div>
+  <div class="big">pub/sub 전파는 <u>"빠른 경로"</u>이고,<br>정합성의 <u>보장</u>은 <u>TTL</u>이 진다.</div>
+  <p style="margin:0;font-size:.94rem">전파가 하는 일은 <b>불일치를 30초에서 5밀리초로 줄이는 것</b>이지 불일치를 없애는 것이 아니다. 없앨 수 없는 나머지를 TTL이 유한한 시간 안에 정리한다. 그래서 실무에서는 <b>"무효화가 전부 유실돼도 최대 30초 뒤에는 맞는 값"</b>처럼 상한을 설계값으로 명시해 둔다 — TTL 숫자는 성능 튜닝 파라미터가 아니라 <b>비즈니스와 합의한 불일치 허용치</b>다.</p>
+</div>
+
+<h3>7-1. 방어를 한 겹 더 — 재연결 시 L1 전체 clear <span class="badge bonus">가산점</span></h3>
+
+<p>끊겨 있던 동안 <b>무엇을 놓쳤는지는 알 수 없지만</b>, "끊겨 있었다"는 사실 자체는 클라이언트가 안다. 그러면 놓친 후보를 특정하는 대신 <b>전부 버리면 된다.</b></p>
+
+<pre><code>public void onSubscriptionReconnected() {
+    <span class="cmt">// 구독 커넥션이 끊겼다 다시 붙었다 = "그 사이 무엇을 놓쳤는지 모른다"</span>
+    <span class="cmt">// 놓친 후보를 특정할 수 없으니 전부 버린다.</span>
+    localCache.invalidateAll();
+}</code></pre>
+
+<p class="small">대가는 <b>재연결 직후 잠깐 L1 미스가 몰리는 것</b>이고, 그 대가로 "끊긴 동안 놓친 것"의 대부분을 커버한다. 미스가 몰리는 것이 부담이라면 그 순간이 곧 <a href="#s12">캐시 스탬피드의 조건</a>과 겹친다는 점까지 짚으면 좋다.</p>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. TTL 설계 — L1은 <u>짧게</u>, L2는 길게</h2>
+
+<p>둘 다 TTL이 있는데 왜 L1이 더 짧아야 하는가. 근거는 성능이 아니라 <b>두 캐시의 무효화 신뢰도가 다르다</b>는 데 있다.</p>
+
+<div class="fig">
+<svg viewBox="0 0 900 236" role="img" aria-label="L1 TTL은 짧게 L2 TTL은 길게 잡는 이유 — 무효화 신뢰도의 차이">
+  <text x="20" y="28" font-size="12.5" font-weight="800" fill="#2563eb">무효화 신뢰도가 TTL 길이를 정한다</text>
+
+  <text x="118" y="72" text-anchor="end" font-size="12.5" font-weight="800" fill="#dc2626">L1 (Caffeine)</text>
+  <rect x="130" y="54" width="130" height="26" rx="5" fill="#dc2626"/>
+  <text x="195" y="72" text-anchor="middle" font-size="11.5" font-weight="800" fill="#ffffff">수 초 ~ 수십 초</text>
+  <text x="276" y="66" font-size="11" fill="#1f2937">무효화가 <tspan font-weight="800" fill="#dc2626">방송에 의존</tspan>하고, 그 방송은 유실될 수 있다</text>
+  <text x="276" y="84" font-size="11" fill="#6b7280">→ 이 길이가 곧 <tspan font-weight="800">불일치의 상한</tspan>이므로 짧아야 한다</text>
+
+  <text x="118" y="140" text-anchor="end" font-size="12.5" font-weight="800" fill="#2563eb">L2 (Redis)</text>
+  <rect x="130" y="122" width="600" height="26" rx="5" fill="#2563eb"/>
+  <text x="430" y="140" text-anchor="middle" font-size="11.5" font-weight="800" fill="#ffffff">수 분 ~ 수 시간</text>
+  <text x="746" y="134" font-size="11" fill="#1f2937"><tspan font-weight="800" fill="#2563eb">DEL 한 번</tspan>이면</text>
+  <text x="746" y="152" font-size="11" fill="#1f2937">확실히 지워진다</text>
+
+  <rect x="130" y="176" width="740" height="46" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="6 4"/>
+  <text x="500" y="196" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">거꾸로 L1을 더 길게 잡으면 — 역전이 생긴다</text>
+  <text x="500" y="214" text-anchor="middle" font-size="11" fill="#1f2937">L2는 이미 갱신됐는데 L1이 옛 값을 더 오래 붙들고 서빙 → <tspan font-weight="800">L2를 갱신한 의미가 그 인스턴스에서 사라진다</tspan></text>
+</svg>
+<div class="cap">L2는 전 인스턴스가 공유하는 <b>한 곳</b>이라 확실히 지울 수 있고, L1은 <b>인스턴스마다 따로</b>라 확실히 지울 수단이 없다. 그 차이가 그대로 TTL 길이의 차이가 된다.</div>
+</div>
+
+<div class="memo">
+  <div class="kicker">외울 부등호</div>
+  <div class="big">L1 TTL &nbsp;&lt;&nbsp; L2 TTL &nbsp;— 전형은 <u>L1 수 초~수십 초 / L2 수 분~수 시간</u></div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 그 밖의 전파 방법 — 무엇을 사는지가 다르다</h2>
+
+<div class="tbl wide">
+<table>
+  <thead><tr><th>방법</th><th>동작</th><th>유실</th><th>전파 지연</th><th>대가 / 전제</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Redis pub/sub</b><br><span class="small">정석</span></td>
+      <td>변경 측이 채널에 키를 <code>PUBLISH</code>, 전원이 구독해 각자 <code>invalidate</code></td>
+      <td class="warn">있음<br><span class="small">at-most-once</span></td>
+      <td class="ok">수 ms</td>
+      <td>발행 코드를 <b>변경 지점마다 직접</b> 심어야 한다 · 모든 인스턴스가 <b>모든</b> 무효화를 받는다</td>
+    </tr>
+    <tr>
+      <td><b>버전 키 폴링</b><br><span class="small">논리 버저닝</span></td>
+      <td><code>config:version</code>을 변경 시 <code>INCR</code>, 각 노드가 주기적으로 확인해 다르면 L1을 통째로 비움</td>
+      <td class="ok">없음<br><span class="small">가져오는 방식</span></td>
+      <td class="mid">폴링 주기만큼</td>
+      <td>보통 <b>키 단위가 아니라 뭉텅이로</b> 비우게 된다</td>
+    </tr>
+    <tr>
+      <td><b>client-side caching</b><br><span class="small">Redis 6 · RESP3 <span class="badge bonus">가산점</span></span></td>
+      <td>Redis가 <b>어느 클라이언트가 어떤 키를 읽어 갔는지 추적</b>해 두었다가, 그 키가 바뀌면 <b>그 키를 캐시한 클라이언트에게만</b> 무효화를 밀어준다</td>
+      <td class="warn">끊긴 사이는 보장 못 함</td>
+      <td class="ok">수 ms</td>
+      <td><b>RESP3 지원 클라이언트</b> 필요 · 서버에 <b>추적 정보 유지 비용</b></td>
+    </tr>
+    <tr>
+      <td><b>짧은 TTL만</b><br><span class="small">전파 장치 없음</span></td>
+      <td>로컬 TTL 수 초~수십 초만 걸어 두고 <b>아무것도 전파하지 않는다</b></td>
+      <td class="ok">해당 없음</td>
+      <td class="warn">최대 TTL</td>
+      <td>가장 단순 · <b>변경이 드물고 몇 초 불일치가 허용되면 실무에서 이걸로 충분한 경우가 의외로 많다</b></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>9-1. 직접 만든 pub/sub vs client-side caching — 갈라 두면 가산점</h3>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">직접 만든 pub/sub <span class="tag warn">브로드캐스트</span></div>
+    <ul>
+      <li><b>누가 감지하나</b> — <b>애플리케이션</b>이 변경 지점마다 <code>PUBLISH</code>를 심는다. 변경 경로가 여럿이면(관리자 API·배치·마이그레이션 스크립트) <b>하나를 빠뜨리기 쉽고</b>, 빠뜨린 경로의 변경은 <b>영원히</b> 전파되지 않는다.</li>
+      <li><b>누구에게 보내나</b> — 채널 하나에 다 뿌린다. <b>내가 캐시하지도 않은 키</b>의 무효화까지 받아서 버린다.</li>
+    </ul>
+  </div>
+  <div class="mini" style="border-color:#16a34a">
+    <div class="h">client-side caching <span class="tag ok">서버가 골라 보낸다</span></div>
+    <ul>
+      <li><b>누가 감지하나</b> — <b>Redis 서버</b>가 키 변경을 감지한다. 변경이 어느 경로로 일어나든 <b>누락될 여지가 구조적으로 없다.</b></li>
+      <li><b>누구에게 보내나</b> — 추적해 둔 <b>"그 키를 캐시한 클라이언트"에게만.</b> <b>내가 관심 있는 키만 받는다</b>는 점이 결정적 차이다.</li>
+      <li><span class="small">키 하나씩이 아니라 <b>접두사 단위</b>로 알림받는 브로드캐스트 모드도 있다 — 서버 추적 부담이 줄지만 관심 없는 키의 알림도 받는다.</span></li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo gap">
+  <div class="kicker">그래도 같은 한계 — 반드시 덧붙일 문장</div>
+  <div class="big">둘 다 <u>"연결이 끊긴 사이의 무효화는 보장하지 못한다"</u>는 점은 같다.</div>
+  <p style="margin:0;font-size:.94rem">그래서 방어도 동일하게 필요하다 — <b>끊김을 감지하면 로컬 캐시를 비우고, 짧은 TTL을 최후의 안전망으로 둔다.</b> 새 기능이 안전망을 대체하지 못한다는 점을 말할 수 있어야 한다.</p>
+</div>
+
+<div class="callout ok">
+  <div class="t">복잡도를 <u>추가하지 않는 것</u>도 유효한 설계 선택이다</div>
+  <div class="qa">하루에 한 번 바뀌는 설정에 <b>pub/sub 구독자 + 발행 코드 + 재연결 처리</b>를 붙이는 것은, 얻는 것에 비해 유지보수할 코드가 너무 많다. "몇 초 불일치 허용 + 변경 드묾"이라면 <b>짧은 TTL 하나로 끝내는 것</b>이 정답인 경우가 많다.</div>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 도입 판단 — "많·안·짧·작" 넷을 다 만족해야 한다</h2>
+
+<p>2단 캐시는 문제를 하나 풀고(지연·부하) 문제를 하나 만든다(불일치·복잡도). 그래서 <b>도입이 정당해지는 조건</b>을 체크리스트로 두고 판단한다. <b>하나라도 어긋나면 Redis 단독(1단)이 정답</b>이다.</p>
+
+<div class="chant">
+  <div class="c"><div class="syl">많</div><div class="eng">① 초고빈도 읽기</div><div class="q">요청마다, 혹은 요청당 여러 번 읽히는가</div></div>
+  <div class="c"><div class="syl">안</div><div class="eng">② 변경이 드묾</div><div class="q">거의 안 바뀌는가</div></div>
+  <div class="c"><div class="syl">짧</div><div class="eng">③ 짧은 불일치 허용</div><div class="q">"최대 N초 옛 값"을 견디는가</div></div>
+  <div class="c"><div class="syl">작</div><div class="eng">④ 크기가 작음</div><div class="q">인스턴스 수만큼 복제돼도 되는가</div></div>
+</div>
+
+<div class="card">
+  <div class="rule"><div class="num">많</div><div class="body">
+    <b>초고빈도 읽기인가</b>
+    <span>하루에 몇 번 읽는 데이터에 2단은 <b>순수한 복잡도 낭비</b>다. 반대로 요청당 20번 읽히는 값이라면 없애는 왕복이 20회다.</span>
+  </div></div>
+  <div class="rule"><div class="num">안</div><div class="body">
+    <b>변경이 드문가</b>
+    <span>자주 바뀌면 <b>무효화 전파가 상시 가동</b>돼 L1 히트율이 떨어진다. 이득은 사라지고 <b>지불한 복잡도만 남는다.</b></span>
+  </div></div>
+  <div class="rule w"><div class="num">짧</div><div class="body">
+    <b>짧은 불일치를 비즈니스가 견디는가 — 가장 먼저 물어야 할 질문</b>
+    <span>"최대 N초 동안 옛 값"이 허용되는가. <b>권한 회수·잔액·재고 차감은 불가</b>다. 기술이 아니라 <b>요구사항</b>으로 판별하는 항목이다.</span>
+  </div></div>
+  <div class="rule"><div class="num">작</div><div class="body">
+    <b>크기가 작은가</b>
+    <span>힙에 <b>인스턴스 수만큼 복제</b>돼도 부담 없는 크기인가. 큰 객체는 GC 압박을 <b>그 배수로</b> 만든다.</span>
+  </div></div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">면접 답변의 골격</div>
+  <div class="big">"무조건 2단이 빠르니 좋다"가 아니라<br><u>"이 조건일 때만 복잡도가 정당화된다"</u>는 판별 기준을 <u>먼저</u> 말한다.</div>
+</div>
+
+<h3>10-1. 절대 넣으면 안 되는 데이터 <span class="badge senior">시니어 변별</span></h3>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">권한 · 세션 회수 <span class="tag warn">보안 사고 경로</span></div>
+    <p>관리자가 계정을 차단했는데 어떤 노드의 L1에 옛 권한이 TTL 동안 남아 있으면, <b>차단된 사용자가 그 노드로 라우팅되는 동안 계속 접근할 수 있다.</b> 여기서는 <b>"짧은 불일치" = "짧은 무단 접근 시간"</b>이라 허용치를 0으로 잡을 수밖에 없다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">결제 · 잔액 · 재고 차감 <span class="tag warn">즉시 일관성</span></div>
+    <p>낡은 값이 <b>잘못된 행동</b>(품절 상품 구매, 초과 차감)을 유발한다. 애초에 캐시 후보가 아니다.</p>
+  </div>
+  <div class="mini" style="border-color:#d97706">
+    <div class="h">변경이 잦은 데이터 <span class="tag gap">이득이 증발</span></div>
+    <p>무효화 전파가 상시 가동돼 히트율이 낮아진다. <b>이득은 사라지고 복잡도만 남는다.</b></p>
+  </div>
+  <div class="mini" style="border-color:#d97706">
+    <div class="h">히트율 낮은 롱테일 키 <span class="tag gap">L1이 낭비</span></div>
+    <p>사용자별 키처럼 종류가 수백만이면 <b>다시 조회되기 전에 축출</b>되므로 L1이 사실상 놀고 있다.</p>
+  </div>
+</div>
+
+<h3>10-2. 판별 훈련 — 이 데이터, 2단 캐시에 올려도 되나</h3>
+<p class="small">항목을 클릭하면 판정이 나온다. <b>먼저 "많·안·짧·작" 중 어느 항목에서 걸리는지</b>를 스스로 말해 본 뒤 확인한다.</p>
+
+<div class="drillbar">
+  <button type="button" id="q-all">전부 펼치기</button>
+  <button type="button" id="q-reset">전부 접기</button>
+</div>
+
+<button type="button" class="rq">요청마다 20번 읽히는 기능 플래그 · 하루 1회 변경 · 불리언 하나
+  <span class="a yes">○ 교과서적 적합 — 넷 다 통과</span></button>
+<button type="button" class="rq">사용자 계정의 차단 여부 / 권한 목록
+  <span class="a no">✕ 금지 — "짧" 위반, 불일치 = 무단 접근 시간</span></button>
+<button type="button" class="rq">상품 재고 수량 (실시간 차감)
+  <span class="a no">✕ 금지 — "짧" 위반, 즉시 일관성 필요</span></button>
+<button type="button" class="rq">전 사용자 공통 카테고리 트리 · 주 1회 변경 · 직렬화 크기 8MB
+  <span class="a maybe">△ "작"이 걸린다 — 20대면 힙에 160MB</span></button>
+<button type="button" class="rq">사용자별 "최근 본 상품" 목록 (키 수백만 개)
+  <span class="a no">✕ 부적합 — "많" 위반, 롱테일이라 L1 히트율이 안 나온다</span></button>
+<button type="button" class="rq">환율 정보 · 1분마다 갱신 · 표시용이라 몇 초 오차 허용
+  <span class="a maybe">△ "안"이 애매 — TTL을 갱신 주기보다 짧게 두면 성립</span></button>
+<button type="button" class="rq">관리자 화면에서만 하루 몇 번 읽는 시스템 설정
+  <span class="a no">✕ 불필요 — "많" 위반, 순수한 복잡도 낭비</span></button>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 실무 감각 — "설정을 저장했는데 적용이 안 돼요"</h2>
+
+<div class="callout gap">
+  <div class="t">상황</div>
+  <div class="qa">운영자가 관리자 화면에서 설정을 바꾸고 저장했다. 그런데 <b>새로고침할 때마다 새 값이 보였다 안 보였다 한다.</b> 애플리케이션 로그에는 아무 에러가 없고, DB에는 새 값이 정확히 들어가 있다. 인스턴스는 4대다.</div>
+</div>
+
+<div class="card">
+  <div class="rule w"><div class="num">1</div><div class="body">
+    <b>먼저 "몇 번 중 몇 번"인지 센다 — 이 비율이 곧 진단이다</b>
+    <span>4번 중 1번만 새 값이면 <b>1대만 갱신됐다</b>는 뜻이고, 이건 <b>전파가 아예 안 걸린</b> 얼굴이다(변경을 처리한 그 인스턴스만 자기 L1을 갱신). 4번 중 3번이 새 값이면 <b>한 대만 메시지를 놓친</b> 얼굴이다 — 그 한 대가 <b>방금 배포로 재시작했거나 커넥션이 끊겼던</b> 인스턴스인지 확인한다.</span>
+  </div></div>
+  <div class="rule w"><div class="num">2</div><div class="body">
+    <b>Redis(L2)에 옛 값이 남아 있는지 본다</b>
+    <span>L2에 옛 값이 그대로면 문제는 L1이 아니라 <b>L2 삭제 자체가 누락</b>된 것이다. 반대로 L2는 비었는데 특정 인스턴스만 옛 값을 준다면 <b>L1 무효화 전파의 문제</b>로 좁혀진다. <b>계층을 하나씩 배제하는 순서</b>가 2단 캐시 디버깅의 전부다.</span>
+  </div></div>
+  <div class="rule w"><div class="num">3</div><div class="body">
+    <b>이 변경 경로에 <code>PUBLISH</code>가 심어져 있는지 본다</b>
+    <span>관리자 API에는 있는데 <b>배치나 마이그레이션 스크립트에는 없는</b> 경우가 전형이다(<a href="#s9">§9-1</a>). 직접 만든 pub/sub의 구조적 약점이 <b>변경 경로 누락</b>이라는 것을 알고 있으면 여기를 먼저 본다.</span>
+  </div></div>
+  <div class="rule g"><div class="num">4</div><div class="body">
+    <b>시간을 재서 "TTL 뒤에는 맞는가"를 확인한다</b>
+    <span>30초쯤 기다렸다가 전부 새 값이 되면 <b>안전망은 정상</b>이고 전파만 실패한 것이다. <b>TTL이 지나도 계속 옛 값</b>이라면 상황이 다르다 — L1 TTL이 없거나, 값을 <b>영구 보관하는 자료구조에 따로 들고 있는</b> 코드를 의심한다.</span>
+  </div></div>
+</div>
+
+<div class="memo">
+  <div class="kicker">이 지식의 실행 가능한 형태</div>
+  <div class="big">"버그처럼 보이는 현상"을 보고 <u>설계상 예정된 불일치 창</u>임을 알아보고,<br><u>몇 초 뒤에는 스스로 맞아야 한다</u>는 상한까지 말할 수 있는가.</div>
+</div>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 꼬리질문 셀프 테스트</h2>
+<p class="small">질문만 보고 <b>먼저 스스로 답한 뒤</b> 펼쳐서 확인한다. <span class="badge senior">시니어 변별</span>·<span class="badge bonus">가산점</span> 문항은 <b>정답 하나가 아니라 판단 기준</b>을 말하는 연습을 한다.</p>
+
+<details>
+  <summary>pub/sub 무효화 메시지가 유실되면 어떻게 되나요?</summary>
+  <div class="ans">
+    <p>놓친 노드의 L1에 낡은 값이 남고, <span class="key">그 노드 스스로는 낡았다는 걸 알 수 없어 불일치가 로컬 TTL 만료까지 지속된다.</span> pub/sub이 저장도 재전달도 하지 않는 <b>at-most-once 방송</b>이기 때문이다.</p>
+    <p>그래서 방어를 <b>겹으로</b> 둔다.</p>
+    <ol>
+      <li><b>짧은 로컬 TTL</b> — 불일치 지속 시간의 <b>상한</b>을 만든다. 이것이 없으면 상한 자체가 없다.</li>
+      <li><b>구독 재연결 시 L1 전체 clear</b> — 끊겨 있던 동안 놓친 것을 특정할 수 없으니 전부 버린다(<a href="#s7">§7-1</a>).</li>
+      <li><b>유실이 정말 치명적이면 전파 채널을 바꾼다</b> — 버전 키 폴링처럼 <b>가져오는</b> 방식이나, 메시지가 저장되는 <b>Redis Streams</b>로 옮긴다.</li>
+    </ol>
+    <p>한 문장으로 정리하면 <span class="key">"pub/sub 전파는 최적화이고, 정합성의 보장은 TTL이 진다"</span>는 역할 분리다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>로컬(L1) TTL은 Redis(L2) TTL보다 길게 잡나요, 짧게 잡나요?</summary>
+  <div class="ans">
+    <p><span class="key">짧게 잡는다.</span> 근거는 성능이 아니라 <b>두 캐시의 무효화 신뢰도가 다르다</b>는 데 있다.</p>
+    <ul>
+      <li><b>L2</b>는 전 인스턴스가 공유하는 <b>한 곳</b>이라 <code>DEL</code> 한 번이면 확실히 지워진다 → 불일치 상한이 필요 없다.</li>
+      <li><b>L1</b>은 인스턴스마다 따로라 무효화가 <b>방송에 의존</b>하고, 그 방송은 유실될 수 있다 → <b>L1의 불일치 상한이 곧 L1 TTL</b>이다.</li>
+    </ul>
+    <p>전형적인 구성은 <b>L1 수 초~수십 초 / L2 수 분~수 시간</b>이다. 거꾸로 L1을 길게 잡으면 <b>역전</b>이 생긴다 — L2는 이미 갱신됐는데 L1이 옛 값을 더 오래 붙들고 서빙하므로, <b>L2를 갱신한 의미가 그 인스턴스에서 사라진다.</b></p>
+  </div>
+</details>
+
+<details>
+  <summary>캐시 무효화(evict)와 캐시 갱신(put) 중 무엇을 전파해야 하나요?</summary>
+  <div class="ans">
+    <p><span class="key">삭제(evict)를 전파한다.</span></p>
+    <p>새 값을 메시지에 실어 각 노드가 자기 L1에 <code>put</code>하게 만들면 <b>순서 역전</b> 문제가 생긴다. 값을 연속으로 두 번 바꿔 메시지가 두 개 나갔는데 <b>첫 번째가 두 번째보다 늦게 도착</b>하면, <b>늦게 도착한 옛 값이 이미 들어와 있던 새 값을 덮어쓴다.</b> 그리고 이 잘못된 값은 다음 변경이나 TTL까지 살아남는다.</p>
+    <p>삭제는 이 문제가 없다. <b>몇 번을 어떤 순서로 적용해도 결과가 "그 키가 없음"으로 같기 때문(멱등)</b>이다. 비어 있는 자리는 다음 조회가 L2/DB에서 최신 값으로 채운다.</p>
+    <p>"캐시 갱신 vs 삭제"라는 일반론과 같은 논리인데, 전파 채널에는 <span class="key">순서 보장이 없다</span>는 조건이 더해져 <b>더 극적으로</b> 적용되는 셈이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>이 구조를 도입하면 안 되는 데이터는 무엇인가요? <span class="badge senior">시니어 변별</span></summary>
+  <div class="ans">
+    <p>즉시 일관성이 요구되는 데이터다. 결제·잔액·재고 차감이 대표이고, 특히 위험한 것이 <span class="key">권한/세션 회수</span>다.</p>
+    <p>관리자가 계정을 차단했는데 어떤 노드의 L1에 옛 권한이 TTL 동안 남아 있으면, <b>차단된 사용자가 그 노드로 라우팅되는 동안 계속 접근할 수 있다.</b> <b>성능 최적화가 보안 사고로 이어지는 경로</b>다. 세션·권한은 "짧은 불일치"가 곧 <b>"짧은 무단 접근 시간"</b>이라 허용치를 0으로 잡을 수밖에 없다.</p>
+    <p>그 밖의 부적합 대상도 이유가 각각이다.</p>
+    <ul>
+      <li><b>변경이 잦은 데이터</b> — 무효화 전파가 상시 가동돼 히트율이 낮아지고, 이득은 사라지고 복잡도만 남는다.</li>
+      <li><b>큰 객체</b> — 인스턴스 수만큼 힙에 복제되므로 GC 압박을 <b>그 배수로</b> 만든다.</li>
+      <li><b>히트율이 낮은 롱테일 키</b> — 다시 조회되기 전에 축출되므로 L1이 사실상 낭비다.</li>
+    </ul>
+    <p>핵심은 판별을 기술이 아니라 <span class="key">요구사항으로</span> 한다는 점이다. <b>"이 데이터의 불일치 상한(L1 TTL)을 비즈니스가 견딜 수 있는가"</b> 한 문장으로 판단한다는 것이 시니어의 답이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Redis 6의 client-side caching은 직접 구현한 pub/sub 무효화와 뭐가 다른가요? <span class="badge bonus">가산점</span></summary>
+  <div class="ans">
+    <p>차이가 <b>두 가지</b>다.</p>
+    <p><span class="key">첫째, 무효화를 누가 감지하는가.</span> 직접 구현은 <b>애플리케이션이</b> 변경 지점마다 <code>PUBLISH</code>를 심어야 한다. 변경 경로가 여럿이면(관리자 API, 배치, 마이그레이션 스크립트) 하나를 빠뜨리기 쉽고, 빠뜨린 경로로 값이 바뀌면 <b>그 변경은 영원히 전파되지 않는다.</b> client-side caching은 <b>Redis 서버가</b> 키 변경을 감지하므로 <b>변경 경로 누락이 구조적으로 없다.</b></p>
+    <p><span class="key">둘째, 누구에게 보내는가.</span> 직접 구현은 채널 하나에 뿌리는 <b>브로드캐스트</b>라 모든 인스턴스가 모든 무효화를 다 받는다. client-side caching은 서버가 <b>각 클라이언트가 어떤 키를 읽어 갔는지 추적</b>해 두었다가 <b>그 키를 캐시한 클라이언트에게만</b> 밀어준다 — <b>"내가 관심 있는 키만" 받는다</b>는 점이 결정적 차이다.</p>
+    <p>대신 전제와 비용이 있다. <b>RESP3와 클라이언트 라이브러리 지원</b>이 필요하고, 서버가 <b>추적 정보를 들고 있는 부담</b>이 생긴다.</p>
+    <p>그리고 마지막 문장이 중요하다 — <span class="key">둘 다 "연결이 끊긴 사이의 무효화는 보장하지 못한다"는 한계는 같다.</span> 그래서 방어는 동일하게 필요하다: 끊김을 감지하면 로컬 캐시를 비우고, 짧은 TTL을 최후의 안전망으로 둔다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>Redis가 죽으면 2단 캐시는 어떻게 동작하나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><b>좋은 면과 나쁜 면이 동시에 나타난다.</b> 둘 다 말해야 답이 닫힌다.</p>
+    <ul>
+      <li><span class="key">좋은 면 — L1이 완충재가 된다.</span> 1단 캐시라면 Redis가 죽는 순간 전 트래픽이 DB로 직행해 <b>DB까지 무너진다.</b> 2단이면 L1에 살아 있는 데이터로 당분간 버틸 수 있다.</li>
+      <li><span class="key">나쁜 면 — 무효화 전파도 함께 죽는다.</span> pub/sub 채널이 바로 그 Redis 위에 있기 때문이다. 즉 Redis 장애 구간에서는 <b>정합성 장치가 TTL 하나만 남는다.</b></li>
+    </ul>
+    <p>그래서 두 가지를 덧붙이면 좋다. 첫째, <b>L1 TTL이 만료되면 결국 L2를 보러 가야 하므로</b> 완충은 <b>TTL 길이만큼만</b> 유효하다 — Redis 조회 실패 시의 폴백(DB로 갈지, 낡은 값을 더 쓸지)을 미리 정해 둬야 한다. 둘째, Redis 복구 직후에는 <b>구독 재연결 시 L1 전체 clear</b>(<a href="#s7">§7-1</a>)가 특히 중요하다 — 장애 구간에 놓친 무효화가 그때 한꺼번에 정리된다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>무효화 메시지를 받아 전 인스턴스가 동시에 L1을 비운 직후, 그 인기 키에 요청이 몰리면? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key">전 인스턴스가 "같은 순간에" 같은 키의 미스를 본다.</span> 브로드캐스트라서 무효화가 <b>거의 동시에</b> 도달하기 때문이다. 로컬 캐시가 흡수해 주던 트래픽이 그 순간 <b>한꺼번에 L2로 쏟아진다.</b></p>
+    <ul>
+      <li>L2에 값이 있으면 여기서 멈춘다 — Redis가 순간적으로 스파이크를 맞지만 대개 감당한다.</li>
+      <li>문제는 <b>L2도 방금 삭제된 경우</b>다(정석 순서가 "L2 삭제 → 방송"이므로 <b>기본적으로 이 상황</b>이다). 그러면 전 인스턴스가 <b>DB로 직행</b>한다 — 캐시 스탬피드와 같은 얼굴이다.</li>
+    </ul>
+    <p>대응은 스탬피드의 도구를 그대로 쓴다 — <b>재계산을 1회로 묶는 락(single flight)</b>, <b>논리적 만료</b>, 또는 변경 측이 삭제 대신 <b>L2를 새 값으로 갱신</b>해 두어 DB까지 내려가지 않게 하는 것이다. 다만 마지막 방법은 <b>L2 갱신과 무효화 순서 문제</b>를 다시 불러오므로, 재계산이 비싼 키에만 선택적으로 쓴다.</p>
+    <p>이 질문의 요지는 <span class="key">"무효화가 잘 전파될수록 미스가 동기화된다"</span>는 역설이다. 전파의 성공이 부하 스파이크를 만든다는 점을 짚으면 좋다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>2단 캐시를 넣었는데 L1 히트율이 20%밖에 안 나옵니다. 무엇을 의심하나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>의심할 곳이 넷이고, <b>"많·안·짧·작" 체크리스트를 역순으로 되짚는</b> 것이 가장 빠르다.</p>
+    <ol>
+      <li><span class="key">키 종류가 너무 많다(롱테일)</span> — <code>maximumSize</code> 안에 들어오기 전에 축출된다. 캐시 대상 키의 <b>카디널리티</b>부터 센다. 이 경우 L1은 구조적으로 맞지 않는다.</li>
+      <li><span class="key">TTL이 너무 짧다</span> — 다음 조회가 오기 전에 만료된다. <b>키당 조회 간격</b>과 TTL을 나란히 놓고 비교한다.</li>
+      <li><span class="key">변경이 잦아 상시 무효화</span> — 전파가 계속 들어와 L1이 계속 비워진다. "안 바뀌는가" 조건을 잘못 판정한 경우다.</li>
+      <li><span class="key">인스턴스가 너무 많다</span> — 전체 트래픽은 커도 <b>인스턴스당</b> 같은 키를 다시 만나는 빈도가 낮으면 L1은 채워지기만 하고 쓰이지 않는다. L1 히트율은 <b>전체 QPS가 아니라 인스턴스당 QPS</b>가 결정한다는 점이 자주 놓치는 부분이다.</li>
+    </ol>
+    <p>확인 수단도 말하면 좋다 — Caffeine의 <code>recordStats()</code>로 <b>히트율·축출 수·평균 적재 시간</b>을 지표로 내보내면 위 넷 중 어느 것인지 대부분 바로 갈린다. <b>추정이 아니라 측정</b>이 되는 지점이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>2단 캐시를 넣기 전에 먼저 시도해 볼 것은 없나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>있다. <span class="key">아끼려는 대상이 "Redis의 일"이 아니라 "왕복 그 자체"라면, 왕복 횟수부터 줄이는 것이 순서상 먼저다.</span></p>
+    <ul>
+      <li><b>요청당 조회 횟수 줄이기</b> — 같은 값을 한 요청 안에서 20번 읽고 있다면, <b>요청 스코프에서 한 번만 읽어 재사용</b>하는 것만으로 왕복 20회가 1회가 된다. <b>노드 간 불일치를 전혀 만들지 않는다</b>는 점이 결정적 장점이다(그 요청이 끝나면 사라지므로).</li>
+      <li><b>여러 키를 한 번에</b> — 루프 <code>GET</code> 대신 <code>MGET</code>이나 pipeline으로 묶으면 왕복 N회가 1회가 된다.</li>
+    </ul>
+    <p>이 둘로 충분하지 않을 때 — 즉 <b>요청 하나짜리로는 줄일 수 없는, 전 요청에 걸친 초고빈도 읽기</b>일 때 비로소 2단 캐시가 정당해진다. <b>"복잡도가 낮은 수단부터 순서대로 시도했는가"</b>를 보여주는 답변이라 그 자체로 점수가 된다.</p>
+  </div>
+</details>
+
+<!-- ===================== SUM ===================== -->
+<div class="banner" id="sum">
+  <div class="kicker">한 줄 요약</div>
+  2단 캐시는 <b>Redis 왕복조차 병목인 초고빈도 읽기</b>를 JVM 안(Caffeine)에서 끝내 지연과 Redis 부하를 없애는 대신
+  <b>"노드마다 값이 다를 수 있다"</b>는 불일치를 지불하는 구조로,
+  무효화는 <b>Redis pub/sub 브로드캐스트</b>로 전파하되 pub/sub은 유실 시 재전달이 없어 불완전하므로
+  <b>짧은 L1 TTL</b>을 불일치의 <b>상한이자 최후의 안전망</b>으로 반드시 함께 두고 —
+  애초에 이 복잡도는 <b>"초고빈도 읽기 + 변경 드묾 + 짧은 불일치 허용"</b> 조건을 만족하는 데이터에서만 정당화된다.
+</div>
+
+</main>
+<script>
+(function(){
+  var rqs = document.querySelectorAll('.rq');
+  for (var i = 0; i < rqs.length; i++){
+    rqs[i].addEventListener('click', function(){ this.classList.toggle('open'); });
+  }
+  var all = document.getElementById('q-all');
+  var reset = document.getElementById('q-reset');
+  if (all) all.addEventListener('click', function(){
+    for (var j = 0; j < rqs.length; j++) rqs[j].classList.add('open');
+  });
+  if (reset) reset.addEventListener('click', function(){
+    for (var k = 0; k < rqs.length; k++) rqs[k].classList.remove('open');
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1408 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sorted Set 실시간 랭킹 설계 — 기본 설계는 10분, 시간 윈도우와 규모 검증이 진짜 문제</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --text:#1f2937; --muted:#6b7280;
+    --accent:#2563eb; --accent-soft:#dbeafe; --warn:#dc2626; --warn-soft:#fee2e2;
+    --ok:#16a34a; --ok-soft:#dcfce7; --amber:#d97706; --amber-soft:#fef3c7;
+    --violet:#7c3aed; --violet-soft:#ede9fe;
+    --code-bg:#1e293b; --code-text:#e2e8f0; --line:#e5e7eb;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    font-size:16px;line-height:1.7;word-break:keep-all}
+  main{max-width:960px;margin:0 auto;padding:24px 16px 80px}
+  h1{font-size:1.6rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+  h2{font-size:1.3rem;margin:56px 0 16px;padding-top:8px;color:var(--accent);
+    border-top:3px solid var(--accent-soft)}
+  h3{font-size:1.08rem;margin:28px 0 10px}
+  p{margin:0 0 14px}
+  a{color:var(--accent)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;
+    background:#e8ecf3;padding:1px 5px;border-radius:4px}
+  pre{background:var(--code-bg);color:var(--code-text);padding:16px;border-radius:10px;
+    overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.82rem;line-height:1.6;margin:0 0 16px}
+  pre code{background:none;padding:0;color:inherit;font-size:inherit}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;margin:0 0 16px}
+  .kicker{font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:6px}
+  .hero{background:var(--card);border:2px solid var(--accent);border-radius:16px;
+    padding:24px 24px 20px;margin:20px 0 20px}
+  .hero .sub{color:var(--muted);font-size:.95rem;margin-bottom:14px}
+  .hero .point{font-size:1.02rem;line-height:1.8}
+  .hero .point b{color:var(--accent)}
+  .toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;
+    list-style:none;padding:0;margin:0}
+  .toc li a{display:block;background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:10px 12px;text-decoration:none;color:var(--text);font-size:.92rem}
+  .toc li a:hover{border-color:var(--accent)}
+  .toc .n{color:var(--accent);font-weight:700;margin-right:6px}
+  .callout{border-left:5px solid var(--accent);background:var(--card);padding:14px 18px;
+    border-radius:0 10px 10px 0;margin:0 0 16px}
+  .callout.warn{border-color:var(--warn);background:#fff7f7}
+  .callout.ok{border-color:var(--ok);background:#f6fdf8}
+  .callout.gap{border-color:var(--amber);background:#fffbeb}
+  .callout .t{font-weight:700;margin-bottom:4px}
+  .badge{display:inline-block;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;
+    vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+  .badge.senior{background:var(--warn);color:#fff}
+  .badge.bonus{background:var(--ok);color:#fff}
+  .badge.gap{background:var(--amber);color:#fff}
+  .badge.blue{background:var(--accent);color:#fff}
+  .badge.extra{background:#6b7280;color:#fff}
+  .fig{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;
+    margin:0 0 16px;overflow-x:auto}
+  .fig svg{display:block;min-width:560px;width:100%;height:auto}
+  .fig .cap{font-size:.85rem;color:var(--muted);margin-top:8px;text-align:center}
+  .wide{width:min(1180px,calc(100vw - 40px));margin-left:50%;transform:translateX(-50%)}
+  .fig.wide svg{min-width:900px}
+  .memo{background:var(--card);border:2px solid var(--accent);border-radius:14px;padding:18px 20px;margin:0 0 16px}
+  .memo .kicker{color:var(--accent)}
+  .memo.warn{border-color:var(--warn)} .memo.warn .kicker{color:var(--warn)}
+  .memo.ok{border-color:var(--ok)} .memo.ok .kicker{color:var(--ok)}
+  .memo.gap{border-color:var(--amber)} .memo.gap .kicker{color:var(--amber)}
+  .memo.vio{border-color:var(--violet)} .memo.vio .kicker{color:var(--violet)}
+  .memo .big{font-size:1.15rem;font-weight:700;line-height:1.55;margin:4px 0 6px}
+  .rule{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px dashed var(--line)}
+  .rule:first-of-type{border-top:none}
+  .rule .num{flex:0 0 34px;height:34px;border-radius:50%;background:var(--accent);color:#fff;
+    font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.95rem}
+  .rule.w .num{background:var(--warn)}
+  .rule.v .num{background:var(--violet)}
+  .rule.g .num{background:var(--ok)}
+  .rule .body b{display:block}
+  .rule .body span{font-size:.92rem;color:var(--muted)}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:0 0 16px}
+  .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:0 0 16px}
+  .mini{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .mini .h{font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mini .tag{font-size:.7rem;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--accent-soft);color:var(--accent)}
+  .mini .tag.warn{background:var(--warn-soft);color:var(--warn)}
+  .mini .tag.ok{background:var(--ok-soft);color:var(--ok)}
+  .mini .tag.gap{background:var(--amber-soft);color:var(--amber)}
+  .mini p{font-size:.92rem;margin:0}
+  .mini ul{margin:4px 0 0;padding-left:18px;font-size:.9rem}
+  .tbl{overflow-x:auto;margin:0 0 16px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:.9rem}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:#f1f4f9;font-weight:700;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.ok{color:var(--ok);font-weight:700} td.warn{color:var(--warn);font-weight:700} td.mid{color:var(--amber);font-weight:700}
+  td.mono,th.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86rem}
+  .ba{display:grid;grid-template-columns:1fr;gap:12px;margin:0 0 16px}
+  @media(min-width:700px){.ba{grid-template-columns:1fr 1fr}}
+  .ba .col{background:var(--card);border-radius:12px;border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column}
+  .ba .head{padding:8px 14px;font-weight:700;font-size:.9rem;color:#fff}
+  .ba .head.bad{background:var(--warn)} .ba .head.good{background:var(--ok)}
+  .ba pre{border-radius:0;margin:0;flex:1}
+  .ba.single{grid-template-columns:1fr}
+  .hl-bad{background:rgba(220,38,38,.28);display:inline-block;width:100%}
+  .hl-good{background:rgba(22,163,74,.28);display:inline-block;width:100%}
+  .cmt{color:#94a3b8}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:0}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;position:relative;padding-right:40px}
+  details summary::-webkit-details-marker{display:none}
+  details summary::after{content:"+";position:absolute;right:16px;top:10px;font-size:1.4rem;color:var(--accent);font-weight:400}
+  details[open] summary::after{content:"−"}
+  details .ans{padding:0 18px 16px;border-top:1px dashed var(--line);padding-top:12px;font-size:.95rem}
+  details .ans .key{font-weight:700;color:var(--accent)}
+  details .ans ol,details .ans ul{margin:6px 0 8px;padding-left:20px}
+  .banner{margin-top:56px;background:var(--accent);color:#fff;border-radius:16px;padding:24px 26px;font-size:1.05rem;line-height:1.8}
+  .banner .kicker{color:#bfdbfe}
+  .banner b{color:#fff;background:rgba(255,255,255,.18);padding:0 4px;border-radius:4px}
+  .small{font-size:.88rem;color:var(--muted)}
+  .qa{font-size:.92rem;color:var(--muted)}
+
+  /* ---- 이 페이지 전용 ---- */
+  .flow3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0 4px}
+  .flow4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:10px 0 4px}
+  .flow3 .st,.flow4 .st{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:10px 8px;text-align:center;font-size:.84rem}
+  .flow3 .st b,.flow4 .st b{display:block;font-size:.95rem;color:var(--accent)}
+  .flow3 .st.r{background:var(--warn-soft);border-color:var(--warn)} .flow3 .st.r b{color:var(--warn)}
+  .chant{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 16px}
+  .chant .c{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 10px;text-align:center}
+  .chant .c .syl{font-size:1.9rem;font-weight:900;line-height:1.1;color:var(--warn)}
+  .chant .c .eng{font-size:.74rem;color:var(--muted);margin:2px 0 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .chant .c .q{font-size:.84rem;font-weight:700;padding:6px 6px;border-radius:8px;background:#f8fafc;border:1px dashed var(--line)}
+  .chant.three{grid-template-columns:repeat(3,1fr)}
+  .chant.three .c .syl{color:var(--ok)}
+  .cmd{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:0 0 16px}
+  .cmd .c{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .cmd .c .n{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800;color:var(--accent);font-size:.95rem}
+  .cmd .c .o{display:inline-block;font-size:.72rem;font-weight:800;color:#fff;background:var(--ok);border-radius:6px;padding:1px 7px;margin-left:6px}
+  .cmd .c .o.mid{background:var(--amber)}
+  .cmd .c .d{font-size:.88rem;margin-top:6px;color:var(--text)}
+  .num-hero{background:var(--card);border:2px solid var(--violet);border-radius:14px;padding:16px 20px;margin:0 0 16px;text-align:center}
+  .num-hero .v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.6rem;font-weight:800;color:var(--violet);letter-spacing:.02em}
+  .num-hero .l{font-size:.9rem;color:var(--muted);margin-top:4px}
+  .stack{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:10px 0 6px}
+  .stack .s{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;font-size:.86rem}
+  .stack .s b{display:block;color:var(--amber);font-size:1.1rem}
+  .stack .s.tot{background:var(--amber-soft);border-color:var(--amber)}
+  .drillbar{display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap}
+  .drillbar button{font:inherit;font-size:.88rem;font-weight:700;padding:7px 14px;border-radius:8px;border:1px solid var(--accent);
+    background:var(--card);color:var(--accent);cursor:pointer}
+  .drillbar button:hover{background:var(--accent-soft)}
+</style>
+</head>
+<body>
+<main>
+
+<div class="kicker">05 · Redis / 캐싱 — 중급 ⭐⭐ · Sorted Set 랭킹 설계</div>
+<h1>Sorted Set 실시간 랭킹 설계 — 기본 설계는 10분, 시간 윈도우와 규모 검증이 진짜 문제</h1>
+<p class="small">원본: <code>interview-questions/knowledge/05-redis-caching/10-sorted-set-realtime-ranking.md</code></p>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="kicker">30초 카드 — 답변은 반드시 3단으로</div>
+  <div class="sub">질문: "랭킹(실시간 인기 웹툰) 기능을 Sorted Set으로 설계해보세요. 대규모에서의 한계는?" — <b>1단에서 멈추면 절반</b>이다. 아래 3단을 순서대로 밟는 것이 이 문항의 답변 골격이다.</div>
+
+  <div class="flow3">
+    <div class="st"><b>① 기본 설계</b><code>ZINCRBY</code> + <code>ZREVRANGE</code><br>여기까지는 10분</div>
+    <div class="st"><b>② 시간 윈도우</b>버킷 키 + TTL + <code>ZUNIONSTORE</code><br>"실시간"의 진짜 요구</div>
+    <div class="st r"><b>③ 규모 한계</b>hot key · big key · 읽기→쓰기 역전<br>승부처</div>
+  </div>
+  <p class="small" style="margin:6px 0 4px">면접관이 보는 것은 ①의 정답 여부가 아니라 <b style="color:#dc2626">시키지 않아도 ②와 ③으로 넘어가는지</b>다.</p>
+
+  <div class="kicker" style="margin-top:16px">핵심 관전 포인트 — 그대로 말하기</div>
+  <div class="point">
+    Sorted Set은 <b>(멤버, 점수) 쌍을 항상 점수순 정렬 상태로 유지</b>해 주는 자료구조다. 그래서 조회가 일어날 때마다 <b><code>ZINCRBY</code>로 점수를 1 올리고</b> 화면에서는 <b><code>ZREVRANGE</code>로 위에서부터 M개</b>를 꺼내면, 정렬 코드를 한 줄도 쓰지 않고 랭킹이 완성된다 — <b>갱신 O(log N), 상위 M개 조회 O(log N + M)</b>. 여기까지가 출발점이다.
+    진짜 문제는 그다음부터인데, 첫째로 <b>"실시간 인기"는 누적 점수가 아니라 최근 N시간의 점수</b>이므로 키를 시간 단위로 쪼개 쌓고 조회 시 최근 버킷들을 <b><code>ZUNIONSTORE</code>로 합산</b>하는 윈도우 설계가 따로 필요하다.
+    둘째로 규모가 커지면 <b>구조 자체에서 한계</b>가 나온다 — 랭킹 키는 하나뿐이라 Redis Cluster를 써도 그 키를 가진 <b>한 노드에만 부하가 몰리고(hot key)</b>, 여기에 <b>"조회 이벤트마다 쓰기"</b>라는 구조가 겹쳐 <b>읽기 트래픽이 그대로 쓰기 트래픽으로 바뀌어</b> 그 한 노드를 때린다. 멤버가 수억이면 <b>big key</b>가 되어 O(N) 명령 한 방이 싱글 스레드를 세우고, <code>ZUNIONSTORE</code>는 멀티 키 명령이라 Cluster에서 <b>같은 슬롯 제약</b>까지 붙는다.
+    <b>도구를 적용하는 답이 아니라 이 규모 한계를 스스로 짚는 답</b>을 해야 한다.
+  </div>
+</section>
+
+<div class="callout gap">
+  <div class="t">출제 의도 — "도구 적용"과 "규모 검증"을 <u>함께</u> 하는 습관을 본다</div>
+  <div class="qa">
+    실시간 인기 웹툰은 <b>이 회사의 실제 기능</b>이다. Sorted Set으로 기본 설계를 하는 것은 출발점이고,
+    <b>"시간 윈도우는 어떻게 처리할지, 멤버가 수억이면 어떻게 되는지"</b>의 한계 인식까지 가는지를 본다.
+    그래서 이 페이지의 무게중심은 명령어 목록(<a href="#s2">§2</a>)이 아니라 <a href="#s5">§5 시간 버킷</a>과 <a href="#s10">§10 읽기→쓰기 역전</a>에 있다.
+  </div>
+</div>
+
+<ul class="toc">
+  <li><a href="#s1"><span class="n">1</span>왜 RDB로는 안 되는가</a></li>
+  <li><a href="#s2"><span class="n">2</span>명령 4종 세트 ★암기</a></li>
+  <li><a href="#s3"><span class="n">3</span>기본 설계와 두 함정</a></li>
+  <li><a href="#s4"><span class="n">4</span>누적 랭킹의 함정</a></li>
+  <li><a href="#s5"><span class="n">5</span>시간 버킷 타임라인 ★</a></li>
+  <li><a href="#s6"><span class="n">6</span>ZUNIONSTORE 합산과 사전 계산</a></li>
+  <li><a href="#s7"><span class="n">7</span>버킷 크기 트레이드오프</a></li>
+  <li><a href="#s8"><span class="n">8</span>한계① hot key</a></li>
+  <li><a href="#s9"><span class="n">9</span>한계② big key</a></li>
+  <li><a href="#s10"><span class="n">10</span>한계③ 읽기→쓰기 역전 ★★</a></li>
+  <li><a href="#s11"><span class="n">11</span>한계④ CROSSSLOT · 해시태그</a></li>
+  <li><a href="#s12"><span class="n">12</span>100배면 어디부터 무너지나 ★</a></li>
+  <li><a href="#s13"><span class="n">13</span>꼬리질문 셀프 테스트</a></li>
+</ul>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 랭킹이라는 요구 — RDB의 인덱스 구조와 상성이 나쁘다</h2>
+
+<p>랭킹을 데이터 관점으로 번역하면 <b>두 동작의 조합</b>이다.</p>
+
+<div class="grid2">
+  <div class="mini">
+    <div class="h">쓰기 <span class="tag warn">초당 수천 번</span></div>
+    <p>조회수·좋아요 같은 값이 <b>쉬지 않고 바뀐다.</b></p>
+  </div>
+  <div class="mini">
+    <div class="h">읽기 <span class="tag">정렬 후 상위 10개</span></div>
+    <p>그 값 기준으로 <b>정렬해서 위에서부터</b> 뽑는다.</p>
+  </div>
+</div>
+
+<p>RDB로 하면 <code>ORDER BY view_count DESC LIMIT 10</code>이다. <b>실행 자체는 된다.</b> 문제는 이 두 동작이 RDB 안에서 <b>서로를 방해한다</b>는 점이다.</p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 356" role="img" aria-label="같은 랭킹 요구를 RDB와 Sorted Set이 처리하는 방식 비교">
+  <defs>
+    <marker id="f1r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="f1g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+  </defs>
+
+  <rect x="6" y="8" width="566" height="340" rx="12" fill="#f8fafc" stroke="#dc2626" stroke-width="2"/>
+  <text x="289" y="34" text-anchor="middle" font-size="15" font-weight="800" fill="#dc2626">RDB — 정렬을 인덱스가 따로 관리한다</text>
+
+  <rect x="150" y="48" width="278" height="36" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="289" y="71" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">UPDATE ... SET view_count = view_count + 1</text>
+
+  <line x1="220" y1="86" x2="150" y2="112" stroke="#dc2626" stroke-width="2" marker-end="url(#f1r)"/>
+  <line x1="358" y1="86" x2="428" y2="112" stroke="#dc2626" stroke-width="2" marker-end="url(#f1r)"/>
+
+  <rect x="34" y="118" width="212" height="62" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+  <text x="140" y="141" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">① 테이블 행 갱신</text>
+  <text x="140" y="162" text-anchor="middle" font-size="11" fill="#6b7280">새 튜플 버전이 생기기도 한다</text>
+
+  <rect x="332" y="118" width="212" height="62" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+  <text x="438" y="141" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">② 인덱스 재배치</text>
+  <text x="438" y="162" text-anchor="middle" font-size="11" fill="#6b7280">B-tree에서 빠져나와 새 자리로</text>
+
+  <text x="289" y="204" text-anchor="middle" font-size="12" font-weight="700" fill="#1f2937">한 번의 증가에 <tspan fill="#dc2626">두 개의 일</tspan> — 갱신과 정렬 유지가 분리돼 있다</text>
+
+  <rect x="34" y="220" width="510" height="76" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="6 4"/>
+  <text x="289" y="243" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">③ 인기 행 하나에 UPDATE가 몰린다 → 행 잠금 대기 줄</text>
+  <rect x="120" y="256" width="40" height="24" rx="5" fill="#dc2626"/><text x="140" y="273" text-anchor="middle" font-size="11" fill="#fff" font-weight="700">T1</text>
+  <rect x="172" y="256" width="40" height="24" rx="5" fill="#fca5a5"/><text x="192" y="273" text-anchor="middle" font-size="11" fill="#7f1d1d" font-weight="700">T2</text>
+  <rect x="224" y="256" width="40" height="24" rx="5" fill="#fca5a5"/><text x="244" y="273" text-anchor="middle" font-size="11" fill="#7f1d1d" font-weight="700">T3</text>
+  <rect x="276" y="256" width="40" height="24" rx="5" fill="#fca5a5"/><text x="296" y="273" text-anchor="middle" font-size="11" fill="#7f1d1d" font-weight="700">T4</text>
+  <text x="400" y="273" text-anchor="middle" font-size="11" fill="#6b7280">…같은 행을 기다린다</text>
+
+  <text x="289" y="326" text-anchor="middle" font-size="13.5" font-weight="800" fill="#dc2626">인기가 많을수록 갱신이 느려지는 역설</text>
+
+  <rect x="588" y="8" width="566" height="340" rx="12" fill="#f8fafc" stroke="#16a34a" stroke-width="2"/>
+  <text x="871" y="34" text-anchor="middle" font-size="15" font-weight="800" fill="#16a34a">Sorted Set — 갱신이 곧 정렬 유지다</text>
+
+  <rect x="732" y="48" width="278" height="36" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="871" y="71" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">ZINCRBY ranking:webtoon 1 &lt;id&gt;</text>
+
+  <line x1="871" y1="86" x2="871" y2="112" stroke="#16a34a" stroke-width="2" marker-end="url(#f1g)"/>
+
+  <rect x="616" y="118" width="510" height="62" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+  <text x="871" y="141" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">점수 변경 = 정렬 위치 이동 — 한 개의 연산</text>
+  <text x="871" y="162" text-anchor="middle" font-size="11" fill="#6b7280">"정렬해서 읽는" 것이 아니라 "정렬된 상태를 유지한 채 쓴다"</text>
+
+  <text x="871" y="204" text-anchor="middle" font-size="12" font-weight="700" fill="#1f2937">따로 관리할 인덱스가 없으니 <tspan fill="#16a34a">재배치 비용도 따로 없다</tspan></text>
+
+  <rect x="616" y="220" width="510" height="76" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="6 4"/>
+  <text x="871" y="243" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">싱글 스레드 — 명령이 차례로 실행된다</text>
+  <rect x="702" y="256" width="40" height="24" rx="5" fill="#16a34a"/><text x="722" y="273" text-anchor="middle" font-size="11" fill="#fff" font-weight="700">C1</text>
+  <rect x="754" y="256" width="40" height="24" rx="5" fill="#86efac"/><text x="774" y="273" text-anchor="middle" font-size="11" fill="#14532d" font-weight="700">C2</text>
+  <rect x="806" y="256" width="40" height="24" rx="5" fill="#86efac"/><text x="826" y="273" text-anchor="middle" font-size="11" fill="#14532d" font-weight="700">C3</text>
+  <rect x="858" y="256" width="40" height="24" rx="5" fill="#86efac"/><text x="878" y="273" text-anchor="middle" font-size="11" fill="#14532d" font-weight="700">C4</text>
+  <text x="1000" y="273" text-anchor="middle" font-size="11" fill="#6b7280">경합이라는 개념 자체가 없다</text>
+
+  <text x="871" y="326" text-anchor="middle" font-size="13.5" font-weight="800" fill="#16a34a">갱신 O(log N) · TOP 10 조회 O(log N + M)</text>
+</svg>
+<div class="cap">같은 요구를 두 저장소가 처리하는 방식. <b>RDB는 "값 갱신"과 "정렬 유지"를 두 개의 일로 처리하고 그 사이에 락 경합이 낀다.</b> Sorted Set은 그 둘이 하나의 연산이다 — "빠른 Map"을 넘어선 Redis의 <b>표현력</b>이란 이런 것이다.</div>
+</div>
+
+<div class="callout">
+  <div class="t">내부 구조는 한 줄로만 짚고 넘어간다</div>
+  <div class="qa">
+    Sorted Set은 <b>해시테이블</b>(멤버 → 점수를 O(1)로)과 <b>스킵 리스트</b>(점수순 정렬 유지, O(log N))를 <b>같이 들고 있는 이중 인덱스</b>다.
+    같은 데이터를 두 벌로 들고 있으니 <b>메모리를 더 쓴다</b> — 그 대가로 "점수로 찾기"와 "순위로 찾기"가 둘 다 빠르다.
+    <b>이 메모리 오버헤드는 <a href="#s9">§9 big key</a>에서 그대로 되돌아온다.</b>
+    (스킵 리스트의 층 구조·확률적 승격 같은 내부 동작은 <code>02-redis-data-structures-use-cases</code> 문서에서 따로 다룬다. 이 문항의 승부처는 자료구조 내부가 아니라 <b>랭킹 시나리오</b>다.)
+  </div>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 명령 4종 세트 — 랭킹 화면 한 장이 이 넷으로 끝난다</h2>
+
+<p>랭킹을 만드는 데 필요한 연산이 <b>명령어 하나씩으로 이미 존재한다.</b> 외울 때는 명령 이름이 아니라 <b>화면의 어느 부분을 만드는지</b>로 묶어 두는 편이 인출이 빠르다.</p>
+
+<div class="fig">
+<svg viewBox="0 0 900 372" role="img" aria-label="랭킹 화면의 각 부분을 만드는 명령 매핑">
+  <defs>
+    <marker id="f2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+    <marker id="f2o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#d97706"/></marker>
+  </defs>
+
+  <rect x="20" y="16" width="300" height="336" rx="14" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <rect x="20" y="16" width="300" height="38" rx="14" fill="#2563eb"/>
+  <rect x="20" y="42" width="300" height="12" fill="#2563eb"/>
+  <text x="170" y="41" text-anchor="middle" font-size="13" font-weight="800" fill="#ffffff">실시간 인기 웹툰</text>
+
+  <rect x="36" y="66" width="268" height="30" rx="6" fill="#dbeafe"/>
+  <text x="50" y="86" font-size="12" font-weight="800" fill="#2563eb">1</text>
+  <text x="76" y="86" font-size="12" fill="#1f2937">웹툰 A</text>
+  <text x="292" y="86" text-anchor="end" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#6b7280">812</text>
+
+  <rect x="36" y="100" width="268" height="30" rx="6" fill="#f1f5f9"/>
+  <text x="50" y="120" font-size="12" font-weight="800" fill="#2563eb">2</text>
+  <text x="76" y="120" font-size="12" fill="#1f2937">웹툰 B</text>
+  <text x="292" y="120" text-anchor="end" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#6b7280">655</text>
+
+  <rect x="36" y="134" width="268" height="30" rx="6" fill="#f1f5f9"/>
+  <text x="50" y="154" font-size="12" font-weight="800" fill="#2563eb">3</text>
+  <text x="76" y="154" font-size="12" fill="#1f2937">웹툰 C</text>
+  <text x="292" y="154" text-anchor="end" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#6b7280">640</text>
+
+  <text x="170" y="184" text-anchor="middle" font-size="14" fill="#94a3b8" letter-spacing="3">· · ·</text>
+
+  <rect x="36" y="194" width="268" height="30" rx="6" fill="#f1f5f9"/>
+  <text x="50" y="214" font-size="12" font-weight="800" fill="#2563eb">10</text>
+  <text x="76" y="214" font-size="12" fill="#1f2937">웹툰 J</text>
+  <text x="292" y="214" text-anchor="end" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#6b7280">401</text>
+
+  <rect x="36" y="248" width="268" height="52" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="170" y="268" text-anchor="middle" font-size="11.5" fill="#6b7280">내 작품</text>
+  <text x="112" y="290" text-anchor="middle" font-size="13" font-weight="800" fill="#d97706">27위</text>
+  <text x="228" y="290" text-anchor="middle" font-size="13" font-weight="800" fill="#d97706">143점</text>
+
+  <text x="170" y="326" text-anchor="middle" font-size="11" fill="#6b7280">화면에 보이는 것은 ID 목록 + 점수뿐</text>
+  <text x="170" y="344" text-anchor="middle" font-size="11" fill="#6b7280">제목·썸네일은 별도 조회로 붙인다</text>
+
+  <path d="M320 130 C 380 130 380 96 424 96" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#f2b)"/>
+  <path d="M320 282 C 372 282 372 186 424 186" fill="none" stroke="#d97706" stroke-width="2" marker-end="url(#f2o)"/>
+  <path d="M320 292 C 380 292 380 262 424 262" fill="none" stroke="#d97706" stroke-width="2" marker-end="url(#f2o)"/>
+
+  <rect x="430" y="66" width="452" height="60" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="446" y="90" font-size="12.5" font-weight="800" font-family="ui-monospace,Menlo,monospace" fill="#2563eb">ZREVRANGE key 0 9 WITHSCORES</text>
+  <text x="446" y="112" font-size="11" fill="#6b7280">점수 높은 순 0~9번째 = TOP 10 · O(log N + M)</text>
+
+  <rect x="430" y="156" width="452" height="60" rx="10" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+  <text x="446" y="180" font-size="12.5" font-weight="800" font-family="ui-monospace,Menlo,monospace" fill="#d97706">ZREVRANK key member</text>
+  <text x="446" y="202" font-size="11" fill="#6b7280">0-based라 화면 표기는 +1 (26 → "27위") · O(log N)</text>
+
+  <rect x="430" y="232" width="452" height="60" rx="10" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+  <text x="446" y="256" font-size="12.5" font-weight="800" font-family="ui-monospace,Menlo,monospace" fill="#d97706">ZSCORE key member</text>
+  <text x="446" y="278" font-size="11" fill="#6b7280">그 멤버의 현재 점수 · O(1) — 해시테이블이 답한다</text>
+
+  <rect x="430" y="306" width="452" height="56" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="446" y="329" font-size="12.5" font-weight="800" font-family="ui-monospace,Menlo,monospace" fill="#16a34a">ZINCRBY key 1 member</text>
+  <text x="446" y="350" font-size="11" fill="#6b7280">화면 밖 — 조회 이벤트가 들어올 때마다 · O(log N)</text>
+</svg>
+<div class="cap">읽기 셋은 <b>화면의 서로 다른 자리</b>를 만들고, 쓰기 하나는 <b>화면 밖에서 계속 돈다.</b> 이 그림이 곧 <a href="#s10">§10</a>의 복선이다 — 화면 밖의 저 초록 명령이 <b>사용자 수만큼 호출되는 쓰기</b>다.</div>
+</div>
+
+<div class="memo">
+  <div class="kicker">암기 카드 — 랭킹 4종 세트</div>
+  <div class="cmd">
+    <div class="c">
+      <div><span class="n">ZINCRBY</span><span class="o">O(log N)</span></div>
+      <div class="d"><b>올린다.</b> 멤버가 <b>없으면 0에서 시작해 만들어 준다</b> — "처음 조회된 웹툰인가" 분기가 코드에 필요 없다.</div>
+    </div>
+    <div class="c">
+      <div><span class="n">ZREVRANGE</span><span class="o mid">O(log N + M)</span></div>
+      <div class="d"><b>위에서부터 꺼낸다.</b> <code>ZRANGE</code>는 <b>낮은 순</b>이라 랭킹에는 <code>REV</code>를 쓴다. <code>0 9</code>가 TOP 10.</div>
+    </div>
+    <div class="c">
+      <div><span class="n">ZREVRANK</span><span class="o">O(log N)</span></div>
+      <div class="d"><b>내 자리를 묻는다.</b> 0-based이므로 <b>화면 표기는 +1</b>.</div>
+    </div>
+    <div class="c">
+      <div><span class="n">ZSCORE</span><span class="o">O(1)</span></div>
+      <div class="d"><b>내 점수를 묻는다.</b> 해시테이블이 바로 답하므로 유일한 O(1).</div>
+    </div>
+  </div>
+  <p style="margin:0;font-size:.95rem"><b>N은 그 Sorted Set의 전체 멤버 수, M은 꺼내오는 개수.</b> 여기서 결정적인 것은 <b style="color:#16a34a">TOP 10을 꺼내는 비용이 전체 멤버 수에 거의 영향받지 않는다</b>는 점이다 — 멤버가 100만이든 1000만이든 log 차이뿐이다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 기본 설계 — 그리고 시키지 않아도 짚어야 할 두 함정</h2>
+
+<pre><code><span class="cmt">// 조회 이벤트 발생 시 — 점수 +1</span>
+<span class="cmt">// incrementScore는 ZINCRBY다. 해당 웹툰이 키에 없으면 0에서 시작해</span>
+<span class="cmt">// 자동으로 만들어 주므로 "처음 조회된 웹툰인가" 분기가 필요 없다.</span>
+redisTemplate.opsForZSet().incrementScore("ranking:webtoon", webtoonId, 1);
+
+<span class="cmt">// 랭킹 화면 — TOP 10 (점수 높은 순)</span>
+<span class="cmt">// reverseRangeWithScores는 ZREVRANGE ... WITHSCORES다.</span>
+<span class="cmt">// 0..9는 0-based 구간이라 1위부터 10위까지를 뜻한다.</span>
+Set&lt;TypedTuple&lt;String&gt;&gt; top10 = redisTemplate.opsForZSet()
+        .reverseRangeWithScores("ranking:webtoon", 0, 9);
+
+<span class="cmt">// "이 웹툰은 현재 몇 위?" — ZREVRANK. 0-based라 화면 표기는 +1</span>
+Long rank = redisTemplate.opsForZSet().reverseRank("ranking:webtoon", webtoonId);</code></pre>
+
+<p><b>여기서 멈추면 절반이다.</b> 면접에서 시키지 않아도 두 가지를 스스로 짚어야 한다.</p>
+
+<h3>3-1. 멤버에는 ID만 넣는다 — 멤버 문자열이 곧 정체성이다</h3>
+
+<p>Sorted Set은 <b>멤버 문자열이 같으면 같은 항목으로, 한 글자라도 다르면 다른 항목으로</b> 취급한다. 그래서 제목·썸네일 같은 메타데이터를 멤버에 직렬화해 넣으면 사고가 난다.</p>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">Before — 멤버에 메타데이터를 실었다</div>
+<pre><code>zSet.incrementScore("ranking:webtoon",
+<span class="hl-bad">    "812|나 혼자만 레벨업|/thumb/812_v1.jpg", 1);</span>
+
+<span class="cmt">// 편집자가 제목 오타를 수정하는 순간 —</span>
+zSet.incrementScore("ranking:webtoon",
+<span class="hl-bad">    "812|나 혼자만 레벨 업|/thumb/812_v1.jpg", 1);</span>
+<span class="cmt">//        ↑ 한 글자 차이 = Redis에게는 전혀 다른 웹툰</span>
+
+<span class="cmt">// 결과</span>
+<span class="cmt">//  · 옛 멤버: 그동안 쌓인 8,120점을 그대로 들고 남는다</span>
+<span class="cmt">//  · 새 멤버: 0점부터 다시 시작</span>
+<span class="cmt">//  → 같은 웹툰이 랭킹에 두 줄로 나오거나,</span>
+<span class="cmt">//    1위였던 작품이 오타 수정 한 번에 순위권 밖으로 사라진다</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">After — 랭킹은 ID 목록만 준다</div>
+<pre><code>zSet.incrementScore("ranking:webtoon",
+<span class="hl-good">    String.valueOf(webtoonId), 1);   // "812"</span>
+
+<span class="cmt">// 조회는 ID 목록만 받고, 화면 조립은 따로</span>
+Set&lt;TypedTuple&lt;String&gt;&gt; top = zSet
+        .reverseRangeWithScores("ranking:webtoon", 0, 9);
+
+List&lt;Long&gt; ids = toIds(top);
+<span class="hl-good">Map&lt;Long, WebtoonMeta&gt; metas = metaCache.getAll(ids);</span>
+<span class="cmt">// 제목이 바뀌어도 ID는 그대로 → 점수가 끊기지 않는다</span>
+
+<span class="cmt">// 원칙: 랭킹 키에는 "변하지 않는 식별자"만 넣는다</span></code></pre>
+  </div>
+</div>
+
+<div class="memo ok">
+  <div class="kicker">규칙 카드</div>
+  <div class="big">랭킹 키에는 <u>변하지 않는 식별자(ID)만</u> 넣는다.<br>제목·썸네일 같은 메타데이터는 <u>그 ID로 별도 조회</u>해 조합한다.</div>
+  <p style="margin:0;font-size:.94rem">이유를 한 문장으로: <b>멤버 문자열이 곧 그 항목의 정체성이라, 문자열이 바뀌면 Redis에게는 새로운 항목이 된다.</b></p>
+</div>
+
+<h3>3-2. 동점 처리 — 그리고 "점수는 double"이라는 사실</h3>
+
+<p>점수가 같은 멤버가 여럿이면 Redis는 <b>멤버 문자열의 사전순(바이너리 비교)</b>으로 정렬한다. 숫자 크기순이 아니라 문자열 비교라서 <code>"10"</code>이 <code>"9"</code>보다 앞에 온다.</p>
+
+<p>"먼저 도달한 쪽이 위" 같은 비즈니스 규칙이 필요하면 점수 하나에 두 정보를 실어야 한다. 흔한 기법이 <b>합성 점수</b>다 — <b>정수부에는 조회수를, 소수부에는 타임스탬프를 역산해(먼저일수록 큰 값이 되도록) 심어서</b>, 조회수가 같으면 소수부가 승부를 가르게 만든다.</p>
+
+<p>그런데 여기서 <b>반드시 짚어야 할 사실</b>이 있다.</p>
+
+<div class="num-hero">
+  <div class="kicker" style="color:#7c3aed">암기 숫자 — Sorted Set의 점수는 정수가 아니라 double이다</div>
+  <div class="v">2<sup>53</sup> = 9,007,199,254,740,992</div>
+  <div class="l">배정도 부동소수점의 가수는 <b>53비트</b>(저장되는 52비트 + 항상 1인 앞자리 1비트) —<br><b>절댓값이 이 값 이하인 정수까지만 정확히 표현된다.</b></div>
+</div>
+
+<p>그 위로 넘어가면 무슨 일이 생기는지가 중요하다. 표현 가능한 값들의 <b>간격이 1보다 커지므로</b>, <b>1을 더해도 값이 그대로인 구간</b>이 생긴다.</p>
+
+<pre><code>9007199254740992     (= 2^53)  까지는 정수가 정확히 표현된다
+9007199254740992 + 1 을 double로 계산하면?
+  -&gt; 9007199254740992   (변하지 않는다. 이 구간의 표현 간격이 2이기 때문)</code></pre>
+
+<p>즉 점수가 2<sup>53</sup>을 넘어선 뒤로는 <code>ZINCRBY key 1 member</code>를 아무리 호출해도 점수가 오르지 않는다. 조회수 카운터로 쓸 때 이 값에 현실적으로 도달할 일은 없지만, <b>"점수는 정수가 아니라 double이다"라는 사실 자체는 두 군데에서 실제로 문제가 된다.</b></p>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#7c3aed">
+    <div class="h">① 합성 점수의 자릿수 예산 <span class="tag" style="background:#ede9fe;color:#7c3aed">설계</span></div>
+    <p>정수부(조회수)와 소수부(타임스탬프)가 <b>53비트를 나눠 쓴다.</b> 소수부에 자릿수를 많이 줄수록 <b>정수부가 정확히 표현되는 상한이 내려간다.</b> 무한정 정밀하게 심을 수 없다는 뜻이다.</p>
+  </div>
+  <div class="mini" style="border-color:#7c3aed">
+    <div class="h">② 금액·정밀 소수를 점수로 쓸 때 <span class="tag warn">오차 누적</span></div>
+    <p><code>0.1</code> 같은 값은 이진 부동소수점으로 <b>정확히 표현되지 않으므로</b> 더하다 보면 오차가 쌓인다. 돈을 다루는 랭킹이라면 <b>원 단위 정수로 환산해</b> 넣는 편이 안전하다.</p>
+  </div>
+</div>
+
+<div class="callout ok">
+  <div class="t">면접 가산점 한 문장</div>
+  <div class="qa">"점수는 double이라 <b>2<sup>53</sup>까지의 정수만 정확</b>합니다 — 그래서 합성 점수를 쓸 때 정수부와 소수부가 그 비트 예산을 나눠 씁니다."</div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. "실시간 인기"의 진짜 문제 — 누적 랭킹에는 시간 축이 없다</h2>
+
+<p>§3까지의 설계에는 아직 <b>시간이라는 축이 없다.</b> 키 하나에 계속 <code>ZINCRBY</code>하면 그건 <b>서비스 개시 이래의 역대 누적 랭킹</b>이다. 왜 문제인지는 숫자로 보면 분명하다.</p>
+
+<div class="fig">
+<svg viewBox="0 0 900 300" role="img" aria-label="누적 점수 랭킹과 최근 24시간 랭킹에서 순위가 뒤집히는 비교">
+  <rect x="10" y="14" width="424" height="272" rx="12" fill="#f8fafc" stroke="#dc2626" stroke-width="2"/>
+  <text x="222" y="40" text-anchor="middle" font-size="14.5" font-weight="800" fill="#dc2626">누적 점수 (역대) — 지금 설계</text>
+
+  <text x="34" y="76" font-size="12" font-weight="700" fill="#1f2937">A · 3년 전 메가히트작</text>
+  <rect x="34" y="86" width="360" height="30" rx="5" fill="#dc2626"/>
+  <text x="384" y="106" text-anchor="end" font-size="12" font-weight="800" fill="#ffffff">누적 5,000만</text>
+  <text x="34" y="134" font-size="11" fill="#6b7280">요즘 실제 조회는 하루 100회</text>
+
+  <text x="34" y="176" font-size="12" font-weight="700" fill="#1f2937">B · 오늘 공개된 신작</text>
+  <rect x="34" y="186" width="8" height="30" rx="3" fill="#94a3b8"/>
+  <text x="52" y="206" font-size="12" font-weight="700" fill="#6b7280">누적 10만</text>
+  <text x="34" y="234" font-size="11" fill="#6b7280">오늘 하루에만 10만 조회 — 화제작</text>
+
+  <text x="222" y="268" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">1위 = A · B가 따라잡으려면 500일</text>
+
+  <rect x="466" y="14" width="424" height="272" rx="12" fill="#f8fafc" stroke="#16a34a" stroke-width="2"/>
+  <text x="678" y="40" text-anchor="middle" font-size="14.5" font-weight="800" fill="#16a34a">최근 24시간 (시간 윈도우)</text>
+
+  <text x="490" y="76" font-size="12" font-weight="700" fill="#1f2937">A · 3년 전 메가히트작</text>
+  <rect x="490" y="86" width="6" height="30" rx="3" fill="#94a3b8"/>
+  <text x="506" y="106" font-size="12" font-weight="700" fill="#6b7280">100</text>
+  <text x="490" y="134" font-size="11" fill="#6b7280">과거의 5,000만은 윈도우 밖이라 계산에 없다</text>
+
+  <text x="490" y="176" font-size="12" font-weight="700" fill="#1f2937">B · 오늘 공개된 신작</text>
+  <rect x="490" y="186" width="360" height="30" rx="5" fill="#16a34a"/>
+  <text x="840" y="206" text-anchor="end" font-size="12" font-weight="800" fill="#ffffff">100,000</text>
+  <text x="490" y="234" font-size="11" fill="#6b7280">사용자가 "실시간 인기"에서 보고 싶은 그것</text>
+
+  <text x="678" y="268" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">1위 = B · 순위가 뒤집힌다</text>
+</svg>
+<div class="cap">같은 데이터인데 <b>시간 축 하나를 넣었을 뿐</b>으로 랭킹이 뒤집힌다. 누적 랭킹에서 <b>1위는 사실상 영구 지정석</b>이고 "지금 뜨는 작품"은 절대 보이지 않는다 — 사용자가 실시간 인기 랭킹에서 기대하는 것과 <b>정반대</b>의 결과다.</div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">문제의 본질 — 한 문장</div>
+  <div class="big"><code style="background:rgba(220,38,38,.1);color:#dc2626">ZINCRBY</code>로 올린 점수는 <u>한 번 올라가면 절대 내려오지 않는다.</u><br>그런데 "실시간 인기"는 <u>오래된 점수가 랭킹에서 빠지기를</u> 기대한다.</div>
+  <p style="margin:0;font-size:.94rem">Sorted Set에는 <b>"이 점수는 1시간 뒤 만료" 같은 개념이 없다.</b> TTL은 <b>키 전체</b>에만 걸 수 있지 <b>멤버별·점수 증분별로는 걸 수 없다.</b> 그래서 우회한다 — <b style="color:#dc2626">점수에 유효기간을 걸 수 없다면, 키를 시간으로 쪼개서 키 자체에 TTL을 건다.</b></p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 시간 버킷 — 키가 생기고 사라지는 타임라인이 이 패턴의 전부다</h2>
+
+<p><b>시간 버킷</b>은 <b>"이 시간대의 점수만 담는 통"</b>이다. 키 이름에 시각을 박아서 시간대마다 다른 키를 쓰고, 각 키에 윈도우 길이만큼의 TTL을 건다. 그러면 오래된 시간대의 점수는 애플리케이션이 지울 필요 없이 <b>키째로 자연 소멸</b>한다.</p>
+
+<div class="callout">
+  <div class="t">비유 — 시간대별 투표함</div>
+  <div class="qa">
+    한 시간에 하나씩 <b>새 투표함</b>을 꺼내 놓고, 그 시간 동안 들어오는 표는 <b>지금 열린 함에만</b> 넣는다.
+    개표할 때는 <b>선반에 남아 있는 최근 24개 함을 한꺼번에 쏟아</b> 센다.
+    함마다 <b>"25시간 뒤 폐기"</b> 도장이 찍혀 있어서, 오래된 함은 <b>아무도 손대지 않아도 알아서 없어진다.</b>
+    "오래된 표를 골라내 빼는 작업"이 이 설계에 존재하지 않는 이유다.
+  </div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 428" role="img" aria-label="시간 버킷 키가 생기고 TTL로 사라지는 타임라인과 슬라이딩 윈도우">
+  <defs>
+    <marker id="f5b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+    <marker id="f5r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="f5g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+  </defs>
+
+  <text x="14" y="22" font-size="12.5" font-weight="800" fill="#1f2937">윈도우 = 최근 24시간 · 버킷 = 1시간 단위 · 버킷 TTL = 25시간</text>
+
+  <!-- snapshot 1 -->
+  <text x="14" y="60" font-size="13" font-weight="800" fill="#2563eb">시각 14:37</text>
+
+  <line x1="14" y1="146" x2="1146" y2="146" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="1146" y="138" text-anchor="end" font-size="10.5" fill="#94a3b8">시간 →</text>
+
+  <rect x="24" y="96" width="128" height="42" rx="7" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="88" y="114" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#94a3b8">…:2026083113</text>
+  <text x="88" y="130" text-anchor="middle" font-size="10" fill="#94a3b8">TTL 만료 · 소멸</text>
+
+  <rect x="160" y="96" width="128" height="42" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="224" y="114" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#dc2626">…:2026083114</text>
+  <text x="224" y="130" text-anchor="middle" font-size="10" fill="#dc2626">TTL 곧 만료</text>
+
+  <rect x="296" y="96" width="128" height="42" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="360" y="114" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">…:2026083115</text>
+  <text x="360" y="130" text-anchor="middle" font-size="10" fill="#6b7280">읽기 전용</text>
+
+  <text x="470" y="122" text-anchor="middle" font-size="15" fill="#94a3b8" letter-spacing="4">· · ·</text>
+
+  <rect x="516" y="96" width="128" height="42" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="580" y="114" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">…:2026090112</text>
+  <text x="580" y="130" text-anchor="middle" font-size="10" fill="#6b7280">읽기 전용</text>
+
+  <rect x="652" y="96" width="128" height="42" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="716" y="114" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">…:2026090113</text>
+  <text x="716" y="130" text-anchor="middle" font-size="10" fill="#6b7280">읽기 전용</text>
+
+  <rect x="788" y="96" width="128" height="42" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="2.4"/>
+  <text x="852" y="114" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" font-weight="700" fill="#2563eb">…:2026090114</text>
+  <text x="852" y="130" text-anchor="middle" font-size="10" font-weight="700" fill="#2563eb">지금 쓰는 버킷</text>
+
+  <rect x="924" y="96" width="128" height="42" rx="7" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="988" y="114" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#cbd5e1">…:2026090115</text>
+  <text x="988" y="130" text-anchor="middle" font-size="10" fill="#cbd5e1">아직 없음</text>
+
+  <line x1="852" y1="52" x2="852" y2="92" stroke="#2563eb" stroke-width="2.4" marker-end="url(#f5b)"/>
+  <rect x="700" y="30" width="304" height="24" rx="6" fill="#2563eb"/>
+  <text x="852" y="47" text-anchor="middle" font-size="11.5" font-weight="700" fill="#ffffff">ZINCRBY — 쓰기는 항상 현재 버킷 하나에만</text>
+
+  <path d="M160 166 L160 178 L916 178 L916 166" fill="none" stroke="#16a34a" stroke-width="2"/>
+  <text x="538" y="196" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">읽기 = 이 24개 버킷을 ZUNIONSTORE로 합산 (2026083115 ~ 2026090114)</text>
+
+  <line x1="14" y1="216" x2="1146" y2="216" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- snapshot 2 -->
+  <text x="14" y="248" font-size="13" font-weight="800" fill="#2563eb">시각 15:00 — 시간이 넘어가는 순간</text>
+
+  <line x1="14" y1="334" x2="1146" y2="334" stroke="#cbd5e1" stroke-width="1.5"/>
+
+  <rect x="24" y="284" width="128" height="42" rx="7" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="88" y="309" text-anchor="middle" font-size="10" fill="#94a3b8">소멸</text>
+
+  <rect x="160" y="284" width="128" height="42" rx="7" fill="#f1f5f9" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 4"/>
+  <text x="224" y="302" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#dc2626">…:2026083114</text>
+  <text x="224" y="318" text-anchor="middle" font-size="10" font-weight="700" fill="#dc2626">TTL 만료 → 윈도우 밖</text>
+
+  <rect x="296" y="284" width="128" height="42" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="360" y="309" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">…:2026083115</text>
+
+  <text x="470" y="310" text-anchor="middle" font-size="15" fill="#94a3b8" letter-spacing="4">· · ·</text>
+
+  <rect x="516" y="284" width="128" height="42" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="580" y="309" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">…:2026090112</text>
+
+  <rect x="652" y="284" width="128" height="42" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="716" y="309" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">…:2026090113</text>
+
+  <rect x="788" y="284" width="128" height="42" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="852" y="302" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">…:2026090114</text>
+  <text x="852" y="318" text-anchor="middle" font-size="10" fill="#6b7280">쓰기 멈춤 · 읽기 전용</text>
+
+  <rect x="924" y="284" width="128" height="42" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="2.4"/>
+  <text x="988" y="302" text-anchor="middle" font-size="10" font-family="ui-monospace,Menlo,monospace" font-weight="700" fill="#2563eb">…:2026090115</text>
+  <text x="988" y="318" text-anchor="middle" font-size="10" font-weight="700" fill="#2563eb">첫 ZINCRBY로 자동 생성</text>
+
+  <line x1="988" y1="248" x2="988" y2="280" stroke="#2563eb" stroke-width="2.4" marker-end="url(#f5b)"/>
+
+  <path d="M296 354 L296 366 L1052 366 L1052 354" fill="none" stroke="#16a34a" stroke-width="2"/>
+  <text x="674" y="384" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">합산 대상이 통째로 오른쪽으로 한 칸 이동 — 이것이 슬라이딩 윈도우다</text>
+
+  <text x="14" y="414" font-size="12" font-weight="800" fill="#dc2626">애플리케이션은 아무것도 지우지 않는다 — 윈도우에서 빠지는 일은 전부 Redis의 TTL이 한다. "오래된 점수 감산" 배치가 존재하지 않는다.</text>
+</svg>
+<div class="cap">쓰기는 <b>파란 칸 하나</b>로만 들어가고, 읽기는 <b>초록 괄호</b>가 덮는 범위를 합산한다. 시간이 흐르면 <b>새 칸이 오른쪽에 자동으로 생기고 왼쪽 끝이 TTL로 사라진다</b> — 그것이 윈도우가 "움직이는" 실체다.</div>
+</div>
+
+<div class="card">
+  <div class="rule g"><div class="num">1</div><div class="body">
+    <b>애플리케이션은 아무것도 지우지 않는다</b>
+    <span>윈도우에서 빠지는 일은 <b>Redis의 TTL이 알아서</b> 한다. "오래된 점수를 찾아 빼는" 배치 잡이 이 설계에는 존재하지 않는다. <b>지우는 코드가 없다는 것 자체가 이 패턴의 이득</b>이다.</span>
+  </div></div>
+  <div class="rule g"><div class="num">2</div><div class="body">
+    <b>쓰기는 항상 현재 버킷 하나에만 들어간다</b>
+    <span>지금 시각으로 키 이름을 만들어 <code>ZINCRBY</code>하면 끝이다. 새 버킷이 처음 생길 때도 <b><code>ZINCRBY</code>가 알아서 만들어 주므로</b>(<a href="#s2">§2</a>) 초기화 코드가 필요 없다.</span>
+  </div></div>
+  <div class="rule w"><div class="num">3</div><div class="body">
+    <b>TTL은 윈도우보다 넉넉히 잡는다 — 24시간 윈도우에 TTL 25시간</b>
+    <span>TTL을 <b>정확히 24시간</b>으로 걸면, 합산하려는 순간 <b>가장 오래된 버킷이 방금 만료돼 사라져</b> 있을 수 있다. 그 한 시간치가 조용히 빠진 랭킹이 나가고, <b>아무 에러도 나지 않아서 눈치채기 어렵다.</b> 여유를 둬서 25시간으로 건다.</span>
+  </div></div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. ZUNIONSTORE — 합산하되, 요청마다 하지는 않는다</h2>
+
+<p>조회할 때는 최근 24개 버킷의 점수를 <b>웹툰별로 더해야</b> 한다. 이걸 하는 명령이 <code>ZUNIONSTORE</code>다. <code>ZUNIONSTORE 결과키 키개수 키1 키2 ...</code> 형태로 쓰며, 여러 Sorted Set의 <b>합집합</b>을 구하되 <b>같은 멤버가 여러 키에 들어 있으면 점수를 더해서</b> 결과 키에 저장한다.</p>
+
+<div class="fig">
+<svg viewBox="0 0 900 296" role="img" aria-label="세 개의 시간 버킷을 ZUNIONSTORE로 합산해 merged 키를 만드는 과정">
+  <defs>
+    <marker id="f6b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+  </defs>
+
+  <rect x="16" y="24" width="252" height="60" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="30" y="44" font-size="10.5" font-family="ui-monospace,Menlo,monospace" fill="#6b7280">ranking:webtoon:2026090112</text>
+  <text x="30" y="66" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">A: <tspan font-weight="700" fill="#2563eb">300</tspan>   B: <tspan font-weight="700" fill="#16a34a">120</tspan></text>
+
+  <rect x="16" y="98" width="252" height="60" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="30" y="118" font-size="10.5" font-family="ui-monospace,Menlo,monospace" fill="#6b7280">ranking:webtoon:2026090113</text>
+  <text x="30" y="140" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">A: <tspan font-weight="700" fill="#2563eb">500</tspan>   C: <tspan font-weight="700" fill="#d97706">80</tspan></text>
+
+  <rect x="16" y="172" width="252" height="60" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="30" y="192" font-size="10.5" font-family="ui-monospace,Menlo,monospace" fill="#6b7280">ranking:webtoon:2026090114</text>
+  <text x="30" y="214" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">B: <tspan font-weight="700" fill="#16a34a">200</tspan></text>
+
+  <path d="M268 54 C 320 54 320 118 356 128" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#f6b)"/>
+  <path d="M268 128 L 354 128" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#f6b)"/>
+  <path d="M268 202 C 320 202 320 138 356 130" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#f6b)"/>
+
+  <rect x="362" y="86" width="164" height="86" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="444" y="112" text-anchor="middle" font-size="12" font-weight="800" font-family="ui-monospace,Menlo,monospace" fill="#2563eb">ZUNIONSTORE</text>
+  <text x="444" y="132" text-anchor="middle" font-size="11" fill="#1f2937">같은 멤버면 점수 합산</text>
+  <text x="444" y="154" text-anchor="middle" font-size="11" font-weight="700" fill="#2563eb">O(N) + O(M log M)</text>
+
+  <line x1="526" y1="128" x2="586" y2="128" stroke="#2563eb" stroke-width="2" marker-end="url(#f6b)"/>
+
+  <rect x="592" y="70" width="292" height="118" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
+  <text x="608" y="92" font-size="10.5" font-family="ui-monospace,Menlo,monospace" fill="#16a34a">ranking:webtoon:merged</text>
+  <text x="608" y="118" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">A: <tspan font-weight="800" fill="#2563eb">800</tspan>  <tspan font-size="10.5" fill="#94a3b8">= 300 + 500</tspan></text>
+  <text x="608" y="142" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">B: <tspan font-weight="800" fill="#16a34a">320</tspan>  <tspan font-size="10.5" fill="#94a3b8">= 120 + 200</tspan></text>
+  <text x="608" y="166" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">C: <tspan font-weight="800" fill="#d97706">80</tspan>   <tspan font-size="10.5" fill="#94a3b8">= 80</tspan></text>
+
+  <rect x="592" y="204" width="292" height="52" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+  <text x="738" y="226" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">이름 끝의 STORE = 결과를 키에 저장</text>
+  <text x="738" y="246" text-anchor="middle" font-size="11" fill="#1f2937">돌려주지 않으니 <tspan font-weight="700">여러 요청이 재사용</tspan>할 수 있다</text>
+
+  <text x="450" y="284" text-anchor="middle" font-size="11.5" fill="#6b7280">N = 입력 키들에 든 멤버 수의 총합 · M = 결과에 남는 멤버 수</text>
+</svg>
+<div class="cap">랭킹 합산에 필요한 동작이 정확히 이 <b>"같은 멤버면 점수 합산"</b>이다. 그리고 <b><code>STORE</code>라는 이름이 다음 절의 해법을 이미 품고 있다</b> — 결과를 키에 남기니 <b>미리 만들어 두고 여러 요청이 나눠 쓸 수 있다.</b></div>
+</div>
+
+<pre><code><span class="cmt">// ① 쓰기: 현재 시간 버킷 키에 적재 (시간 단위 버킷)</span>
+String bucket = "ranking:webtoon:" + now.format(yyyyMMddHH);  <span class="cmt">// ranking:webtoon:2026090114</span>
+zSet.incrementScore(bucket, webtoonId, 1);
+<span class="cmt">// TTL은 윈도우(24h)보다 넉넉히. 합산 직전에 가장 오래된 버킷이</span>
+<span class="cmt">// 만료돼 사라지는 것을 막기 위한 여유분이다.</span>
+redisTemplate.expire(bucket, Duration.ofHours(25));
+
+<span class="cmt">// ② 읽기: 최근 24개 버킷을 합산한 결과 키를 만들어 조회</span>
+List&lt;String&gt; last24 = recentBucketKeys(24);          <span class="cmt">// 최근 24시간 버킷 키 목록</span>
+<span class="cmt">// unionAndStore는 ZUNIONSTORE. 같은 웹툰이 여러 버킷에 있으면</span>
+<span class="cmt">// 점수를 더해서 merged 키에 저장한다.</span>
+zSet.unionAndStore("ranking:webtoon:2026090114", last24, "ranking:webtoon:merged");
+<span class="cmt">// merged는 파생 데이터라 오래 두면 낡은 랭킹이 된다. 짧은 TTL로 안전장치를 건다.</span>
+redisTemplate.expire("ranking:webtoon:merged", Duration.ofMinutes(1));</code></pre>
+
+<h3>6-1. 합산을 요청마다 하면 싱글 스레드가 멈춘다</h3>
+
+<p><code>ZUNIONSTORE</code>의 시간 복잡도는 <b>O(N) + O(M log M)</b>이다. 앞의 O(N)은 <b>모든 입력을 한 번씩 훑는 비용</b>, 뒤의 O(M log M)은 <b>합산 결과를 정렬된 자료구조로 만드는 비용</b>이다.</p>
+
+<div class="callout warn">
+  <div class="t">숫자를 대입해 본다</div>
+  <div class="qa">웹툰 <b>2만 개</b> × 버킷 <b>24개</b> = 최악의 경우 입력 멤버 <b>48만 개</b>. 이걸 랭킹 화면 요청마다 실행하면 — <b>Redis는 싱글 스레드라서</b> 그 계산이 도는 동안 <b>다른 모든 명령이 줄을 선다.</b> 랭킹 페이지 조회 1,000 QPS에 이 명령이 그대로 붙는 구조는 <b>성립하지 않는다.</b></div>
+</div>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">Before — 요청마다 합산</div>
+<pre><code>public List&lt;RankItem&gt; top10() {
+<span class="hl-bad">    zSet.unionAndStore(head, last24, MERGED);  // 요청마다 O(N)</span>
+    return read(zSet.reverseRangeWithScores(MERGED, 0, 9));
+}
+<span class="cmt">// 조회 1,000 QPS = 초당 1,000번의 48만 멤버 스캔</span>
+<span class="cmt">// 그동안 다른 클라이언트의 GET 하나까지 전부 대기한다</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">After — 스케줄러가 미리 만들어 둔다</div>
+<pre><code><span class="hl-good">@Scheduled(fixedDelay = 60_000)   // 1분마다 한 번</span>
+public void rebuildMerged() {
+    zSet.unionAndStore(head, last24, MERGED);
+    <span class="cmt">// TTL은 재생성 주기(1분)보다 넉넉히 — 스케줄러가 한 번 밀려도</span>
+    <span class="cmt">// 랭킹이 통째로 비지 않게. 버킷 TTL과 같은 논리다.</span>
+    redisTemplate.expire(MERGED, Duration.ofMinutes(5));
+}
+
+public List&lt;RankItem&gt; top10() {
+<span class="hl-good">    return read(zSet.reverseRangeWithScores(MERGED, 0, 9));</span>
+}
+<span class="cmt">// 조회 경로에는 O(log N + M) 명령 하나만 남는다</span></code></pre>
+  </div>
+</div>
+
+<div class="memo gap">
+  <div class="kicker">이건 기술 결정이 아니라 요구사항 협상이다</div>
+  <div class="big">1분마다 갱신한다는 것은 <u>"랭킹이 최대 1분 낡을 수 있다"</u>는 뜻이다.</div>
+  <p style="margin:0;font-size:.94rem">실시간 인기 랭킹이 <b>60초 낡아도 되는지를 기획과 합의하고 나서야</b> 이 설계가 성립한다. 랭킹처럼 <b>"근사해도 되는" 데이터</b>에서 정확도를 조금 내주고 비용을 크게 줄이는 협상이 <b>설계의 일부</b>라는 것을 보여주는 지점이다 — 이 협상 카드는 <a href="#s10">§10</a>에서 한 번 더 쓰인다.</p>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 버킷 크기 — 정밀도와 비용의 트레이드오프</h2>
+
+<p>버킷을 1시간 단위로 잡으면 <b>윈도우가 1시간씩 뚝뚝 움직인다.</b> 14:59에 보던 "최근 24시간"과 15:00에 보는 "최근 24시간"이 <b>한 시간치만큼</b> 달라진다는 뜻이다. 더 부드럽게 움직이게 하려면 버킷을 잘게 쪼갠다.</p>
+
+<div class="tbl">
+<table>
+  <thead><tr><th>버킷 크기</th><th>24시간 윈도우의 버킷 수</th><th>윈도우가 움직이는 단위</th><th>대가</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">1시간</td><td class="mono">24개</td><td class="ok">1시간씩 — 뚝뚝</td><td>합산 비용·키 개수 최소</td></tr>
+    <tr><td class="mono">10분</td><td class="mono">144개</td><td class="ok">10분씩 — 부드러움 6배</td><td class="warn">합산 대상 키 6배 · 같은 웹툰이 144개 버킷에 나뉨</td></tr>
+    <tr><td class="mono">1분</td><td class="mono">1,440개</td><td class="ok">1분씩</td><td class="warn">한 명령에 1,440개 키 — 현실적이지 않다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <div class="t">답의 형태</div>
+  <div class="qa">"정답이 있는 문제가 아니라 <b>협상 결과</b>입니다. <b>윈도우가 얼마나 부드럽게 움직여야 하는지</b>를 제품 요구사항에서 정하고, <b>그로부터 버킷 크기를 역산</b>합니다." — <b>기술로 정하는 값이 아니라 요구사항에서 역산하는 값</b>이라는 점이 답의 골자다.</div>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 대규모의 한계 — 이 질문의 승부처</h2>
+
+<p>지금까지의 설계는 웹툰 수만 개, 조회 수천 QPS 규모에서는 <b>잘 돈다.</b> 여기서부터는 그 설계를 <b>100배 규모에 놓았을 때 어디가 먼저 무너지는지</b>의 이야기다. 한계는 넷이고, <b>넷이 따로 노는 게 아니라 서로를 부른다.</b></p>
+
+<div class="chant">
+  <div class="c"><div class="syl">핫</div><div class="eng">hot key</div><div class="q">키 하나는 클러스터로도 안 쪼개진다</div></div>
+  <div class="c"><div class="syl">빅</div><div class="eng">big key</div><div class="q">수억 멤버가 한 노드에</div></div>
+  <div class="c"><div class="syl">역</div><div class="eng">read→write</div><div class="q">조회가 그대로 쓰기가 된다</div></div>
+  <div class="c"><div class="syl">슬</div><div class="eng">CROSSSLOT</div><div class="q">멀티 키는 같은 슬롯이어야 한다</div></div>
+</div>
+<p class="small" style="margin-top:-6px"><b>"핫 · 빅 · 역 · 슬"</b> 넷을 순서대로 꺼내되, <b>가장 중요한 것은 세 번째 "역"</b>이다 — 그것이 "핫"의 진짜 원인이기 때문이다.</p>
+
+<h3 id="s8b">8-1. 랭킹 키 하나는 클러스터로도 분산되지 않는다 (hot key)</h3>
+
+<p><b>Redis Cluster는 키 단위로 샤딩한다.</b> 키 이름을 해싱해 <b>16,384개의 해시 슬롯</b> 중 하나에 배정하고, 각 노드가 슬롯 범위를 나눠 맡는다. 즉 <b>하나의 키는 통째로 한 노드에 산다. 키를 쪼개서 여러 노드에 나눠 담는 기능은 없다.</b></p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 330" role="img" aria-label="해시 슬롯 샤딩에서 랭킹 키 하나가 한 노드에만 배정되어 트래픽이 몰리는 구조">
+  <defs>
+    <marker id="f8r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="f8s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#94a3b8"/></marker>
+  </defs>
+
+  <rect x="392" y="16" width="376" height="38" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
+  <text x="580" y="41" text-anchor="middle" font-size="13" font-family="ui-monospace,Menlo,monospace" font-weight="700" fill="#dc2626">key = "ranking:webtoon" — 딱 하나</text>
+
+  <line x1="580" y1="54" x2="580" y2="82" stroke="#dc2626" stroke-width="2" marker-end="url(#f8r)"/>
+  <text x="596" y="74" font-size="11" fill="#6b7280">키 이름을 해싱 → 슬롯 하나로 배정</text>
+
+  <text x="30" y="102" font-size="11.5" font-weight="700" fill="#6b7280">해시 슬롯 0 ~ 16383</text>
+  <rect x="30" y="110" width="366" height="34" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.2"/>
+  <rect x="396" y="110" width="366" height="34" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <rect x="762" y="110" width="368" height="34" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="213" y="132" text-anchor="middle" font-size="11.5" font-weight="700" fill="#64748b">0 – 5460  →  Node A</text>
+  <text x="579" y="132" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">5461 – 10922  →  Node B  ★ 랭킹 키가 여기</text>
+  <text x="946" y="132" text-anchor="middle" font-size="11.5" font-weight="700" fill="#64748b">10923 – 16383  →  Node C</text>
+
+  <rect x="60" y="196" width="306" height="70" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6"/>
+  <text x="213" y="222" text-anchor="middle" font-size="13" font-weight="700" fill="#64748b">Node A</text>
+  <text x="213" y="246" text-anchor="middle" font-size="11.5" fill="#94a3b8">이 트래픽에는 아무 도움이 안 된다</text>
+
+  <rect x="426" y="188" width="306" height="86" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="2.4"/>
+  <text x="579" y="216" text-anchor="middle" font-size="13.5" font-weight="800" fill="#dc2626">Node B</text>
+  <text x="579" y="240" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">전 서비스의 랭킹 쓰기 + 읽기를 혼자 받는다</text>
+  <text x="579" y="260" text-anchor="middle" font-size="11" fill="#6b7280">노드를 100대로 늘려도 이 그림은 변하지 않는다</text>
+
+  <rect x="792" y="196" width="306" height="70" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6"/>
+  <text x="945" y="222" text-anchor="middle" font-size="13" font-weight="700" fill="#64748b">Node C</text>
+  <text x="945" y="246" text-anchor="middle" font-size="11.5" fill="#94a3b8">이 트래픽에는 아무 도움이 안 된다</text>
+
+  <line x1="470" y1="156" x2="500" y2="184" stroke="#dc2626" stroke-width="2.4" marker-end="url(#f8r)"/>
+  <line x1="540" y1="156" x2="552" y2="184" stroke="#dc2626" stroke-width="2.4" marker-end="url(#f8r)"/>
+  <line x1="620" y1="156" x2="608" y2="184" stroke="#dc2626" stroke-width="2.4" marker-end="url(#f8r)"/>
+  <line x1="690" y1="156" x2="660" y2="184" stroke="#dc2626" stroke-width="2.4" marker-end="url(#f8r)"/>
+
+  <line x1="213" y1="150" x2="213" y2="190" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#f8s)"/>
+  <line x1="945" y1="150" x2="945" y2="190" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#f8s)"/>
+
+  <text x="580" y="304" text-anchor="middle" font-size="13.5" font-weight="800" fill="#dc2626">샤딩의 최소 단위는 "키"다 — 키 하나보다 잘게 나눌 방법이 없다</text>
+  <text x="580" y="324" text-anchor="middle" font-size="11.5" fill="#6b7280">"클러스터를 쓰니까 확장된다"는 착각이 깨지는 대표 사례</text>
+</svg>
+<div class="cap">전 서비스의 조회 쓰기와 랭킹 읽기가 <b>키 하나로 수렴</b>하고, 그 키는 한 노드에 산다. 이렇게 특정 키에 트래픽이 몰려 그 노드가 병목이 되는 현상이 <b>hot key</b>다.</div>
+</div>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#16a34a">
+    <div class="h">읽기 쪽 완화책 <span class="tag ok">로컬 캐시</span></div>
+    <p><b>merged 결과를 애플리케이션 로컬 캐시로 내린다.</b> TOP N은 ID와 점수 몇십 개뿐이라 <b>몇 KB밖에 안 된다.</b> 서버 각자가 몇 초간 들고 있으면 <b>랭킹 읽기 QPS가 Redis에 거의 도달하지 않는다.</b></p>
+    <ul><li>대가는 <b>지연</b> — merged가 1분마다 갱신되고 로컬 캐시가 5초를 더 얹으면 사용자가 보는 랭킹은 <b>최대 1분 5초 낡는다.</b></li></ul>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">쓰기 쪽은? <span class="tag warn">§10에서</span></div>
+    <p>읽기는 위처럼 흡수할 수 있지만 <b>쓰기는 그렇지 않다.</b> 그리고 <b>hot key의 진짜 원인은 쓰기 쪽</b>이다 — <a href="#s10">§10</a>이 그 이야기다.</p>
+  </div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 한계② big key — 같은 설계를 "전체 유저 랭킹"에 옮기면</h2>
+
+<p>웹툰은 많아야 수만 개라 이 설계로 충분하다. 문제는 <b>같은 설계를 그대로 "전체 유저 게임 점수 랭킹"에 옮겼을 때</b>다. 멤버가 <b>수억 개</b>가 된다. <b>big key</b>는 하나의 키가 담고 있는 데이터가 지나치게 큰 상태를 말하고, <b>세 방향에서 터진다.</b></p>
+
+<div class="card">
+  <div class="rule w"><div class="num">1</div><div class="body">
+    <b>메모리가 한 노드에 몰린다</b>
+    <span>Sorted Set은 멤버 하나마다 <b>멤버 문자열 + 스킵 리스트 노드 + 해시테이블 엔트리</b>를 함께 들고 있다(<a href="#s1">§1</a>의 이중 인덱스). 멤버당 수십~수백 바이트가 붙으므로 <b>수억 멤버면 수십 GB</b>가 되고, 그 전부가 <b>한 노드</b>에 올라간다 — <a href="#s8b">§8-1</a>의 이유로 쪼갤 수 없다.</span>
+  </div></div>
+  <div class="rule w"><div class="num">2</div><div class="body">
+    <b>O(N) 명령 한 방이 서버를 세운다</b>
+    <span>Redis는 싱글 스레드다. <code>ZUNIONSTORE</code>나 <code>ZRANGEBYSCORE</code>처럼 <b>멤버 수에 비례하는 명령</b>을 수억 멤버 키에 치면, 그 명령이 끝날 때까지 <b>다른 모든 클라이언트의 GET 하나까지 전부 대기</b>한다.</span>
+  </div></div>
+  <div class="rule w"><div class="num">3</div><div class="body">
+    <b>삭제와 마이그레이션도 폭탄이다</b>
+    <span>큰 컬렉션을 <code>DEL</code>로 지우면 <b>그 해제 작업이 이벤트 루프에서 돌아</b> 그 시간만큼 서버가 멈춘다. 클러스터에서 <b>슬롯을 다른 노드로 옮길 때</b>도 큰 키 하나가 <b>통째로 이동</b>해야 해서 그동안 지연이 튄다.</span>
+  </div></div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">대응은 기술이 아니라 질문에서 시작한다</div>
+  <div class="big">"정말 <u>수억 명 전원의 정확한 순위</u>가 필요합니까,<br>아니면 <u>TOP 1000만 정확하면</u> 됩니까?"</div>
+  <p style="margin:0;font-size:.94rem">이 되물음이 <b>대응 방법을 결정한다.</b> 요구사항을 그대로 받아 기술로 버티려 하면 답이 없고, <b>요구사항을 깎으면 세 문제가 한꺼번에 사라진다.</b></p>
+</div>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#16a34a">
+    <div class="h">TOP N만 필요하다면 <span class="tag ok">크기를 상수로</span></div>
+    <p><code>ZREMRANGEBYRANK</code>로 <b>주기적으로 하위를 잘라낸다.</b> 순위 구간을 지정해 그 구간의 멤버를 지우는 명령이다 — 예를 들어 <b>상위 1000명만 남기고 나머지를 날린다.</b></p>
+    <ul><li>멤버 수가 <b>1000으로 고정</b>되면 위의 세 문제가 <b>전부 사라진다.</b></li></ul>
+  </div>
+  <div class="mini" style="border-color:#d97706">
+    <div class="h">"내 순위"까지 전원에게 줘야 한다면 <span class="tag gap">근사</span></div>
+    <p><b>점수 구간별 카운트(히스토그램)</b>로 근사 순위를 준다. 구간마다 인원 수만 세어 두고 <b>"내 점수보다 높은 구간들의 인원 합 + 1"</b>로 계산해 <b>"상위 12% (약 3만 등)"</b>처럼 보여준다.</p>
+    <ul><li>정확한 등수를 포기하는 대신 <b>수억 멤버를 다 들고 있지 않아도 된다.</b></li></ul>
+  </div>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 한계③ 조회 트래픽이 그대로 쓰기 트래픽이 된다 <span class="badge senior">이 문서에서 가장 중요</span></h2>
+
+<div class="callout warn">
+  <div class="t">캐시에 대한 직관이 여기서 뒤집힌다</div>
+  <div class="qa">
+    <b>캐시는 보통 읽기를 흡수하는 장치다.</b> DB로 갈 조회를 Redis가 대신 받아 주니 DB 부하가 줄어든다 — "캐시를 도입하면 시스템 전체 부하가 내려간다"는 직관은 여기서 온다.
+    <b>그런데 랭킹은 정반대로 동작한다.</b> 조회 이벤트가 발생할 때마다 <code>ZINCRBY</code>를 쳐야 하는데, <code>ZINCRBY</code>는 값을 바꾸는 <b>쓰기</b> 명령이다.
+    즉 랭킹 집계는 <b style="color:#dc2626">페이지뷰라는 읽기 트래픽을 Redis 쓰기 트래픽으로 변환하는 구조</b>다.
+  </div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 348" role="img" aria-label="일반 캐시는 읽기를 replica로 분산하지만 랭킹 집계는 읽기를 쓰기로 바꿔 마스터 한 대에 몰아넣는다">
+  <defs>
+    <marker id="fag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+    <marker id="far" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+  </defs>
+
+  <rect x="8" y="10" width="1144" height="150" rx="12" fill="#f6fdf8" stroke="#16a34a" stroke-width="2"/>
+  <text x="26" y="36" font-size="13.5" font-weight="800" fill="#16a34a">[일반 캐시] 읽기는 흡수되고, 흡수되지 않은 것도 나눠 받을 수 있다</text>
+
+  <rect x="30" y="52" width="200" height="76" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="130" y="80" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2937">사용자 조회</text>
+  <text x="130" y="104" text-anchor="middle" font-size="14" font-weight="800" fill="#16a34a">100,000 QPS</text>
+
+  <line x1="230" y1="90" x2="292" y2="90" stroke="#16a34a" stroke-width="2.2" marker-end="url(#fag)"/>
+  <text x="261" y="80" text-anchor="middle" font-size="10.5" fill="#6b7280">읽기</text>
+
+  <rect x="298" y="52" width="180" height="76" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="388" y="80" text-anchor="middle" font-size="12.5" font-weight="700" fill="#16a34a">Redis 읽기</text>
+  <text x="388" y="104" text-anchor="middle" font-size="12" fill="#1f2937">GET — 상태를 바꾸지 않는다</text>
+
+  <line x1="478" y1="90" x2="540" y2="90" stroke="#16a34a" stroke-width="2.2" marker-end="url(#fag)"/>
+
+  <rect x="546" y="46" width="132" height="26" rx="6" fill="#ffffff" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="612" y="64" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">replica 1</text>
+  <rect x="546" y="78" width="132" height="26" rx="6" fill="#ffffff" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="612" y="96" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">replica 2</text>
+  <rect x="546" y="110" width="132" height="26" rx="6" fill="#ffffff" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="612" y="128" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">replica 3</text>
+  <text x="700" y="96" font-size="12" font-weight="800" fill="#16a34a">읽기는 늘려서 나눠 받을 수 있다</text>
+
+  <line x1="900" y1="90" x2="962" y2="90" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#fag)"/>
+  <rect x="968" y="60" width="160" height="60" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1048" y="84" text-anchor="middle" font-size="12" font-weight="700" fill="#64748b">DB</text>
+  <text x="1048" y="106" text-anchor="middle" font-size="11" fill="#94a3b8">캐시 미스만큼만</text>
+
+  <rect x="8" y="176" width="1144" height="164" rx="12" fill="#fff7f7" stroke="#dc2626" stroke-width="2.4"/>
+  <text x="26" y="202" font-size="13.5" font-weight="800" fill="#dc2626">[랭킹 집계] 읽기가 쓰기로 바뀌는 순간, 확장 수단이 사라진다</text>
+
+  <rect x="30" y="218" width="200" height="76" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="130" y="246" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1f2937">사용자 조회</text>
+  <text x="130" y="270" text-anchor="middle" font-size="14" font-weight="800" fill="#dc2626">100,000 QPS</text>
+
+  <line x1="230" y1="256" x2="292" y2="256" stroke="#dc2626" stroke-width="2.6" marker-end="url(#far)"/>
+  <text x="261" y="246" text-anchor="middle" font-size="10.5" font-weight="800" fill="#dc2626">★ 변환</text>
+
+  <rect x="298" y="218" width="180" height="76" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="388" y="246" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">Redis 쓰기</text>
+  <text x="388" y="270" text-anchor="middle" font-size="12" fill="#1f2937">ZINCRBY — 값을 바꾼다</text>
+
+  <line x1="478" y1="256" x2="540" y2="256" stroke="#dc2626" stroke-width="2.6" marker-end="url(#far)"/>
+
+  <rect x="546" y="212" width="200" height="88" rx="10" fill="#dc2626"/>
+  <text x="646" y="242" text-anchor="middle" font-size="13" font-weight="800" fill="#ffffff">마스터 1대</text>
+  <text x="646" y="264" text-anchor="middle" font-size="11.5" fill="#fecaca">랭킹 키를 가진 그 노드</text>
+  <text x="646" y="286" text-anchor="middle" font-size="12" font-weight="800" fill="#ffffff">100,000 QPS 쓰기</text>
+
+  <rect x="790" y="212" width="150" height="26" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="865" y="230" text-anchor="middle" font-size="11" fill="#94a3b8">replica 1</text>
+  <rect x="790" y="244" width="150" height="26" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="865" y="262" text-anchor="middle" font-size="11" fill="#94a3b8">replica 2</text>
+  <rect x="790" y="276" width="150" height="26" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="865" y="294" text-anchor="middle" font-size="11" fill="#94a3b8">replica 3</text>
+
+  <line x1="746" y1="225" x2="784" y2="225" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4"/>
+  <line x1="746" y1="257" x2="784" y2="257" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4"/>
+  <line x1="746" y1="289" x2="784" y2="289" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="765" y="219" text-anchor="middle" font-size="16" font-weight="800" fill="#dc2626">✕</text>
+  <text x="765" y="251" text-anchor="middle" font-size="16" font-weight="800" fill="#dc2626">✕</text>
+  <text x="765" y="283" text-anchor="middle" font-size="16" font-weight="800" fill="#dc2626">✕</text>
+
+  <text x="1050" y="240" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">쓰기는 마스터로만 간다</text>
+  <text x="1050" y="262" text-anchor="middle" font-size="11.5" fill="#1f2937">＋ 랭킹 키는 하나뿐(§8-1)</text>
+  <text x="1050" y="286" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dc2626">= 확장의 여지가 완전히 막힌다</text>
+</svg>
+<div class="cap"><b>이 세 줄이 이어지는 것이 hot key의 정체다.</b> <code>ZINCRBY</code> 하나가 O(log N)으로 빠르다는 사실은 여기서 도움이 안 된다 — <b>명령 하나의 비용이 아니라 한 노드가 받는 명령의 개수</b>가 병목이기 때문이다.</div>
+</div>
+
+<h3>10-1. 해법 — 집계의 지연을 허용해 쓰기 <u>횟수</u>를 줄인다</h3>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">Before — 이벤트마다 Redis 왕복</div>
+<pre><code>public void onView(long webtoonId) {
+<span class="hl-bad">    zSet.incrementScore(bucket(), String.valueOf(webtoonId), 1);</span>
+}
+<span class="cmt">// 조회 QPS가 그대로 쓰기 QPS가 된다</span>
+<span class="cmt">// 사용자가 늘어난 만큼 정확히 그만큼 마스터를 때린다</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">After — 로컬에서 모았다가 주기적으로 한 번에</div>
+<pre><code><span class="cmt">// LongAdder는 여러 스레드가 동시에 증가시킬 때 경합을 분산시키는 카운터다.</span>
+<span class="cmt">// 이 서버가 5초 동안 본 조회 횟수를 웹툰별로 메모리에 쌓아 둔다.</span>
+<span class="hl-good">private final ConcurrentHashMap&lt;Long, LongAdder&gt; buffer = new ConcurrentHashMap&lt;&gt;();</span>
+
+public void onView(long webtoonId) {
+<span class="hl-good">    buffer.computeIfAbsent(webtoonId, k -&gt; new LongAdder()).increment();</span>
+}
+
+<span class="hl-good">@Scheduled(fixedDelay = 5_000)</span>
+public void flush() {
+    <span class="cmt">// 버퍼를 통째로 스냅샷 떠서 비우고, 웹툰별 누적 횟수를</span>
+    <span class="cmt">// ZINCRBY 한 번씩으로 반영한다. 파이프라인으로 묶어 보내면</span>
+    <span class="cmt">// 네트워크 왕복 횟수까지 한 번으로 줄어든다.</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="fig">
+<svg viewBox="0 0 900 268" role="img" aria-label="로컬 버퍼링으로 ZINCRBY 호출 수가 20분의 1로 줄어드는 계산">
+  <text x="20" y="26" font-size="12.5" font-weight="800" fill="#1f2937">전제 — 조회 100,000 QPS · 애플리케이션 서버 50대 · 플러시 주기 5초</text>
+
+  <rect x="20" y="44" width="410" height="90" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="225" y="70" text-anchor="middle" font-size="13" font-weight="800" fill="#dc2626">Before</text>
+  <text x="225" y="94" text-anchor="middle" font-size="12" fill="#1f2937">5초 동안 조회 500,000건</text>
+  <text x="225" y="120" text-anchor="middle" font-size="15" font-weight="800" fill="#dc2626">ZINCRBY 500,000회</text>
+
+  <rect x="470" y="44" width="410" height="90" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="675" y="70" text-anchor="middle" font-size="13" font-weight="800" fill="#16a34a">After</text>
+  <text x="675" y="92" text-anchor="middle" font-size="11.5" fill="#1f2937">서버 1대가 5초에 받는 조회 = 500,000 / 50 = 10,000건</text>
+  <text x="675" y="110" text-anchor="middle" font-size="11.5" fill="#1f2937">그 안에 등장한 서로 다른 웹툰이 500종이라면 서버당 500회</text>
+  <text x="675" y="130" text-anchor="middle" font-size="15" font-weight="800" fill="#16a34a">50 × 500 = ZINCRBY 25,000회</text>
+
+  <rect x="240" y="152" width="420" height="46" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="450" y="181" text-anchor="middle" font-size="15" font-weight="800" fill="#2563eb">500,000 → 25,000 = 20분의 1</text>
+
+  <text x="450" y="226" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1f2937">압축률은 고정값이 아니다 — <tspan fill="#2563eb">한 서버가 한 주기 안에 같은 웹툰을 몇 번 보느냐</tspan>가 결정한다</text>
+  <text x="450" y="250" text-anchor="middle" font-size="11.5" fill="#6b7280">서버당 10,000건이 500종에 나뉘면 평균 20회 → 정확히 20분의 1. 트래픽이 몰릴수록·주기가 길수록·인기가 집중될수록 좋아진다.</text>
+</svg>
+<div class="cap"><b>이 구조의 한계도 함께 알고 있어야 한다</b> — 조회가 <b>아주 많은 종류에 얇게 흩어져 있으면</b>(한 서버가 같은 웹툰을 한두 번밖에 못 보면) 압축 효과가 거의 없다.</div>
+</div>
+
+<div class="memo gap">
+  <div class="kicker">대가는 두 가지 — 명시적으로 말해야 하는 부분</div>
+  <div class="rule"><div class="num">1</div><div class="body">
+    <b>랭킹이 최대 5초 늦게 반영된다</b>
+    <span>버퍼에 머무는 시간만큼 지연이 붙는다. <a href="#s6">§6</a>의 merged 1분, <a href="#s8b">§8-1</a>의 로컬 캐시 5초와 <b>합쳐져 쌓인다.</b></span>
+  </div></div>
+  <div class="rule"><div class="num">2</div><div class="body">
+    <b>서버가 플러시 전에 죽으면 버퍼의 조회수가 유실된다</b>
+    <span>랭킹은 화면용 근사치이므로 감수할 만하지만, <b>"유실될 수 있다"는 사실을 아는 채로 선택했는지</b>가 답변의 질을 가른다.</span>
+  </div></div>
+  <p style="margin:8px 0 0;font-size:.94rem"><b style="color:#d97706">"정확·즉시"를 "근사·지연 허용"으로 협상해서 비용을 낮췄다</b>는 사실 자체를 문장으로 말해야 한다.</p>
+</div>
+
+<div class="callout gap">
+  <div class="t">지연은 쌓인다 — 최종 사용자가 보는 값의 나이를 계산해 둔다</div>
+  <div class="stack">
+    <div class="s">로컬 버퍼<b>5초</b>§10</div>
+    <div class="s">merged 재생성<b>1분</b>§6</div>
+    <div class="s">로컬 캐시<b>5초</b>§8-1</div>
+    <div class="s tot">사용자가 보는 랭킹<b>최대 1분 10초</b>낡음</div>
+  </div>
+  <div class="qa">세 완화책을 다 넣으면 지연이 <b>더해진다.</b> 각각은 합리적인데 <b>합쳐 놓고 보면 기획이 기대한 "실시간"이 아닐 수 있다</b> — 그래서 <b>최종 지연을 먼저 계산해 합의하고</b> 거기서 각 구간의 예산을 나누는 순서가 맞다.</div>
+</div>
+
+<h3>10-2. 같은 원리의 다른 형태 — Kafka와 샘플링</h3>
+
+<div class="grid2">
+  <div class="mini">
+    <div class="h">Kafka 이벤트 스트림 <span class="tag">버퍼의 위치만 다르다</span></div>
+    <p>조회 이벤트를 Kafka로 흘려보내고 <b>컨슈머가 일정 시간 단위로 집계해 반영</b>하는 구조도 <b>같은 원리</b>다. 버퍼가 <b>애플리케이션 메모리 대신 Kafka에</b> 있다는 차이다.</p>
+    <ul>
+      <li>이점 — <b>서버가 죽어도 이벤트가 유실되지 않는다.</b></li>
+      <li>비용 — <b>인프라 한 겹이 늘어난다.</b></li>
+    </ul>
+  </div>
+  <div class="mini">
+    <div class="h">샘플링 <span class="tag gap">정확도를 판다</span></div>
+    <p>조회 <b>10건 중 1건만 골라 점수를 10씩</b> 올리면 쓰기가 <b>10분의 1</b>이 된다. 대가는 정확도다.</p>
+    <ul>
+      <li>상위권은 표본이 충분해 <b>오차가 작다.</b></li>
+      <li>실제 조회 30회짜리 하위권은 표본이 3건이라 <b>하나만 어긋나도 점수가 20↔40으로 흔들린다.</b></li>
+      <li>→ <b>TOP N 랭킹에는 합리적, "내 작품 지금 몇 위"에는 부적합.</b></li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 한계④ 클러스터의 멀티 키 제약이 hot key를 되부른다</h2>
+
+<p>마지막 한계는 <b>앞의 것들이 서로 엮여서</b> 나온다. <code>ZUNIONSTORE</code>는 <b>여러 키를 한 명령에서 다루는 멀티 키 명령</b>이다. 그런데 Redis Cluster에서 키들은 각자 다른 노드에 흩어져 있을 수 있고, <b>한 명령은 한 노드 안에서만 실행된다.</b> 그래서 클러스터는 조건을 건다 — <b>명령에 등장하는 모든 키가 같은 해시 슬롯에 있어야 한다.</b> 아니면 <code>CROSSSLOT</code> 오류가 난다.</p>
+
+<div class="fig">
+<svg viewBox="0 0 900 300" role="img" aria-label="해시태그 없이는 버킷 키가 서로 다른 슬롯에 흩어져 CROSSSLOT 오류가 나고, 해시태그를 쓰면 같은 슬롯에 모이지만 부하도 한 노드로 모인다">
+  <defs>
+    <marker id="fbr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="fbb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+  </defs>
+
+  <rect x="10" y="12" width="424" height="276" rx="12" fill="#f8fafc" stroke="#dc2626" stroke-width="2"/>
+  <text x="222" y="38" text-anchor="middle" font-size="14" font-weight="800" fill="#dc2626">해시태그 없음 — 자연 상태</text>
+
+  <rect x="30" y="52" width="384" height="24" rx="5" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="42" y="69" font-size="11" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">ranking:webtoon:2026090113</text>
+  <text x="404" y="69" text-anchor="end" font-size="10.5" font-weight="700" fill="#64748b">→ 슬롯 a</text>
+
+  <rect x="30" y="82" width="384" height="24" rx="5" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="42" y="99" font-size="11" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">ranking:webtoon:2026090114</text>
+  <text x="404" y="99" text-anchor="end" font-size="10.5" font-weight="700" fill="#64748b">→ 슬롯 b</text>
+
+  <rect x="30" y="112" width="384" height="24" rx="5" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+  <text x="42" y="129" font-size="11" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">ranking:webtoon:merged</text>
+  <text x="404" y="129" text-anchor="end" font-size="10.5" font-weight="700" fill="#64748b">→ 슬롯 c</text>
+
+  <text x="222" y="158" text-anchor="middle" font-size="11.5" fill="#6b7280">키 이름 전체를 해싱하므로 이름이 다르면 슬롯도 흩어진다</text>
+
+  <line x1="222" y1="166" x2="222" y2="190" stroke="#dc2626" stroke-width="2" marker-end="url(#fbr)"/>
+
+  <rect x="60" y="196" width="324" height="70" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="222" y="222" text-anchor="middle" font-size="13" font-weight="800" fill="#dc2626">CROSSSLOT 오류</text>
+  <text x="222" y="246" text-anchor="middle" font-size="11.5" fill="#1f2937">ZUNIONSTORE가 아예 실행되지 않는다</text>
+
+  <rect x="466" y="12" width="424" height="276" rx="12" fill="#f8fafc" stroke="#2563eb" stroke-width="2"/>
+  <text x="678" y="38" text-anchor="middle" font-size="14" font-weight="800" fill="#2563eb">해시태그 — 중괄호 안만 해싱한다</text>
+
+  <rect x="486" y="52" width="384" height="24" rx="5" fill="#ffffff" stroke="#2563eb" stroke-width="1.2"/>
+  <text x="498" y="69" font-size="11" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">ranking:<tspan font-weight="800" fill="#2563eb">{webtoon}</tspan>:2026090113</text>
+  <text x="860" y="69" text-anchor="end" font-size="10.5" font-weight="700" fill="#2563eb">→ 슬롯 s</text>
+
+  <rect x="486" y="82" width="384" height="24" rx="5" fill="#ffffff" stroke="#2563eb" stroke-width="1.2"/>
+  <text x="498" y="99" font-size="11" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">ranking:<tspan font-weight="800" fill="#2563eb">{webtoon}</tspan>:2026090114</text>
+  <text x="860" y="99" text-anchor="end" font-size="10.5" font-weight="700" fill="#2563eb">→ 슬롯 s</text>
+
+  <rect x="486" y="112" width="384" height="24" rx="5" fill="#ffffff" stroke="#2563eb" stroke-width="1.2"/>
+  <text x="498" y="129" font-size="11" font-family="ui-monospace,Menlo,monospace" fill="#1f2937">ranking:<tspan font-weight="800" fill="#2563eb">{webtoon}</tspan>:merged</text>
+  <text x="860" y="129" text-anchor="end" font-size="10.5" font-weight="700" fill="#2563eb">→ 슬롯 s</text>
+
+  <text x="678" y="158" text-anchor="middle" font-size="11.5" fill="#6b7280">셋 다 "webtoon"만 해싱된다 → 같은 슬롯 → 실행 가능</text>
+
+  <line x1="678" y1="166" x2="678" y2="190" stroke="#2563eb" stroke-width="2" marker-end="url(#fbb)"/>
+
+  <rect x="516" y="196" width="324" height="70" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="678" y="220" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">같은 슬롯 = 같은 노드</text>
+  <text x="678" y="242" text-anchor="middle" font-size="11.5" fill="#1f2937">랭킹 관련 키 전부와 그 부하가</text>
+  <text x="678" y="260" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dc2626">다시 한 노드로 모인다 — §8-1을 못 박는 셈</text>
+</svg>
+<div class="cap">문제를 푸는 장치가 <b>그 문제를 더 확실하게 만든다.</b> 해시태그는 <code>CROSSSLOT</code>을 해결하지만, <b>그 대가로 hot key를 구조적으로 고정</b>한다.</div>
+</div>
+
+<div class="memo vio">
+  <div class="kicker">이 질문의 마지막 관전 포인트</div>
+  <div class="big">인프라의 확장 방식(클러스터의 <u>슬롯 단위 샤딩</u>)이<br>애플리케이션의 <u>키 설계</u>를 역으로 규정한다.</div>
+  <p style="margin:0;font-size:.94rem">애플리케이션이 원하는 대로 키를 설계한 뒤 인프라를 붙이는 것이 아니라, <b>인프라의 제약을 알고 키를 설계해야 한다</b>는 사례다. 이 문장을 붙이면 답변이 "명령어 나열"에서 "설계 이야기"로 올라간다.</p>
+</div>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. "트래픽이 100배가 되면 어디가 먼저 무너지나요?" <span class="badge senior">시니어 변별</span></h2>
+
+<div class="callout">
+  <div class="t">이 질문의 채점 포인트는 목록이 아니라 <u>순서</u>다</div>
+  <div class="qa"><b>모든 한계를 한꺼번에 나열하는 답</b>과, <b>무엇이 먼저 무너지는지 순서를 매기고 방어도 그 순서로 배치하는 답</b>의 차이가 이 질문의 변별점이다. <b>"어디가 병목인지의 순서"를 짚는 것 자체가 규모 검증 습관의 증거다.</b></div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 336" role="img" aria-label="트래픽 100배에서 무너지는 순서와 같은 순서로 배치하는 방어책">
+  <defs>
+    <marker id="fcr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="fcg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+  </defs>
+
+  <text x="20" y="26" font-size="13.5" font-weight="800" fill="#dc2626">무너지는 순서</text>
+
+  <rect x="20" y="40" width="330" height="94" rx="10" fill="#dc2626"/>
+  <text x="185" y="66" text-anchor="middle" font-size="13" font-weight="800" fill="#ffffff">첫째 · 쓰기 경로</text>
+  <text x="185" y="90" text-anchor="middle" font-size="11.5" fill="#fecaca">조회 QPS와 같은 수의 ZINCRBY가</text>
+  <text x="185" y="108" text-anchor="middle" font-size="11.5" fill="#fecaca">랭킹 키를 가진 단일 노드로 몰린다</text>
+  <text x="185" y="126" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff">§10 읽기→쓰기 역전 + §8-1 hot key</text>
+
+  <rect x="368" y="40" width="330" height="94" rx="10" fill="#f87171"/>
+  <text x="533" y="66" text-anchor="middle" font-size="13" font-weight="800" fill="#ffffff">둘째 · ZUNIONSTORE 합산</text>
+  <text x="533" y="90" text-anchor="middle" font-size="11.5" fill="#fff1f2">멤버가 늘수록 O(N) + O(M log M)의</text>
+  <text x="533" y="108" text-anchor="middle" font-size="11.5" fill="#fff1f2">N과 M이 커진다</text>
+  <text x="533" y="126" text-anchor="middle" font-size="11" font-weight="700" fill="#ffffff">싱글 스레드를 그만큼 오래 점유</text>
+
+  <rect x="716" y="40" width="330" height="94" rx="10" fill="#fca5a5"/>
+  <text x="881" y="66" text-anchor="middle" font-size="13" font-weight="800" fill="#7f1d1d">셋째 · 메모리</text>
+  <text x="881" y="90" text-anchor="middle" font-size="11.5" fill="#7f1d1d">멤버 수 × (문자열 + 스킵 리스트 노드</text>
+  <text x="881" y="108" text-anchor="middle" font-size="11.5" fill="#7f1d1d">+ 해시테이블 엔트리)</text>
+  <text x="881" y="126" text-anchor="middle" font-size="11" font-weight="700" fill="#7f1d1d">그 전부가 한 노드에 쌓인다</text>
+
+  <line x1="350" y1="87" x2="362" y2="87" stroke="#dc2626" stroke-width="2.4" marker-end="url(#fcr)"/>
+  <line x1="698" y1="87" x2="710" y2="87" stroke="#dc2626" stroke-width="2.4" marker-end="url(#fcr)"/>
+  <text x="1064" y="92" font-size="11.5" font-weight="700" fill="#94a3b8">나중</text>
+
+  <line x1="20" y1="156" x2="1046" y2="156" stroke="#e5e7eb" stroke-width="1.5"/>
+
+  <text x="20" y="184" font-size="13.5" font-weight="800" fill="#16a34a">방어도 같은 순서로</text>
+
+  <rect x="20" y="198" width="330" height="100" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="185" y="224" text-anchor="middle" font-size="13" font-weight="800" fill="#16a34a">① 묶는다</text>
+  <text x="185" y="248" text-anchor="middle" font-size="11.5" fill="#1f2937">로컬 버퍼링 + 파이프라인으로</text>
+  <text x="185" y="266" text-anchor="middle" font-size="11.5" fill="#1f2937">쓰기 횟수 자체를 줄인다</text>
+  <text x="185" y="288" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">§10 — 500,000 → 25,000</text>
+
+  <rect x="368" y="198" width="330" height="100" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="533" y="224" text-anchor="middle" font-size="13" font-weight="800" fill="#16a34a">② 내린다</text>
+  <text x="533" y="248" text-anchor="middle" font-size="11.5" fill="#1f2937">merged TOP N을 애플리케이션</text>
+  <text x="533" y="266" text-anchor="middle" font-size="11.5" fill="#1f2937">로컬 캐시로 내려 읽기를 흡수</text>
+  <text x="533" y="288" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">§8-1 — Redis에 도달조차 하지 않게</text>
+
+  <rect x="716" y="198" width="330" height="100" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="881" y="224" text-anchor="middle" font-size="13" font-weight="800" fill="#16a34a">③ 자른다</text>
+  <text x="881" y="248" text-anchor="middle" font-size="11.5" fill="#1f2937">ZREMRANGEBYRANK로 하위 랭크를</text>
+  <text x="881" y="266" text-anchor="middle" font-size="11.5" fill="#1f2937">잘라 크기를 상수로 유지</text>
+  <text x="881" y="288" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">§9 — 멤버 수를 1000으로 고정</text>
+
+  <line x1="350" y1="248" x2="362" y2="248" stroke="#16a34a" stroke-width="2.4" marker-end="url(#fcg)"/>
+  <line x1="698" y1="248" x2="710" y2="248" stroke="#16a34a" stroke-width="2.4" marker-end="url(#fcg)"/>
+
+  <text x="1096" y="248" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">+ 협상</text>
+  <text x="1096" y="266" text-anchor="middle" font-size="10.5" fill="#6b7280">정확·즉시</text>
+  <text x="1096" y="280" text-anchor="middle" font-size="10.5" fill="#6b7280">→ 근사·지연</text>
+</svg>
+<div class="cap">위아래가 <b>같은 순서로 대응</b>한다. 무너지는 순서를 말한 다음 <b>"방어도 같은 순서로 갑니다"</b>라고 이어 붙이면, 지식 나열이 아니라 <b>운영 계획</b>으로 들린다.</div>
+</div>
+
+<div class="memo ok">
+  <div class="kicker">암기 카드 — 방어 3종</div>
+  <div class="chant three">
+    <div class="c"><div class="syl">묶고</div><div class="eng">buffer + pipeline</div><div class="q">쓰기 횟수를 줄인다</div></div>
+    <div class="c"><div class="syl">내리고</div><div class="eng">local cache</div><div class="q">읽기를 Redis 앞에서 막는다</div></div>
+    <div class="c"><div class="syl">자른다</div><div class="eng">ZREMRANGEBYRANK</div><div class="q">멤버 수를 상수로 만든다</div></div>
+  </div>
+  <p style="margin:0;font-size:.95rem">그리고 셋 모두 <b>같은 화폐로 값을 치른다</b> — <b style="color:#d97706">정확도와 신선도</b>. 그래서 이 셋을 말한 뒤에는 반드시 <b>"이 지연을 기획과 합의했다"</b>는 문장이 따라와야 한다.</p>
+</div>
+
+<!-- ===================== 13 ===================== -->
+<h2 id="s13">13. 꼬리질문 셀프 테스트</h2>
+<p class="small">질문만 보고 <b>먼저 스스로 답한 뒤</b> 펼쳐서 확인한다. <span class="badge senior">시니어 변별</span>은 정답 하나를 고르지 말고 <b>판단 기준과 순서</b>를 말하는 연습을, <span class="badge extra">추가</span>는 원문에 없지만 실제로 자주 이어지는 질문이다.</p>
+
+<div class="drillbar">
+  <button id="q-open">전부 펼치기</button>
+  <button id="q-close">전부 접기</button>
+</div>
+
+<details>
+  <summary>이 설계를 그대로 두고 트래픽이 100배가 되면 어디가 먼저 무너지나요? <span class="badge senior">시니어 변별</span></summary>
+  <div class="ans">
+    <p><span class="key">순서를 짚어서 답한다.</span> 전체 그림은 <a href="#s12">§12</a>에 있다.</p>
+    <ol>
+      <li><b>쓰기 경로가 먼저 무너진다.</b> 조회 QPS와 같은 수의 <code>ZINCRBY</code>가 랭킹 키를 가진 <b>단일 노드</b>로 몰린다(<a href="#s10">§10</a>의 읽기→쓰기 역전 + <a href="#s8b">§8-1</a>의 hot key). <b>쓰기는 replica로 분산되지 않으므로</b> 여기서 가장 먼저 한계에 닿는다.</li>
+      <li><b>스케줄러의 <code>ZUNIONSTORE</code> 합산이다.</b> 멤버가 늘수록 O(N) + O(M log M)의 N과 M이 커지고, <b>싱글 스레드를 그만큼 오래 점유</b>한다.</li>
+      <li><b>메모리다.</b> 멤버 수 × (문자열 + 스킵 리스트 노드 + 해시테이블 엔트리)가 한 노드에 쌓인다.</li>
+    </ol>
+    <p>그리고 <b>방어도 같은 순서로</b> 간다 — ① 로컬 버퍼링 + 파이프라인으로 <b>쓰기 횟수를 묶고</b>, ② merged TOP N을 로컬 캐시로 <b>내려</b> 읽기가 Redis에 도달하지 않게 하고, ③ <code>ZREMRANGEBYRANK</code>로 하위 랭크를 <b>잘라</b> 크기를 상수로 유지한다.</p>
+    <p><span class="key">"어디가 병목인지의 순서"를 짚는 것 자체가 규모 검증 습관의 증거다.</span> 모든 한계를 한꺼번에 나열하는 답과, <b>무엇이 먼저 무너지는지 순서를 매기고 방어도 그 순서로 배치하는 답</b>의 차이가 이 질문의 변별점이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>점수가 같은 웹툰끼리의 순서는 어떻게 되나요?</summary>
+  <div class="ans">
+    <p><span class="key">멤버 문자열의 사전순(바이너리 비교)</span>이다. 숫자 크기순이 아니라 문자열 비교라 <code>"10"</code>이 <code>"9"</code>보다 앞에 온다.</p>
+    <p>비즈니스 규칙(선점순 등)이 필요하면 <b>점수를 합성</b>한다 — 예를 들어 정수부는 조회수, 소수부는 <code>1 - (timestamp / 최댓값)</code>처럼 <b>먼저 도달할수록 큰 값</b>이 되게 만든다. 그러면 조회수가 같을 때 소수부가 승부를 가른다.</p>
+    <p>여기에 <a href="#s3">§3-2</a>의 사실을 얹으면 답이 정확해진다. <span class="key">점수는 double이고 정수를 정확히 표현할 수 있는 상한이 2<sup>53</sup> = 9,007,199,254,740,992</span>이므로, <b>정수부와 소수부가 그 53비트 예산을 나눠 쓴다.</b> 소수부에 자릿수를 많이 줄수록 <b>정수부(조회수)의 정확 표현 상한이 내려간다</b>는 것까지 말하면 좋다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>최근 1시간 랭킹인데 10분 전 조회까지만 반영하고 싶다면?</summary>
+  <div class="ans">
+    <p><span class="key">버킷 정밀도의 문제</span>다(<a href="#s7">§7</a>). 1시간 윈도우를 10분 단위로 움직이려면 <b>10분 버킷 6개를 합산</b>한다.</p>
+    <p>정밀도를 올릴수록 <b>버킷 개수, <code>ZUNIONSTORE</code> 합산 비용, 키 관리 비용</b>이 함께 늘어난다. 그래서 <b>"윈도우가 얼마나 부드럽게 움직여야 하는가"를 제품 요구사항과 협상해서 버킷 크기를 정한다</b>고 답하면 된다.</p>
+    <p><span class="key">기술로 정하는 값이 아니라 요구사항에서 역산하는 값</span>이라는 점이 답의 골자다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>"내 웹툰은 지금 몇 위" 조회는 비싸지 않나요?</summary>
+  <div class="ans">
+    <p><b>명령 자체는 싸다.</b> <code>ZREVRANK</code>는 O(log N)이라 멤버가 많아도 <b>조회 한 번의 비용은 문제가 안 된다.</b></p>
+    <p><span class="key">진짜 문제는 그 명령을 쓰려면 전체 멤버를 다 들고 있어야 한다는 것</span>이다. 순위를 매기려면 <b>나보다 위에 몇 명이 있는지</b> 알아야 하고, 그러려면 <b>전원이 Sorted Set 안에</b> 있어야 한다. 멤버가 수억이면 <a href="#s9">§9</a>의 big key 문제로 그대로 돌아간다.</p>
+    <p>그래서 <b>TOP N만 유지하는 잘린 랭킹에서는 순위권 밖 멤버의 순위를 줄 수 없다.</b> 선택지는 둘이다 — <b>"순위권 밖"이라고만 표시하고 타협</b>하거나, <b>점수 히스토그램으로 "상위 12%" 같은 근사 순위</b>를 주거나. 어느 쪽이든 <b>정확한 등수를 포기하는 대가로 크기를 상수로 유지하는 거래</b>다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>DB에도 어차피 조회수를 저장할 텐데, 랭킹도 DB로 하면 안 되나요?</summary>
+  <div class="ans">
+    <p><code>ORDER BY view_count DESC LIMIT 10</code>은 <b>실행할 수는 있다.</b> 안 되는 이유는 셋이다(<a href="#s1">§1</a>).</p>
+    <ol>
+      <li>조회수 컬럼 인덱스는 <b>초당 수천 번의 갱신마다 재정렬 비용</b>을 낸다.</li>
+      <li><b>인기 행에 UPDATE가 몰려 락 경합</b>이 생긴다 — 인기가 많을수록 느려지는 역설.</li>
+      <li><b>시간 윈도우 랭킹은 컬럼 하나 정렬로 안 된다.</b> 이벤트 로그 테이블을 <code>GROUP BY</code>로 집계해야 해서 훨씬 비싸진다.</li>
+    </ol>
+    <p>다만 <span class="key">Redis 편만 들면 답이 반쪽</span>이다. <b>Redis 랭킹은 재시작이나 장애로 유실될 수 있다.</b> 그래서 실무의 정석은 <b>역할 분리</b>다 — <b>정산·통계처럼 정확해야 하는 수치는 DB(이벤트 적재)가 원본</b>이고, <b>Redis는 화면에 보여 줄 실시간 근사치</b>다.</p>
+    <p>둘은 <b>경쟁 관계가 아니라 용도가 다른 두 저장소</b>이고, <b>어긋나도 되는 데이터와 어긋나면 안 되는 데이터를 구분했다</b>는 점이 답의 핵심이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary><code>ZINCRBY</code> 대신 <code>ZADD</code>로 점수를 넣으면 안 되나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key"><code>ZADD</code>는 점수를 "설정"하는 명령이라 덮어쓴다.</span> 그래서 증가를 구현하려면 <b>읽고 → 더하고 → 쓰는</b> 세 단계가 되는데, 이 사이에 다른 요청이 끼어들면 <b>lost update</b>가 난다.</p>
+<pre><code><span class="cmt">// 두 요청이 동시에 도착하면</span>
+A: ZSCORE key m  -&gt; 100      B: ZSCORE key m  -&gt; 100
+A: ZADD  key 101 m           B: ZADD  key 101 m
+<span class="cmt">// 조회가 2번인데 점수는 101 — 1이 사라진다</span></code></pre>
+    <p><code>ZINCRBY</code>는 <b>서버 안에서 읽기·더하기·쓰기가 한 명령으로 끝나고</b>, Redis는 싱글 스레드라 그 사이에 아무도 끼어들 수 없다. <b>원자성이 명령 자체에 들어 있는 것</b>이 <code>ZINCRBY</code>를 쓰는 이유다.</p>
+    <p>참고로 <code>ZADD</code>에 <code>INCR</code> 옵션을 주면 <code>ZINCRBY</code>와 같은 동작이 되고, "기존 점수보다 클 때만 갱신" 같은 조건부 옵션도 있다 — <b>최고 기록(best score) 랭킹</b>처럼 "누적"이 아니라 "최댓값"이 필요한 경우에 쓰는 형태다. <span class="key">랭킹의 점수 의미가 누적인지 최댓값인지부터 정하는 것</span>이 명령 선택의 출발점이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>이벤트마다 <code>ZINCRBY</code> 뒤에 <code>EXPIRE</code>를 또 부르면 왕복이 두 배 아닌가요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>맞다. 그리고 <b>정확히 이 지적이 나와야 한다.</b> 정리하면 이렇다.</p>
+    <ul>
+      <li><b>정확성 문제는 없다.</b> <code>EXPIRE</code>는 O(1)이고 <b>몇 번 걸든 결과가 같은(멱등) 연산</b>이라, 매번 다시 걸어도 TTL이 그 시점 기준으로 갱신될 뿐이다. 오히려 <b>"버킷이 처음 생기는 순간을 판별해서 그때만 걸기"</b>가 경합 때문에 더 까다롭다.</li>
+      <li><b>진짜 비용은 네트워크 왕복이다.</b> Redis 성능의 지배 요인은 명령 처리 시간이 아니라 왕복 횟수라, 명령이 2배가 되면 왕복도 2배가 된다.</li>
+    </ul>
+    <p>해법은 셋 중 하나다 — <b>파이프라인으로 두 명령을 한 왕복에 묶거나</b>, <b>Lua 스크립트로 한 번에 보내거나</b>, <a href="#s10">§10</a>의 <b>로컬 버퍼링을 도입해 애초에 flush 주기마다 한 번만 나가게</b> 하거나. <span class="key">버퍼링을 넣으면 이 문제는 저절로 사라진다</span> — 5초에 한 번 나가는 flush에서 <code>EXPIRE</code> 한 번 더 부르는 것은 아무 부담이 아니다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>스케줄러가 여러 대인데 <code>ZUNIONSTORE</code>가 중복 실행되면 어떻게 되나요? 합산 도중에 조회하면 반쪽 랭킹이 보이나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><b>두 질문을 나눠서 답한다.</b></p>
+    <p><span class="key">① 중복 실행 — 결과는 깨지지 않지만 비용이 배로 든다.</span> <code>ZUNIONSTORE</code>는 같은 입력에 같은 결과를 만드는 <b>멱등</b> 연산이라 결과 키는 정상이다. 문제는 <b>O(N) 명령이 서버 대수만큼 실행되어 싱글 스레드를 그만큼 더 오래 점유</b>한다는 것이다. 대응은 <b>리더 선출이나 분산 락으로 한 대만 돌게 하기</b>, 또는 <b>합산 작업을 별도의 단일 워커로 분리하기</b>다.</p>
+    <p><span class="key">② 중간 상태는 보이지 않는다.</span> <code>ZUNIONSTORE</code>는 <b>명령 하나</b>이고 Redis는 싱글 스레드라, 그 명령이 도는 동안 다른 클라이언트의 조회는 <b>실행되지 못하고 대기</b>한다. 그래서 "절반만 합산된 랭킹"을 읽는 일은 생기지 않는다.</p>
+    <p>다만 <b>바로 그 "대기"가 대가</b>다. 합산이 오래 걸릴수록 <b>그 시간만큼 전체 Redis가 멈춘다</b> — <a href="#s12">§12</a>에서 두 번째 병목으로 꼽은 이유가 이것이다. 그래서 <b>합산 주기를 늘리거나, 버킷 수를 줄이거나, 애초에 멤버 수를 잘라</b> 이 명령이 짧게 끝나도록 관리한다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>조회는 1점, 좋아요는 5점처럼 가중치를 주고 싶다면? 최근 버킷에 더 큰 가중치를 주려면? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><b>두 층에서 각각 가중치를 걸 수 있다.</b></p>
+    <ul>
+      <li><b>이벤트 가중치</b> — <code>ZINCRBY</code>의 증가량을 이벤트 종류마다 다르게 준다(<code>조회 1</code>, <code>좋아요 5</code>). 가장 단순하지만 <b>나중에 가중치를 바꾸면 이미 쌓인 점수는 옛 가중치로 남는다</b>는 성질이 있다.</li>
+      <li><b>이벤트 종류별로 키를 나눈다</b> — <code>...:view:2026090114</code>, <code>...:like:2026090114</code>로 따로 쌓고 합산할 때 <code>ZUNIONSTORE</code>의 <code>WEIGHTS</code> 옵션으로 <b>키마다 배수를 곱해서</b> 더한다. <b>가중치를 나중에 바꿔도 원본 카운트가 그대로 남아 있어</b> 재계산이 가능하다는 것이 큰 이점이다.</li>
+    </ul>
+    <p><span class="key">그리고 같은 <code>WEIGHTS</code>로 "시간 감쇠"도 구현된다.</span> 최근 버킷에 큰 가중치를, 오래된 버킷에 작은 가중치를 주면 <b>윈도우 안에서도 최근 것이 더 세게 반영</b>된다 — <a href="#s4">§4</a>에서 본 "누적 랭킹의 고인 물" 문제를 윈도우 안에서 한 번 더 완화하는 장치다.</p>
+    <p>대가는 <b>키 개수와 합산 비용</b>이다. 종류를 나눌수록 <code>ZUNIONSTORE</code>의 입력 키가 배수로 늘어난다(<a href="#s7">§7</a>의 트레이드오프와 같은 축).</p>
+  </div>
+</details>
+
+<details>
+  <summary>Redis가 재시작되면 랭킹이 통째로 사라지는데, 괜찮은가요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key">"괜찮다"가 아니라 "이 데이터는 유실돼도 되는 종류라고 판정했다"가 정확한 답</span>이다. 세 갈래로 나눠 말한다.</p>
+    <ul>
+      <li><b>지속성 설정으로 줄일 수는 있다.</b> RDB 스냅샷이나 AOF를 켜면 유실 폭이 줄어든다. 다만 <b>유실을 0에 가깝게 만들수록 쓰기 비용을 더 낸다</b>는 트레이드오프가 있고, 랭킹은 <b>초당 수만 건이 들어오는 쓰기 부하가 큰 키</b>라 이 비용이 가볍지 않다.</li>
+      <li><b>원본은 DB의 이벤트 로그다.</b> 정산·통계에 쓰는 정확한 수치는 DB에 적재하고, Redis는 <b>화면용 근사치</b>로 둔다. 그러면 유실은 "랭킹 화면이 잠깐 빈다"로 끝나고, <b>배치로 최근 N시간 이벤트를 다시 집계해 버킷을 재구축</b>하는 복구 경로가 생긴다.</li>
+      <li><b>시간 버킷 설계에는 자가 치유 성질이 있다.</b> 버킷은 어차피 TTL로 계속 교체되므로, 유실 후에도 <b>윈도우 길이만큼 시간이 지나면 랭킹이 저절로 정상 상태로 수렴</b>한다. 누적 랭킹이었다면 3년 치를 다시 쌓아야 하지만, 24시간 윈도우는 24시간이면 복구된다.</li>
+    </ul>
+    <p><b>"유실되면 무엇이 깨지는가"를 먼저 따지고, 그다음에 지속성 설정을 말하는 순서</b>가 좋다. 순서를 뒤집으면 "AOF 켜면 됩니다"라는 도구 답변이 된다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>TOP 10이 아니라 100위까지 페이지네이션하면 뒤쪽 페이지가 더 비싸지 않나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key">순위 기반 조회는 뒤쪽 페이지라고 더 비싸지지 않는다.</span> <code>ZREVRANGE key 0 9</code>든 <code>ZREVRANGE key 90 99</code>든 복잡도는 <b>O(log N + M)</b>이다 — 스킵 리스트가 <b>순위로 시작 지점을 바로 찾을 수 있기</b> 때문이다.</p>
+    <p><b>RDB의 <code>LIMIT ... OFFSET</code>과 대비해서 말하면 좋다.</b> SQL의 깊은 OFFSET은 <b>건너뛸 행을 실제로 읽고 버려야</b> 해서 페이지가 깊어질수록 느려진다. Sorted Set의 순위 조회에는 그 성질이 없다.</p>
+    <p>다만 <b>진짜 조심할 것은 M</b>이다. <code>ZREVRANGE key 0 -1</code>처럼 <b>전체를 한 번에 꺼내면</b> M이 곧 N이 되어 <b>O(N) 명령</b>이 되고, 거기에 <b>수십 MB를 직렬화해 내보내는 네트워크 비용</b>까지 붙어 싱글 스레드를 오래 붙잡는다(<a href="#s9">§9</a>). <span class="key">"깊은 페이지"가 아니라 "큰 페이지"가 위험하다</span>는 것이 이 질문의 요지다.</p>
+  </div>
+</details>
+
+<!-- ===================== SUM ===================== -->
+<div class="banner" id="sum">
+  <div class="kicker">한 줄 요약</div>
+  Sorted Set은 <b>ZINCRBY</b>(없으면 0에서 만들어 주는 점수 증가)와 <b>ZREVRANGE</b>(점수 높은 순 M개)만으로 <b>O(log N) 랭킹</b>을 주는 최적의 도구지만,
+  "실시간 인기"는 누적이 아니라 최근 N시간이므로 <b>시간 버킷 키 + TTL + ZUNIONSTORE 합산</b>이라는 윈도우 설계가 따로 필요하고,
+  대규모에서는 <b>랭킹 키가 하나뿐이라 클러스터로도 분산되지 않는 hot key</b>에 <b>"조회 이벤트마다 쓰기"라는 읽기·쓰기 역전</b>이 겹쳐 <b>단일 노드가 먼저 무너지며</b>,
+  그 뒤로 <b>수억 멤버 big key</b>와 <b>멀티 키 슬롯 제약</b>이 따라오므로 —
+  <b>로컬 버퍼링으로 쓰기를 묶고</b>, <b>결과를 로컬 캐시로 내리고</b>, <b>하위 랭크를 잘라내고</b>,
+  <b>"정확·즉시"를 "근사·지연 허용"으로 협상</b>하는 것까지 붙여야 규모를 견디는 설계가 된다.
+</div>
+
+</main>
+<script>
+(function(){
+  var ds = document.querySelectorAll('details');
+  var open = document.getElementById('q-open');
+  var close = document.getElementById('q-close');
+  if (open) open.addEventListener('click', function(){
+    for (var i = 0; i < ds.length; i++) ds[i].open = true;
+  });
+  if (close) close.addEventListener('click', function(){
+    for (var j = 0; j < ds.length; j++) ds[j].open = false;
+  });
+})();
+</script>
+</body>
+</html>

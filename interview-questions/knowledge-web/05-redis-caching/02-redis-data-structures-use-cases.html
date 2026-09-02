@@ -1,0 +1,1374 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis 5대 자료구조 — 연산을 서버로 옮기는 설계 도구함</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent);scroll-margin-top:16px}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:18px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g5{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.plain .k{font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+
+figure{margin:16px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.5}
+figure.wide{width:min(1180px,calc(100vw - 40px));margin-left:50%;transform:translateX(-50%)}
+.svgwrap{overflow-x:auto}
+.svgwrap svg{min-width:560px}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.neutral .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#5eead4}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0;width:min(1180px,calc(100vw - 40px));margin-left:50%;transform:translateX(-50%)}
+.cmp pre{margin:6px 0 0}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+.tools{display:flex;gap:8px;margin:10px 0}
+.tools button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:.85rem;cursor:pointer;color:var(--text)}
+.tools button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">05 Redis · 캐싱 &nbsp;|&nbsp; 자료구조 &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>Redis 5대 자료구조<br><span class="sub">"빠른 Map"을 넘어서는 설계 도구함 — 자료구조를 고른다는 건 연산을 서버로 옮긴다는 뜻</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"Redis의 주요 자료구조(String, Hash, List, Set, Sorted Set)와 각각의 사용 사례는?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — Redis는 key-value 저장소지만 <b>value가 단순 문자열이 아니라 자료구조</b>다. String은 캐시·카운터·분산 락, Hash는 객체의 필드 단위 저장과 부분 갱신, List는 큐와 최근 목록, Set은 중복 방지와 집합 연산, Sorted Set은 score 정렬이 필요한 랭킹·지연 큐에 쓴다. 자료구조가 왜 필요한지는 <b>없을 때를 보면</b> 안다 — 값을 애플리케이션에서 읽어(조회) 고쳐서(수정) 다시 쓰면(저장) 그 사이에 끼어든 다른 요청의 변경이 덮여 사라지는 <b>lost update</b>가 나고, 목록 전체가 네트워크를 두 번 오간다. Redis 자료구조는 그 연산을 <b>서버 안으로 옮긴 것</b>이고, 명령 실행이 싱글 스레드라 옮겨진 연산은 전부 <b>원자적</b>이다 — 중간 상태가 남에게 보이지 않고 전부 실행되거나 전혀 실행되지 않는다. 즉 자료구조를 맞게 고른다는 것은 <b>동시성 처리와 네트워크 왕복을 Redis에 떠넘긴다</b>는 뜻이고, 이것이 명령어를 외우는 것과 구분되는 실익이다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>정의</b> — Redis의 value는 자료구조다. String(통값·원자 증감) / Hash(필드 단위) / List(순서·양끝) / Set(중복 없음) / Sorted Set(score 정렬 유지).</div></li>
+    <li><span class="n">2</span><div><b>존재 이유</b> — 앱에서 하던 "읽고-고치고-쓰기"를 서버 명령 하나로 옮긴 것. 명령 하나는 원자적이라 lost update가 성립할 틈이 사라지고, 값이 네트워크를 오가지 않는다.</div></li>
+    <li><span class="n">3</span><div><b>선택 기준</b> — "이 데이터가 무엇인가"가 아니라 <b>"이 데이터에 필요한 연산이 무엇인가"</b>. 자료구조가 연산을 대신 못 하면 앱에서 조회-수정-저장을 하게 되고 그 순간 원자성과 성능을 둘 다 잃는다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">왜 자료구조가 5개나 있나</a></li>
+    <li><a href="#s1-1">lost update — 조용히 사라지는 갱신</a></li>
+    <li><a href="#s1-3">연산을 서버로 옮긴다 (before/after)</a></li>
+    <li><a href="#s2">다섯 자료구조 한눈에 (값의 모양)</a></li>
+    <li><a href="#s2-1">String — 캐시 · 카운터 · 분산 락</a></li>
+    <li><a href="#s2-2">Hash — 부분 조회 / 부분 갱신</a></li>
+    <li><a href="#s2-3">List — 큐 · 최근 목록</a></li>
+    <li><a href="#s2-4">Set — 중복 방지 · 집합 연산</a></li>
+    <li><a href="#s2-5">Sorted Set — 랭킹 · 지연 큐</a></li>
+    <li><a href="#s3">스킵 리스트 (가산점 포인트)</a></li>
+    <li><a href="#s4">선택 흐름 · 한눈 비교 · 압축 인코딩</a></li>
+    <li><a href="#s5">꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0. 질문 + 의도 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "Redis의 주요 자료구조(String, Hash, List, Set, Sorted Set)와 각각의 사용 사례는?"</p>
+  <p><b>출제 의도</b>: Redis를 <b>"빠른 Map"으로만 쓰는 사람</b>과 <b>Sorted Set으로 랭킹을, Set으로 중복 방지를 설계하는 사람</b>의 활용 폭 차이. 도구의 표현력을 아는 만큼 설계 선택지가 넓어진다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">그래서 이 페이지가 겨냥하는 약점 두 가지</span>
+    ① <b>명령어 나열로 끝내는 답</b> — "String은 SET/GET, List는 LPUSH/RPOP…"은 도구 목록이지 설계가 아니다. 1절의 <b>lost update</b>를 축으로, 각 자료구조를 "어떤 종류의 읽고-고치고-쓰기를 서버로 옮겨 주는가"로 다시 읽는다.<br>
+    ② <b>"왜 그 자료구조인가"에서 막히는 문제</b> — 4절의 <b>선택 결정 트리</b>와 각 절의 규칙 카드로, 데이터의 모양이 아니라 <b>연산</b>에서 출발하는 판단 순서를 고정한다.
+  </div>
+</div>
+
+<!-- ===================== 1. 왜 5개나 ===================== -->
+<h2 id="s1">1. 왜 자료구조가 5개나 있나 — "연산을 서버로 옮기기 위해"</h2>
+<p>이 절이 문서 전체의 축이다. 다섯 자료구조를 각각 외우기 전에, <b>자료구조가 없었다면 무슨 일이 벌어지는지</b>를 먼저 본다. 없을 때의 고통이 곧 각 자료구조의 존재 이유다.</p>
+
+<h3 id="s1-1">1-1. 전제 지식 — lost update가 무엇인가</h3>
+<div class="memo">
+  <h4>lost update (갱신 유실)</h4>
+  <div class="rule">두 요청이 같은 값을 각자 읽어 각자 수정하고 각자 저장했을 때,<br>나중에 저장한 쪽이 앞선 쪽의 변경을 덮어써서 <b style="color:var(--danger)">한쪽 변경이 흔적 없이 사라지는</b> 현상</div>
+  <p style="margin:6px 0 0;font-size:.95rem">무서운 점은 <b>아무 에러도 나지 않는다</b>는 것이다. 두 요청 모두 정상 응답을 받고, 로그에도 예외가 남지 않으며, <b>데이터만 조용히 틀려 있다.</b> 그래서 발견이 늦고, 발견해도 재현이 어렵다.</p>
+</div>
+
+<p>Redis가 단순한 key→문자열 저장소였다면 <b>목록에 항목 하나를 추가하는 데도</b> 이 문제가 그대로 생긴다. 클라이언트가 <b>전체를 읽고 → 수정하고 → 전체를 다시 쓰는</b> 3단계를 거쳐야 하기 때문이다.</p>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 900 350" width="900" height="350" role="img" aria-label="lost update가 발생하는 시간 순서 도식">
+    <defs>
+      <marker id="lu-ar" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+    </defs>
+    <!-- lane guides -->
+    <line x1="150" y1="44" x2="150" y2="300" stroke="#e5e7eb" stroke-width="2" stroke-dasharray="4 5"/>
+    <line x1="450" y1="44" x2="450" y2="300" stroke="#e5e7eb" stroke-width="2" stroke-dasharray="4 5"/>
+    <line x1="758" y1="44" x2="758" y2="300" stroke="#e5e7eb" stroke-width="2" stroke-dasharray="4 5"/>
+    <!-- headers -->
+    <rect x="35" y="8" width="230" height="30" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="150" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#2563eb">요청 A</text>
+    <rect x="330" y="8" width="240" height="30" rx="8" fill="#f1f3f7" stroke="#d1d5db"/>
+    <text x="450" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#374151">Redis에 저장된 값</text>
+    <rect x="643" y="8" width="230" height="30" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="758" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#d97706">요청 B</text>
+    <!-- t1 -->
+    <text x="10" y="76" font-size="12" fill="#9ca3af" class="mono">t1</text>
+    <rect x="35" y="56" width="230" height="32" rx="7" fill="#fff" stroke="#bfdbfe"/>
+    <text x="150" y="77" text-anchor="middle" font-size="12" class="mono" fill="#1f2937">GET recent → ["A","B"]</text>
+    <rect x="368" y="56" width="164" height="32" rx="7" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="450" y="77" text-anchor="middle" font-size="12" class="mono">["A","B"]</text>
+    <!-- t2 -->
+    <text x="10" y="122" font-size="12" fill="#9ca3af" class="mono">t2</text>
+    <rect x="643" y="102" width="230" height="32" rx="7" fill="#fff" stroke="#fde68a"/>
+    <text x="758" y="123" text-anchor="middle" font-size="12" class="mono" fill="#1f2937">GET recent → ["A","B"]</text>
+    <rect x="368" y="102" width="164" height="32" rx="7" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="450" y="123" text-anchor="middle" font-size="12" class="mono">["A","B"]</text>
+    <!-- t3 -->
+    <text x="10" y="168" font-size="12" fill="#9ca3af" class="mono">t3</text>
+    <rect x="35" y="148" width="230" height="32" rx="7" fill="#eff6ff" stroke="#bfdbfe" stroke-dasharray="4 3"/>
+    <text x="150" y="169" text-anchor="middle" font-size="12">앱 메모리에서 앞에 "C" 추가</text>
+    <rect x="643" y="148" width="230" height="32" rx="7" fill="#fffbeb" stroke="#fde68a" stroke-dasharray="4 3"/>
+    <text x="758" y="169" text-anchor="middle" font-size="12">앱 메모리에서 앞에 "D" 추가</text>
+    <text x="450" y="169" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">← 값은 앱에 나가 있다 →</text>
+    <!-- t4 -->
+    <text x="10" y="216" font-size="12" fill="#9ca3af" class="mono">t4</text>
+    <rect x="35" y="196" width="230" height="32" rx="7" fill="#fff" stroke="#bfdbfe"/>
+    <text x="150" y="217" text-anchor="middle" font-size="12" class="mono">SET ["C","A","B"]</text>
+    <rect x="368" y="196" width="164" height="32" rx="7" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="450" y="217" text-anchor="middle" font-size="12" class="mono" fill="#2563eb">["C","A","B"]</text>
+    <!-- t5 -->
+    <text x="10" y="266" font-size="12" fill="#9ca3af" class="mono">t5</text>
+    <rect x="643" y="246" width="230" height="32" rx="7" fill="#fff" stroke="#fde68a"/>
+    <text x="758" y="267" text-anchor="middle" font-size="12" class="mono">SET ["D","A","B"]</text>
+    <rect x="368" y="246" width="164" height="32" rx="7" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="450" y="267" text-anchor="middle" font-size="12" class="mono" fill="#dc2626" font-weight="700">["D","A","B"]</text>
+    <line x1="450" y1="228" x2="450" y2="244" stroke="#6b7280" stroke-width="1.5" marker-end="url(#lu-ar)"/>
+    <!-- conclusion -->
+    <rect x="180" y="298" width="540" height="44" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="450" y="318" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626">"C"가 사라졌다 — 덮어쓴 것이 아니라 없던 일이 됐다</text>
+    <text x="450" y="335" text-anchor="middle" font-size="12" fill="#7f1d1d">그런데 요청 A도 요청 B도 정상 200 응답을 받았다. 예외 로그도 없다.</text>
+  </svg>
+  </div>
+  <figcaption>문제의 뿌리는 <b>읽기(t1·t2)와 쓰기(t4·t5) 사이에 시간이 벌어져 있다</b>는 것이다. 그 간격 동안 값은 아무나 바꿀 수 있고, 나중에 쓰는 쪽은 <b>자기가 읽었던 시점의 세계를 기준으로 통째로 덮어쓴다.</b></figcaption>
+</figure>
+
+<h3 id="s1-2">1-2. 전제 지식 — "원자적"이란 무슨 뜻인가</h3>
+<p>이 문제의 해법을 말하려면 원자성부터 정의해야 한다.</p>
+
+<div class="memo green">
+  <h4>원자적(atomic)</h4>
+  <div class="rule ok">어떤 작업이 <b>전부 실행되거나 전혀 실행되지 않으며</b>,<br>그 <b>중간 상태가 다른 클라이언트에게 절대 보이지 않는</b> 성질</div>
+  <p style="margin:6px 0 0;font-size:.95rem">더 이상 쪼갤 수 없는 단위(atom)라는 어원에서 왔다. 앞의 lost update를 이 말로 다시 쓰면 이렇게 된다 — <b>"읽고-고치고-쓰기"가 원자적이지 않아서 그 중간에 남이 끼어들 틈이 있었다.</b></p>
+</div>
+
+<p>Redis에서는 <b>명령 하나가 원자성의 단위</b>다. 명령을 실행하는 스레드가 하나뿐이라 명령과 명령은 언제나 순서대로 실행되고, 한 명령의 실행 도중에 다른 명령이 끼어들 <b>물리적 틈이 없다.</b> 그래서 <code>LPUSH</code> 한 번은 "리스트를 읽고, 맨 앞에 붙이고, 다시 저장하는" 세 동작을 포함하지만 그 전체가 쪼개지지 않는다.</p>
+
+<div class="memo red">
+  <h4>같이 외워야 할 반쪽 — 명령 <u>두 개</u>는 원자적이지 않다</h4>
+  <div class="chain">
+    <span class="chip g">LPUSH 한 번</span><span class="arrow">=</span><span class="chip g">원자적 ✓</span>
+    <span class="arrow" style="margin:0 10px">/</span>
+    <span class="chip r">LPUSH → LTRIM</span><span class="arrow">=</span><span class="chip r">그 사이에 끼어들 수 있다 ✗</span>
+  </div>
+  <p style="margin:6px 0 0;font-size:.95rem">여러 명령을 한 덩어리로 묶으려면 <code>MULTI</code>/<code>EXEC</code>나 <b>Lua 스크립트</b>가 필요하다. "Redis는 싱글 스레드라 다 원자적이다"라고 뭉뚱그리면 이 지점에서 반례를 맞는다. (5절 꼬리질문에서 다시 다룬다.)</p>
+</div>
+
+<h3 id="s1-3">1-3. 자료구조 = 연산을 서버 안으로 옮긴 것</h3>
+<p>이제 정리가 된다. <b>Redis 자료구조의 본질은 애플리케이션이 하던 "읽고-고치고-쓰기"를 서버 안의 명령 하나로 옮긴 것</b>이다. "리스트 왼쪽에 추가", "집합에 없으면 넣기", "score 1 올리기"가 각각 명령 하나이고, 명령 하나는 원자적이므로 끼어들 틈이 사라진다. 덤으로 목록 전체가 네트워크를 오갈 필요도 없어진다.</p>
+
+<figure class="wide">
+  <div class="svgwrap">
+  <svg viewBox="0 0 1120 300" width="1120" height="300" role="img" aria-label="연산이 앱에 있을 때와 서버 안에 있을 때의 대비">
+    <defs>
+      <marker id="op-ar" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+      <marker id="op-arr" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="op-arg" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+    <!-- LEFT -->
+    <rect x="8" y="8" width="540" height="284" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="278" y="32" text-anchor="middle" font-size="14" font-weight="700" fill="#dc2626">before — 연산이 앱에 있다 (읽고 · 고치고 · 쓰기)</text>
+    <rect x="48" y="92" width="150" height="60" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="123" y="128" text-anchor="middle" font-size="13">애플리케이션</text>
+    <rect x="378" y="92" width="140" height="60" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="448" y="118" text-anchor="middle" font-size="13">Redis</text>
+    <text x="448" y="136" text-anchor="middle" font-size="11" fill="#6b7280" class="mono">String 하나</text>
+    <line x1="378" y1="108" x2="206" y2="108" stroke="#6b7280" stroke-width="1.6" marker-end="url(#op-ar)"/>
+    <text x="292" y="100" text-anchor="middle" font-size="11.5" fill="#374151">① GET — 목록 전체가 나온다</text>
+    <path d="M78 92 C 78 56, 168 56, 168 92" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#op-arr)"/>
+    <text x="123" y="52" text-anchor="middle" font-size="11.5" fill="#dc2626" font-weight="700">② 앱 메모리에서 수정</text>
+    <line x1="198" y1="140" x2="370" y2="140" stroke="#6b7280" stroke-width="1.6" marker-end="url(#op-ar)"/>
+    <text x="284" y="160" text-anchor="middle" font-size="11.5" fill="#374151">③ SET — 목록 전체를 되돌린다</text>
+    <rect x="78" y="196" width="400" height="66" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="278" y="219" text-anchor="middle" font-size="12.5" fill="#dc2626" font-weight="700">①과 ③ 사이가 벌어져 있다 = 남이 끼어들 틈</text>
+    <text x="278" y="240" text-anchor="middle" font-size="12" fill="#7f1d1d">경합하면 lost update, 목록이 크면 네트워크를 두 번 왕복</text>
+    <text x="278" y="282" text-anchor="middle" font-size="12" fill="#991b1b">결함은 예외 처리가 아니라 "값이 앱까지 왔다가 돌아간다"는 구조 자체다</text>
+    <!-- RIGHT -->
+    <rect x="572" y="8" width="540" height="284" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="842" y="32" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a">after — 연산이 서버 안에 있다 (List 자료구조)</text>
+    <rect x="612" y="92" width="150" height="60" rx="10" fill="#fff" stroke="#9ca3af"/>
+    <text x="687" y="128" text-anchor="middle" font-size="13">애플리케이션</text>
+    <rect x="922" y="92" width="150" height="60" rx="10" fill="#fff" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="997" y="118" text-anchor="middle" font-size="13">Redis</text>
+    <text x="997" y="136" text-anchor="middle" font-size="11" fill="#16a34a" class="mono">List</text>
+    <line x1="762" y1="122" x2="914" y2="122" stroke="#16a34a" stroke-width="2" marker-end="url(#op-arg)"/>
+    <text x="838" y="112" text-anchor="middle" font-size="12" class="mono" fill="#166534">LPUSH recent "C"</text>
+    <text x="838" y="142" text-anchor="middle" font-size="11.5" fill="#16a34a" font-weight="700">왕복 1회 · 값은 나오지 않는다</text>
+    <rect x="642" y="196" width="400" height="66" rx="10" fill="#fff" stroke="#bbf7d0"/>
+    <text x="842" y="219" text-anchor="middle" font-size="12.5" fill="#16a34a" font-weight="700">"읽고-고치고-쓰기"가 서버 안에서 한 덩어리로 실행된다</text>
+    <text x="842" y="240" text-anchor="middle" font-size="12" fill="#166534">명령 하나 = 원자적 = 중간 상태가 남에게 보이지 않는다</text>
+    <text x="842" y="282" text-anchor="middle" font-size="12" fill="#15803d">틈이 없어졌으므로 경합 자체가 성립하지 않는다</text>
+  </svg>
+  </div>
+  <figcaption>같은 일을 누가 하느냐만 다르다. 왼쪽은 앱이 주체라 값이 밖으로 나왔다 돌아오고, 오른쪽은 서버가 주체라 값이 제자리에서 바뀐다. <b>아래 다섯 자료구조는 각각 "어떤 종류의 읽고-고치고-쓰기를 서버로 옮겨 주는가"로 읽으면 된다.</b></figcaption>
+</figure>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> String에 JSON 목록을 통째로</div>
+<pre><code><span class="cm">// 조회-수정-저장. 경합 시 유실.</span>
+<span class="kw">String</span> json = redis.get(<span class="st">"recent:user:1"</span>);   <span class="cm">// ["A","B"]</span>
+<span class="kw">List</span>&lt;String&gt; items = parse(json);
+<span class="ln-bad">items.add(0, <span class="st">"C"</span>);          <span class="cm">// ← 이 사이 다른 요청이 끼면</span></span><span class="ln-bad">redis.set(<span class="st">"recent:user:1"</span>, toJson(items));</span><span class="cm">// → 한쪽 갱신이 증발(lost update)</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> List 자료구조</div>
+<pre><code><span class="cm">// 값이 앱으로 나오지 않고 서버 안에서 바뀐다.</span>
+<span class="cm">// 명령 하나라서 원자적이고,</span>
+<span class="cm">// 그래서 경합 자체가 성립하지 않는다.</span>
+
+
+<span class="ln-good">redis.lpush(<span class="st">"recent:user:1"</span>, <span class="st">"C"</span>);</span></code></pre>
+  </div>
+</div>
+
+<!-- ===================== 2. 다섯 자료구조 ===================== -->
+<h2 id="s2">2. 다섯 가지 자료구조와 사용 사례</h2>
+<p>먼저 <b>"value 자리에 무엇이 들어 있는가"</b>를 그림으로 한 번에 본다. 다섯 자료구조의 차이는 결국 이 그림의 차이이고, 그 모양이 곧 <b>가능한 연산</b>을 결정한다.</p>
+
+<figure class="wide">
+  <div class="svgwrap">
+  <svg viewBox="0 0 1120 262" width="1120" height="262" role="img" aria-label="다섯 자료구조의 value 모양 비교">
+    <defs>
+      <marker id="ds-ar" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/></marker>
+      <marker id="ds-arb" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="ds-arg" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <!-- P1 String -->
+    <rect x="8" y="10" width="212" height="242" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="114" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#2563eb">String</text>
+    <rect x="28" y="48" width="172" height="24" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="114" y="65" text-anchor="middle" font-size="10.5" class="mono" fill="#2563eb">product:1234</text>
+    <line x1="114" y1="72" x2="114" y2="92" stroke="#9ca3af" stroke-width="1.4" marker-end="url(#ds-ar)"/>
+    <rect x="28" y="96" width="172" height="52" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="114" y="118" text-anchor="middle" font-size="10" class="mono">{"name":"콜라",</text>
+    <text x="114" y="134" text-anchor="middle" font-size="10" class="mono">"price":1500}</text>
+    <text x="114" y="176" text-anchor="middle" font-size="11.5" fill="#374151">값 하나 · 통째로 읽고 쓴다</text>
+    <text x="114" y="196" text-anchor="middle" font-size="11.5" fill="#374151">일부만 꺼내는 연산이 없다</text>
+    <rect x="28" y="210" width="172" height="30" rx="7" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="114" y="230" text-anchor="middle" font-size="11" fill="#16a34a">예외: 정수면 INCR 원자 증감</text>
+
+    <!-- P2 Hash -->
+    <rect x="232" y="10" width="212" height="242" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="338" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#2563eb">Hash</text>
+    <rect x="252" y="48" width="172" height="24" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="338" y="65" text-anchor="middle" font-size="10.5" class="mono" fill="#2563eb">user:1</text>
+    <line x1="338" y1="72" x2="338" y2="92" stroke="#9ca3af" stroke-width="1.4" marker-end="url(#ds-ar)"/>
+    <rect x="252" y="96" width="172" height="24" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+    <line x1="348" y1="96" x2="348" y2="120" stroke="#cbd5e1"/>
+    <text x="300" y="113" text-anchor="middle" font-size="10" class="mono">name</text>
+    <text x="386" y="113" text-anchor="middle" font-size="10" class="mono">kim</text>
+    <rect x="252" y="122" width="172" height="24" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+    <line x1="348" y1="122" x2="348" y2="146" stroke="#cbd5e1"/>
+    <text x="300" y="139" text-anchor="middle" font-size="10" class="mono">grade</text>
+    <text x="386" y="139" text-anchor="middle" font-size="10" class="mono">VIP</text>
+    <rect x="252" y="148" width="172" height="24" rx="4" fill="#eff6ff" stroke="#2563eb"/>
+    <line x1="348" y1="148" x2="348" y2="172" stroke="#bfdbfe"/>
+    <text x="300" y="165" text-anchor="middle" font-size="10" class="mono" fill="#2563eb">point</text>
+    <text x="386" y="165" text-anchor="middle" font-size="10" class="mono" fill="#2563eb">1200</text>
+    <text x="338" y="196" text-anchor="middle" font-size="11.5" fill="#374151">field → value 쌍들</text>
+    <rect x="252" y="210" width="172" height="30" rx="7" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="338" y="230" text-anchor="middle" font-size="11" fill="#2563eb">한 필드만 읽고 고칠 수 있다</text>
+
+    <!-- P3 List -->
+    <rect x="456" y="10" width="212" height="242" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="562" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#2563eb">List</text>
+    <rect x="476" y="48" width="172" height="24" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="562" y="65" text-anchor="middle" font-size="10.5" class="mono" fill="#2563eb">recent:user:1</text>
+    <rect x="480" y="108" width="38" height="34" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="499" y="130" text-anchor="middle" font-size="10.5" class="mono">C</text>
+    <rect x="524" y="108" width="38" height="34" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="543" y="130" text-anchor="middle" font-size="10.5" class="mono">A</text>
+    <rect x="568" y="108" width="38" height="34" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="587" y="130" text-anchor="middle" font-size="10.5" class="mono">B</text>
+    <rect x="612" y="108" width="38" height="34" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="631" y="130" text-anchor="middle" font-size="10.5" class="mono">A</text>
+    <line x1="518" y1="125" x2="524" y2="125" stroke="#9ca3af"/>
+    <line x1="562" y1="125" x2="568" y2="125" stroke="#9ca3af"/>
+    <line x1="606" y1="125" x2="612" y2="125" stroke="#9ca3af"/>
+    <line x1="476" y1="92" x2="497" y2="104" stroke="#16a34a" stroke-width="1.6" marker-end="url(#ds-arg)"/>
+    <text x="490" y="88" text-anchor="middle" font-size="10" fill="#16a34a" class="mono">LPUSH</text>
+    <line x1="652" y1="92" x2="634" y2="104" stroke="#16a34a" stroke-width="1.6" marker-end="url(#ds-arg)"/>
+    <text x="638" y="88" text-anchor="middle" font-size="10" fill="#16a34a" class="mono">RPOP</text>
+    <text x="562" y="172" text-anchor="middle" font-size="11.5" fill="#374151">순서 유지 · 중복 허용</text>
+    <text x="562" y="192" text-anchor="middle" font-size="11.5" fill="#374151">양끝 O(1)</text>
+    <rect x="476" y="210" width="172" height="30" rx="7" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="562" y="230" text-anchor="middle" font-size="11" fill="#dc2626">중간 접근·전체 조회는 O(N)</text>
+
+    <!-- P4 Set -->
+    <rect x="680" y="10" width="212" height="242" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="786" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#2563eb">Set</text>
+    <rect x="700" y="48" width="172" height="24" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="786" y="65" text-anchor="middle" font-size="10.5" class="mono" fill="#2563eb">event:entries</text>
+    <rect x="700" y="92" width="172" height="66" rx="33" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <rect x="716" y="106" width="46" height="22" rx="11" fill="#fff" stroke="#bbf7d0"/>
+    <text x="739" y="121" text-anchor="middle" font-size="10" class="mono">u:1</text>
+    <rect x="770" y="106" width="46" height="22" rx="11" fill="#fff" stroke="#bbf7d0"/>
+    <text x="793" y="121" text-anchor="middle" font-size="10" class="mono">u:7</text>
+    <rect x="742" y="132" width="46" height="22" rx="11" fill="#fff" stroke="#bbf7d0"/>
+    <text x="765" y="147" text-anchor="middle" font-size="10" class="mono">u:9</text>
+    <text x="786" y="180" text-anchor="middle" font-size="11.5" fill="#374151">중복 없음 · 순서 없음</text>
+    <rect x="700" y="196" width="172" height="44" rx="7" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="786" y="214" text-anchor="middle" font-size="11" fill="#16a34a">SADD 반환값 = 판정 결과</text>
+    <text x="786" y="231" text-anchor="middle" font-size="11" fill="#16a34a">1 = 처음 / 0 = 이미 있음</text>
+
+    <!-- P5 Sorted Set -->
+    <rect x="904" y="10" width="208" height="242" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="1008" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#2563eb">Sorted Set</text>
+    <rect x="922" y="48" width="172" height="24" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="1008" y="65" text-anchor="middle" font-size="10.5" class="mono" fill="#2563eb">ranking:daily</text>
+    <rect x="922" y="90" width="172" height="24" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+    <rect x="922" y="90" width="150" height="24" rx="4" fill="#dbeafe" stroke="none"/>
+    <text x="936" y="107" font-size="10" class="mono">webtoon:55</text>
+    <text x="1086" y="107" text-anchor="end" font-size="10" class="mono" fill="#1d4ed8">1450</text>
+    <rect x="922" y="118" width="172" height="24" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+    <rect x="922" y="118" width="124" height="24" rx="4" fill="#dbeafe" stroke="none"/>
+    <text x="936" y="135" font-size="10" class="mono">webtoon:12</text>
+    <text x="1086" y="135" text-anchor="end" font-size="10" class="mono" fill="#1d4ed8">1200</text>
+    <rect x="922" y="146" width="172" height="24" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+    <rect x="922" y="146" width="101" height="24" rx="4" fill="#dbeafe" stroke="none"/>
+    <text x="936" y="163" font-size="10" class="mono">webtoon:88</text>
+    <text x="1086" y="163" text-anchor="end" font-size="10" class="mono" fill="#1d4ed8">980</text>
+    <text x="1008" y="190" text-anchor="middle" font-size="11.5" fill="#374151">멤버 + score(실수)</text>
+    <rect x="922" y="204" width="172" height="36" rx="7" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="1008" y="221" text-anchor="middle" font-size="11" fill="#2563eb">쓰기 순간마다</text>
+    <text x="1008" y="235" text-anchor="middle" font-size="11" fill="#2563eb">정렬 상태를 유지한다</text>
+  </svg>
+  </div>
+  <figcaption>왼쪽으로 갈수록 단순하고 오른쪽으로 갈수록 서버가 대신해 주는 일이 많다. 대신 오른쪽일수록 메모리와 연산 비용이 붙는다 — <b>필요한 연산만큼만 오른쪽으로 간다</b>가 선택의 기본자세다.</figcaption>
+</figure>
+
+<!-- 2-1 String -->
+<h3 id="s2-1">2-1. String — 만능 기본형: 캐시, 카운터, 분산 락</h3>
+<p>가장 단순한 <b>"key 하나 = 값 하나"</b>다. 값은 텍스트뿐 아니라 직렬화된 객체, 숫자, 바이너리까지 담는다.</p>
+
+<div class="memo green">
+  <h4>언제 String을 고르는가</h4>
+  <div class="rule ok">값을 <b>언제나 통째로 읽고 통째로 쓰는</b> 경우</div>
+  <p style="margin:6px 0 0;font-size:.95rem">이 값의 일부만 따로 읽거나 고칠 일이 없고, 원소를 하나씩 더하거나 빼는 일도 없다면 <b>더 복잡한 자료구조를 쓸 이유가 없다.</b> 조회 결과를 JSON으로 직렬화해 캐시하는 경우가 전형적이다. 여기에 예외가 하나 — 값이 <b>정수</b>라면 String은 <code>INCR</code> 계열로 <b>덧셈만은 서버에서 원자적으로</b> 해 준다. 그래서 카운터도 String의 영역이다.</p>
+</div>
+
+<div class="grid g3">
+  <div class="tile plain"><div class="k">캐시</div><div class="d">조회 결과(JSON)를 <code>SET key value EX 300</code>으로 TTL과 함께 저장. look-aside 캐시의 기본형.</div></div>
+  <div class="tile plain"><div class="k">카운터</div><div class="d"><code>INCR</code>/<code>INCRBY</code>가 원자적이라 조회수, 재고 차감, API 호출 횟수 제한(rate limit)에 바로 쓴다.</div></div>
+  <div class="tile plain"><div class="k">분산 락</div><div class="d"><code>SET key val NX PX 3000</code> — "없을 때만 넣기(NX)"가 원자적이라 락 획득 경쟁을 <b>명령 하나로 판정</b>한다.</div></div>
+</div>
+
+<div class="codehead neutral"><span class="tag">명령</span> String 대표 3종</div>
+<pre><code>SET  product:1234 '{"name":"콜라","price":1500}' EX 300   <span class="cm"># TTL 캐시</span>
+INCR view:product:1234                                     <span class="cm"># 원자 카운터</span>
+SET  lock:coupon &lt;소유자토큰&gt; NX PX 3000                    <span class="cm"># 분산 락 획득</span></code></pre>
+
+<p><b>분산 락이 왜 <code>SET NX</code> 한 방이어야 하는지</b>가 이 자료구조의 압축된 교훈이다. 1절의 lost update와 정확히 같은 구조의 문제다 — 확인과 행동 사이가 벌어져 있다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 있는지 보고 없으면 넣기</div>
+<pre><code><span class="ln-bad"><span class="kw">if</span> (redis.get(<span class="st">"lock:coupon"</span>) == <span class="kw">null</span>) {   <span class="cm">// 둘 다 "없다"를 본다</span></span><span class="ln-bad">    redis.set(<span class="st">"lock:coupon"</span>, token);      <span class="cm">// 둘 다 여기 도달</span></span>}
+<span class="cm">// → 락이 락이 아니다. 확인과 선점 사이가 벌어져 있다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 없을 때만 넣기(NX)</div>
+<pre><code><span class="cm">// 확인과 선점이 한 덩어리라</span>
+<span class="cm">// 두 요청 중 정확히 하나만 true를 받는다.</span>
+<span class="ln-good"><span class="kw">Boolean</span> acquired = redis.setIfAbsent(</span><span class="ln-good">    <span class="st">"lock:coupon"</span>, token, Duration.ofSeconds(3));</span><span class="cm">// PX(만료)는 락을 쥔 프로세스가 죽어도 풀리게 하는 안전장치</span></code></pre>
+  </div>
+</div>
+
+<!-- 2-2 Hash -->
+<h3 id="s2-2">2-2. Hash — 객체를 필드 단위로: 부분 조회 / 부분 갱신</h3>
+<p>key 하나 아래 <b>field → value 쌍들</b>을 담는다. 객체를 통째로 직렬화하지 않고 필드별로 저장하므로, <b>한 필드만 읽거나 고칠 수 있다.</b></p>
+
+<div class="memo green">
+  <h4>언제 Hash를 고르는가</h4>
+  <div class="rule ok">한 덩어리로 묶이는 값인데 <b>접근 단위가 필드 하나</b>일 때<br><span style="font-size:.92rem;font-weight:600">그리고 — <b style="color:var(--danger)">필드별 원자적 증감이 필요하면 무조건 Hash</b></span></div>
+  <p style="margin:6px 0 0;font-size:.95rem">사용자 프로필 <b>전체를 매번 읽어야 한다면 String-JSON이 낫지만</b>, 등급만 확인하거나 포인트만 증감하는 호출이 잦다면 Hash가 맞다. 판단 기준을 한 문장으로 하면 <b>"전체 역직렬화 비용을 매번 낼 가치가 있는가"</b>다. String-JSON에서는 수량 하나를 올리는 데도 전체를 읽고 써야 하고, <b>그 순간 lost update가 열린다.</b></p>
+</div>
+
+<div class="callout info"><span class="t">비유 — 문서 통째 복사 vs 서랍 칸막이</span>
+  String-JSON은 <b>문서를 통째로 복사해 와서 한 줄 고친 뒤 원본 자리에 통째로 되돌려 놓는</b> 방식이다. 내가 고친 건 한 줄인데, 되돌려 놓는 건 문서 전체다. 그 사이 남이 <u>다른 줄</u>을 고쳐 놨다면 그 수정까지 내 옛날 복사본으로 덮인다. Hash는 서랍 칸을 나눠 두고 <b>내 칸만 열어 고치는</b> 방식이라, 남의 칸은 내 관심 밖이라 덮일 일이 없다.
+</div>
+
+<div class="grid">
+  <div class="tile plain"><div class="k">자주 부분 갱신되는 객체</div><div class="d">사용자 프로필, 장바구니(field=상품ID, value=수량 — <code>HINCRBY</code>로 수량만 원자 증감).</div></div>
+  <div class="tile plain"><div class="k">여러 카운터를 한 키에</div><div class="d">상품별 일간 통계(field=날짜)처럼 관련 카운터를 묶어 <b>키 수를 줄인다.</b></div></div>
+</div>
+
+<div class="codehead neutral"><span class="tag">명령</span> Hash 대표 3종</div>
+<pre><code>HSET user:1 name "kim" grade "VIP" point 1200
+HGET user:1 grade              <span class="cm"># grade만 — 전체 역직렬화 불필요</span>
+HINCRBY cart:1 product:99 2    <span class="cm"># 장바구니 수량만 원자 증가</span></code></pre>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> String에 JSON 통째로</div>
+<pre><code><span class="cm">// 포인트만 바꾸려 해도 객체 전체를 읽고 쓴다</span>
+<span class="kw">String</span> json = redis.get(<span class="st">"user:1"</span>);
+<span class="cm">// {"name":"kim","grade":"VIP","point":1200}</span>
+User u = parse(json);
+u.setPoint(u.getPoint() + 100);
+<span class="ln-bad">redis.set(<span class="st">"user:1"</span>, toJson(u));</span><span class="cm">// 그사이 남이 grade를 GOLD로 바꿔 저장했다면,</span>
+<span class="cm">// 이 SET이 예전 grade가 담긴 통째 객체로 덮어쓴다.</span>
+<span class="cm">// → 내가 만지지도 않은 필드까지 lost update 사정권.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 필드 하나만 원자 증가</div>
+<pre><code><span class="cm">// 건드리는 필드만 서버에서 원자적으로 증가시킨다.</span>
+<span class="cm">// 다른 필드는 이 명령의 관심 밖이라</span>
+<span class="cm">// 덮일 일이 없다.</span>
+
+
+
+
+<span class="ln-good">redis.hincrBy(<span class="st">"user:1"</span>, <span class="st">"point"</span>, 100);</span></code></pre>
+  </div>
+</div>
+<p class="sub">String-JSON과의 선택 기준은 5절 첫 꼬리질문에서 한 번 더 다룬다 — <b>이 비교가 실무 판단력을 보여주는 지점</b>이다.</p>
+
+<!-- 2-3 List -->
+<h3 id="s2-3">2-3. List — 순서 있는 양방향 목록: 큐, 최근 본 상품</h3>
+<p>양쪽 끝에서 넣고 뺄 수 있는 연결 리스트다. <b>끝 연산(<code>LPUSH</code>/<code>RPUSH</code>/<code>LPOP</code>/<code>RPOP</code>)은 O(1)</b>, 중간 접근은 O(N)이다.</p>
+
+<div class="memo green">
+  <h4>언제 List를 고르는가</h4>
+  <div class="rule ok"><b>삽입 순서가 의미를 갖고</b>, 다루는 지점이 <b>목록의 끝</b>(맨 앞이나 맨 뒤)일 때</div>
+  <p style="margin:6px 0 0;font-size:.95rem">"가장 최근 것부터 N개", "먼저 들어온 것부터 하나씩 꺼내기"가 그렇다. 반대로 <b>"가운데에서 특정 항목을 찾아 지운다"</b>거나 <b>"전체를 훑어 조건에 맞는 것을 고른다"</b>가 주 용도라면 List는 잘못된 선택이다 — 그 연산이 O(N)이고, 싱글 스레드에서 그 O(N)은 곧 <b>서버 전체를 세우는 비용</b>이다.</p>
+  <div class="chain" style="margin-top:8px">
+    <span class="chip b">같은 값이 여러 번 들어와도 자연스럽다</span><span class="arrow">→</span><span class="chip g">List</span>
+    <span class="arrow" style="margin:0 8px">/</span>
+    <span class="chip b">한 번만 있어야 한다</span><span class="arrow">→</span><span class="chip g">Set</span>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="tile plain"><div class="k">간단한 작업 큐</div><div class="d">생산자가 <code>LPUSH</code>, 소비자가 <code>BRPOP</code>(비어 있으면 대기하는 블로킹 팝)으로 <b>폴링 없이</b> 큐를 구현한다.</div></div>
+  <div class="tile plain"><div class="k">최근 본 상품 / 최신 피드</div><div class="d"><code>LPUSH</code> + <code>LTRIM</code>으로 "최근 N개만 유지"를 두 명령으로 끝낸다.</div></div>
+</div>
+
+<div class="codehead neutral"><span class="tag">명령</span> 최근 N개 유지 관용구</div>
+<pre><code>LPUSH recent:user:1 "product:99"
+LTRIM recent:user:1 0 9          <span class="cm"># 항상 최근 10개만 유지 — 무한 성장 방지</span></code></pre>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> "최근 10개 유지"를 앱에서</div>
+<pre><code><span class="cm">// 목록 전체가 네트워크를 두 번 오간다</span>
+<span class="kw">List</span>&lt;String&gt; recent = parse(redis.get(<span class="st">"recent:user:1"</span>));
+recent.add(0, <span class="st">"product:99"</span>);
+<span class="kw">if</span> (recent.size() &gt; 10) recent = recent.subList(0, 10);
+<span class="ln-bad">redis.set(<span class="st">"recent:user:1"</span>, toJson(recent));</span><span class="cm">// 경합 시 다른 탭의 조회 기록이 증발</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 두 명령, 목록은 서버에 머문다</div>
+<pre><code><span class="ln-good">redis.lpush(<span class="st">"recent:user:1"</span>, <span class="st">"product:99"</span>);</span><span class="ln-good">redis.ltrim(<span class="st">"recent:user:1"</span>, 0, 9);</span><span class="cm">// 두 명령 사이에 다른 요청이 끼어 목록이</span>
+<span class="cm">// 잠깐 11개일 수는 있다. 다만 그것은</span>
+<span class="cm">// "잠깐 하나 더 있는" 무해한 상태이고</span>
+<span class="cm">// 곧 다음 LTRIM이 정리한다.</span>
+<span class="cm">// 이 잠깐조차 허용 못 하면 MULTI/EXEC나 Lua로 묶는다.</span></code></pre>
+  </div>
+</div>
+
+<p>폴링 대신 <code>BRPOP</code>을 쓰는 것도 <b>같은 성격의 개선</b>이다 — 앱이 반복하던 일(계속 물어보기)을 서버가 대신 붙잡아 주는 쪽으로 옮긴다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 폴링</div>
+<pre><code><span class="cm">// 요청은 낭비되고 반응은 최대 100ms 늦다</span>
+<span class="kw">while</span> (<span class="kw">true</span>) {
+    <span class="kw">String</span> job = redis.rpop(<span class="st">"queue:mail"</span>);
+<span class="ln-bad">    <span class="kw">if</span> (job == <span class="kw">null</span>) { Thread.sleep(100); <span class="kw">continue</span>; }</span>    process(job);
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 블로킹 팝</div>
+<pre><code><span class="cm">// 항목이 들어올 때까지 서버가 붙잡아 둔다</span>
+<span class="cm">// (최대 5초 대기 후 반환)</span>
+<span class="ln-good"><span class="kw">String</span> job = redis.brpop(</span><span class="ln-good">    Duration.ofSeconds(5), <span class="st">"queue:mail"</span>);</span><span class="cm">// 빈 큐를 향한 무의미한 왕복이 사라지고, 도착 즉시 처리된다.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>List의 두 가지 주의점</h4>
+  <div class="grid">
+    <div class="tile red"><div class="k">LRANGE key 0 -1</div><div class="d">전체 조회는 <b>O(N)</b>. 리스트가 크면 싱글 스레드를 그만큼 점유해 <b>블로킹 폭탄</b>이 된다.</div></div>
+    <div class="tile red"><div class="k">ack가 없다</div><div class="d">소비자가 꺼낸 뒤 죽으면 <b>메시지가 사라진다.</b> 유실이 허용되지 않으면 List가 아니라 Redis Streams나 Kafka의 영역. (5절에서 자세히)</div></div>
+  </div>
+</div>
+
+<!-- 2-4 Set -->
+<h3 id="s2-4">2-4. Set — 중복 없는 집합: 중복 방지, 집합 연산</h3>
+<p>순서가 없고 <b>중복이 없는</b> 멤버 집합이다. <code>SADD</code>는 <b>"이미 있으면 0, 새로 넣었으면 1"</b>을 반환하므로 <b>존재 확인과 추가가 원자적으로 한 번에</b> 이뤄진다.</p>
+
+<div class="memo green">
+  <h4>언제 Set을 고르는가</h4>
+  <div class="rule ok"><b>"이미 있는가?"</b>가 핵심 질문일 때</div>
+  <p style="margin:6px 0 0;font-size:.95rem">중복 응모 차단, 출석 체크, 좋아요 여부처럼 같은 값이 두 번 들어가면 안 되는 데이터가 여기 해당한다. 판단의 결정적 근거는 <b><code>SADD</code>의 반환값</b>이다 — 애플리케이션이 "조회해서 없으면 넣는다"를 할 필요 없이, <b>판정 자체를 서버가 원자적으로 내려 준다.</b> 여러 집합을 겹쳐 봐야 한다면(공통 팔로워, 아직 안 본 항목) Set 말고 다른 선택지는 사실상 없다. 반대로 <b>순서가 의미 있거나 같은 값이 여러 번 들어와야 한다면</b> Set은 답이 아니다.</p>
+</div>
+
+<div class="callout info"><span class="t">암기 장치 — SADD는 "번호표 뽑기"</span>
+  번호표를 뽑으면 <b>새 번호가 나오거나(1 = 처음이다)</b>, 이미 뽑은 사람이면 <b>거절당한다(0 = 이미 있다)</b>. 뽑는 행위 하나에 판정이 들어 있어서, "뽑아도 되는지 먼저 물어보는" 단계가 필요 없다. 이 <b>"물어보는 단계가 사라졌다"</b>가 곧 원자성이다.
+</div>
+
+<div class="grid g3">
+  <div class="tile plain"><div class="k">중복 방지</div><div class="d">이벤트 중복 응모 차단, 오늘 출석 체크, "이 공지를 이미 본 사용자" — <code>SADD</code>의 반환값이 곧 <b>"처음인가?"의 답</b>.</div></div>
+  <div class="tile plain"><div class="k">좋아요 / 팔로워</div><div class="d"><code>SISMEMBER</code>로 "내가 눌렀나"를 O(1)로 확인하고, <code>SCARD</code>로 개수를 센다.</div></div>
+  <div class="tile plain"><div class="k">집합 연산</div><div class="d"><code>SINTER</code>(교집합 — 공통 팔로워, 함께 아는 친구), <code>SDIFF</code>(차집합 — 아직 안 본 항목).</div></div>
+</div>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> DB에서 SELECT 후 INSERT</div>
+<pre><code><span class="cm">// 확인 시점과 삽입 시점이 벌어져 있어</span>
+<span class="cm">// 그 틈에 상대가 끼어든다.</span>
+<span class="ln-bad"><span class="kw">if</span> (!db.existsEntry(userId)) { db.insertEntry(userId); }</span><span class="cm">// → 동시 요청이 둘 다 통과 = 중복 응모 발생</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> SADD 반환값으로 판정</div>
+<pre><code><span class="cm">// 확인과 삽입이 서버 안에서 한 덩어리다.</span>
+<span class="cm">// 동시 요청 둘 중 정확히 하나만 1을 받는다.</span>
+<span class="ln-good"><span class="kw">Long</span> added = redis.sadd(<span class="st">"event:2026-08:entries"</span>, userId);</span><span class="ln-good"><span class="kw">if</span> (added == 0) <span class="kw">throw new</span> AlreadyEnteredException();</span></code></pre>
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">주의 — 큰 Set의 전체 순회</span>
+  <code>SMEMBERS</code>(전체 조회)와 <code>SINTER</code>는 <b>O(N)</b>이라 수백만 멤버 Set에서는 서버를 세운다. 큰 집합 순회는 <code>SSCAN</code>으로 <b>나눠서</b> 한다.
+</div>
+
+<!-- 2-5 Sorted Set -->
+<h3 id="s2-5">2-5. Sorted Set — score로 정렬된 집합: 랭킹, 지연 큐</h3>
+<p>Set에 <b>score(실수)</b>가 붙어, 멤버들이 항상 score 순으로 <b>정렬된 상태로 유지된다.</b> 추가와 score 변경, 순위 조회가 <b>O(log N)</b>이다. <b>"정렬 상태의 실시간 유지"가 이 자료구조의 존재 이유</b>다.</p>
+
+<div class="memo green">
+  <h4>언제 Sorted Set을 고르는가</h4>
+  <div class="rule ok">데이터마다 <b>"크기"를 뜻하는 숫자</b>가 있고, <b>그 숫자 순서로 조회</b>해야 할 때</div>
+  <p style="margin:6px 0 0;font-size:.95rem">점수 순 상위 10개, 시각 순으로 지금 실행할 것들, 최근 60초 안의 요청들 — <b>전부 같은 모양</b>이다. 반대로 순위나 범위 조회 없이 값만 꺼내 쓴다면 score는 낭비다.</p>
+</div>
+
+<div class="memo">
+  <h4>갈림길 하나 더 — <u>정렬을 언제 하느냐</u></h4>
+  <div class="grid">
+    <div class="tile red"><div class="k">RDB 랭킹</div><div class="d"><b>조회할 때</b> 정렬한다. 조회마다 정렬 비용을 내거나, 배치로 미리 계산해 <b>스냅샷</b>을 뜬다(= 실시간 포기).</div></div>
+    <div class="tile ok"><div class="k">Sorted Set</div><div class="d"><b>쓰기 순간마다</b> 정렬 상태를 유지한다. 조회는 <b>이미 정렬된 구간을 잘라 오는</b> 일이 된다.</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.95rem">그래서 <b>"실시간 순위"라는 요구가 있으면 Sorted Set이 정답에 가깝다.</b> 비용을 조회 쪽에서 쓰기 쪽으로 옮긴 것이고, 랭킹은 보통 조회가 훨씬 잦다.</p>
+</div>
+
+<div class="grid g3">
+  <div class="tile plain"><div class="k">실시간 랭킹</div><div class="d">조회/좋아요마다 <code>ZINCRBY</code>, 상위 10개는 <code>ZREVRANGE</code>, 내 순위는 <code>ZREVRANK</code>.</div></div>
+  <div class="tile plain"><div class="k">지연 큐 / 스케줄링</div><div class="d">score를 <b>실행 예정 시각(epoch)</b>으로 넣고, 워커가 <code>ZRANGEBYSCORE queue 0 &lt;now&gt;</code>로 "지금 실행할 것"만 꺼낸다.</div></div>
+  <div class="tile plain"><div class="k">슬라이딩 윈도우 rate limiter</div><div class="d">score를 <b>요청 시각</b>으로 넣고, 오래된 것은 <code>ZREMRANGEBYSCORE</code>로 제거한 뒤 <code>ZCARD</code>로 최근 N초 요청 수를 센다.</div></div>
+</div>
+
+<div class="codehead neutral"><span class="tag">명령</span> 랭킹 3종 세트</div>
+<pre><code>ZINCRBY  ranking:daily 1 "webtoon:55"       <span class="cm"># 조회 1건 → score +1</span>
+ZREVRANGE ranking:daily 0 9 WITHSCORES      <span class="cm"># 실시간 TOP 10</span>
+ZREVRANK ranking:daily "webtoon:55"         <span class="cm"># 내 순위 (0부터)</span></code></pre>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 관계형 DB로 랭킹</div>
+<pre><code><span class="cm">-- 증가와 정렬이 따로 논다</span>
+<span class="ln-bad">UPDATE webtoon SET view_count = view_count + 1 WHERE id = 55;</span><span class="ln-bad">SELECT id, view_count FROM webtoon</span><span class="ln-bad">  ORDER BY view_count DESC LIMIT 10;</span><span class="cm">-- 인덱스를 걸어도 조회수가 바뀔 때마다 인덱스가 갱신되고,</span>
+<span class="cm">-- 규모가 커지면 결국 집계 배치 + 랭킹 스냅샷 테이블로</span>
+<span class="cm">-- 도망가게 된다 (= 실시간 포기).</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> Sorted Set</div>
+<pre><code><span class="cm">// 증가와 정렬 유지가 한 명령이다.</span>
+<span class="ln-good">redis.zincrby(<span class="st">"ranking:daily"</span>, 1, <span class="st">"webtoon:55"</span>);</span><span class="cm">// 조회는 정렬된 구간을 잘라 오는 것뿐이다.</span>
+<span class="ln-good">Set&lt;TypedTuple&lt;String&gt;&gt; top10 =</span><span class="ln-good">    redis.reverseRangeWithScores(<span class="st">"ranking:daily"</span>, 0, 9);</span></code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>동점 처리 규칙 — 시험에 잘 나온다</h4>
+  <div class="rule red">score가 같은 멤버끼리는 <b>멤버 문자열의 사전순</b>으로 정렬된다</div>
+  <p style="margin:6px 0 0;font-size:.95rem">"동점일 때 먼저 올린 사람이 앞서야 한다"는 요구가 있다면 그 순서를 <b>score 안에 섞어 넣는 설계</b>가 필요하다 (예: score를 <code>점수 - 시각/큰수</code> 형태로 만들어 미세하게 차등을 준다).</p>
+</div>
+
+<!-- ===================== 3. 스킵 리스트 ===================== -->
+<h2 id="s3">3. 내부 구조 — 스킵 리스트가 무엇인가 <span class="badge bonus">가산점 포인트</span></h2>
+<p>Sorted Set은 <b>스킵 리스트 + 해시테이블</b> 이중 구조다. 그런데 "스킵 리스트"라는 이름만 던지면 설명이 안 된다. 이 자료구조가 <b>왜 필요했는지</b>부터 쌓아야 이름이 의미를 갖는다.</p>
+
+<h3 id="s3-0">3-0. 출발점 — 정렬 유지와 빠른 탐색을 동시에 못 하는 문제</h3>
+<p>랭킹은 두 가지를 다 요구한다. 값이 수시로 바뀌고(<code>ZINCRBY</code>), 정렬된 구간을 잘라 와야 한다(<code>ZREVRANGE 0 9</code>). 그런데 기본 자료구조는 <b>둘 중 하나만</b> 준다.</p>
+
+<div class="scroll"><table>
+  <thead><tr><th></th><th>탐색</th><th>중간 삽입</th></tr></thead>
+  <tbody>
+    <tr><td><b>정렬된 배열</b></td><td class="good">O(log N) — 이진 탐색</td><td class="bad">O(N) — 뒤쪽 원소를 전부 밀어야 한다</td></tr>
+    <tr><td><b>정렬된 연결 리스트</b></td><td class="bad">O(N) — 앞에서 하나씩 따라간다</td><td class="good">O(1) — 포인터 두 개만 바꾼다</td></tr>
+  </tbody>
+</table></div>
+
+<div class="callout warn"><span class="t">넘어가면 안 되는 지점 — 왜 정렬된 연결 리스트에서는 이진 탐색을 못 쓰나</span>
+  이진 탐색은 <b>"가운데로 점프"가 전제</b>인 알고리즘이다. 배열은 원소가 메모리에 <b>연속으로</b> 놓여 있어 <code>arr[n/2]</code>라는 주소 계산 한 번으로 가운데를 짚는다. 연결 리스트는 원소들이 메모리 여기저기 <b>흩어져</b> 있고 앞 노드가 다음 노드의 주소만 들고 있어서, <b>가운데 노드가 어디 있는지는 거기까지 걸어가 봐야 안다.</b> 점프 능력이 없으니 "절반을 버린다"는 전략 자체를 세울 수 없다. 그래서 정렬돼 있어도 O(N)이다.
+</div>
+
+<div class="rule">스킵 리스트의 아이디어는 한 줄이다 — <b>연결 리스트에 점프 능력을 인위적으로 달아 주자.</b></div>
+
+<h3 id="s3-1">3-1. 1단계 — 급행 노선을 얹는다</h3>
+<p><b>지하철</b>을 떠올리면 정확하다. 완행은 모든 역에 서고 급행은 주요 역만 선다. 목적지 근처까지 급행으로 크게 이동한 뒤 완행으로 갈아타 좁힌다.</p>
+
+<figure class="wide">
+  <div class="svgwrap">
+  <svg viewBox="0 0 1120 230" width="1120" height="230" role="img" aria-label="급행 한 층을 얹은 연결 리스트에서 14를 찾는 경로">
+    <text x="24" y="76" font-size="12" font-weight="700" fill="#2563eb">급행</text>
+    <text x="24" y="92" font-size="11" fill="#6b7280">(1층)</text>
+    <text x="24" y="166" font-size="12" font-weight="700" fill="#374151">완행</text>
+    <text x="24" y="182" font-size="11" fill="#6b7280">(0층)</text>
+    <!-- base line -->
+    <line x1="80" y1="160" x2="1090" y2="160" stroke="#d1d5db" stroke-width="2"/>
+    <!-- express line -->
+    <line x1="80" y1="80" x2="1022" y2="80" stroke="#93c5fd" stroke-width="2"/>
+    <!-- highlighted express path 1 -> 13 -->
+    <line x1="80" y1="80" x2="884" y2="80" stroke="#2563eb" stroke-width="4"/>
+    <!-- down from 13 -->
+    <line x1="884" y1="94" x2="884" y2="146" stroke="#2563eb" stroke-width="3" stroke-dasharray="5 4"/>
+    <!-- 13 -> 14 on base -->
+    <line x1="884" y1="160" x2="951" y2="160" stroke="#2563eb" stroke-width="4"/>
+    <!-- nodes: 1..16 at x = 80 + (i-1)*67.3 -->
+    <g font-size="11" class="mono">
+      <circle cx="80" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="80" y="164" text-anchor="middle">1</text>
+      <circle cx="147" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="147" y="164" text-anchor="middle">2</text>
+      <circle cx="214" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="214" y="164" text-anchor="middle">3</text>
+      <circle cx="281" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="281" y="164" text-anchor="middle">4</text>
+      <circle cx="348" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="348" y="164" text-anchor="middle">5</text>
+      <circle cx="415" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="415" y="164" text-anchor="middle">6</text>
+      <circle cx="482" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="482" y="164" text-anchor="middle">7</text>
+      <circle cx="549" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="549" y="164" text-anchor="middle">8</text>
+      <circle cx="616" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="616" y="164" text-anchor="middle">9</text>
+      <circle cx="683" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="683" y="164" text-anchor="middle">10</text>
+      <circle cx="750" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="750" y="164" text-anchor="middle">11</text>
+      <circle cx="817" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="817" y="164" text-anchor="middle">12</text>
+      <circle cx="884" cy="160" r="13" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="884" y="164" text-anchor="middle" fill="#1d4ed8">13</text>
+      <circle cx="951" cy="160" r="14" fill="#dcfce7" stroke="#16a34a" stroke-width="2.5"/><text x="951" y="164" text-anchor="middle" fill="#15803d" font-weight="700">14</text>
+      <circle cx="1018" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="1018" y="164" text-anchor="middle">15</text>
+      <circle cx="1085" cy="160" r="13" fill="#fff" stroke="#9ca3af"/><text x="1085" y="164" text-anchor="middle">16</text>
+    </g>
+    <g font-size="11" class="mono">
+      <circle cx="80" cy="80" r="13" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="80" y="84" text-anchor="middle" fill="#1d4ed8">1</text>
+      <circle cx="214" cy="80" r="13" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="214" y="84" text-anchor="middle" fill="#1d4ed8">3</text>
+      <circle cx="348" cy="80" r="13" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="348" y="84" text-anchor="middle" fill="#1d4ed8">5</text>
+      <circle cx="482" cy="80" r="13" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="482" y="84" text-anchor="middle" fill="#1d4ed8">7</text>
+      <circle cx="616" cy="80" r="13" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="616" y="84" text-anchor="middle" fill="#1d4ed8">9</text>
+      <circle cx="750" cy="80" r="13" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="750" y="84" text-anchor="middle" fill="#1d4ed8">11</text>
+      <circle cx="884" cy="80" r="14" fill="#2563eb" stroke="#1d4ed8" stroke-width="2"/><text x="884" y="84" text-anchor="middle" fill="#fff" font-weight="700">13</text>
+      <circle cx="1018" cy="80" r="13" fill="#eff6ff" stroke="#93c5fd" stroke-dasharray="3 2"/><text x="1018" y="84" text-anchor="middle" fill="#93c5fd">15</text>
+    </g>
+    <text x="1018" y="46" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">15는 14를 지나친다 ✕</text>
+    <text x="800" y="118" text-anchor="middle" font-size="11" fill="#2563eb" font-weight="700">여기서 완행으로 내려간다</text>
+    <text x="560" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="#2563eb">14를 찾는 경로 — 급행으로 1→3→5→7→9→11→13 (7칸), 내려와 13→14 (1칸) = 총 8번</text>
+    <text x="560" y="212" text-anchor="middle" font-size="12.5" fill="#374151">완행만 걸었으면 <tspan font-weight="700" fill="#dc2626">14번</tspan>. 급행 한 층으로 비용이 <tspan class="mono">N/2 + 2</tspan>가 됐다.</text>
+  </svg>
+  </div>
+  <figcaption>급행 위에 <b>특급</b>을 얹으면 <code>N/4 + 2 + 2</code>가 된다. 이걸 반복해서 <b>층마다 원소가 절반씩 줄어들게</b> 하면, 층수는 <code>log N</code>이 되고 각 층에서 걷는 거리는 평균 두 칸 안쪽으로 유지된다 — <b>전체 O(log N).</b> "층이 올라갈 때마다 절반"이라는 말의 정체가 이것이다.</figcaption>
+</figure>
+
+<h3 id="s3-2">3-2. 2단계 — 탐색 규칙은 딱 두 줄이다</h3>
+
+<div class="memo">
+  <h4>스킵 리스트 탐색 규칙 — 이 두 줄이 전부다</h4>
+  <div class="grid">
+    <div class="tile ok"><div class="k">① 오른쪽 값 ≤ 찾는 값</div><div class="d"><b>오른쪽으로 간다</b></div></div>
+    <div class="tile red"><div class="k">② 아니면 (지나치거나 nil)</div><div class="d"><b>한 층 내려간다</b></div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.95rem">"내려간다"가 곧 <b>탐색 범위를 좁히는 행위</b>다. 3층에서 55에 멈춘 순간 <b>"답은 55 이후에 있다"가 확정</b>되고, 이후로는 그 뒤쪽만 본다. 이진 탐색이 절반을 버리는 것과 같은 일을 <b>포인터 따라가기만으로</b> 해내고 있다.</p>
+</div>
+
+<figure class="wide">
+  <div class="svgwrap">
+  <svg viewBox="0 0 1000 360" width="1000" height="360" role="img" aria-label="스킵 리스트에서 62를 찾는 탐색 경로">
+    <defs>
+      <marker id="sl-ar" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/></marker>
+      <marker id="sl-arb" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+    <!-- level labels -->
+    <text x="14" y="62" font-size="12" font-weight="700" fill="#6b7280">3층</text>
+    <text x="14" y="132" font-size="12" font-weight="700" fill="#6b7280">2층</text>
+    <text x="14" y="202" font-size="12" font-weight="700" fill="#6b7280">1층</text>
+    <text x="14" y="272" font-size="12" font-weight="700" fill="#374151">0층</text>
+    <!-- level 3 -->
+    <line x1="122" y1="56" x2="536" y2="56" stroke="#2563eb" stroke-width="4" marker-end="url(#sl-arb)"/>
+    <line x1="562" y1="56" x2="862" y2="56" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <rect x="60" y="42" width="62" height="28" rx="6" fill="#f1f3f7" stroke="#9ca3af"/><text x="91" y="61" text-anchor="middle" font-size="11" class="mono">head</text>
+    <rect x="536" y="42" width="52" height="28" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="562" y="61" text-anchor="middle" font-size="11.5" class="mono" fill="#1d4ed8" font-weight="700">55</text>
+    <text x="880" y="61" font-size="11" class="mono" fill="#9ca3af">nil</text>
+    <!-- level 2 -->
+    <line x1="122" y1="126" x2="264" y2="126" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="316" y1="126" x2="536" y2="126" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="588" y1="126" x2="676" y2="126" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="728" y1="126" x2="862" y2="126" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <rect x="60" y="112" width="62" height="28" rx="6" fill="#f1f3f7" stroke="#9ca3af"/><text x="91" y="131" text-anchor="middle" font-size="11" class="mono">head</text>
+    <rect x="264" y="112" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="290" y="131" text-anchor="middle" font-size="11.5" class="mono">21</text>
+    <rect x="536" y="112" width="52" height="28" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="562" y="131" text-anchor="middle" font-size="11.5" class="mono" fill="#1d4ed8" font-weight="700">55</text>
+    <rect x="676" y="112" width="52" height="28" rx="6" fill="#fef2f2" stroke="#fecaca"/><text x="702" y="131" text-anchor="middle" font-size="11.5" class="mono" fill="#dc2626">78</text>
+    <text x="880" y="131" font-size="11" class="mono" fill="#9ca3af">nil</text>
+    <!-- level 1 -->
+    <line x1="122" y1="196" x2="124" y2="196" stroke="#d1d5db" stroke-width="2"/>
+    <line x1="122" y1="196" x2="194" y2="196" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="246" y1="196" x2="264" y2="196" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="316" y1="196" x2="396" y2="196" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="448" y1="196" x2="536" y2="196" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="588" y1="196" x2="676" y2="196" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="728" y1="196" x2="862" y2="196" stroke="#d1d5db" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <rect x="60" y="182" width="62" height="28" rx="6" fill="#f1f3f7" stroke="#9ca3af"/><text x="91" y="201" text-anchor="middle" font-size="11" class="mono">head</text>
+    <rect x="194" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="220" y="201" text-anchor="middle" font-size="11.5" class="mono">8</text>
+    <rect x="264" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="290" y="201" text-anchor="middle" font-size="11.5" class="mono">21</text>
+    <rect x="396" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="422" y="201" text-anchor="middle" font-size="11.5" class="mono">40</text>
+    <rect x="536" y="182" width="52" height="28" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="562" y="201" text-anchor="middle" font-size="11.5" class="mono" fill="#1d4ed8" font-weight="700">55</text>
+    <rect x="676" y="182" width="52" height="28" rx="6" fill="#fef2f2" stroke="#fecaca"/><text x="702" y="201" text-anchor="middle" font-size="11.5" class="mono" fill="#dc2626">78</text>
+    <text x="880" y="201" font-size="11" class="mono" fill="#9ca3af">nil</text>
+    <!-- level 0 -->
+    <line x1="122" y1="266" x2="194" y2="266" stroke="#9ca3af" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="246" y1="266" x2="264" y2="266" stroke="#9ca3af" stroke-width="2"/>
+    <line x1="246" y1="266" x2="326" y2="266" stroke="#9ca3af" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="378" y1="266" x2="396" y2="266" stroke="#9ca3af" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="448" y1="266" x2="466" y2="266" stroke="#9ca3af" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="518" y1="266" x2="536" y2="266" stroke="#9ca3af" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="588" y1="266" x2="606" y2="266" stroke="#2563eb" stroke-width="4" marker-end="url(#sl-arb)"/>
+    <line x1="658" y1="266" x2="676" y2="266" stroke="#9ca3af" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="728" y1="266" x2="746" y2="266" stroke="#9ca3af" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <line x1="798" y1="266" x2="862" y2="266" stroke="#9ca3af" stroke-width="2" marker-end="url(#sl-ar)"/>
+    <rect x="60" y="252" width="62" height="28" rx="6" fill="#f1f3f7" stroke="#9ca3af"/><text x="91" y="271" text-anchor="middle" font-size="11" class="mono">head</text>
+    <rect x="194" y="252" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="220" y="271" text-anchor="middle" font-size="11.5" class="mono">8</text>
+    <rect x="264" y="252" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="290" y="271" text-anchor="middle" font-size="11.5" class="mono">13</text>
+    <rect x="326" y="252" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="352" y="271" text-anchor="middle" font-size="11.5" class="mono">21</text>
+    <rect x="396" y="252" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="422" y="271" text-anchor="middle" font-size="11.5" class="mono">40</text>
+    <rect x="466" y="252" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="492" y="271" text-anchor="middle" font-size="11.5" class="mono">47</text>
+    <rect x="536" y="252" width="52" height="28" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="562" y="271" text-anchor="middle" font-size="11.5" class="mono" fill="#1d4ed8" font-weight="700">55</text>
+    <rect x="606" y="252" width="52" height="28" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2.5"/><text x="632" y="271" text-anchor="middle" font-size="11.5" class="mono" fill="#15803d" font-weight="700">62</text>
+    <rect x="676" y="252" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="702" y="271" text-anchor="middle" font-size="11.5" class="mono">78</text>
+    <rect x="746" y="252" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="772" y="271" text-anchor="middle" font-size="11.5" class="mono">91</text>
+    <text x="880" y="271" font-size="11" class="mono" fill="#9ca3af">nil</text>
+    <!-- down arrows -->
+    <line x1="562" y1="70" x2="562" y2="112" stroke="#2563eb" stroke-width="3" stroke-dasharray="5 4" marker-end="url(#sl-arb)"/>
+    <line x1="562" y1="140" x2="562" y2="182" stroke="#2563eb" stroke-width="3" stroke-dasharray="5 4" marker-end="url(#sl-arb)"/>
+    <line x1="562" y1="210" x2="562" y2="252" stroke="#2563eb" stroke-width="3" stroke-dasharray="5 4" marker-end="url(#sl-arb)"/>
+    <!-- step badges -->
+    <circle cx="330" cy="34" r="12" fill="#2563eb"/><text x="330" y="39" text-anchor="middle" font-size="12" fill="#fff" font-weight="700">1</text>
+    <circle cx="600" cy="90" r="12" fill="#2563eb"/><text x="600" y="95" text-anchor="middle" font-size="12" fill="#fff" font-weight="700">2</text>
+    <circle cx="600" cy="160" r="12" fill="#2563eb"/><text x="600" y="165" text-anchor="middle" font-size="12" fill="#fff" font-weight="700">3</text>
+    <circle cx="600" cy="230" r="12" fill="#2563eb"/><text x="600" y="235" text-anchor="middle" font-size="12" fill="#fff" font-weight="700">4</text>
+    <circle cx="632" cy="308" r="12" fill="#16a34a"/><text x="632" y="313" text-anchor="middle" font-size="12" fill="#fff" font-weight="700">5</text>
+    <text x="656" y="313" font-size="12" fill="#15803d" font-weight="700">62 — 찾았다 (비교 5번)</text>
+    <text x="91" y="308" font-size="11.5" fill="#6b7280">0층은 모든 원소가 정렬된 채로 이어진 평범한 연결 리스트</text>
+    <text x="500" y="342" text-anchor="middle" font-size="12.5" fill="#374151">0층만 걸었으면 7번. 원소가 9개뿐이라 차이가 작아 보이지만, <tspan font-weight="700" fill="#2563eb">100만 개면 100만 번 대 약 40번</tspan>이다.</text>
+  </svg>
+  </div>
+  <figcaption>위층에서 크게 뛰고 아래층에서 좁힌다. 파란 굵은 선이 실제 탐색 경로, 점선이 "한 층 내려감"이다.</figcaption>
+</figure>
+
+<div class="scroll"><table>
+  <thead><tr><th>#</th><th>현재 위치</th><th>오른쪽</th><th>판단</th><th>행동</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>3층 head</td><td><code>55</code></td><td>55 &lt; 62</td><td class="good">오른쪽으로 → 55</td></tr>
+    <tr><td>2</td><td>3층 55</td><td><code>nil</code></td><td>갈 수 없다</td><td>한 층 내려감</td></tr>
+    <tr><td>3</td><td>2층 55</td><td><code>78</code></td><td>78 &gt; 62</td><td>한 층 내려감</td></tr>
+    <tr><td>4</td><td>1층 55</td><td><code>78</code></td><td>78 &gt; 62</td><td>한 층 내려감</td></tr>
+    <tr class="hl"><td>5</td><td>0층 55</td><td><b>62</b></td><td>일치</td><td class="good">찾았다</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="s3-3">3-3. 3단계 — 왜 동전 던지기인가</h3>
+<p>여기가 스킵 리스트의 핵심이고, 보통 가장 안 잡히는 부분이다.</p>
+
+<p>앞에서 그린 <b>"매 2번째 노드를 급행역으로"</b> 같은 이상적인 모양은 <b>삽입 한 번에 무너진다.</b> 맨 앞에 원소 하나가 들어오면 짝수/홀수 번째가 전부 뒤집히니, 급행역을 다시 지정하려면 전체를 훑어야 한다 — <b>O(N)</b>이다. 랭킹은 초당 수천 번 갱신되는데 이런 비용은 낼 수 없다.</p>
+
+<p>균형 트리(레드-블랙 트리)는 이 문제를 <b>회전(rotation)</b>으로 푼다. 삽입할 때마다 균형이 깨졌는지 검사하고 서브트리를 돌려 모양을 강제로 복구한다. 동작하지만 처리해야 할 경우의 수가 많아 <b>구현이 복잡하다.</b></p>
+
+<div class="rule">스킵 리스트는 정반대를 택한다 — <b>"정확한 모양"을 포기하고 "평균적으로 그 모양"에 만족한다.</b></div>
+
+<div class="cmp">
+  <div>
+    <div class="codehead neutral"><span class="tag">삽입 시</span> 층수를 동전으로 정한다</div>
+<pre><code>level = 1
+<span class="kw">while</span> (동전이 앞면):      <span class="cm">// 확률 p</span>
+    level += 1
+
+<span class="cm">// → 이 노드는 level 층까지 링크를 갖는다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead neutral"><span class="tag">결과</span> p = 1/2일 때 분포</div>
+<pre><code>1층까지만  : 1/2      <span class="cm">← 절반은 급행역이 되지 못한다</span>
+2층까지    : 1/4
+3층까지    : 1/8
+...
+<span class="cm">// 아무도 조정하지 않았는데 "층마다 절반"이</span>
+<span class="cm">// 확률적으로 저절로 만들어진다.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>결정적인 이득 — 재균형이라는 개념이 <u>아예 없다</u></h4>
+  <div class="rule ok">노드의 층수는 <b>삽입 시점에 정해지고 그 뒤로 절대 바뀌지 않는다</b></div>
+  <p style="margin:6px 0 0;font-size:.95rem">다른 노드가 들어오거나 빠져도 내 층수는 그대로다. 그래서 삽입은 각 층에서 <b>"내 왼쪽이 될 노드"의 포인터를 고쳐 끼우는 일뿐</b>이고, 그 왼쪽 노드들은 <b>탐색 경로에서 이미 다 지나온 노드들</b>이다. 따로 찾을 필요가 없다.</p>
+</div>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 900 250" width="900" height="250" role="img" aria-label="55를 3층까지 올려 삽입할 때 고치는 포인터 4개">
+    <defs>
+      <marker id="ins-arg" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="450" y="24" text-anchor="middle" font-size="13.5" font-weight="700" fill="#16a34a">55를 3층까지 올려 삽입 — 탐색하며 멈춘 지점이 그대로 삽입 지점 목록이 된다</text>
+    <g font-size="12">
+      <rect x="60" y="44" width="360" height="36" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+      <text x="76" y="67" font-size="12" fill="#374151"><tspan font-weight="700">3층</tspan>: head 에서 멈췄다</text>
+      <rect x="470" y="44" width="370" height="36" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="486" y="67" font-size="12" fill="#166534">head 의 3층 링크를 <tspan class="mono" font-weight="700">55</tspan> 로</text>
+      <line x1="424" y1="62" x2="466" y2="62" stroke="#16a34a" stroke-width="2" marker-end="url(#ins-arg)"/>
+
+      <rect x="60" y="90" width="360" height="36" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+      <text x="76" y="113" font-size="12" fill="#374151"><tspan font-weight="700">2층</tspan>: 21 에서 멈췄다</text>
+      <rect x="470" y="90" width="370" height="36" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="486" y="113" font-size="12" fill="#166534">21 의 2층 링크를 <tspan class="mono" font-weight="700">55</tspan> 로</text>
+      <line x1="424" y1="108" x2="466" y2="108" stroke="#16a34a" stroke-width="2" marker-end="url(#ins-arg)"/>
+
+      <rect x="60" y="136" width="360" height="36" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+      <text x="76" y="159" font-size="12" fill="#374151"><tspan font-weight="700">1층</tspan>: 40 에서 멈췄다</text>
+      <rect x="470" y="136" width="370" height="36" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="486" y="159" font-size="12" fill="#166534">40 의 1층 링크를 <tspan class="mono" font-weight="700">55</tspan> 로</text>
+      <line x1="424" y1="154" x2="466" y2="154" stroke="#16a34a" stroke-width="2" marker-end="url(#ins-arg)"/>
+
+      <rect x="60" y="182" width="360" height="36" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+      <text x="76" y="205" font-size="12" fill="#374151"><tspan font-weight="700">0층</tspan>: 47 에서 멈췄다</text>
+      <rect x="470" y="182" width="370" height="36" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="486" y="205" font-size="12" fill="#166534">47 의 0층 링크를 <tspan class="mono" font-weight="700">55</tspan> 로</text>
+      <line x1="424" y1="200" x2="466" y2="200" stroke="#16a34a" stroke-width="2" marker-end="url(#ins-arg)"/>
+    </g>
+    <text x="450" y="240" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">포인터 4개만 바꾼다. 다른 노드는 건드리지 않는다. 회전도 없다.</text>
+  </svg>
+  </div>
+  <figcaption>왼쪽 열은 <b>3-2절 탐색에서 각 층마다 멈춘 지점</b>이다. 즉 삽입은 "탐색 한 번 + 포인터 몇 개 수정"으로 끝난다.</figcaption>
+</figure>
+
+<h3 id="s3-4">3-4. 4단계 — 무작위인데 어떻게 믿나</h3>
+<p>최악의 경우는 실제로 O(N)이다. 모든 동전이 뒷면이면 전부 1층짜리, 즉 <b>평범한 연결 리스트</b>가 된다. 원소 100만 개에서 그 일이 벌어질 확률은 계산할 의미가 없는 수준이다.</p>
+<p>다만 확률이 작다는 것보다 <b>더 중요한 성질</b>이 있다.</p>
+
+<div class="memo">
+  <h4>이 설계의 세련된 부분</h4>
+  <div class="rule">스킵 리스트의 모양은 <b>입력 데이터에 전혀 의존하지 않는다</b></div>
+  <div class="grid" style="margin-top:10px">
+    <div class="tile red"><div class="k">이진 탐색 트리</div><div class="d">정렬된 데이터를 순서대로 넣으면 한쪽으로 늘어져 <b>연결 리스트</b>가 된다. 즉 <b>입력 패턴이 성능을 결정</b>하고, 그래서 악의적인 입력으로 성능을 무너뜨릴 수 있다(해시테이블의 충돌 공격도 같은 종류).</div></div>
+    <div class="tile ok"><div class="k">스킵 리스트</div><div class="d">모양은 오직 <b>내부 난수</b>가 결정하므로 <b>어떤 순서로 넣어도 기대 성능이 같다.</b> 무작위성이 데이터 쪽이 아니라 <b>자료구조 안에</b> 있다.</div></div>
+  </div>
+</div>
+
+<h3 id="s3-5">3-5. 5단계 — Redis가 더 붙인 두 가지</h3>
+
+<div class="memo">
+  <h4>(1) Redis의 스킵 리스트 상수</h4>
+  <div class="grid">
+    <div class="tile"><div class="k">p = 0.25</div><div class="s">ZSKIPLIST_P</div><div class="d">승격 확률을 1/2이 아니라 <b>1/4</b>로 잡았다. 확률을 낮춰 <b>노드당 포인터 개수를 줄인 것</b>(평균 링크 수 2개 → 1.33개). 탐색 단계는 조금 늘지만, 수억 개 멤버를 담는 서버에서는 <b>메모리가 더 비싼 자원</b>이라는 판단이다.</div></div>
+    <div class="tile"><div class="k">최대 32층</div><div class="s">ZSKIPLIST_MAXLEVEL</div><div class="d">p=1/4에서 원소 <b>2<sup>64</sup>개</b> 규모까지 커버한다.</div></div>
+  </div>
+</div>
+
+<p><b>(2) span — 순위 계산의 비밀.</b> <code>ZRANK</code>나 <code>ZRANGE 0 9</code>처럼 <b>인덱스로 자르는 조회가 어떻게 O(log N)인지</b>를 설명하는 부분이다. Redis의 각 층 링크는 <b>"이 링크가 0층 기준 몇 칸을 건너뛰는가"</b>를 함께 저장한다. 이것이 span이다.</p>
+
+<figure class="wide">
+  <div class="svgwrap">
+  <svg viewBox="0 0 1000 280" width="1000" height="280" role="img" aria-label="span을 더해 순위를 계산하는 도식">
+    <defs>
+      <marker id="sp-arb" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="sp-ar" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/></marker>
+    </defs>
+    <text x="14" y="62" font-size="12" font-weight="700" fill="#6b7280">3층</text>
+    <text x="14" y="132" font-size="12" font-weight="700" fill="#6b7280">2층</text>
+    <text x="14" y="202" font-size="12" font-weight="700" fill="#374151">0층</text>
+    <!-- level 3: head -> 55 span 6 -->
+    <line x1="122" y1="56" x2="536" y2="56" stroke="#2563eb" stroke-width="4" marker-end="url(#sp-arb)"/>
+    <rect x="278" y="34" width="86" height="24" rx="12" fill="#2563eb"/>
+    <text x="321" y="51" text-anchor="middle" font-size="12" fill="#fff" font-weight="700" class="mono">span 6</text>
+    <rect x="60" y="42" width="62" height="28" rx="6" fill="#f1f3f7" stroke="#9ca3af"/><text x="91" y="61" text-anchor="middle" font-size="11" class="mono">head</text>
+    <rect x="536" y="42" width="52" height="28" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="562" y="61" text-anchor="middle" font-size="11.5" class="mono" fill="#1d4ed8" font-weight="700">55</text>
+    <!-- level 2 -->
+    <line x1="122" y1="126" x2="264" y2="126" stroke="#9ca3af" stroke-width="2" marker-end="url(#sp-ar)"/>
+    <rect x="150" y="104" width="86" height="24" rx="12" fill="#e5e7eb"/>
+    <text x="193" y="121" text-anchor="middle" font-size="12" fill="#374151" class="mono">span 3</text>
+    <line x1="316" y1="126" x2="536" y2="126" stroke="#9ca3af" stroke-width="2" marker-end="url(#sp-ar)"/>
+    <rect x="382" y="104" width="86" height="24" rx="12" fill="#e5e7eb"/>
+    <text x="425" y="121" text-anchor="middle" font-size="12" fill="#374151" class="mono">span 3</text>
+    <line x1="588" y1="126" x2="676" y2="126" stroke="#9ca3af" stroke-width="2" marker-end="url(#sp-ar)"/>
+    <rect x="589" y="104" width="86" height="24" rx="12" fill="#e5e7eb"/>
+    <text x="632" y="121" text-anchor="middle" font-size="12" fill="#374151" class="mono">span 2</text>
+    <rect x="60" y="112" width="62" height="28" rx="6" fill="#f1f3f7" stroke="#9ca3af"/><text x="91" y="131" text-anchor="middle" font-size="11" class="mono">head</text>
+    <rect x="264" y="112" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="290" y="131" text-anchor="middle" font-size="11.5" class="mono">21</text>
+    <rect x="536" y="112" width="52" height="28" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="562" y="131" text-anchor="middle" font-size="11.5" class="mono" fill="#1d4ed8" font-weight="700">55</text>
+    <rect x="676" y="112" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="702" y="131" text-anchor="middle" font-size="11.5" class="mono">78</text>
+    <!-- level 0 -->
+    <line x1="122" y1="196" x2="862" y2="196" stroke="#d1d5db" stroke-width="2"/>
+    <rect x="60" y="182" width="62" height="28" rx="6" fill="#f1f3f7" stroke="#9ca3af"/><text x="91" y="201" text-anchor="middle" font-size="11" class="mono">head</text>
+    <g font-size="11.5" class="mono">
+      <rect x="194" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="220" y="201" text-anchor="middle">8</text>
+      <rect x="264" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="290" y="201" text-anchor="middle">13</text>
+      <rect x="326" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="352" y="201" text-anchor="middle">21</text>
+      <rect x="396" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="422" y="201" text-anchor="middle">40</text>
+      <rect x="466" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="492" y="201" text-anchor="middle">47</text>
+      <rect x="536" y="182" width="52" height="28" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/><text x="562" y="201" text-anchor="middle" fill="#1d4ed8" font-weight="700">55</text>
+      <rect x="606" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="632" y="201" text-anchor="middle">62</text>
+      <rect x="676" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="702" y="201" text-anchor="middle">78</text>
+      <rect x="746" y="182" width="52" height="28" rx="6" fill="#fff" stroke="#9ca3af"/><text x="772" y="201" text-anchor="middle">91</text>
+    </g>
+    <g font-size="11" fill="#9ca3af" class="mono">
+      <text x="220" y="228" text-anchor="middle">1</text><text x="290" y="228" text-anchor="middle">2</text>
+      <text x="352" y="228" text-anchor="middle">3</text><text x="422" y="228" text-anchor="middle">4</text>
+      <text x="492" y="228" text-anchor="middle">5</text><text x="562" y="228" text-anchor="middle" fill="#2563eb" font-weight="700">6</text>
+      <text x="632" y="228" text-anchor="middle">7</text><text x="702" y="228" text-anchor="middle">8</text>
+      <text x="772" y="228" text-anchor="middle">9</text>
+      <text x="91" y="228" text-anchor="middle">0층 위치 →</text>
+    </g>
+    <rect x="230" y="244" width="540" height="30" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="500" y="264" text-anchor="middle" font-size="12.5" fill="#1d4ed8" font-weight="700">내려온 경로의 span을 더하면 6 → 55는 앞에서 6번째 (ZRANK는 0부터 세므로 반환값 5)</text>
+  </svg>
+  </div>
+  <figcaption>별도로 세지 않고 <b>탐색 한 번에 순위가 나온다.</b> 그래서 <code>ZRANGE 0 9</code>도 "순위 0인 지점을 O(log N)으로 찾고 0층을 열 칸 걷기"로 끝난다. 균형 트리로 같은 일을 하려면 노드마다 서브트리 크기를 유지하고 <b>회전할 때마다 그 값을 다시 계산</b>해야 한다.</figcaption>
+</figure>
+
+<div class="callout ok"><span class="t">0층이 "정렬된 이중 연결 리스트"라는 사실이 값을 하는 곳</span>
+  범위 조회가 <b>"시작 지점을 O(log N)으로 찾은 뒤 옆으로 걸어가는"</b> 일로 끝난다. 게다가 Redis는 0층에 <b>뒤로 가는 포인터</b>를 하나 더 달아 뒀다. 랭킹 조회는 대부분 역순(<code>ZREVRANGE</code>로 상위 N명)이므로, 이 디테일이 실용적으로 큰 차이를 만든다.
+</div>
+
+<h3 id="s3-6">3-6. 해시테이블은 무엇을 하나 — 이중 인덱스</h3>
+<p>스킵 리스트만 있으면 <b>"멤버 이름으로 score를 찾기"</b>에는 탐색이 필요하다. 스킵 리스트는 <b>score 순으로만</b> 정렬돼 있을 뿐, 멤버 이름 순으로는 아무 질서가 없기 때문이다. 그래서 해시테이블을 병행해 "멤버 → score"를 O(1)로 답하게 한다. <code>ZSCORE</code>나 <code>ZINCRBY</code>가 빠른 이유가 이것이다.</p>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 900 300" width="900" height="300" role="img" aria-label="Sorted Set의 이중 인덱스 구조">
+    <defs>
+      <marker id="di-arb" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+    <rect x="20" y="12" width="860" height="276" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="450" y="38" text-anchor="middle" font-size="14" font-weight="700" fill="#374151">Sorted Set 하나 &nbsp;<tspan class="mono" font-size="12.5" fill="#2563eb">ranking:daily</tspan></text>
+    <!-- hash table -->
+    <rect x="46" y="56" width="380" height="126" rx="10" fill="#fff" stroke="#bfdbfe" stroke-width="1.6"/>
+    <text x="236" y="80" text-anchor="middle" font-size="13" font-weight="700" fill="#2563eb">해시테이블 — 멤버 → score</text>
+    <rect x="70" y="92" width="330" height="26" rx="5" fill="#f1f5f9" stroke="#e2e8f0"/>
+    <text x="86" y="110" font-size="11.5" class="mono">"webtoon:55"  →  1200</text>
+    <rect x="70" y="122" width="330" height="26" rx="5" fill="#f1f5f9" stroke="#e2e8f0"/>
+    <text x="86" y="140" font-size="11.5" class="mono">"webtoon:12"  →   980</text>
+    <text x="236" y="170" text-anchor="middle" font-size="12" fill="#2563eb" font-weight="700">O(1) — ZSCORE · ZINCRBY의 첫 단계</text>
+    <!-- skip list -->
+    <rect x="474" y="56" width="380" height="126" rx="10" fill="#fff" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="664" y="80" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">스킵 리스트 — score 순 정렬</text>
+    <g class="mono" font-size="11.5">
+      <text x="500" y="122" fill="#9ca3af">…</text>
+      <rect x="518" y="104" width="60" height="28" rx="6" fill="#f0fdf4" stroke="#bbf7d0"/><text x="548" y="123" text-anchor="middle">980</text>
+      <text x="586" y="123" fill="#9ca3af">→</text>
+      <rect x="602" y="104" width="66" height="28" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/><text x="635" y="123" text-anchor="middle" fill="#15803d" font-weight="700">1200</text>
+      <text x="676" y="123" fill="#9ca3af">→</text>
+      <rect x="692" y="104" width="66" height="28" rx="6" fill="#f0fdf4" stroke="#bbf7d0"/><text x="725" y="123" text-anchor="middle">1450</text>
+      <text x="768" y="123" fill="#9ca3af">…</text>
+    </g>
+    <text x="664" y="170" text-anchor="middle" font-size="12" fill="#16a34a" font-weight="700">O(log N) — ZRANK · ZREVRANGE · ZRANGEBYSCORE</text>
+    <!-- shared member -->
+    <rect x="330" y="228" width="240" height="46" rx="10" fill="#fff" stroke="#374151" stroke-width="1.6"/>
+    <text x="450" y="248" text-anchor="middle" font-size="12" class="mono">"webtoon:55"</text>
+    <text x="450" y="266" text-anchor="middle" font-size="11.5" fill="#6b7280">score 1200 — 실체는 하나</text>
+    <line x1="236" y1="182" x2="352" y2="224" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#di-arb)"/>
+    <line x1="664" y1="182" x2="548" y2="224" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#di-arb)"/>
+    <text x="450" y="206" text-anchor="middle" font-size="12.5" font-weight="700" fill="#2563eb">두 인덱스가 같은 멤버를 가리킨다</text>
+  </svg>
+  </div>
+  <figcaption>면접에서 이 한 문장이 정확도를 만든다 — <b>"스킵 리스트와 해시테이블이 같은 멤버를 가리키는 이중 인덱스 구조"</b>. 연산마다 어느 쪽이 일하는지 아래 표로 확인한다.</figcaption>
+</figure>
+
+<div class="scroll"><table>
+  <thead><tr><th>명령</th><th>해시테이블</th><th>스킵 리스트</th><th>전체</th></tr></thead>
+  <tbody>
+    <tr><td><code>ZSCORE member</code></td><td>O(1) 조회</td><td class="sub">안 씀</td><td class="good">O(1)</td></tr>
+    <tr><td><code>ZADD</code> / <code>ZINCRBY</code></td><td>O(1)로 기존 score 확인</td><td>위치 재배치 O(log N)</td><td>O(log N)</td></tr>
+    <tr><td><code>ZRANK member</code></td><td>O(1)로 score 획득</td><td>span 합산 O(log N)</td><td>O(log N)</td></tr>
+    <tr><td><code>ZREVRANGE 0 9</code></td><td class="sub">안 씀</td><td>시작점 O(log N) + 10칸 걷기</td><td>O(log N + 10)</td></tr>
+  </tbody>
+</table></div>
+
+<!-- ===================== 4. 선택 기준 ===================== -->
+<h2 id="s4">4. 한눈 비교와 선택 기준</h2>
+
+<div class="scroll"><table>
+  <thead><tr><th>자료구조</th><th>핵심 성질</th><th>대표 사용 사례</th><th>서버로 옮겨 주는 연산</th></tr></thead>
+  <tbody>
+    <tr><td><b>String</b></td><td>단일 값, 원자 증감</td><td>캐시, 카운터, 분산 락</td><td><code>INCR</code>(더하기), <code>SET NX</code>(없으면 넣기)</td></tr>
+    <tr><td><b>Hash</b></td><td>field 단위 접근</td><td>프로필, 장바구니, 부분 갱신 객체</td><td><code>HINCRBY</code>(필드만 증감), <code>HGET</code>(필드만 조회)</td></tr>
+    <tr><td><b>List</b></td><td>양끝 O(1), 순서 유지</td><td>큐, 최근 본 목록</td><td><code>LPUSH</code>/<code>LTRIM</code>(앞에 붙이고 뒤 자르기), <code>BRPOP</code>(기다렸다 꺼내기)</td></tr>
+    <tr><td><b>Set</b></td><td>중복 없음, 집합 연산</td><td>중복 방지, 좋아요, 교집합</td><td><code>SADD</code>(있는지 보고 넣기), <code>SINTER</code>(겹쳐 보기)</td></tr>
+    <tr><td><b>Sorted Set</b></td><td>score 정렬 유지</td><td>랭킹, 지연 큐, rate limiter</td><td><code>ZINCRBY</code>(올리고 재정렬), <code>ZRANK</code>(세지 않고 순위)</td></tr>
+  </tbody>
+</table></div>
+
+<div class="memo green">
+  <h4>선택의 출발점 — 명사가 아니라 동사에서 시작한다</h4>
+  <div class="rule ok">"이 데이터가 <b>무엇인가</b>"가 아니라 &nbsp;→&nbsp; "이 데이터에 필요한 <b>연산이 무엇인가</b>"</div>
+  <p style="margin:6px 0 0;font-size:.95rem">데이터의 <b>모양</b>이 아니라 그 데이터에 <b>하려는 짓</b>이 자료구조를 정한다. "장바구니니까 List" 같은 판단이 틀리는 이유가 이것이다 — 장바구니는 목록처럼 생겼지만 실제 연산은 <b>"상품별 수량 증감"</b>이라 Hash가 맞다.</p>
+</div>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 900 480" width="900" height="480" role="img" aria-label="자료구조 선택 결정 트리">
+    <defs>
+      <marker id="dt-ar" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/></marker>
+      <marker id="dt-arg" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+    <!-- Q1 -->
+    <rect x="120" y="20" width="330" height="50" rx="10" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="285" y="42" text-anchor="middle" font-size="13" font-weight="700">정렬된 순서로 조회해야 하나?</text>
+    <text x="285" y="60" text-anchor="middle" font-size="11" fill="#6b7280">상위 N · 범위 · 내 순위 · 시각 순</text>
+    <line x1="450" y1="45" x2="592" y2="45" stroke="#16a34a" stroke-width="2" marker-end="url(#dt-arg)"/>
+    <text x="521" y="36" text-anchor="middle" font-size="12" fill="#16a34a" font-weight="700">예</text>
+    <rect x="600" y="24" width="250" height="42" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="725" y="50" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a">Sorted Set</text>
+    <line x1="285" y1="70" x2="285" y2="106" stroke="#9ca3af" stroke-width="2" marker-end="url(#dt-ar)"/>
+    <text x="302" y="92" font-size="11.5" fill="#6b7280">아니오</text>
+    <!-- Q2 -->
+    <rect x="120" y="110" width="330" height="50" rx="10" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="285" y="132" text-anchor="middle" font-size="13" font-weight="700">중복 없이 "있는가?"를 물어야 하나?</text>
+    <text x="285" y="150" text-anchor="middle" font-size="11" fill="#6b7280">중복 방지 · 좋아요 여부 · 집합 연산</text>
+    <line x1="450" y1="135" x2="592" y2="135" stroke="#16a34a" stroke-width="2" marker-end="url(#dt-arg)"/>
+    <text x="521" y="126" text-anchor="middle" font-size="12" fill="#16a34a" font-weight="700">예</text>
+    <rect x="600" y="114" width="250" height="42" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="725" y="140" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a">Set</text>
+    <line x1="285" y1="160" x2="285" y2="196" stroke="#9ca3af" stroke-width="2" marker-end="url(#dt-ar)"/>
+    <text x="302" y="182" font-size="11.5" fill="#6b7280">아니오</text>
+    <!-- Q3 -->
+    <rect x="120" y="200" width="330" height="50" rx="10" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="285" y="222" text-anchor="middle" font-size="13" font-weight="700">순서대로 넣고 끝에서 꺼내나?</text>
+    <text x="285" y="240" text-anchor="middle" font-size="11" fill="#6b7280">큐 · 최근 N개 · 중복 허용</text>
+    <line x1="450" y1="225" x2="592" y2="225" stroke="#16a34a" stroke-width="2" marker-end="url(#dt-arg)"/>
+    <text x="521" y="216" text-anchor="middle" font-size="12" fill="#16a34a" font-weight="700">예</text>
+    <rect x="600" y="204" width="250" height="42" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="725" y="230" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a">List</text>
+    <line x1="285" y1="250" x2="285" y2="286" stroke="#9ca3af" stroke-width="2" marker-end="url(#dt-ar)"/>
+    <text x="302" y="272" font-size="11.5" fill="#6b7280">아니오</text>
+    <!-- Q4 -->
+    <rect x="120" y="290" width="330" height="50" rx="10" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="285" y="312" text-anchor="middle" font-size="13" font-weight="700">한 덩어리인데 필드별로 만지나?</text>
+    <text x="285" y="330" text-anchor="middle" font-size="11" fill="#6b7280">부분 조회 · 필드별 원자 증감</text>
+    <line x1="450" y1="315" x2="592" y2="315" stroke="#16a34a" stroke-width="2" marker-end="url(#dt-arg)"/>
+    <text x="521" y="306" text-anchor="middle" font-size="12" fill="#16a34a" font-weight="700">예</text>
+    <rect x="600" y="294" width="250" height="42" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="725" y="320" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a">Hash</text>
+    <line x1="285" y1="340" x2="285" y2="376" stroke="#9ca3af" stroke-width="2" marker-end="url(#dt-ar)"/>
+    <text x="302" y="362" font-size="11.5" fill="#6b7280">아니오</text>
+    <!-- final -->
+    <rect x="120" y="380" width="330" height="44" rx="10" fill="#f1f3f7" stroke="#9ca3af"/>
+    <text x="285" y="408" text-anchor="middle" font-size="13" font-weight="700">그 외 — 통값으로 읽고 쓴다</text>
+    <line x1="450" y1="402" x2="592" y2="402" stroke="#16a34a" stroke-width="2" marker-end="url(#dt-arg)"/>
+    <rect x="600" y="381" width="250" height="42" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="725" y="407" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a">String</text>
+    <!-- warning -->
+    <rect x="120" y="440" width="730" height="34" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="485" y="462" text-anchor="middle" font-size="12.5" fill="#dc2626" font-weight="700">위에서부터 순서대로 묻는다 — 표현력이 큰 것부터 걸러 내야 "연산이 서버에 남는다"</text>
+  </svg>
+  </div>
+  <figcaption>이 순서를 지켜야 하는 이유는 하나다. <b>자료구조가 연산을 대신해 주지 못하면 결국 애플리케이션에서 조회-수정-저장을 하게 되고, 그 순간 원자성과 성능을 둘 다 잃는다.</b> 1절에서 본 lost update가 그대로 돌아온다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>싱글 스레드에서 O(N)은 곧 "서버 전체 정지" — 위험 명령 인출 목록</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">LRANGE key 0 -1</div><div class="d">List 전체 조회</div></div>
+    <div class="tile red"><div class="k">SMEMBERS / SINTER</div><div class="d">Set 전체 조회·교집합</div></div>
+    <div class="tile red"><div class="k">ZRANGE (넓은 범위)</div><div class="d">Sorted Set 대량 구간</div></div>
+    <div class="tile red"><div class="k">HGETALL (큰 Hash)</div><div class="d">필드 전부 조립</div></div>
+    <div class="tile red"><div class="k">DEL (큰 키)</div><div class="d">원소 전부 메모리 해제</div></div>
+    <div class="tile ok"><div class="k">대안</div><div class="d"><code>SSCAN</code>/<code>HSCAN</code>으로 나눠 읽기, 범위 좁히기, <code>UNLINK</code>로 지우기</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.95rem">Redis는 명령 실행이 싱글 스레드다. 이 목록의 명령이 오래 걸리면 <b>그 시간 동안 다른 모든 클라이언트가 대기</b>한다. "느린 쿼리 하나"가 아니라 <b>"서버 전체의 정지"</b>라는 점이 RDB와 다르다.</p>
+</div>
+
+<h3 id="s4-2">(가산점 포인트) 작은 컬렉션은 압축 인코딩으로 저장된다</h3>
+<p>모든 컬렉션형은 멤버가 적을 때 <b>listpack</b>(Redis 7.0 이전에는 ziplist)이라는 압축 인코딩으로 저장된다. 원소들을 <b>연속된 바이트 배열에 촘촘히 이어 붙이는</b> 방식이라 포인터 부담이 없어 메모리를 크게 아낀다. 정수만 담긴 작은 Set은 <b>intset</b>이라는 전용 인코딩을 쓴다.</p>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 900 200" width="900" height="200" role="img" aria-label="작은 컬렉션의 압축 인코딩과 전환">
+    <defs>
+      <marker id="en-ar" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,5 L0,10 z" fill="#d97706"/></marker>
+    </defs>
+    <rect x="40" y="40" width="300" height="110" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="190" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#16a34a">멤버가 적을 때</text>
+    <text x="190" y="90" text-anchor="middle" font-size="12.5" class="mono" fill="#166534">listpack / intset</text>
+    <g class="mono" font-size="10.5">
+      <rect x="70" y="102" width="240" height="24" rx="4" fill="#fff" stroke="#bbf7d0"/>
+      <line x1="130" y1="102" x2="130" y2="126" stroke="#bbf7d0"/><line x1="190" y1="102" x2="190" y2="126" stroke="#bbf7d0"/><line x1="250" y1="102" x2="250" y2="126" stroke="#bbf7d0"/>
+      <text x="100" y="119" text-anchor="middle">a</text><text x="160" y="119" text-anchor="middle">b</text>
+      <text x="220" y="119" text-anchor="middle">c</text><text x="280" y="119" text-anchor="middle">d</text>
+    </g>
+    <text x="190" y="142" text-anchor="middle" font-size="11" fill="#16a34a">연속 바이트 — 포인터 부담 없음</text>
+    <line x1="348" y1="95" x2="548" y2="95" stroke="#d97706" stroke-width="2.5" marker-end="url(#en-ar)"/>
+    <text x="448" y="76" text-anchor="middle" font-size="12" fill="#d97706" font-weight="700">멤버 수 · 값 길이가</text>
+    <text x="448" y="92" text-anchor="middle" font-size="12" fill="#d97706" font-weight="700">임계를 넘으면</text>
+    <text x="448" y="120" text-anchor="middle" font-size="11.5" fill="#dc2626" font-weight="700">자동 전환 · 되돌아오지 않음</text>
+    <rect x="560" y="40" width="300" height="110" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="710" y="66" text-anchor="middle" font-size="13.5" font-weight="700" fill="#2563eb">임계를 넘으면</text>
+    <text x="710" y="90" text-anchor="middle" font-size="12.5" class="mono" fill="#1d4ed8">해시테이블 / 스킵 리스트</text>
+    <g class="mono" font-size="10.5">
+      <rect x="590" y="102" width="52" height="24" rx="4" fill="#fff" stroke="#bfdbfe"/><text x="616" y="119" text-anchor="middle">a</text>
+      <text x="650" y="119" fill="#9ca3af">→</text>
+      <rect x="664" y="102" width="52" height="24" rx="4" fill="#fff" stroke="#bfdbfe"/><text x="690" y="119" text-anchor="middle">b</text>
+      <text x="724" y="119" fill="#9ca3af">→</text>
+      <rect x="738" y="102" width="52" height="24" rx="4" fill="#fff" stroke="#bfdbfe"/><text x="764" y="119" text-anchor="middle">c</text>
+    </g>
+    <text x="710" y="142" text-anchor="middle" font-size="11" fill="#2563eb">노드마다 포인터 — 연산은 빠르지만 메모리↑</text>
+    <text x="450" y="180" text-anchor="middle" font-size="12.5" fill="#374151">임계를 <tspan font-weight="700" fill="#dc2626">살짝 넘긴</tspan> 컬렉션이 수십만 개 있으면 메모리가 예상보다 훨씬 크게 잡힌다</text>
+  </svg>
+  </div>
+  <figcaption>멤버 수나 값 길이가 설정된 임계를 넘어가면 그때 해시테이블이나 스킵 리스트로 전환된다. 이 전환은 <b>자동이고 되돌아오지 않는다.</b></figcaption>
+</figure>
+
+<div class="callout info"><span class="t">실무적 함의</span>
+  <b>작은 Hash 여러 개가 큰 Hash 하나보다 메모리 효율이 좋을 수 있다.</b> 반대로 임계를 살짝 넘긴 컬렉션이 수십만 개 있으면 메모리가 예상보다 훨씬 크게 잡힌다. <b>메모리 산정이 빗나갔을 때 이 인코딩 전환을 의심 목록에 올릴 수 있으면 좋다.</b>
+</div>
+
+<!-- ===================== 5. 꼬리질문 ===================== -->
+<h2 id="s5">5. 꼬리질문 셀프 테스트</h2>
+<p class="sub">질문만 보고 소리 내어 답한 뒤 펼쳐서 확인한다. 답에 <b>이 문서의 축</b>(연산을 서버로 · 명령 하나 = 원자적 · 접근 패턴 · O(N)은 서버 정지)이 들어갔는지 스스로 채점한다.</p>
+<div class="tools"><button type="button" onclick="document.querySelectorAll('details.q').forEach(d=&gt;d.open=true)">모두 펼치기</button><button type="button" onclick="document.querySelectorAll('details.q').forEach(d=&gt;d.open=false)">모두 접기</button></div>
+
+<details class="q"><summary>객체 캐시는 String에 JSON으로 넣나요, Hash로 쪼개 넣나요? <span class="badge core">핵심</span><span class="hint">힌트: 기준은 하나 — 접근 패턴. 그리고 마지막에 TTL 이야기를 붙인다</span></summary><div class="a">
+  <p>기준은 <b>접근 패턴</b>이다.</p>
+  <p>항상 <b>통째로 읽고 통째로 갱신</b>하는 조회 캐시라면 <b>String-JSON이 낫다.</b> 단순하고, 직렬화가 한 번이면 끝이라 오히려 빠르다. Hash로 쪼개면 필드마다 오버헤드가 붙고 <code>HGETALL</code>로 전부 읽어 조립하는 비용이 든다.</p>
+  <p>특정 필드만 자주 읽거나 갱신한다면(장바구니 수량, 포인트) <b>Hash가 맞다.</b> 부분 갱신이 원자적이고, 전체 역직렬화 비용이 없으며, 2-2절에서 본 <b>"내가 만지지도 않은 필드가 덮이는" lost update가 원천적으로 없다.</b></p>
+  <div class="rule">결정적 차이 하나를 덧붙이면 답이 완성된다 — <b>TTL은 기본적으로 key 단위</b></div>
+  <p>Hash 하나에 담긴 필드들은 <b>수명을 공유한다</b>는 뜻이다. (Redis 7.4에서 <code>HEXPIRE</code> 계열로 필드 단위 만료가 추가됐지만, 운영 클러스터의 버전을 확인해야 쓸 수 있는 이야기이고 설계의 기본값은 여전히 key 단위 TTL이다.) 그래서 <b>"필드마다 수명이 달라야 한다"면 Hash 하나가 아니라 key를 쪼개는 설계</b>를 먼저 검토한다.</p>
+</div></details>
+
+<details class="q"><summary>Sorted Set은 어떻게 O(log N)으로 정렬을 유지하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 이름만 대면 반쪽. "왜 층을 얹어야 했나" → "왜 확률인가" → "해시테이블은 왜"</span></summary><div class="a">
+  <p><b>스킵 리스트(skip list)</b> 덕분이다. 정렬된 연결 리스트에 "급행 노선" 층을 확률적으로 여러 겹 얹은 구조로, 탐색할 때 위층에서 크게 건너뛰다가 목표를 지나치면 아래층으로 내려와 좁혀 간다. <b>층이 올라갈수록 원소가 절반씩 줄도록</b> 만들어지므로 층수가 log N에 비례하고, 그래서 탐색·삽입·삭제가 O(log N)이다.</p>
+  <p><b>① 왜 연결 리스트에 층을 얹어야 했는지</b>를 한 마디 붙이면 답의 급이 달라진다. 이진 탐색은 <b>"가운데로 점프"가 전제</b>인데, 연결 리스트는 주소가 흩어져 있어 가운데가 어디인지 걸어가 봐야 안다. 그래서 정렬돼 있어도 O(N)이고, 스킵 리스트는 <b>그 점프 능력을 상위 층 링크로 인위적으로 만들어 준 것</b>이다.</p>
+  <p><b>② 층수를 확률로 정하는 이유</b>까지 답하면 완성된다. "매 2번째를 급행역으로" 같은 정확한 모양은 <b>삽입 한 번에 무너져 재구성에 O(N)</b>이 든다. 그래서 정확한 모양을 포기하고 동전 던지기로 평균적인 모양만 얻는다. 대신 <b>노드의 층수가 삽입 시점에 고정되어 재균형(회전)이 아예 없다</b> — 균형 트리와 같은 성능을 훨씬 단순한 구현으로 얻는 것이 채택 이유다. 덧붙여 스킵 리스트의 모양은 난수만으로 결정되므로 <b>입력 순서에 성능이 흔들리지 않는다</b>(정렬된 데이터에 한쪽으로 늘어지는 이진 탐색 트리와 대비된다).</p>
+  <p><b>③ 해시테이블</b>을 병행해 "멤버로 score 찾기"는 O(1)로 처리한다. <b>두 자료구조가 같은 멤버를 가리키는 이중 인덱스 구조</b>라고 답하면 정확하다. 범위 조회가 빠른 이유까지 덧붙이면 좋다 — 스킵 리스트의 <b>맨 아래층이 정렬된 연결 리스트</b>라서 시작점만 찾으면 옆으로 걸어가면 된다. Redis는 여기에 역순 조회(<code>ZREVRANGE</code>)를 위해 맨 아래층에 <b>뒤로 가는 포인터</b>까지 달아 뒀다.</p>
+  <p><b>④ <code>ZRANK</code>가 어떻게 O(log N)인지</b> 물어 오면 <b>span</b>을 말하면 된다. 각 층 링크가 "0층 기준 몇 칸을 건너뛰는가"를 함께 저장하므로, <b>내려오며 지나온 span을 더하면 그것이 곧 순위</b>다. 세어 보지 않고 탐색 한 번으로 순위가 나온다.</p>
+</div></details>
+
+<details class="q"><summary>List를 메시지 큐로 쓰면 어떤 한계가 있나요? <span class="badge core">핵심</span><span class="hint">힌트: 세 가지. 그리고 요구사항을 가르는 축 하나</span></summary><div class="a">
+  <div class="grid g3">
+    <div class="tile red"><div class="k">① ack가 없다</div><div class="d"><code>BRPOP</code>으로 꺼내는 순간 메시지는 큐에서 사라진다. 소비자가 처리 도중에 죽으면 그 메시지는 <b>어디에도 남지 않는다.</b> "처리 완료를 확인한 뒤 지운다"는 개념 자체가 없다.</div></div>
+    <div class="tile red"><div class="k">② 소비자 그룹이 없다</div><div class="d">여러 소비자에게 나눠 주기, 실패한 것 재전송, 각 소비자가 어디까지 읽었는지 관리 같은 것이 제공되지 않는다.</div></div>
+    <div class="tile red"><div class="k">③ 재소비(replay) 불가</div><div class="d">꺼낸 메시지는 사라지므로 <b>"어제 것을 다시 처리"</b>가 안 된다.</div></div>
+  </div>
+  <div class="rule red">요구사항을 가르는 축은 <b>"유실 허용 여부"</b></div>
+  <p>그래서 <b>"유실돼도 되는 가벼운 작업"까지가 List 큐의 영역</b>이고, 유실 불가·다중 소비자·재처리가 요구되면 <b>Redis Streams나 Kafka</b>로 넘어가야 한다. 이 축을 먼저 짚고 나서 대안을 말하는 순서가 좋다 — 도구 이름부터 말하면 "왜"가 빠진다.</p>
+</div></details>
+
+<details class="q"><summary>랭킹 Sorted Set의 멤버가 수억 개가 되면 어떤 문제가 있나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: big key. 세 방향으로 터지고, 대응은 "만들어진 뒤"가 아니다</span></summary><div class="a">
+  <p><b>big key 문제</b>다. 세 방향으로 터진다.</p>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">① 메모리와 분산</div><div class="d">그 키 하나가 수 GB를 점유하고, Redis Cluster는 <b>키 단위로</b> 노드에 분산하므로 이 거대한 키가 <b>한 노드에 통째로</b> 얹힌다. <b>아무리 노드를 늘려도 이 키는 쪼개지지 않는다.</b></div></div>
+    <div class="tile red"><div class="k">② O(N) 위험</div><div class="d"><code>ZRANGE</code> 범위가 크거나 집계형 연산이 들어가면 O(N)에 가까워지고, <b>싱글 스레드를 그 시간만큼 점유해 서버 전체를 세운다.</b></div></div>
+    <div class="tile red"><div class="k">③ 삭제·마이그레이션·복제</div><div class="d"><code>DEL</code> 하나가 수억 개 원소의 메모리를 해제하느라 <b>초 단위로 멈추므로</b> <code>UNLINK</code>가 필요해지는 지점이고, 클러스터 슬롯 마이그레이션이나 복제 동기화에서도 이 키가 통째로 움직이며 지연을 만든다.</div></div>
+  </div>
+  <div class="rule">대응은 <b>만들어진 뒤가 아니라 키 설계 단계</b>에서 한다</div>
+  <ol style="margin:0;padding-left:20px">
+    <li><b>기간별로 분할</b> — <code>ranking:2026-08-31</code>처럼 일/주 단위 키 + 만료.</li>
+    <li><b>상위 N만 유지</b> — 주기적 <code>ZREMRANGEBYRANK</code>.</li>
+    <li><b>요구사항을 되묻는다</b> — "전체 정밀 순위가 정말 필요한가?" 실제로는 <b>상위 100위와 "내 순위 근처"만</b> 필요한 경우가 대부분이다.</li>
+  </ol>
+  <p style="margin-top:8px">3번까지 말하는 것이 시니어 변별 지점이다. 앞의 둘은 기술적 완화이고, 3번은 <b>문제 자체를 없애는</b> 접근이다.</p>
+</div></details>
+
+<details class="q"><summary>String의 INCR로 만든 조회수 카운터, 어떤 점을 주의해야 하나요?<span class="hint">힌트: 셋 — 유실 / 키 수명 / 타입 규율</span></summary><div class="a">
+  <div class="grid g3">
+    <div class="tile red"><div class="k">① Redis는 유실될 수 있다</div><div class="d">카운터가 <b>정산이나 광고비 산정처럼 돈에 연결</b>된다면 Redis를 원본으로 삼으면 안 된다. 주기적으로 DB에 반영하는(write-behind) 구조를 함께 설계하고, <b>"유실 시 어디까지 되돌아가는가"</b>를 정해 둬야 한다.</div></div>
+    <div class="tile red"><div class="k">② TTL 없는 키가 무한히 쌓인다</div><div class="d">대상(상품, 게시글)이 많으면 키 수가 그만큼 늘어나고 <b>아무도 지우지 않는다.</b> 키 수명 정책을 함께 설계해야 한다 — <b>일자별 키로 만들어 만료를 거는 방식</b>이 흔하다.</div></div>
+    <div class="tile red"><div class="k">③ INCR은 정수일 때만 동작</div><div class="d">값은 문자열로 저장되지만 <code>INCR</code>은 <b>정수로 해석 가능할 때만</b> 동작한다. 같은 키를 <code>SET</code>으로 JSON을 덮어쓰는 코드가 어딘가에 섞이면 그다음 <code>INCR</code>이 런타임 에러를 낸다.</div></div>
+  </div>
+  <div class="rule red">③은 자료구조 문제가 아니라 <b>키 네이밍과 소유권 규율의 문제</b>다</div>
+  <p><b>한 키는 한 용도, 한 팀이 소유한다</b>는 규칙이 없으면 언젠가 부딪힌다. 이렇게 답하면 "명령어를 아는 사람"이 아니라 "운영을 아는 사람"으로 읽힌다.</p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 원자성의 경계를 콕 찍어 묻는 것들</h4>
+
+<details class="q"><summary>"Redis는 싱글 스레드라 원자적이다"는 어디까지 맞는 말인가요? <span class="badge trap">약점 겨냥</span><span class="hint">힌트: 단위가 무엇인지 말하지 않으면 틀린 말이 된다</span></summary><div class="a">
+  <p><b>원자성의 단위는 "명령 하나"</b>다. 거기까지가 맞는 말이다. <code>LPUSH</code> 한 번은 내부적으로 "읽고-붙이고-저장"이지만 <b>다른 명령이 그 사이에 끼어들 물리적 틈이 없어</b> 원자적이다.</p>
+  <p>그러나 <b>명령 두 개는 원자적이지 않다.</b> <code>LPUSH</code> 다음에 <code>LTRIM</code>을 보내면 두 명령 사이에 다른 클라이언트의 명령이 들어올 수 있다. 앱이 <code>GET</code> → 계산 → <code>SET</code>을 하는 것도 마찬가지고, 이건 1절의 lost update와 정확히 같은 구조다.</p>
+  <div class="rule">묶으려면 — <b><code>MULTI</code>/<code>EXEC</code></b> 또는 <b>Lua 스크립트</b></div>
+  <p>차이도 한 마디 붙일 수 있으면 좋다. <code>MULTI</code>/<code>EXEC</code>는 <b>여러 명령을 한 번에 실행</b>해 주지만 <b>중간 결과를 보고 분기할 수 없다</b>(명령들이 미리 다 정해져 있어야 한다). Lua는 서버에서 스크립트를 실행하므로 <b>"읽은 값에 따라 다르게 행동하는" 로직</b>까지 한 덩어리로 만들 수 있다. 그래서 "값을 확인하고 조건이 맞으면 지운다" 같은 것은 Lua의 영역이다(다음 문항).</p>
+</div></details>
+
+<details class="q"><summary>SET NX로 분산 락을 잡았습니다. 해제는 어떻게 하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 그냥 DEL 하면 무슨 사고가 나는지부터</span></summary><div class="a">
+  <p><b>그냥 <code>DEL</code>하면 남의 락을 푼다.</b> 시나리오는 이렇다 — 프로세스 A가 락을 잡고 작업이 길어져 <code>PX</code> 만료 시간이 지나 락이 자동 해제된다. 그 틈에 프로세스 B가 같은 키로 락을 새로 잡는다. 그때 A가 작업을 마치고 <code>DEL lock:coupon</code>을 호출하면 <b>A가 B의 락을 지워 버린다.</b> 그다음부터는 락이 락이 아니다.</p>
+  <p>그래서 락 값에 <b>소유자 토큰</b>(UUID 같은 것)을 넣어 두고, 해제할 때 <b>"이 락의 값이 내 토큰일 때만 지운다"</b>를 해야 한다. 그런데 이걸 <code>GET</code> → 비교 → <code>DEL</code>로 하면 <b>명령이 세 개</b>라 원자적이지 않다 — 비교와 삭제 사이에 만료가 일어나면 똑같은 사고가 난다.</p>
+  <div class="rule red">"값을 확인하고 조건이 맞으면 지운다"는 한 덩어리여야 한다 → <b>Lua 스크립트</b></div>
+  <p>정리하면 <b>획득은 <code>SET NX PX</code> 한 명령, 해제는 토큰 비교 + <code>DEL</code>을 묶은 Lua 한 덩어리</b>다. 이 문제도 결국 이 문서의 축 그대로다 — <b>확인과 행동 사이가 벌어지면 사고가 난다.</b></p>
+</div></details>
+
+<details class="q"><summary>장바구니를 만들려고 합니다. 목록처럼 생겼는데 왜 List가 아닌가요? <span class="badge trap">약점 겨냥</span><span class="hint">힌트: 명사가 아니라 동사에서 출발한다</span></summary><div class="a">
+  <p>4절의 원칙을 그대로 적용하는 문제다. <b>"장바구니 = 목록"은 데이터의 모양</b>이고, 자료구조를 정하는 건 <b>연산</b>이다. 장바구니에 실제로 하는 일을 적어 보면 — <b>"상품 A의 수량을 2 늘린다"</b>, <b>"상품 B를 뺀다"</b>, <b>"상품 C가 담겨 있나 본다"</b>. 전부 <b>특정 항목을 지목하는</b> 연산이고, 순서는 의미가 없다.</p>
+  <p>List로 하면 "상품 A 찾기"가 O(N)이고 수량 변경은 결국 <b>전체를 읽어 고쳐 쓰는</b> 앱 로직이 된다 — 1절의 lost update 그대로다. <b>Hash</b>로 <code>field = 상품ID</code>, <code>value = 수량</code>을 쓰면 <code>HINCRBY cart:1 product:99 2</code> 한 명령으로 <b>해당 수량만 원자적으로</b> 바뀐다.</p>
+  <div class="rule">"~처럼 생겼다"로 고르면 틀리고, <b>"~를 해야 한다"</b>로 고르면 맞는다</div>
+  <p>같은 함정의 다른 예 — <b>"랭킹은 목록이니 List"</b>(→ Sorted Set), <b>"태그는 목록이니 List"</b>(→ 중복이 없어야 하고 "이 태그 있나"를 물으므로 Set).</p>
+</div></details>
+
+<details class="q"><summary>Set으로 중복 응모를 막았는데 몇 달 뒤 그 키가 수백만 멤버가 됐습니다. 무엇을 잘못했나요?<span class="hint">힌트: 자료구조 선택은 맞았다. 빠진 건 하나</span></summary><div class="a">
+  <p>자료구조 선택은 옳았다 — "이미 있는가?"가 핵심 질문이니 Set이 맞다. 빠진 것은 <b>키의 수명 설계</b>다. 이벤트 응모 기록은 <b>영원히 필요한 데이터가 아닌데</b> 키가 하나뿐이면 계속 쌓이기만 한다. 그리고 커진 키는 앞 문항의 <b>big key</b> 문제를 그대로 물려받는다 — Cluster에서 한 노드에 얹히고, <code>SMEMBERS</code>·<code>SINTER</code>가 O(N)이라 서버를 세우고, <code>DEL</code>조차 위험해진다.</p>
+  <p>고치는 방향은 랭킹 big key와 <b>완전히 같다.</b></p>
+  <ul style="margin:0;padding-left:20px">
+    <li><b>기간·대상 단위로 키를 쪼갠다</b> — <code>event:2026-08:entries</code>처럼 이벤트/기간을 키에 넣는다.</li>
+    <li><b>TTL을 건다</b> — 이벤트 종료 + 정산 기간이 지나면 자동 소멸.</li>
+    <li>영구 보존이 필요한 기록이라면 <b>원본은 DB</b>에 두고, Redis Set은 <b>"동시 요청 판정용 단기 캐시"</b>로만 쓴다.</li>
+  </ul>
+  <div class="rule">Redis 설계에서 <b>"이 키는 언제 사라지는가"</b>는 자료구조 선택과 <b>동급의 질문</b>이다</div>
+</div></details>
+
+<details class="q"><summary>Sorted Set 랭킹에서 동점자 순서를 "먼저 달성한 사람이 위"로 하려면? <span class="badge bonus">가산점</span><span class="hint">힌트: Redis는 동점을 어떻게 정렬하는지부터</span></summary><div class="a">
+  <p>먼저 기본 규칙을 안다는 걸 보여야 한다 — <b>score가 같으면 멤버 문자열의 사전순</b>으로 정렬된다. 즉 아무것도 안 하면 순서는 <b>업무적으로 무의미한 기준</b>(ID 문자열)으로 정해진다.</p>
+  <p>Redis에는 "2차 정렬 키"가 없으므로, 필요한 순서를 <b>score 하나에 접어 넣어야</b> 한다. 점수가 주 기준이고 시각이 보조 기준이라면 <b>같은 점수 안에서 먼저 달성한 쪽이 아주 미세하게 높은 score</b>를 갖도록 만든다 — 예를 들어 <code>점수 - 시각/큰수</code> 형태로, 시각이 이를수록 빼는 값이 작아지게 한다.</p>
+  <div class="callout warn" style="margin:10px 0 0"><span class="t">주의 — 정밀도</span>
+    score는 실수라 <b>표현 가능한 자릿수에 한계</b>가 있다. 점수 부분과 시각 부분이 서로의 자릿수를 침범하면 <b>순위가 뒤집힌다.</b> "큰수"를 얼마로 잡을지는 <b>점수의 최대 범위와 시각의 해상도(초/밀리초)를 함께 보고</b> 정해야 하고, 안 되면 <b>순위 계산을 애플리케이션이나 DB로 넘기는 것</b>도 선택지다.
+  </div>
+</div></details>
+
+<details class="q"><summary>Redis 자료구조를 잘 고르면 락이 필요 없어지나요?<span class="hint">힌트: 원자성이 커버하는 범위가 어디까지인지</span></summary><div class="a">
+  <p><b>"한 키 안에서 끝나는 읽고-고치고-쓰기"</b>라면 그렇다. <code>INCR</code>, <code>HINCRBY</code>, <code>SADD</code>, <code>ZINCRBY</code>는 각각 명령 하나라서 그 자체로 경합이 없고, 이런 경우 별도의 락은 <b>불필요한 비용</b>이다.</p>
+  <p>그러나 <b>여러 키에 걸친 작업</b>이나 <b>Redis 밖까지 이어지는 작업</b>은 명령 하나로 표현되지 않는다. "재고를 줄이고 → 주문을 DB에 만들고 → 실패하면 되돌린다" 같은 것이 그렇다. 여기서는 여전히 조율 장치가 필요하고, 그게 <b>분산 락</b>이거나 <b>Lua로 묶기</b>다(Lua는 Redis 안에서 끝나는 여러 키 작업까지 커버한다).</p>
+  <div class="rule">자료구조의 원자성은 <b>키 하나 안</b>에서 강력하다 — 경계를 넘으면 별도의 장치가 필요하다</div>
+  <p>답의 순서를 이렇게 잡으면 좋다. <b>① 먼저 "락 없이 되는 경우"를 정확히 말하고 ② 경계를 긋고 ③ 그 밖에서 쓰는 도구를 든다.</b> "Redis니까 락 필요 없어요"도, "무조건 분산 락"도 둘 다 반쪽이다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<div class="banner">
+  <div class="t">한 줄 요약</div>
+  Redis 자료구조를 안다는 건 <b>명령어 목록 암기가 아니라</b> "조회-수정-저장 3단계 + 락"으로 풀던 문제를 <b>"원자적 명령 한 방"</b>으로 옮길 줄 아는 것 — String · Hash · List · Set · Sorted Set 각각이 <b>어떤 연산을 서버에서 대신해 주는지</b>가 곧 설계 선택지의 폭이다.
+</div>
+
+<p class="foot">원본 문서: <code>interview-questions/knowledge/05-redis-caching/02-redis-data-structures-use-cases.md</code></p>
+
+</main>
+</body>
+</html>
+

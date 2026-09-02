@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>루프 GET vs MGET vs Pipeline — Redis 성능의 지배 요인은 네트워크 왕복이다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+.tools{display:flex;gap:8px;margin:10px 0}
+.tools button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 12px;font-size:.85rem;cursor:pointer;color:var(--text)}
+.tools button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">05 Redis · 캐싱 &nbsp;|&nbsp; 성능⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>루프 GET vs MGET vs Pipeline<br><span class="sub">Redis 성능의 지배 요인은 명령 처리가 아니라 네트워크 왕복이다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"여러 키를 조회할 때 루프 GET, MGET, pipeline의 차이는?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — Redis에서 키 100개를 조회할 때 진짜 비용은 <b>명령 처리(마이크로초 단위)</b>가 아니라 <b>네트워크 왕복(RTT, 밀리초 단위)</b>이다. 루프 GET은 왕복 100번 = <b>RTT × 100</b>이고, MGET과 pipeline은 왕복 1번으로 줄인다 — 같은 데이터를 가져오는데 지연이 <b>수십 배</b> 차이난다. 둘의 구분은 이렇다. <b>MGET</b>은 "같은 종류(String 조회)의 멀티 키 명령 하나"라서 가장 단순하지만 <b>String GET에만</b> 쓸 수 있고 Cluster에서는 <b>해시 슬롯 제약</b>을 받는다. <b>pipeline</b>은 "서로 다른 명령 여러 개를 응답을 기다리지 않고 몰아 보내는 <b>전송 방식</b>"이라 조합이 자유롭지만, 트랜잭션이 아니므로 <b>원자성은 없다</b>. 리뷰에서 <b>루프 안의 GET N번</b>을 잡아내는 눈이 이 지식의 실전 형태다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>비용의 정체</b> — Redis가 값 하나를 찾는 데는 <b>마이크로초</b>가 걸리는데 한 번 오가는 데는 <b>0.5밀리초 안팎</b>이 든다. 즉 <b>비용의 대부분이 이동 시간</b>이라, 질문은 "어떤 명령이 빠른가"가 아니라 <b>"왕복을 몇 번으로 줄이는가"</b>다.</div></li>
+    <li><span class="n">2</span><div><b>세 방식의 차이</b> — 루프 GET은 <b>응답을 기다렸다 다음을 보내므로 왕복 N번</b>, MGET과 pipeline은 <b>왕복 1번</b>이다. 키 100개 기준 <b>50.1ms 대 0.6ms, 약 83배</b>이고 <b>서버가 한 일의 양은 셋 다 똑같다</b>.</div></li>
+    <li><span class="n">3</span><div><b>MGET과 pipeline의 층위</b> — MGET은 <b>명령</b>이라 통째로 실행되어 중간 개입이 없지만 <b>String 전용</b>이고, pipeline은 <b>전송 방식</b>이라 명령 조합이 자유롭지만 <b>사이에 남의 명령이 끼어들 수 있다</b>. 원자성이 필요하면 <b>MULTI/EXEC나 Lua</b>다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">RTT — 비용의 대부분은 이동 시간이다</a></li>
+    <li><a href="#s2">키 100개, 세 방식 — 시간축으로 보기</a></li>
+    <li><a href="#s3">루프 GET의 숨은 비용 — 커넥션 풀 고갈</a></li>
+    <li><a href="#s4">코드 — 루프 GET → MGET</a></li>
+    <li><a href="#s5">MGET은 "명령", pipeline은 "전송 방식"</a></li>
+    <li><a href="#s6">"pipeline에 원자성이 없다"의 실체</a></li>
+    <li><a href="#s7">pipeline vs MULTI/EXEC vs Lua</a></li>
+    <li><a href="#s8">Cluster — MGET이 그냥 안 되는 이유</a></li>
+    <li><a href="#s9">몰아 보내기도 과하면 블로킹 폭탄</a></li>
+    <li><a href="#s10">리뷰의 눈 — 루프 × 원격 호출</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "여러 키를 조회할 때 루프 GET, MGET, pipeline의 차이는?"</p>
+  <p><b>출제 의도</b>: Redis 성능의 실제 지배 요인이 <b>명령 처리 속도가 아니라 네트워크 왕복</b>임을 아는지 본다. 루프 안에서 <code>GET</code>을 N번 치는 코드를 리뷰에서 잡는 눈 — <b>"Redis는 빠르니까"라는 막연한 믿음</b>이 아니라 <b>지연이 어디서 생기는지를 분해해 본 경험</b>이 있는지가 드러난다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"Redis는 빠르니 몇 번 더 불러도 된다"</b>는 감각 → 1~2절에서 <b>µs와 ms의 자릿수</b>를 분해하고 시간축에 실제 비례로 그려서 감각을 바꾼다.<br>
+    ② <b>MGET과 pipeline을 "둘 다 묶는 것"으로 뭉뚱그리는 것</b> → 5~6절에서 <b>명령(실행) vs 전송 방식</b>이라는 층위 차이로 다시 세우고, 원자성이 왜 없는지를 도식으로 본다.<br>
+    ③ <b>"왕복 1번이 정답"이라는 단순화</b> → 9절에서 <b>거대한 단일 명령이 그 자체로 블로킹</b>이 되는 반대편 함정과 배치 분할의 균형점을 다룬다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. RTT — 비용의 대부분은 "일한 시간"이 아니라 "오간 시간"이다</h2>
+
+<p>이 주제의 모든 논의가 <b>RTT</b>라는 약어 위에 서 있으니 먼저 풀고 가자. <b>RTT는 Round Trip Time, 즉 "왕복 시간"이다.</b> 요청이 클라이언트를 떠나 서버에 도착하고, 서버의 응답이 다시 클라이언트로 돌아오기까지 걸리는 <b>전체 시간</b>을 말한다. 편지를 부치고 답장을 받기까지의 시간이라고 보면 된다.</p>
+
+<p>여기서 중요한 것은 <b>이 시간의 대부분이 Redis가 일한 시간이 아니라 그냥 오가는 데 쓰인 시간</b>이라는 점이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="Redis 명령 하나의 왕복 시간을 실제 비율로 분해한 그림. 요청 이동 약 250마이크로초, 서버 처리 1마이크로초, 응답 이동 약 250마이크로초">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+    </defs>
+
+    <text x="560" y="28" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">명령 하나의 왕복 시간(RTT ≈ 0.5ms)을 실제 비율대로 그리면 — Redis가 일한 구간은 선 하나로도 안 보인다</text>
+
+    <!-- endpoints -->
+    <rect x="20" y="72" width="76" height="120" rx="9" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="58" y="122" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">애플리</text>
+    <text x="58" y="140" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">케이션</text>
+    <rect x="1024" y="72" width="76" height="120" rx="9" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="1062" y="122" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">응답</text>
+    <text x="1062" y="140" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">도착</text>
+
+    <!-- bar -->
+    <rect x="100" y="96" width="458" height="40" fill="#e2e8f0" stroke="#94a3b8"/>
+    <rect x="558" y="96" width="4" height="40" fill="#dc2626"/>
+    <rect x="562" y="96" width="458" height="40" fill="#e2e8f0" stroke="#94a3b8"/>
+
+    <text x="329" y="121" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">요청이 네트워크를 건너간다 (소켓 → 커널 → NIC → 스위치)</text>
+    <text x="791" y="121" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">응답이 같은 길을 되돌아온다</text>
+
+    <text x="329" y="160" font-size="12" fill="#6b7280" text-anchor="middle">약 250µs</text>
+    <text x="791" y="160" font-size="12" fill="#6b7280" text-anchor="middle">약 250µs</text>
+
+    <!-- pointer to processing -->
+    <line x1="560" y1="200" x2="560" y2="142" stroke="#dc2626" stroke-width="1.6" marker-end="url(#a1)"/>
+    <rect x="430" y="202" width="260" height="52" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="560" y="222" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">Redis가 실제로 일한 시간</text>
+    <text x="560" y="242" font-size="12.5" fill="#b91c1c" text-anchor="middle">해시 테이블에서 값 하나 찾기 = <tspan font-weight="700">약 1µs</tspan></text>
+
+    <!-- span -->
+    <line x1="100" y1="80" x2="1020" y2="80" stroke="#2563eb" stroke-width="1.4"/>
+    <line x1="100" y1="74" x2="100" y2="86" stroke="#2563eb" stroke-width="1.4"/>
+    <line x1="1020" y1="74" x2="1020" y2="86" stroke="#2563eb" stroke-width="1.4"/>
+    <rect x="486" y="62" width="148" height="22" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="78" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">RTT ≈ 0.5ms = 500µs</text>
+
+    <rect x="20" y="272" width="1080" height="46" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="292" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">0.5밀리초는 500마이크로초다 — 처리가 1µs라면 비용의 <tspan font-size="15">500배</tspan>가 이동 시간인 셈이다</text>
+    <text x="560" y="311" font-size="12.5" fill="#1e40af" text-anchor="middle">물리적으로 멀어지면(다른 가용 영역, 다른 리전) 이 격차는 더 벌어진다</text>
+  </svg>
+  <figcaption>같은 데이터센터 안이어도 왕복은 <b>0.5ms 안팎</b>이다. 빨간 세로선이 Redis가 값을 찾은 구간인데, <b>실제 비율로 그리면 4픽셀도 안 된다.</b> 이 그림 하나가 이 주제의 전부라고 해도 지나치지 않다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>구간</th><th>하는 일</th><th>대략적 시간</th></tr></thead>
+  <tbody>
+    <tr><td>명령 처리</td><td>메모리의 해시 테이블에서 값 하나 찾아 반환</td><td class="good">마이크로초(µs) 단위</td></tr>
+    <tr class="hl"><td>네트워크 왕복</td><td>소켓 → 커널 → NIC → 스위치 → 반대 방향</td><td class="bad">같은 데이터센터 안이라도 0.5ms 안팎</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>1-1. 비유 두 개로 감각을 고정한다</h3>
+
+<div class="grid g2">
+  <div class="card" style="margin:0">
+    <p style="margin:0"><b>택배 비유</b> — 물건 포장(명령 처리)은 <b>10초</b>인데 배송 왕복이 <b>이틀</b>인 상황이다. 이런 상황에서 전체 시간을 결정하는 것은 <b>포장 속도가 아니라</b> 물건 100개를 <b>한 상자에 담아 한 번 보내느냐, 100번 따로 보내느냐</b>다.</p>
+  </div>
+  <div class="card" style="margin:0">
+    <p style="margin:0"><b>장보기 비유</b> — 마트가 아무리 가까워도 <b>사올 물건마다 한 번씩 다녀오면</b> 100번을 걷는다. 계산대가 빠른 것과는 아무 상관이 없다. <b>목록을 적어 한 번에 다녀오는 것</b>이 유일한 해법이다.</p>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>질문의 본체를 다시 정의하면</h4>
+  <div class="rule">이 질문은 <b>"어떤 명령이 빠른가"</b>가 아니라 <b>"왕복 횟수를 몇 번으로 줄일 수 있는가"</b>다</div>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 키 100개를 세 방식으로 — 시간축에 실제 비율로 그려 본다</h2>
+
+<p>계산에 쓸 가정은 셋뿐이다. 이 숫자를 머리에 넣고 시작하자.</p>
+
+<div class="grid g3">
+  <div class="tile big"><div class="k">0.5ms</div><div class="s">RTT (같은 데이터센터 가정)</div></div>
+  <div class="tile big"><div class="k">1µs</div><div class="s">키 하나당 서버 처리 시간 = 0.001ms</div></div>
+  <div class="tile big"><div class="k">100개</div><div class="s">조회할 키</div></div>
+</div>
+
+<h3>2-1. 세 방식이 각각 무슨 일을 하는가</h3>
+
+<div class="grid g3">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">루프 GET</div>
+    <div class="d"><code>GET key1</code>을 보내고 <b>응답이 올 때까지 기다렸다가</b> <code>GET key2</code>를 보낸다. 앞 응답을 받아야 다음을 보내는 <b>직렬 구조</b>라 왕복이 <b>키 수만큼</b> 발생한다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">MGET</div>
+    <div class="d"><code>MGET key1 … key100</code>이라는 <b>명령 하나</b>를 보낸다. 왕복은 1번이고, 서버는 그 안에서 100개를 찾는다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">pipeline</div>
+    <div class="d"><code>GET</code>을 100개 <b>연달아 밀어 넣고</b> 응답 100개를 몰아서 받는다. 왕복은 역시 1번이다.</div>
+  </div>
+</div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>방식</th><th>왕복 횟수</th><th>왕복 시간</th><th>서버 처리 시간</th><th>합계</th></tr></thead>
+  <tbody>
+    <tr><td><b>루프 GET</b></td><td class="bad">100</td><td class="bad">0.5ms × 100 = <b>50ms</b></td><td>0.001ms × 100 = 0.1ms</td><td class="bad"><b>50.1ms</b></td></tr>
+    <tr class="hl"><td><b>MGET</b></td><td class="good">1</td><td class="good">0.5ms × 1 = <b>0.5ms</b></td><td>0.001ms × 100 = 0.1ms</td><td class="good"><b>0.6ms</b></td></tr>
+    <tr class="hl"><td><b>pipeline</b></td><td class="good">1</td><td class="good">0.5ms × 1 = <b>0.5ms</b></td><td>0.001ms × 100 = 0.1ms</td><td class="good"><b>0.6ms</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>2-2. 같은 시간축 위에 겹쳐 보면</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 470" role="img" aria-label="0에서 52밀리초까지의 시간축 위에 루프 GET의 왕복 100번 누적 50.1밀리초와 MGET, pipeline의 0.6밀리초를 실제 비율로 비교한 그림">
+    <defs>
+      <pattern id="rttloop" width="9" height="38" patternUnits="userSpaceOnUse">
+        <rect width="9" height="38" fill="#fee2e2"/>
+        <rect x="0" width="4.4" height="38" fill="#fecaca"/>
+        <line x1="8.6" y1="0" x2="8.6" y2="38" stroke="#dc2626" stroke-width="0.9"/>
+      </pattern>
+      <marker id="a2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="a2r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#b91c1c"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">키 100개 조회 — 가로축은 실제 시간(1ms = 18px)이다</text>
+
+    <!-- axis -->
+    <line x1="140" y1="66" x2="1076" y2="66" stroke="#94a3b8" stroke-width="1.4"/>
+    <g font-size="11" fill="#6b7280" text-anchor="middle">
+      <line x1="140" y1="60" x2="140" y2="72" stroke="#94a3b8"/><text x="140" y="52">0ms</text>
+      <line x1="320" y1="60" x2="320" y2="72" stroke="#94a3b8"/><text x="320" y="52">10ms</text>
+      <line x1="500" y1="60" x2="500" y2="72" stroke="#94a3b8"/><text x="500" y="52">20ms</text>
+      <line x1="680" y1="60" x2="680" y2="72" stroke="#94a3b8"/><text x="680" y="52">30ms</text>
+      <line x1="860" y1="60" x2="860" y2="72" stroke="#94a3b8"/><text x="860" y="52">40ms</text>
+      <line x1="1040" y1="60" x2="1040" y2="72" stroke="#94a3b8"/><text x="1040" y="52">50ms</text>
+    </g>
+
+    <!-- loop get row -->
+    <rect x="14" y="92" width="118" height="44" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="73" y="112" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">루프 GET</text>
+    <text x="73" y="129" font-size="11" fill="#b91c1c" text-anchor="middle">왕복 100번</text>
+    <rect x="140" y="96" width="902" height="38" fill="url(#rttloop)" stroke="#dc2626" stroke-width="1.2"/>
+    <text x="591" y="158" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">빨간 칸 하나 = 왕복 1회(0.5ms) — 이 칸이 100개 이어져 있다</text>
+    <rect x="960" y="70" width="146" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="1033" y="87" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">합계 50.1ms</text>
+
+    <!-- mget row -->
+    <rect x="14" y="192" width="118" height="44" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="73" y="212" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">MGET</text>
+    <text x="73" y="229" font-size="11" fill="#166534" text-anchor="middle">왕복 1번</text>
+    <rect x="140" y="196" width="11" height="38" fill="#16a34a"/>
+    <line x1="151" y1="215" x2="236" y2="215" stroke="#16a34a" stroke-width="1.6" marker-end="url(#a2)"/>
+    <text x="246" y="211" font-size="12.5" fill="#166534" font-weight="700">0.6ms — 이 초록 조각이 전부다</text>
+    <text x="246" y="230" font-size="11.5" fill="#166534">0.6ms 지점 이후로는 <tspan font-weight="700">이미 응답을 다 받고 다음 일을 하고 있다</tspan></text>
+
+    <!-- pipeline row -->
+    <rect x="14" y="256" width="118" height="44" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="73" y="276" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">pipeline</text>
+    <text x="73" y="293" font-size="11" fill="#166534" text-anchor="middle">왕복 1번</text>
+    <rect x="140" y="260" width="11" height="38" fill="#16a34a"/>
+    <line x1="151" y1="279" x2="236" y2="279" stroke="#16a34a" stroke-width="1.6" marker-end="url(#a2)"/>
+    <text x="246" y="275" font-size="12.5" fill="#166534" font-weight="700">0.6ms — MGET과 같은 자리에서 끝난다</text>
+    <text x="246" y="294" font-size="11.5" fill="#166534">왕복 수가 같으므로 <tspan font-weight="700">지연도 같다</tspan> (차이는 5절부터)</text>
+
+    <!-- processing comparison -->
+    <rect x="14" y="326" width="1092" height="76" rx="10" fill="#fafbfc" stroke="#cbd5e1"/>
+    <text x="34" y="348" font-size="13" fill="#1f2937" font-weight="700">서버가 실제로 한 일의 양 — 세 방식 모두 동일하다</text>
+    <rect x="140" y="358" width="120" height="18" rx="4" fill="#fecaca" stroke="#dc2626"/><text x="270" y="372" font-size="11.5" fill="#b91c1c">루프 GET · 0.1ms</text>
+    <rect x="420" y="358" width="120" height="18" rx="4" fill="#bbf7d0" stroke="#16a34a"/><text x="550" y="372" font-size="11.5" fill="#166534">MGET · 0.1ms</text>
+    <rect x="700" y="358" width="120" height="18" rx="4" fill="#bbf7d0" stroke="#16a34a"/><text x="830" y="372" font-size="11.5" fill="#166534">pipeline · 0.1ms</text>
+    <text x="34" y="394" font-size="12" fill="#6b7280">Redis가 하는 일은 어느 방식이든 똑같다 — 키 100개를 찾는 것뿐이다</text>
+
+    <rect x="14" y="414" width="1092" height="44" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="434" font-size="14.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">50.1ms ÷ 0.6ms ≈ 83배 — 달라진 변수는 왕복 횟수 하나뿐이다</text>
+    <text x="560" y="452" font-size="12.5" fill="#1e40af" text-anchor="middle">그 하나가 전체 시간의 99%를 결정한다</text>
+  </svg>
+  <figcaption>표의 숫자보다 이 그림을 기억하는 편이 낫다. <b>"처리 시간 열이 세 줄 모두 0.1ms로 같다"</b>는 사실이 핵심이다 — 느린 이유가 Redis에 있지 않다는 뜻이고, 그래서 <b>Redis를 더 좋은 장비로 바꿔도 루프 GET은 빨라지지 않는다.</b> 고쳐야 할 것은 애플리케이션 코드다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>여기서 나오는 흔한 오답</h4>
+  <p style="margin:0 0 6px"><b>"루프 GET이 느린 건 Redis에 부하를 100번 주기 때문"</b> — 틀렸다. 서버가 한 일은 <b>0.1ms로 동일</b>하다. 명령 파싱·디스패치가 100번 일어나는 만큼의 미세한 추가 부담은 있지만, <b>50ms를 만든 주범은 아니다.</b> 주범은 <b>"응답을 기다렸다가 다음을 보내는" 대기 100번</b>이다.</p>
+  <div class="rule red">느린 곳은 서버가 아니라 <b>클라이언트가 기다리며 서 있는 시간</b>이다</div>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 루프 GET의 숨은 비용 — 지연보다 무서운 커넥션 풀 고갈</h2>
+
+<p>지연 말고 하나가 더 있다. 왕복 한 번마다 <b>커넥션 하나를 그 시간 동안 점유</b>하므로, 루프 GET은 <b>커넥션 풀 고갈</b>을 부른다.</p>
+
+<p>커넥션 풀은 미리 만들어 둔 Redis 연결을 여러 스레드가 <b>빌려 쓰고 반납하는</b> 구조다. 요청 하나가 Redis 호출을 100번 한다면 그 요청은 커넥션을 <b>50ms 동안 붙들고</b> 있는 셈이다. 동시 요청이 조금만 늘어도 풀의 커넥션이 전부 대여 중이 되고, <b>뒤늦게 온 요청은 커넥션을 기다리는 시간이 지연에 추가로 가산된다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="커넥션 하나를 50밀리초 붙드는 루프 GET과 0.6밀리초만 붙드는 MGET의 처리량 비교, 그리고 커넥션 대기열이 생기는 구조">
+    <defs><marker id="a3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker></defs>
+
+    <text x="560" y="26" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">커넥션 점유 시간 — 같은 풀에서 같은 커넥션 하나가 1초에 몇 건을 처리할 수 있나</text>
+
+    <!-- left: loop -->
+    <rect x="20" y="48" width="530" height="180" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="72" font-size="13.5" fill="#b91c1c" font-weight="700">루프 GET — 커넥션 1개를 50ms 점유</text>
+    <rect x="44" y="86" width="482" height="30" rx="5" fill="#fecaca" stroke="#dc2626"/>
+    <text x="285" y="106" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">요청 A가 커넥션을 붙잡고 있는 구간 (왕복 100번)</text>
+    <text x="44" y="140" font-size="12" fill="#b91c1c">· 이 50ms 동안 <tspan font-weight="700">그 커넥션은 다른 누구도 못 쓴다</tspan></text>
+    <text x="44" y="162" font-size="12" fill="#b91c1c">· 커넥션 1개 기준 처리량 ≈ <tspan font-weight="700">초당 20건</tspan></text>
+    <text x="44" y="184" font-size="11.5" fill="#7f1d1d">(1초 ÷ 50ms — 왕복 시간만 따진 단순 계산)</text>
+    <text x="44" y="210" font-size="12" fill="#b91c1c" font-weight="700">→ 동시 요청이 조금만 늘면 풀이 바닥난다</text>
+
+    <!-- right: mget -->
+    <rect x="570" y="48" width="530" height="180" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="594" y="72" font-size="13.5" fill="#166534" font-weight="700">MGET / pipeline — 커넥션 1개를 0.6ms 점유</text>
+    <rect x="594" y="86" width="6" height="30" rx="2" fill="#16a34a"/>
+    <text x="612" y="106" font-size="12" fill="#166534" font-weight="700">← 점유 구간이 이만큼이다 (같은 축척)</text>
+    <text x="594" y="140" font-size="12" fill="#166534">· 반납이 빠르니 <tspan font-weight="700">같은 커넥션을 계속 돌려 쓴다</tspan></text>
+    <text x="594" y="162" font-size="12" fill="#166534">· 커넥션 1개 기준 처리량 ≈ <tspan font-weight="700">초당 약 1,600건</tspan></text>
+    <text x="594" y="184" font-size="11.5" fill="#14532d">(1초 ÷ 0.6ms — 역시 단순 계산)</text>
+    <text x="594" y="210" font-size="12" fill="#166534" font-weight="700">→ 같은 풀 크기로 훨씬 많은 동시 요청을 감당한다</text>
+
+    <!-- pool exhaustion -->
+    <text x="560" y="262" font-size="13.5" fill="#b91c1c" text-anchor="middle" font-weight="700">풀이 바닥나는 순간 — 지연은 나 혼자의 문제가 아니게 된다</text>
+
+    <rect x="120" y="278" width="200" height="86" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <text x="220" y="300" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">커넥션 풀 (예: 8개)</text>
+    <g>
+      <rect x="136" y="312" width="38" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/>
+      <rect x="180" y="312" width="38" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/>
+      <rect x="224" y="312" width="38" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/>
+      <rect x="268" y="312" width="38" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/>
+      <rect x="136" y="336" width="38" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/>
+      <rect x="180" y="336" width="38" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/>
+      <rect x="224" y="336" width="38" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/>
+      <rect x="268" y="336" width="38" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/>
+    </g>
+    <text x="220" y="380" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">전부 대여 중 (각각 50ms짜리 루프 실행)</text>
+
+    <line x1="330" y1="320" x2="380" y2="320" stroke="#6b7280" stroke-width="1.6" marker-end="url(#a3)"/>
+
+    <rect x="390" y="278" width="250" height="86" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="515" y="300" font-size="12.5" fill="#92400e" text-anchor="middle" font-weight="700">뒤늦게 온 요청들</text>
+    <text x="515" y="322" font-size="11.5" fill="#92400e" text-anchor="middle">Redis에 아직 말도 못 걸었는데</text>
+    <text x="515" y="341" font-size="11.5" fill="#92400e" text-anchor="middle" font-weight="700">커넥션 대기 시간이 먼저 쌓인다</text>
+    <text x="515" y="358" font-size="11" fill="#92400e" text-anchor="middle">이 대기는 응답 시간에 그대로 가산된다</text>
+
+    <line x1="650" y1="320" x2="700" y2="320" stroke="#6b7280" stroke-width="1.6" marker-end="url(#a3)"/>
+
+    <rect x="710" y="278" width="380" height="86" rx="10" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="900" y="300" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">피해가 옆으로 번진다</text>
+    <text x="900" y="322" font-size="11.5" fill="#b91c1c" text-anchor="middle">같은 풀을 쓰는 <tspan font-weight="700">다른 기능의 요청까지</tspan> 느려진다</text>
+    <text x="900" y="344" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">트래픽이 늘 때 갑자기 비선형으로 무너지는 장애</text>
+    <text x="900" y="360" font-size="11" fill="#7f1d1d" text-anchor="middle">평소엔 멀쩡하다가 임계점에서 한 번에 터진다</text>
+  </svg>
+  <figcaption>루프 GET은 <b>자기 응답 시간만 나빠지는 것이 아니다.</b> 커넥션이라는 공유 자원을 오래 붙들어 <b>같은 풀을 쓰는 다른 요청까지 느리게 만든다.</b> "평소엔 괜찮았는데 트래픽이 2배 되니 응답 시간이 10배가 됐다"는 유형의 장애가 여기서 나온다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>왜 "비선형"인가 — 면접에서 한 줄 더 붙일 지점</h4>
+  <p style="margin:0 0 6px">커넥션이 남아 있는 동안에는 지연이 <b>50ms에서 멈춘다.</b> 그런데 <b>풀이 다 차는 순간부터</b>는 "커넥션을 기다린 시간 + 50ms"가 되고, 대기열이 길어질수록 앞사람의 50ms가 <b>뒷사람에게 누적</b>된다. 트래픽 증가는 선형인데 응답 시간은 어느 지점에서 <b>절벽처럼 꺾인다.</b></p>
+  <div class="rule red">공유 자원을 오래 붙드는 코드는 <b>자기 지연이 아니라 남의 지연</b>을 만든다</div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 코드 — 리뷰에서 잡아야 할 형태와 고친 형태</h2>
+
+<div class="codehead bad"><span class="tag">before</span> 루프 GET — 왕복 100번, 커넥션 점유 50ms</div>
+<pre><code>List&lt;Product&gt; products = <span class="kw">new</span> ArrayList&lt;&gt;();
+<span class="kw">for</span> (Long id : productIds) {                        <span class="cm">// id가 100개라면</span>
+<span class="ln-bad">    String json = redis.<span class="fn">opsForValue</span>().<span class="fn">get</span>(<span class="st">"product:"</span> + id);<span class="note">여기서 왕복 1번 + 응답 대기</span></span>
+    products.<span class="fn">add</span>(<span class="fn">parse</span>(json));
+}
+<span class="cm">// 이 한 줄이 "요청 보내고 응답 올 때까지 대기"다.</span>
+<span class="cm">// 루프를 도는 동안 왕복 100번, 커넥션 점유 50ms.</span></code></pre>
+
+<div class="codehead good"><span class="tag">after</span> MGET — 왕복 1번</div>
+<pre><code>List&lt;String&gt; keys = productIds.<span class="fn">stream</span>()
+        .<span class="fn">map</span>(id -&gt; <span class="st">"product:"</span> + id)
+        .<span class="fn">toList</span>();
+
+<span class="ln-good">List&lt;String&gt; jsons = redis.<span class="fn">opsForValue</span>().<span class="fn">multiGet</span>(keys);<span class="note">MGET 하나 = 왕복 1회</span></span>
+
+<span class="cm">// 반환 리스트는 요청한 키 순서와 같고, 존재하지 않는 키의 자리는 null이다.</span>
+<span class="cm">// 그래서 인덱스로 원래 키와 짝지을 수 있고, null 체크는 호출부의 책임이다.</span></code></pre>
+
+<div class="memo green">
+  <h4>MGET 반환 규약 — 이 두 줄을 모르면 버그가 난다</h4>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">① 순서가 보장된다</div><div class="d">요청한 키 순서와 <b>같은 순서</b>로 돌아온다. 그래서 <b>인덱스로 원래 키·ID를 되찾을 수 있다.</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② 없는 키는 자리를 지킨 null</div><div class="d">결과에서 <b>빠지는 것이 아니라</b> <code>null</code>이 그 자리에 들어온다. 빠졌다고 가정하고 짝을 맞추면 <b>전부 밀린다.</b></div></div>
+  </div>
+</div>
+
+<h3>4-1. 한 걸음 더 — 부분 캐시 미스 처리까지가 실전 형태 <span class="badge bonus">가산점</span></h3>
+
+<p>캐시에서 100개를 요청하면 <b>일부만 있고 일부는 없는 것이 정상</b>이다. 여기서 "없는 것만 골라 DB에서 한 번에 가져오는" 형태까지 가야 <b>왕복이 다시 늘지 않는다.</b> null을 발견할 때마다 DB를 한 번씩 치면, Redis에서 없앤 N+1을 <b>DB에서 그대로 재현</b>하는 꼴이다.</p>
+
+<div class="codehead good"><span class="tag">패턴</span> MGET → 미스만 모아 벌크 조회 → 벌크 적재</div>
+<pre><code>List&lt;String&gt; jsons = redis.<span class="fn">opsForValue</span>().<span class="fn">multiGet</span>(keys);   <span class="cm">// 왕복 1</span>
+
+List&lt;Long&gt; missed = <span class="kw">new</span> ArrayList&lt;&gt;();
+<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; keys.<span class="fn">size</span>(); i++) {
+<span class="ln-good">    <span class="kw">if</span> (jsons.<span class="fn">get</span>(i) == <span class="kw">null</span>) missed.<span class="fn">add</span>(productIds.<span class="fn">get</span>(i));<span class="note">자리(index)로 원래 id를 되찾는다</span></span>
+}
+
+<span class="kw">if</span> (!missed.<span class="fn">isEmpty</span>()) {
+<span class="ln-good">    List&lt;Product&gt; fromDb = productRepository.<span class="fn">findAllById</span>(missed);<span class="note">DB도 IN 절 한 번</span></span>
+    <span class="cm">// 캐시에 되채우는 것도 pipeline이나 MSET으로 묶어 한 왕복에 끝낸다.</span>
+}
+<span class="cm">// 흔한 실수: null을 만날 때마다 DB를 한 번씩 조회 → Redis에서 없앤 N+1이 DB에서 부활한다.</span></code></pre>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. MGET vs pipeline — "명령 하나" vs "전송 방식"</h2>
+
+<p>둘 다 왕복을 1번으로 줄이지만 <b>층위가 다르다.</b> MGET은 Redis가 제공하는 <b>명령</b>이고, pipeline은 클라이언트가 명령들을 <b>보내는 방식</b>이다. <b>명령과 전송 방식은 애초에 같은 종류의 것이 아니다.</b> 이 문장을 먼저 말하고 시작하면 답이 흔들리지 않는다.</p>
+
+<div class="memo">
+  <h4>비유로 고정하기 — 주문서 한 장 vs 봉투 하나</h4>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">MGET = 품목 100개가 적힌 주문서 한 장</div><div class="d">창구 직원은 이 <b>한 장을 처리하는 동안 다른 주문서를 받지 않는다.</b> 대신 이 주문서 양식에는 <b>"String 조회"만 적을 수 있다.</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">pipeline = 주문서 100장을 한 봉투에 넣어 보내기</div><div class="d">봉투 덕분에 <b>배달은 한 번</b>이지만, 창구는 봉투를 뜯어 <b>한 장씩</b> 처리한다. 그 사이에 <b>남이 낸 주문서가 끼어들 수 있다.</b> 대신 양식은 자유다.</div></div>
+  </div>
+  <div class="rule">봉투는 <b>묶어줄 뿐 지켜주지 않는다</b> — pipeline에 원자성이 없다는 말의 비유적 표현</div>
+</div>
+
+<h3>5-1. MGET은 명령이다 — 통째로 실행된다</h3>
+
+<p><code>MGET</code>은 "String 타입 키 여러 개를 한 번에 읽는" <b>하나의 명령</b>이다. 서버는 이것을 명령 하나로 받아 <b>통째로 실행</b>한다.</p>
+
+<p>Redis는 명령을 <b>한 번에 하나씩</b> 실행한다(명령 실행이 단일 스레드로 이뤄진다). 그래서 한 명령이 실행되는 동안에는 다른 클라이언트의 명령이 <b>중간에 끼어들 수 없다.</b> MGET이 키 100개를 읽는 동안 다른 클라이언트가 그중 50번째 키를 바꾸는 일은 일어나지 않는다. 즉 <b>MGET의 결과는 어느 한 시점의 일관된 스냅샷</b>이다.</p>
+
+<p>대신 제약이 분명하다. <b>GET의 묶음만 가능하다.</b> Hash를 읽거나(<code>HGETALL</code>) TTL을 갱신하는(<code>EXPIRE</code>) 명령을 섞을 수 없다. 쓰기 쪽 짝으로는 <code>MSET</code>이 있다.</p>
+
+<h3>5-2. pipeline은 전송 방식이다 — "몰아 보낸다"의 실체</h3>
+
+<p>pipeline을 "명령을 몰아 보내는 것"이라고만 설명하면 감이 안 오니, 실제로 무슨 일이 일어나는지 풀어 보자.</p>
+
+<p><b>보통의 요청-응답은 핑퐁이다.</b> 클라이언트는 명령 하나를 소켓에 쓰고, <b>응답이 돌아올 때까지 블로킹된 채 기다리고</b>, 응답을 읽은 뒤에 다음 명령을 쓴다. 이 "기다림"이 왕복 시간이고, 명령 수만큼 반복된다.</p>
+
+<p><b>pipeline은 이 기다림을 없앤다.</b> 클라이언트는 응답을 기다리지 않고 명령 1, 2, 3, …, 100을 <b>연달아 소켓에 밀어 넣는다.</b> 그리고 나서 응답 100개를 순서대로 읽는다. 서버는 서버대로 소켓에 도착하는 명령들을 받는 대로 처리해 응답을 차례로 돌려보낸다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 380" role="img" aria-label="일반 요청 응답의 핑퐁 구조와 파이프라인의 밀어넣기 구조를 나란히 비교한 시퀀스 다이어그램">
+    <defs>
+      <marker id="a4" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a4g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+    </defs>
+
+    <!-- left panel -->
+    <rect x="14" y="14" width="540" height="352" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="284" y="40" font-size="13.5" fill="#b91c1c" text-anchor="middle" font-weight="700">일반 요청-응답 (핑퐁) — 왕복 2번</text>
+    <rect x="48" y="54" width="120" height="28" rx="7" fill="#fff" stroke="#94a3b8"/><text x="108" y="73" font-size="12" fill="#374151" text-anchor="middle">클라이언트</text>
+    <rect x="400" y="54" width="120" height="28" rx="7" fill="#fff" stroke="#94a3b8"/><text x="460" y="73" font-size="12" fill="#374151" text-anchor="middle">Redis</text>
+    <line x1="108" y1="82" x2="108" y2="340" stroke="#cbd5e1" stroke-dasharray="4 4"/>
+    <line x1="460" y1="82" x2="460" y2="340" stroke="#cbd5e1" stroke-dasharray="4 4"/>
+
+    <line x1="108" y1="110" x2="452" y2="110" stroke="#2563eb" stroke-width="1.7" marker-end="url(#a4)"/>
+    <text x="284" y="104" class="mono" font-size="11.5" fill="#1d4ed8" text-anchor="middle">GET a</text>
+    <rect x="112" y="118" width="120" height="22" rx="5" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="172" y="134" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">여기서 블로킹 대기</text>
+    <line x1="460" y1="152" x2="116" y2="152" stroke="#475569" stroke-width="1.7" marker-end="url(#a4g)"/>
+    <text x="284" y="146" class="mono" font-size="11.5" fill="#334155" text-anchor="middle">"1"</text>
+
+    <line x1="108" y1="196" x2="452" y2="196" stroke="#2563eb" stroke-width="1.7" marker-end="url(#a4)"/>
+    <text x="284" y="190" class="mono" font-size="11.5" fill="#1d4ed8" text-anchor="middle">GET b</text>
+    <rect x="112" y="204" width="120" height="22" rx="5" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="172" y="220" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">또 블로킹 대기</text>
+    <line x1="460" y1="238" x2="116" y2="238" stroke="#475569" stroke-width="1.7" marker-end="url(#a4g)"/>
+    <text x="284" y="232" class="mono" font-size="11.5" fill="#334155" text-anchor="middle">"2"</text>
+
+    <rect x="48" y="266" width="472" height="82" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="284" y="288" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">"보내고 → 기다리고 → 읽고"가 명령 수만큼 반복된다</text>
+    <text x="284" y="310" font-size="12" fill="#b91c1c" text-anchor="middle">명령이 100개면 이 대기가 100번</text>
+    <text x="284" y="334" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">클라이언트가 서 있는 시간 = RTT × 명령 수</text>
+
+    <!-- right panel -->
+    <rect x="566" y="14" width="540" height="352" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="836" y="40" font-size="13.5" fill="#166534" text-anchor="middle" font-weight="700">pipeline (기다리지 않고 밀어 넣기) — 왕복 1번</text>
+    <rect x="600" y="54" width="120" height="28" rx="7" fill="#fff" stroke="#94a3b8"/><text x="660" y="73" font-size="12" fill="#374151" text-anchor="middle">클라이언트</text>
+    <rect x="952" y="54" width="120" height="28" rx="7" fill="#fff" stroke="#94a3b8"/><text x="1012" y="73" font-size="12" fill="#374151" text-anchor="middle">Redis</text>
+    <line x1="660" y1="82" x2="660" y2="340" stroke="#cbd5e1" stroke-dasharray="4 4"/>
+    <line x1="1012" y1="82" x2="1012" y2="340" stroke="#cbd5e1" stroke-dasharray="4 4"/>
+
+    <line x1="660" y1="108" x2="1004" y2="108" stroke="#16a34a" stroke-width="1.7" marker-end="url(#a4)"/>
+    <text x="836" y="102" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">GET a</text>
+    <line x1="660" y1="130" x2="1004" y2="130" stroke="#16a34a" stroke-width="1.7" marker-end="url(#a4)"/>
+    <text x="836" y="124" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">GET b</text>
+    <rect x="600" y="140" width="150" height="22" rx="5" fill="#dcfce7" stroke="#bbf7d0"/>
+    <text x="675" y="156" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">응답을 기다리지 않는다</text>
+
+    <rect x="932" y="140" width="160" height="46" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="1012" y="158" font-size="11.5" fill="#374151" text-anchor="middle">도착하는 대로</text>
+    <text x="1012" y="176" font-size="11.5" fill="#374151" text-anchor="middle">a 처리 → b 처리</text>
+
+    <line x1="1012" y1="206" x2="668" y2="206" stroke="#475569" stroke-width="1.7" marker-end="url(#a4g)"/>
+    <text x="836" y="200" class="mono" font-size="11.5" fill="#334155" text-anchor="middle">"1"</text>
+    <line x1="1012" y1="228" x2="668" y2="228" stroke="#475569" stroke-width="1.7" marker-end="url(#a4g)"/>
+    <text x="836" y="222" class="mono" font-size="11.5" fill="#334155" text-anchor="middle">"2"</text>
+    <rect x="600" y="238" width="150" height="22" rx="5" fill="#dcfce7" stroke="#bbf7d0"/>
+    <text x="675" y="254" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">응답을 순서대로 읽는다</text>
+
+    <rect x="600" y="266" width="472" height="82" rx="10" fill="#fff" stroke="#bbf7d0"/>
+    <text x="836" y="288" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">"전부 보내고 → 전부 읽는다"로 순서를 바꿨을 뿐이다</text>
+    <text x="836" y="310" font-size="12" fill="#166534" text-anchor="middle">서버가 하는 일도, 명령의 개수도 그대로다</text>
+    <text x="836" y="334" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">사라진 것은 오직 "기다림" — 그것이 전부였다</text>
+  </svg>
+  <figcaption>pipeline이 바꾼 것은 <b>클라이언트가 소켓을 다루는 순서</b>뿐이다. 명령을 줄이지도, 서버를 빠르게 하지도 않는다. <b>"기다림을 없앴다"</b>는 이 한 가지 사실에서 성능 이득과 원자성 부재가 <b>동시에</b> 따라 나온다 — 다음 절이 그 이야기다.</figcaption>
+</figure>
+
+<div class="codehead plain"><span class="tag">code</span> pipeline — 서로 다른 명령을 한 왕복에 (Spring Data Redis)</div>
+<pre><code>List&lt;Object&gt; results = redisTemplate.<span class="fn">executePipelined</span>(
+    (RedisCallback&lt;Object&gt;) conn -&gt; {
+        <span class="kw">for</span> (Long id : productIds) {
+<span class="ln-good">            conn.<span class="fn">stringCommands</span>().<span class="fn">get</span>((<span class="st">"product:"</span> + id).<span class="fn">getBytes</span>());<span class="note">버퍼에 담기만 한다</span></span>
+        }
+        <span class="cm">// 여기서 각 호출은 "명령을 버퍼에 담는" 동작이다.</span>
+        <span class="cm">// 응답을 기다리지 않으므로 반환값도 이 자리에서는 의미가 없다.</span>
+
+<span class="ln-good">        conn.<span class="fn">hashCommands</span>().<span class="fn">hGetAll</span>(<span class="st">"category:map"</span>.<span class="fn">getBytes</span>());<span class="note">MGET으로는 불가능한 부분</span></span>
+        <span class="cm">// 타입이 다른 명령을 같은 왕복에 섞는다 — pipeline만 되는 일.</span>
+
+        <span class="kw">return</span> <span class="kw">null</span>;
+        <span class="cm">// 콜백의 반환값은 무시된다. 결과는 executePipelined가</span>
+        <span class="cm">// 응답을 보낸 순서대로 모아 List로 돌려준다.</span>
+    });</code></pre>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. "pipeline에는 원자성이 없다" — 그 말의 실체</h2>
+
+<p>여기서 결정적인 사실이 나온다. <b>pipeline 안의 명령들 사이에는 다른 클라이언트의 명령이 끼어들 수 있다.</b></p>
+
+<p>서버 입장에서 pipeline으로 온 100개는 "한 덩어리"가 아니라 <b>그냥 순서대로 도착한 개별 명령 100개</b>다. 다른 클라이언트가 보낸 명령이 그 사이에 도착하면 서버는 그것도 순서대로 처리한다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="파이프라인으로 보낸 명령들 사이에 다른 클라이언트의 SET 명령이 끼어들어 서버 실행 순서가 섞이는 그림">
+    <defs><marker id="a5" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker></defs>
+
+    <text x="560" y="26" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">서버가 보는 것은 "내 pipeline"이 아니라 "도착한 순서대로의 개별 명령들"이다</text>
+
+    <!-- lanes -->
+    <rect x="14" y="48" width="150" height="44" rx="8" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="89" y="68" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">내 pipeline</text>
+    <text x="89" y="85" font-size="11" fill="#1e40af" text-anchor="middle">한 봉투에 담아 보냄</text>
+
+    <rect x="14" y="108" width="150" height="44" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="89" y="128" font-size="12.5" fill="#92400e" text-anchor="middle" font-weight="700">다른 클라이언트</text>
+    <text x="89" y="145" font-size="11" fill="#92400e" text-anchor="middle">전혀 무관한 요청</text>
+
+    <!-- my commands -->
+    <rect x="200" y="52" width="130" height="36" rx="7" fill="#eff6ff" stroke="#2563eb"/><text x="265" y="75" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle">GET a</text>
+    <rect x="380" y="52" width="130" height="36" rx="7" fill="#eff6ff" stroke="#2563eb"/><text x="445" y="75" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle">GET b</text>
+    <rect x="740" y="52" width="130" height="36" rx="7" fill="#eff6ff" stroke="#2563eb"/><text x="805" y="75" class="mono" font-size="12" fill="#1d4ed8" text-anchor="middle">GET c</text>
+
+    <!-- other client command -->
+    <rect x="560" y="112" width="150" height="36" rx="7" fill="#fef3c7" stroke="#d97706"/><text x="635" y="135" class="mono" font-size="12" fill="#92400e" text-anchor="middle">SET b "changed"</text>
+
+    <!-- arrows down to execution -->
+    <line x1="265" y1="90" x2="265" y2="196" stroke="#9ca3af" stroke-width="1.4" marker-end="url(#a5)"/>
+    <line x1="445" y1="90" x2="435" y2="196" stroke="#9ca3af" stroke-width="1.4" marker-end="url(#a5)"/>
+    <line x1="635" y1="150" x2="620" y2="196" stroke="#d97706" stroke-width="1.6" marker-end="url(#a5)"/>
+    <line x1="805" y1="90" x2="815" y2="196" stroke="#9ca3af" stroke-width="1.4" marker-end="url(#a5)"/>
+
+    <!-- execution lane -->
+    <rect x="14" y="204" width="150" height="46" rx="8" fill="#f1f5f9" stroke="#475569"/>
+    <text x="89" y="224" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">서버의 실제</text>
+    <text x="89" y="241" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">실행 순서</text>
+
+    <rect x="200" y="204" width="130" height="46" rx="7" fill="#fff" stroke="#94a3b8"/><text x="265" y="232" class="mono" font-size="12" fill="#334155" text-anchor="middle">GET a</text>
+    <rect x="370" y="204" width="130" height="46" rx="7" fill="#fff" stroke="#94a3b8"/><text x="435" y="232" class="mono" font-size="12" fill="#334155" text-anchor="middle">GET b</text>
+    <rect x="540" y="204" width="160" height="46" rx="7" fill="#fef3c7" stroke="#d97706" stroke-width="1.8"/><text x="620" y="232" class="mono" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">SET b "changed"</text>
+    <rect x="740" y="204" width="130" height="46" rx="7" fill="#fff" stroke="#94a3b8"/><text x="805" y="232" class="mono" font-size="12" fill="#334155" text-anchor="middle">GET c</text>
+
+    <text x="620" y="270" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">↑ 내 명령들 사이에 남의 명령이 들어왔다</text>
+
+    <rect x="900" y="196" width="206" height="62" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="1003" y="218" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">그래서 내가 읽은 100개는</text>
+    <text x="1003" y="238" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">서로 다른 시점의 값일 수 있다</text>
+    <text x="1003" y="252" font-size="10.5" fill="#7f1d1d" text-anchor="middle">= 일관된 스냅샷이 아니다</text>
+
+    <!-- contrast with MGET -->
+    <rect x="14" y="286" width="1092" height="58" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="34" y="308" font-size="13" fill="#166534" font-weight="700">대조 — 같은 상황에서 MGET이라면</text>
+    <rect x="300" y="294" width="330" height="40" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="465" y="312" class="mono" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">MGET a b c</text>
+    <text x="465" y="329" font-size="11" fill="#166534" text-anchor="middle">명령 하나 = 통째로 실행, 중간 개입 없음</text>
+    <text x="660" y="311" font-size="12" fill="#166534">다른 클라이언트의 <tspan class="mono">SET b</tspan>는 <tspan font-weight="700">MGET이 끝난 뒤에</tspan> 실행된다</text>
+    <text x="660" y="330" font-size="12" fill="#166534">→ 세 값은 <tspan font-weight="700">같은 시점의 스냅샷</tspan>이다</text>
+
+    <rect x="14" y="354" width="1092" height="38" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="378" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">"몰아 보냈다"는 것은 전송의 이야기이지 실행의 이야기가 아니다</text>
+  </svg>
+  <figcaption>pipeline은 <b>왕복을 아꼈을 뿐</b>, 서버는 여전히 <b>도착 순서대로 하나씩</b> 처리한다. 대신 얻는 것이 있다 — 서버 입장에서 개별 명령이 순서대로 온 것과 같으므로 <b>어떤 명령이든 자유롭게 조합할 수 있다.</b> <code>GET</code>과 <code>HGETALL</code>과 <code>EXPIRE</code>를 한 번의 왕복에 섞어 보낼 수 있다.</figcaption>
+</figure>
+
+<div class="callout info"><span class="t">헷갈리기 쉬운 지점 — "원자성이 없다"가 "응답이 뒤섞인다"는 뜻은 아니다</span>
+  <b>내 응답이 남의 응답과 섞여 오는 일은 없다.</b> Redis는 <b>커넥션마다</b> 그 커넥션이 보낸 명령의 순서대로 응답을 돌려주므로, 내가 <code>GET a</code>, <code>GET b</code>, <code>GET c</code>를 이 순서로 밀어 넣었다면 응답도 <b>정확히 그 순서로</b> 내 소켓에 들어온다. 그래서 결과 리스트의 <b>i번째가 i번째 명령의 결과</b>라는 짝짓기는 안전하다.<br>
+  <span style="display:inline-block;margin-top:6px">깨지는 것은 <b>순서가 아니라 시점의 일관성</b>이다 — <b>"내 명령들 사이에 남의 쓰기가 실행될 수 있다"</b>가 정확한 표현이다.</span>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. pipeline vs MULTI/EXEC vs Lua — 축을 나누면 흔들리지 않는다</h2>
+
+<p>원자적 일괄 실행이 필요하다면 pipeline이 아니라 <b>MULTI/EXEC</b>다. <code>MULTI</code>를 보내면 서버는 그 뒤에 오는 명령들을 실행하지 않고 <b>큐에 쌓아둔다.</b> <code>EXEC</code>를 받는 순간 쌓아둔 명령들을 <b>통째로 실행하고</b>, 그 사이에 다른 클라이언트의 명령이 끼어들지 않는다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="파이프라인, MULTI EXEC, Lua 스크립트가 각각 전송 최적화와 실행 보장, 조건 분기 가능 여부에서 어떻게 다른지 비교한 그림">
+    <text x="560" y="26" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">세 도구는 "무엇을 해결하는가"가 서로 다르다 — 경쟁 관계가 아니다</text>
+
+    <!-- pipeline -->
+    <rect x="20" y="44" width="340" height="240" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="190" y="70" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">pipeline</text>
+    <text x="190" y="90" font-size="12" fill="#1e40af" text-anchor="middle" font-weight="700">해결하는 문제: 전송 최적화</text>
+    <rect x="40" y="102" width="300" height="56" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <rect x="52" y="114" width="52" height="32" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="78" y="135" class="mono" font-size="10.5" fill="#1d4ed8" text-anchor="middle">GET a</text>
+    <rect x="112" y="114" width="52" height="32" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="138" y="135" font-size="10" fill="#92400e" text-anchor="middle">남의</text>
+    <rect x="172" y="114" width="52" height="32" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="198" y="135" class="mono" font-size="10.5" fill="#1d4ed8" text-anchor="middle">GET b</text>
+    <rect x="232" y="114" width="52" height="32" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="258" y="135" font-size="10" fill="#92400e" text-anchor="middle">남의</text>
+    <rect x="292" y="114" width="40" height="32" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="312" y="135" class="mono" font-size="10.5" fill="#1d4ed8" text-anchor="middle">GET c</text>
+    <text x="190" y="176" font-size="11.5" fill="#1e40af" text-anchor="middle">실행 구간에 <tspan font-weight="700">틈이 있다</tspan></text>
+    <text x="44" y="204" font-size="12" fill="#1f2937">왕복 절약 <tspan font-weight="700" fill="#16a34a">O</tspan></text>
+    <text x="44" y="226" font-size="12" fill="#1f2937">중간 개입 차단 <tspan font-weight="700" fill="#dc2626">X</tspan></text>
+    <text x="44" y="248" font-size="12" fill="#1f2937">중간 결과로 분기 <tspan font-weight="700" fill="#dc2626">X</tspan></text>
+    <text x="44" y="272" font-size="11.5" fill="#6b7280">명령 조합은 완전히 자유</text>
+
+    <!-- multi -->
+    <rect x="390" y="44" width="340" height="240" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="560" y="70" font-size="14" fill="#166534" text-anchor="middle" font-weight="700">MULTI / EXEC</text>
+    <text x="560" y="90" font-size="12" fill="#14532d" text-anchor="middle" font-weight="700">해결하는 문제: 실행 보장</text>
+    <rect x="410" y="102" width="300" height="56" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <rect x="424" y="114" width="272" height="32" rx="5" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="560" y="135" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">EXEC 시점에 쌓인 명령을 통째로 실행</text>
+    <text x="560" y="176" font-size="11.5" fill="#14532d" text-anchor="middle"><tspan font-weight="700">틈이 없다</tspan> — 남의 명령이 못 들어온다</text>
+    <text x="414" y="204" font-size="12" fill="#1f2937">왕복 절약 <tspan font-weight="700" fill="#d97706">△</tspan> <tspan font-size="11" fill="#6b7280">(pipeline에 실으면 O)</tspan></text>
+    <text x="414" y="226" font-size="12" fill="#1f2937">중간 개입 차단 <tspan font-weight="700" fill="#16a34a">O</tspan></text>
+    <text x="414" y="248" font-size="12" fill="#1f2937">중간 결과로 분기 <tspan font-weight="700" fill="#dc2626">X</tspan></text>
+    <text x="414" y="272" font-size="11.5" fill="#6b7280">큐에 쌓인 명령은 서로의 결과를 못 본다</text>
+
+    <!-- lua -->
+    <rect x="760" y="44" width="340" height="240" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="930" y="70" font-size="14" fill="#92400e" text-anchor="middle" font-weight="700">Lua 스크립트</text>
+    <text x="930" y="90" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">해결하는 문제: 실행 보장 + 분기</text>
+    <rect x="780" y="102" width="300" height="56" rx="8" fill="#fff" stroke="#fde68a"/>
+    <rect x="794" y="114" width="272" height="32" rx="5" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+    <text x="930" y="135" font-size="11" fill="#92400e" text-anchor="middle" font-weight="700">스크립트 전체가 하나의 명령처럼 실행</text>
+    <text x="930" y="176" font-size="11.5" fill="#92400e" text-anchor="middle">그 안에서 <tspan font-weight="700">읽고 → 판단하고 → 쓴다</tspan></text>
+    <text x="784" y="204" font-size="12" fill="#1f2937">왕복 절약 <tspan font-weight="700" fill="#16a34a">O</tspan></text>
+    <text x="784" y="226" font-size="12" fill="#1f2937">중간 개입 차단 <tspan font-weight="700" fill="#16a34a">O</tspan></text>
+    <text x="784" y="248" font-size="12" fill="#1f2937">중간 결과로 분기 <tspan font-weight="700" fill="#16a34a">O</tspan></text>
+    <text x="784" y="272" font-size="11.5" fill="#6b7280">단, 길어지면 그 시간만큼 서버가 묶인다</text>
+
+    <rect x="20" y="294" width="1080" height="38" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="318" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">"pipeline = 성능, MULTI/Lua = 원자성" — 이 축으로 답하면 구분이 흔들리지 않는다</text>
+  </svg>
+  <figcaption>중간 조회 결과를 보고 <b>분기까지</b> 해야 한다면 MULTI/EXEC로도 부족하다. <b>MULTI에 쌓인 명령들은 서로의 결과를 볼 수 없기 때문이다.</b> 이때는 Lua 스크립트를 쓴다 — 스크립트 전체가 하나의 명령처럼 원자적으로 실행되면서 그 안에서는 조건 분기를 쓸 수 있다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <thead><tr><th></th><th>무엇을 해결하나</th><th>중간 개입</th></tr></thead>
+  <tbody>
+    <tr><td><b>pipeline</b></td><td><b>전송 최적화</b> — 왕복 절약</td><td class="bad">끼어들 수 있다</td></tr>
+    <tr><td><b>MULTI/EXEC</b></td><td><b>실행 보장</b> — 원자적 일괄 실행</td><td class="good">끼어들 수 없다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>선택 기준 — 이 표 세 줄이면 실무 판단이 끝난다</h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k" style="font-family:inherit">String 키 여러 개<br>단순 조회/저장</div><div class="d"><code>MGET</code> / <code>MSET</code></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">서로 다른 명령·자료구조를<br>한 왕복에</div><div class="d"><b>pipeline</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">원자적 일괄 실행<br>(중간 개입 차단)</div><div class="d"><code>MULTI/EXEC</code> 또는 <b>Lua</b></div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>둘은 배타적이지 않다.</b> MULTI/EXEC 자체를 pipeline에 실어 보내면 <b>원자성을 얻으면서 왕복도 아낄 수 있다.</b> "둘 중 하나"가 아니라 <b>"서로 다른 층의 도구"</b>라는 것이 이 표의 진짜 메시지다.</p>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. Cluster에서는 MGET이 그냥 안 된다 <span class="badge trap">확장 시 코드가 깨지는 지점</span></h2>
+
+<p>단일 인스턴스에서 잘 돌던 MGET이 Redis Cluster로 옮기는 순간 깨진다. 원리를 알아야 미리 대비할 수 있으니 순서대로 보자.</p>
+
+<div class="step">
+  <div class="n">1</div>
+  <div class="body"><b>Cluster는 키를 슬롯으로 나눠 노드에 분산한다.</b> Redis Cluster는 전체 키 공간을 <b>16384개의 해시 슬롯</b>으로 나눠 두고, <b>키 이름을 해싱해서</b> 그 키가 어느 슬롯에 속하는지 정한다. 그리고 각 노드가 슬롯 범위를 나눠 가진다. 노드가 3대라면 대략 5461개씩 맡는 식이다.</div>
+</div>
+<div class="step">
+  <div class="n">2</div>
+  <div class="body"><b>그리고 한 명령은 한 노드에서만 실행된다.</b> 클라이언트가 명령을 보낼 때 그 명령이 다루는 키의 슬롯을 계산해 담당 노드로 보내는데, <b>명령 하나가 여러 노드에 걸쳐 실행되는 메커니즘은 없다.</b></div>
+</div>
+<div class="step red">
+  <div class="n">3</div>
+  <div class="body"><b>둘을 합치면 결론이 나온다.</b> MGET의 키들이 서로 다른 슬롯에 속하면 서로 다른 노드에 있고, <b>한 명령으로는 실행할 수 없다.</b> 그래서 Redis는 <code>CROSSSLOT</code> 에러를 돌려준다.</div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 440" role="img" aria-label="MGET의 키들이 서로 다른 해시 슬롯과 노드에 흩어져 CROSSSLOT 에러가 나는 구조와, 해시 태그로 같은 슬롯에 모으는 해결책">
+    <defs><marker id="a6" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+      <marker id="a6r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a6g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">키 이름 → 해시 슬롯(0~16383) → 담당 노드 — 명령 하나는 노드 하나에만 갈 수 있다</text>
+
+    <!-- problem -->
+    <rect x="14" y="42" width="1092" height="192" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="66" font-size="13.5" fill="#b91c1c" font-weight="700">문제 — 키들이 흩어져 있을 때</text>
+    <rect x="40" y="76" width="300" height="34" rx="7" fill="#1e293b"/>
+    <text x="190" y="98" class="mono" font-size="12.5" fill="#fca5a5" text-anchor="middle">MGET product:1 product:2 product:3</text>
+
+    <!-- keys -->
+    <g font-size="11.5" text-anchor="middle">
+      <rect x="120" y="128" width="150" height="30" rx="6" fill="#fff" stroke="#94a3b8"/><text x="195" y="148" class="mono" fill="#334155">product:1</text>
+      <rect x="440" y="128" width="150" height="30" rx="6" fill="#fff" stroke="#94a3b8"/><text x="515" y="148" class="mono" fill="#334155">product:2</text>
+      <rect x="760" y="128" width="150" height="30" rx="6" fill="#fff" stroke="#94a3b8"/><text x="835" y="148" class="mono" fill="#334155">product:3</text>
+    </g>
+    <line x1="195" y1="158" x2="195" y2="174" stroke="#9ca3af" stroke-width="1.3" marker-end="url(#a6)"/>
+    <line x1="515" y1="158" x2="515" y2="174" stroke="#9ca3af" stroke-width="1.3" marker-end="url(#a6)"/>
+    <line x1="835" y1="158" x2="835" y2="174" stroke="#9ca3af" stroke-width="1.3" marker-end="url(#a6)"/>
+    <g font-size="11.5" text-anchor="middle">
+      <rect x="120" y="178" width="150" height="24" rx="5" fill="#eff6ff" stroke="#bfdbfe"/><text x="195" y="195" fill="#1d4ed8">슬롯 8421</text>
+      <rect x="440" y="178" width="150" height="24" rx="5" fill="#eff6ff" stroke="#bfdbfe"/><text x="515" y="195" fill="#1d4ed8">슬롯 12190</text>
+      <rect x="760" y="178" width="150" height="24" rx="5" fill="#eff6ff" stroke="#bfdbfe"/><text x="835" y="195" fill="#1d4ed8">슬롯 3055</text>
+    </g>
+    <g font-size="12" text-anchor="middle" font-weight="700">
+      <rect x="120" y="206" width="150" height="22" rx="5" fill="#fee2e2" stroke="#fecaca"/><text x="195" y="222" fill="#b91c1c">노드 B</text>
+      <rect x="440" y="206" width="150" height="22" rx="5" fill="#fee2e2" stroke="#fecaca"/><text x="515" y="222" fill="#b91c1c">노드 C</text>
+      <rect x="760" y="206" width="150" height="22" rx="5" fill="#fee2e2" stroke="#fecaca"/><text x="835" y="222" fill="#b91c1c">노드 A</text>
+    </g>
+    <line x1="340" y1="93" x2="960" y2="93" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a6r)"/>
+    <rect x="620" y="76" width="330" height="34" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="785" y="98" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">명령 하나가 세 노드에 갈 수 없다 → CROSSSLOT 에러</text>
+
+    <!-- solutions -->
+    <rect x="14" y="248" width="540" height="180" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="40" y="272" font-size="13.5" fill="#166534" font-weight="700">대응 ① 해시 태그로 같은 슬롯에 모은다</text>
+    <rect x="40" y="284" width="220" height="28" rx="6" fill="#fff" stroke="#16a34a"/><text x="150" y="303" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">user:{123}:profile</text>
+    <rect x="280" y="284" width="220" height="28" rx="6" fill="#fff" stroke="#16a34a"/><text x="390" y="303" class="mono" font-size="11.5" fill="#166534" text-anchor="middle">user:{123}:cart</text>
+    <line x1="150" y1="312" x2="240" y2="336" stroke="#16a34a" stroke-width="1.4" marker-end="url(#a6g)"/>
+    <line x1="390" y1="312" x2="300" y2="336" stroke="#16a34a" stroke-width="1.4" marker-end="url(#a6g)"/>
+    <rect x="180" y="340" width="180" height="28" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="270" y="359" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">중괄호 안만 해싱 → 같은 슬롯</text>
+    <text x="40" y="388" font-size="12" fill="#166534">같은 노드에 있으므로 <tspan font-weight="700">함께 MGET할 수 있다</tspan></text>
+    <text x="40" y="410" font-size="12" fill="#b45309" font-weight="700">대가: 같은 태그가 많아지면 특정 슬롯에 데이터가 몰린다</text>
+
+    <rect x="566" y="248" width="540" height="180" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="592" y="272" font-size="13.5" fill="#1d4ed8" font-weight="700">대응 ② 클라이언트 라이브러리가 노드별로 쪼갠다</text>
+    <rect x="592" y="284" width="150" height="30" rx="6" fill="#fff" stroke="#2563eb"/><text x="667" y="304" font-size="11.5" fill="#1d4ed8" text-anchor="middle">키 100개 요청</text>
+    <line x1="742" y1="299" x2="782" y2="299" stroke="#2563eb" stroke-width="1.5" marker-end="url(#a6)"/>
+    <g font-size="11" text-anchor="middle">
+      <rect x="790" y="278" width="90" height="22" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="835" y="294" fill="#1d4ed8">노드 A분</text>
+      <rect x="890" y="278" width="90" height="22" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="935" y="294" fill="#1d4ed8">노드 B분</text>
+      <rect x="990" y="278" width="90" height="22" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="1035" y="294" fill="#1d4ed8">노드 C분</text>
+    </g>
+    <text x="935" y="320" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">각 노드에 병렬 요청 → 결과를 원래 순서로 합침</text>
+    <text x="592" y="348" font-size="12" fill="#1d4ed8">노드가 3대면 왕복 100번이 아니라 <tspan font-weight="700">병렬 3번</tspan>으로 끝난다</text>
+    <rect x="592" y="360" width="488" height="56" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="610" y="380" font-size="12" fill="#92400e" font-weight="700">단, 라이브러리마다 다르므로 쓰기 전에 확인해야 한다</text>
+    <text x="610" y="398" font-size="11.5" fill="#92400e">· 자동으로 쪼개 주는 줄 알았는데 그냥 에러를 던지거나</text>
+    <text x="610" y="412" font-size="11.5" fill="#92400e">· 쪼개기는 하되 순차로 보내 왕복이 노드 수만큼 직렬로 쌓이기도 한다</text>
+  </svg>
+  <figcaption>해시 태그는 <b>공짜가 아니다.</b> <code>user:{123}:profile</code>과 <code>user:{123}:cart</code>는 해싱 대상이 둘 다 <code>123</code>이라 <b>반드시 같은 슬롯</b>에 들어가지만, 같은 태그를 쓰는 키가 많아지면 <b>특정 슬롯에 데이터가 몰리는 편중</b>이 생긴다. <b>분산을 일부 포기하고 멀티 키 조회를 얻는 교환</b>이라고 말해야 정확하다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>이 제약이 중요한 진짜 이유</h4>
+  <p style="margin:0 0 6px"><b>"단일 인스턴스에서 Cluster로 확장하는 순간 애플리케이션 코드가 깨지는" 대표 사례</b>이기 때문이다. 확장은 보통 <b>트래픽이 감당이 안 될 때 급하게</b> 하는 일이라, 그 시점에 코드가 깨지는 것을 발견하면 최악이다.</p>
+  <div class="rule red">확장 계획 <b>단계에서 미리 아는 것</b>이 이 지식의 값이다</div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 몰아 보내기도 과하면 블로킹 폭탄 <span class="badge bonus">가산점 포인트</span></h2>
+
+<p>왕복을 아끼는 것이 좋다고 해서 한 번에 수만 개를 묶으면 <b>반대편 문제</b>가 생긴다. 이유는 <b>Redis가 명령을 한 번에 하나씩 처리한다</b>는 데 있다.</p>
+
+<div class="grid g3">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">① 거대한 MGET = 절대적 블로킹</div>
+    <div class="d">키 10만 개짜리 MGET은 <b>명령 하나</b>다. 다 찾을 때까지 Redis는 <b>다른 어떤 명령도 처리하지 못한다.</b> 키 하나에 1µs만 잡아도 <b>100ms 동안 서버 전체가 멈춘다.</b></div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">② 거대한 pipeline도 정도만 덜하다</div>
+    <div class="d">사이에 다른 클라이언트가 끼어들 수는 있지만, 서버는 <b>읽어 들인 명령들을 연달아 처리</b>한다. 10만 개를 소화하는 동안 <b>다른 클라이언트의 대기 시간이 계속 늘어난다.</b></div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">③ 응답 쪽도 부담이다</div>
+    <div class="d">10만 개의 응답은 클라이언트가 다 읽어 갈 때까지 서버의 <b>출력 버퍼</b>에 쌓여 메모리를 부풀리고, 클라이언트에서도 <b>결과 리스트 10만 개가 힙에 통째로</b> 올라온다.</div>
+  </div>
+</div>
+
+<p><b>요청은 작은데 응답이 거대한 비대칭</b>이 여기서 생긴다. 보내는 쪽은 짧은 명령 목록이라 부담이 없어 보이지만, 돌아오는 쪽은 데이터 전체다. <code>KEYS</code> 명령이 위험한 것과 정확히 같은 계열의 문제다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="루프 GET, 거대 배치, 적당한 배치 분할 세 가지의 왕복 횟수와 서버 점유 시간 비교">
+    <text x="560" y="26" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">키 10,000개를 조회한다면 — 양 극단 사이에 균형점이 있다</text>
+
+    <!-- A -->
+    <rect x="14" y="44" width="1092" height="96" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="68" font-size="13.5" fill="#b91c1c" font-weight="700">A. 루프 GET — 왕복 10,000번</text>
+    <g>
+      <rect x="330" y="54" width="4" height="26" fill="#dc2626"/><rect x="342" y="54" width="4" height="26" fill="#dc2626"/><rect x="354" y="54" width="4" height="26" fill="#dc2626"/>
+      <rect x="366" y="54" width="4" height="26" fill="#dc2626"/><rect x="378" y="54" width="4" height="26" fill="#dc2626"/><rect x="390" y="54" width="4" height="26" fill="#dc2626"/>
+      <rect x="402" y="54" width="4" height="26" fill="#dc2626"/><rect x="414" y="54" width="4" height="26" fill="#dc2626"/><rect x="426" y="54" width="4" height="26" fill="#dc2626"/>
+      <text x="450" y="73" font-size="12" fill="#b91c1c">… 이런 왕복이 10,000번</text>
+    </g>
+    <text x="40" y="94" font-size="12.5" fill="#b91c1c">· 전체 지연: <tspan font-weight="700">0.5ms × 10,000 = 5초</tspan></text>
+    <text x="40" y="116" font-size="12.5" fill="#b91c1c">· 서버를 한 번에 오래 붙들지는 않는다 — 대신 <tspan font-weight="700">내 요청이 5초</tspan>, 커넥션도 5초 점유</text>
+    <text x="700" y="105" font-size="13" fill="#b91c1c" font-weight="700">지연 실패</text>
+
+    <!-- B -->
+    <rect x="14" y="150" width="1092" height="96" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="174" font-size="13.5" fill="#b91c1c" font-weight="700">B. 한 방에 다 묶기 — 왕복 1번, 그러나 명령 하나가 거대</text>
+    <rect x="330" y="160" width="360" height="26" rx="4" fill="#fecaca" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="510" y="178" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">이 구간 내내 Redis는 다른 명령을 처리하지 못한다</text>
+    <text x="40" y="200" font-size="12.5" fill="#b91c1c">· 내 요청은 빠르지만 <tspan font-weight="700">서버 전체가 그동안 멈춘다</tspan> (키 10만 개면 약 100ms)</text>
+    <text x="40" y="222" font-size="12.5" fill="#b91c1c">· 다른 모든 요청의 응답 시간에 그 시간이 <tspan font-weight="700">통째로 얹힌다</tspan> + 출력 버퍼·클라이언트 힙 부담</text>
+    <text x="700" y="211" font-size="13" fill="#b91c1c" font-weight="700">가용성 실패</text>
+
+    <!-- C -->
+    <rect x="14" y="256" width="1092" height="102" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="40" y="280" font-size="13.5" fill="#166534" font-weight="700">C. 500개씩 20번 — 실무의 균형점</text>
+    <g>
+      <rect x="330" y="266" width="24" height="26" rx="3" fill="#bbf7d0" stroke="#16a34a"/>
+      <rect x="362" y="266" width="24" height="26" rx="3" fill="#bbf7d0" stroke="#16a34a"/>
+      <rect x="394" y="266" width="24" height="26" rx="3" fill="#bbf7d0" stroke="#16a34a"/>
+      <rect x="426" y="266" width="24" height="26" rx="3" fill="#bbf7d0" stroke="#16a34a"/>
+      <rect x="458" y="266" width="24" height="26" rx="3" fill="#bbf7d0" stroke="#16a34a"/>
+      <text x="500" y="285" font-size="12" fill="#166534">… 20번 (사이사이 다른 명령이 처리된다)</text>
+    </g>
+    <text x="40" y="306" font-size="12.5" fill="#166534">· 전체 지연: <tspan font-weight="700">20 × 0.5ms = 10ms</tspan> — 루프 GET(5초)과는 비교가 안 된다</text>
+    <text x="40" y="328" font-size="12.5" fill="#166534">· 한 명령의 점유는 <tspan font-weight="700">짧게 유지</tspan> — 서버를 한 번에 오래 붙들지 않는다</text>
+    <text x="40" y="350" font-size="12.5" fill="#166534">· 내 지연과 남의 지연을 <tspan font-weight="700">동시에</tspan> 지킨다</text>
+    <text x="700" y="317" font-size="13" fill="#166534" font-weight="700">둘 다 통과</text>
+
+    <rect x="14" y="366" width="1092" height="30" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="386" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">왕복 최소화와 단일 명령 비대화 사이에 균형점이 있다 — 보통 수백~수천 개 단위</text>
+  </svg>
+  <figcaption>A는 <b>내 지연</b>이 무너지고 B는 <b>남의 지연</b>이 무너진다. 면접에서 좋은 답은 <b>"왕복 1번으로 만든다"</b>가 아니라 <b>"왕복을 상수로 만들되 한 덩어리가 너무 커지지 않게 자른다"</b>이다.</figcaption>
+</figure>
+
+<div class="codehead good"><span class="tag">after+</span> 배치로 잘라 보내기 — 상한이 없는 목록에는 필수</div>
+<pre><code><span class="kw">static final int</span> BATCH = 500;
+
+List&lt;String&gt; result = <span class="kw">new</span> ArrayList&lt;&gt;(keys.<span class="fn">size</span>());
+<span class="ln-good"><span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; keys.<span class="fn">size</span>(); i += BATCH) {<span class="note">왕복 1번짜리 호출을 여러 번</span></span>
+    List&lt;String&gt; chunk = keys.<span class="fn">subList</span>(i, Math.<span class="fn">min</span>(i + BATCH, keys.<span class="fn">size</span>()));
+    result.<span class="fn">addAll</span>(redis.<span class="fn">opsForValue</span>().<span class="fn">multiGet</span>(chunk));
+}
+<span class="cm">// 키 10,000개 → 왕복 20번 = 약 10ms.</span>
+<span class="cm">// 루프 GET(5초)과는 비교가 안 되면서, 서버를 한 번에 오래 붙들지도 않는다.</span></code></pre>
+
+<div class="memo">
+  <h4>목표를 정확히 표현하면 — 이 문장이 시니어 신호다</h4>
+  <div class="rule">"왕복 <b>1번</b>"이 목표가 아니라, <b>키 수 N에 비례하던 왕복을 N과 무관한 상수 몇 번으로 만드는 것</b>이 목표다</div>
+  <p style="margin:10px 0 0"><b>왕복 최소화</b>와 <b>단일 명령 비대화</b> 사이에 균형점이 있다는 감각까지 말하면 답이 완성된다. "무조건 묶어라"로 끝나는 답과 여기서 갈린다.</p>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 리뷰의 눈 — "루프 × 원격 호출"은 저장소를 가리지 않는다 <span class="badge senior">시니어 변별</span></h2>
+
+<p><b>루프 안의 원격 호출을 보면 반사적으로 두 가지를 묻는다.</b> <b>"N이 얼마까지 커질 수 있는가"</b>, <b>"왕복당 비용이 얼마인가"</b>. 이 두 질문이 습관이 되어 있는지가 리뷰어의 수준을 가른다.</p>
+
+<p>그리고 이 패턴은 Redis만의 것이 아니다. <b>JPA의 N+1 문제와 구조가 완전히 같다.</b> N+1은 주문 목록 10건을 조회하고(쿼리 1번), 각 주문의 회원을 지연 로딩으로 꺼내면서(쿼리 10번) 총 11번의 쿼리가 나가는 현상이다. 여기서 왕복 10번을 만드는 것은 <b>루프 안에 원격 호출이 들어 있다는 사실 그 자체</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="JPA와 Redis와 HTTP API에서 루프 안 원격 호출이 똑같은 모양의 왕복 N번을 만드는 구조 비교">
+    <defs><marker id="a7" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a7g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker></defs>
+
+    <text x="560" y="26" font-size="14.5" fill="#1f2937" text-anchor="middle" font-weight="700">기술 스택은 달라도 모양이 같다 — 이름만 바꾸면 그대로 재사용되는 문제와 해법</text>
+
+    <!-- header row -->
+    <text x="110" y="62" font-size="12.5" fill="#6b7280" text-anchor="middle" font-weight="700">저장소</text>
+    <text x="420" y="62" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">문제 코드 — 루프 안 원격 호출</text>
+    <text x="840" y="62" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">해법 — 한 번에 가져오기</text>
+
+    <!-- rows -->
+    <g>
+      <rect x="20" y="76" width="180" height="62" rx="9" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="110" y="102" font-size="13" fill="#334155" text-anchor="middle" font-weight="700">JPA / RDB</text>
+      <text x="110" y="122" font-size="11" fill="#6b7280" text-anchor="middle">N+1 문제</text>
+      <rect x="220" y="76" width="400" height="62" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="420" y="100" font-size="12" fill="#b91c1c" text-anchor="middle">루프 안 지연 로딩</text>
+      <text x="420" y="122" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 쿼리 N번</text>
+      <line x1="620" y1="107" x2="654" y2="107" stroke="#16a34a" stroke-width="1.6" marker-end="url(#a7g)"/>
+      <rect x="662" y="76" width="438" height="62" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="881" y="112" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">fetch join · @BatchSize · IN 절</text>
+    </g>
+
+    <g>
+      <rect x="20" y="146" width="180" height="62" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+      <text x="110" y="172" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">Redis</text>
+      <text x="110" y="192" font-size="11" fill="#1e40af" text-anchor="middle">이 문서의 주제</text>
+      <rect x="220" y="146" width="400" height="62" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+      <text x="420" y="170" font-size="12" fill="#b91c1c" text-anchor="middle">루프 안 GET</text>
+      <text x="420" y="192" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 왕복 N번</text>
+      <line x1="620" y1="177" x2="654" y2="177" stroke="#16a34a" stroke-width="1.6" marker-end="url(#a7g)"/>
+      <rect x="662" y="146" width="438" height="62" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+      <text x="881" y="182" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">MGET · pipeline</text>
+    </g>
+
+    <g>
+      <rect x="20" y="216" width="180" height="62" rx="9" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="110" y="242" font-size="13" fill="#334155" text-anchor="middle" font-weight="700">HTTP API</text>
+      <text x="110" y="262" font-size="11" fill="#6b7280" text-anchor="middle">마이크로서비스 간 호출</text>
+      <rect x="220" y="216" width="400" height="62" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="420" y="240" font-size="12" fill="#b91c1c" text-anchor="middle">루프 안 REST 호출</text>
+      <text x="420" y="262" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 왕복 N번</text>
+      <line x1="620" y1="247" x2="654" y2="247" stroke="#16a34a" stroke-width="1.6" marker-end="url(#a7g)"/>
+      <rect x="662" y="216" width="438" height="62" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="881" y="252" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">벌크 엔드포인트 · 병렬 호출</text>
+    </g>
+
+    <rect x="20" y="288" width="1080" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="311" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">"루프 × 네트워크 왕복"은 저장소가 무엇이든 지연을 N배로 만든다</text>
+  </svg>
+  <figcaption>이 한 문장을 쥐고 있으면 <b>처음 보는 기술 스택에서도 같은 냄새를 맡을 수 있다.</b> 면접에서 Redis 질문에 JPA N+1을 연결해 답하는 것이 <b>"이 사람은 원리로 이해했다"</b>는 가장 빠른 신호다.</figcaption>
+</figure>
+
+<h3>10-1. 리뷰 코멘트의 형태 — 네 가지가 한 세트다</h3>
+
+<div class="callout ok"><span class="t">이렇게 쓴다</span>
+  "productIds가 화면 요구사항상 <b>최대 몇 개</b>인가요? 100개면 이 루프가 <b>왕복 100번</b>이라 p99가 수십 ms 늘어납니다. <code>multiGet</code>으로 묶고, <b>상한이 없다면 1,000개 단위로 잘라</b>주세요."
+</div>
+
+<div class="grid" style="grid-template-columns:repeat(4,1fr)">
+  <div class="tile"><div class="k" style="font-family:inherit">① 문제 지적</div><div class="d">루프 안 GET N번</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">② 근거</div><div class="d">왕복 100번 → p99 수십 ms</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">③ 대안</div><div class="d"><code>multiGet</code>으로 묶기</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">④ 상한 확인</div><div class="d">N이 무한하면 <b>배치 분할까지</b></div></div>
+</div>
+
+<p><b>"N+1이네요"라고만 쓰면 상대는 무엇을 얼마나 고쳐야 하는지 모른다.</b> 특히 마지막의 <b>상한 확인</b>이 중요한데, N이 무한히 커질 수 있는 코드는 <b>묶는 것만으로는 해결되지 않고</b> 배치 분할까지 필요하기 때문이다(9절).</p>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 면접 전날 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<div class="memo">
+  <h4>이 주제에서 반드시 입에 붙여야 할 여섯 개</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">① µs vs ms</div><div class="d">처리는 <b>마이크로초</b>, 왕복은 <b>밀리초</b>. 비용의 <b>약 500배</b>가 이동 시간</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 50.1ms vs 0.6ms</div><div class="d">키 100개 기준 <b>약 83배</b>. <b>서버 처리량은 셋 다 0.1ms로 동일</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">③ 명령 vs 전송 방식</div><div class="d">MGET = 명령(통째 실행·String 전용) / pipeline = 전송(조합 자유·<b>원자성 없음</b>)</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">④ 성능 vs 원자성</div><div class="d"><b>pipeline = 성능</b>, <b>MULTI/Lua = 원자성</b>. 분기까지면 Lua</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">⑤ CROSSSLOT</div><div class="d">Cluster는 <b>16384 슬롯</b>, 한 명령은 한 노드 → 해시 태그 <code>{}</code>(편중 대가) 또는 노드별 분배</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">⑥ 상수 왕복 + 배치</div><div class="d">목표는 "1번"이 아니라 <b>"N과 무관한 상수"</b>. 한 덩어리는 <b>수백~수천</b>으로</div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>세 개의 연상</b> — <b>"MGET은 주문서 한 장, pipeline은 봉투 하나"</b>(층위 구분) · <b>"봉투는 묶어줄 뿐 지켜주지 않는다"</b>(원자성 없음) · <b>"루프 안의 원격 호출을 보면 N을 묻는다"</b>(JPA N+1과 같은 냄새).</p>
+</div>
+
+<p class="sub">질문만 먼저 읽고 <b>소리 내어 답해 본 뒤</b> 펼쳐서 맞춰 본다. 답을 눈으로 읽는 것보다 인출 훈련이 훨씬 오래 간다.</p>
+<div class="tools">
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=true})">모두 펼치기</button>
+  <button type="button" onclick="document.querySelectorAll('details.q').forEach(function(d){d.open=false})">모두 접기</button>
+</div>
+
+<details class="q"><summary>MGET과 pipeline으로 GET을 묶는 것, 결과가 같다면 무엇을 쓰나요? <span class="badge core">최다 빈출</span><span class="hint">힌트: 이유가 셋이다 — 서버 · 코드 · 시점</span></summary><div class="a">
+  <p>String 조회만이라면 <b>MGET이 낫다.</b> 이유가 셋이다.</p>
+  <p><b>① 서버 부담이 적다.</b> 명령 파싱과 디스패치가 100번이 아니라 1번이다.<br>
+  <b>② 코드가 단순하다.</b> <code>multiGet(keys)</code> 한 줄과 콜백 안의 루프는 읽는 부담이 다르다.<br>
+  <b>③ 한 명령이라 그 시점의 일관된 조회가 된다.</b> pipeline은 명령 사이에 남의 쓰기가 끼어들 수 있어 <b>100개가 서로 다른 시점의 값</b>일 수 있다.</p>
+  <p>pipeline은 <b>명령 종류가 섞일 때</b>, 또는 <b>Cluster에서 노드별 분배가 필요할 때</b> 꺼내는 도구다.</p>
+  <div class="rule">한 줄로는 — <b>"기본은 MGET, 조합이 필요하면 pipeline"</b></div>
+</div></details>
+
+<details class="q"><summary>pipeline과 MULTI/EXEC의 차이는요?<span class="hint">힌트: 해결하는 문제가 애초에 다르다 + 배타적이지 않다</span></summary><div class="a">
+  <p>pipeline은 <b>전송 최적화</b>(왕복 절약)이고 MULTI/EXEC는 <b>실행 보장</b>(원자적 일괄 실행)이다. <b>해결하는 문제 자체가 다르다.</b></p>
+  <p>pipeline 안의 명령들 사이에는 <b>다른 클라이언트의 명령이 끼어들 수 있다.</b> MULTI/EXEC는 명령을 <b>큐에 쌓아뒀다가 EXEC 시점에 통째로 실행</b>하므로 중간 개입이 없다.</p>
+  <p><b>둘은 배타적이지 않다.</b> MULTI/EXEC 자체를 pipeline에 실어 보내면 <b>원자성을 얻으면서 왕복도 아낄 수 있다.</b></p>
+  <p>다만 MULTI/EXEC에도 한계가 있다. <b>중간 조회 결과로 분기하지 못한다</b> — 큐에 쌓인 명령들은 서로의 결과를 볼 수 없기 때문이다. "값을 읽어 보고 조건에 맞으면 쓴다"는 <b>check-then-act</b>가 필요하면 <code>WATCH</code>(감시하던 키가 바뀌면 EXEC를 실패시키는 낙관적 방식)나 <b>Lua 스크립트</b>로 가야 한다.</p>
+</div></details>
+
+<details class="q"><summary>루프 GET인데 왕복을 못 줄이는 상황도 있나요?<span class="hint">힌트: 다음 키를 미리 알 수 있는가</span></summary><div class="a">
+  <p>있다. <b>앞 조회의 결과가 다음 조회의 키를 결정하는 의존 체인</b>이면 묶을 수 없다. 예를 들어 <code>GET session:abc</code>로 얻은 userId로 <code>GET user:{userId}</code>를 조회해야 한다면, <b>두 번째 키를 미리 알 수 없으므로</b> 한 왕복에 담을 수가 없다.</p>
+  <p>이때의 답은 둘이다.</p>
+  <p><b>① Lua 스크립트로 체인 전체를 서버에서 실행한다.</b> 왕복 1번으로 보내고 서버 안에서 "읽고 → 그 값으로 다음 키를 만들고 → 또 읽는" 과정을 끝낸다.<br>
+  <b>② 자료구조 설계를 바꿔 한 번에 읽히게 만든다.</b> 함께 읽히는 필드를 Hash 한 키에 모아두면 <code>HGETALL</code> 한 번으로 끝난다.</p>
+  <div class="rule">여기서 한 걸음 더 — <b>"왕복 수는 코드가 아니라 데이터 모델이 결정할 때가 많다"</b></div>
+  <p style="margin-top:10px">루프를 아무리 고쳐도 안 줄어드는 왕복은 대개 <b>키를 잘못 쪼개 놓은 결과</b>이고, 진짜 해법은 <b>키 설계로 돌아가는 것</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>이 지식이 코드 리뷰에서 어떻게 쓰이나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 두 개의 질문 + 네 개의 코멘트 구성 요소</span></summary><div class="a">
+  <p><b>루프 안의 원격 호출을 보면 반사적으로 두 가지를 묻는다.</b> "N이 얼마까지 커질 수 있는가", "왕복당 비용이 얼마인가".</p>
+  <p>그리고 이 패턴은 Redis만의 것이 아니다. <b>JPA의 N+1과 구조가 완전히 같다</b> — 루프 안에 원격 호출이 있다는 사실 그 자체가 왕복 N번을 만든다. 해법의 형태도 같다(fetch join · <code>@BatchSize</code> ↔ MGET · pipeline). HTTP API 호출도 마찬가지고, 답은 벌크 엔드포인트다.</p>
+  <p><b>코멘트는 네 가지가 한 세트</b>다 — <b>문제 지적 + 근거 + 대안 + 상한 확인</b>. "N+1이네요"라고만 쓰면 상대는 무엇을 얼마나 고쳐야 하는지 모른다. 특히 <b>상한 확인</b>이 중요한데, N이 무한히 커질 수 있는 코드는 <b>묶는 것만으로는 해결되지 않고 배치 분할까지 필요</b>하기 때문이다.</p>
+  <div class="rule ok">"루프 × 네트워크 왕복"은 <b>저장소가 무엇이든</b> 지연을 N배로 만든다</div>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>pipeline으로 보낸 명령 중 하나가 에러나면 나머지는 어떻게 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: pipeline은 트랜잭션이 아니다 — 그 말의 실무적 귀결</span></summary><div class="a">
+  <p><b>나머지는 그대로 실행된다.</b> pipeline은 트랜잭션이 아니므로 <b>롤백이라는 개념 자체가 없다.</b> 실패한 명령의 <b>응답 자리에 에러가 담겨</b> 돌아오고, 앞뒤 명령의 결과는 정상적으로 반영된다.</p>
+  <p>그래서 코드에서 <b>결과 리스트를 순회하며 항목별로 확인</b>해야 한다. "예외가 안 났으니 다 성공"이라고 가정하는 것이 가장 흔한 실수다 — <b>부분 성공이 정상 동작</b>인 도구다.</p>
+  <p><b>MULTI/EXEC로 바꾸면 해결될까?</b> 여기서 한 칸 더 들어갈 수 있다. MULTI/EXEC는 <b>중간 개입을 막아줄 뿐</b>, "실행 중 하나가 실패하면 앞의 것을 되돌린다"는 <b>RDB식 롤백을 제공하지 않는다.</b> 그래서 <b>"부분 실패를 어떻게 감지하고 보정할 것인가"</b>는 어느 쪽을 쓰든 애플리케이션이 설계해야 하는 문제다.</p>
+  <div class="rule red">"묶어 보냈다"와 "다 되거나 다 안 되거나"는 <b>완전히 다른 이야기</b>다</div>
+</div></details>
+
+<details class="q"><summary>여러 스레드가 동시에 각자 pipeline을 보내면 응답이 섞이지 않나요?<span class="hint">힌트: "원자성이 없다"와 "순서가 깨진다"는 다른 말이다</span></summary><div class="a">
+  <p><b>섞이지 않는다.</b> Redis는 <b>커넥션마다</b> 그 커넥션이 보낸 명령의 순서대로 응답을 돌려준다. 내가 <code>GET a</code> → <code>GET b</code> → <code>GET c</code> 순으로 밀어 넣었다면 응답도 <b>정확히 그 순서로</b> 내 소켓에 들어오고, 결과 리스트의 <b>i번째는 i번째 명령의 결과</b>다.</p>
+  <p>깨지는 것은 <b>순서가 아니라 시점의 일관성</b>이다. 다른 클라이언트의 명령이 <b>서버의 실행 순서 사이에 들어올 수 있다</b>는 것이지, <b>내 응답 스트림에 남의 응답이 섞여 오는 것이 아니다.</b> 이 둘을 구분해 말하면 "원자성 없음"을 정확히 이해한 것으로 들린다.</p>
+  <p>실무적으로 주의할 것은 오히려 다른 쪽이다 — <b>커넥션 풀에서 빌린 커넥션 위에서 pipeline이 진행되므로, 그 커넥션을 다른 스레드와 공유하는 구조라면 문제가 된다.</b> 그래서 pipeline은 <b>커넥션 하나를 그 작업 동안 온전히 점유하는 방식</b>으로 구현된다.</p>
+</div></details>
+
+<details class="q"><summary>비동기·논블로킹 클라이언트를 쓰면 pipeline이 따로 필요 없나요?<span class="hint">힌트: pipeline의 본질은 "기다리지 않고 보내는 것"이었다</span></summary><div class="a">
+  <p><b>본질을 보면 같은 이야기다.</b> pipeline이 없앤 것은 <b>"응답을 기다리는 시간"</b>이었다. 그러므로 <b>논블로킹 API로 명령들을 먼저 다 보내 놓고 나중에 결과를 모으는 방식</b>이라면, 형태는 달라도 <b>왕복이 겹쳐지는 효과는 같다.</b></p>
+  <p>다만 <b>착각하기 쉬운 지점</b>이 있다. <b>같은 라이브러리를 쓰더라도 동기(블로킹) API를 호출하는 한 루프는 여전히 왕복 N번</b>이다. "비동기 클라이언트를 쓰니 괜찮다"가 아니라 <b>"응답을 기다린 뒤 다음을 보내는 코드인가"</b>가 판단 기준이다.</p>
+  <p>그리고 어느 방식이든 <b>9절의 균형</b>은 그대로 적용된다 — 한 번에 너무 많은 명령을 밀어 넣으면 서버 점유와 버퍼 부담은 똑같이 생긴다.</p>
+  <div class="rule">기준은 API의 이름이 아니라 <b>"기다림이 루프 안에 있는가"</b>다</div>
+</div></details>
+
+<details class="q"><summary>MGET 결과에서 값이 없는 키는 어떻게 표현되나요? 캐시 미스 처리는요?<span class="hint">힌트: 자리를 지키는 null + 미스를 다시 N번 조회하지 않기</span></summary><div class="a">
+  <p><b>없는 키의 자리에는 <code>null</code>이 들어온다.</b> 결과에서 빠지는 것이 아니라 <b>요청한 순서 그대로 자리를 지키므로</b>, 인덱스로 원래 키·ID와 짝지을 수 있다. 반대로 <b>"없는 건 빠져서 온다"고 가정하면 짝이 전부 밀려</b> 엉뚱한 데이터를 반환하는 버그가 난다.</p>
+  <p><b>미스 처리에서 실수가 나온다.</b> null을 만날 때마다 DB를 한 번씩 조회하면, <b>Redis에서 없앤 N+1을 DB에서 그대로 재현</b>하는 꼴이다. 올바른 형태는 <b>미스된 키들을 모아 한 번에 벌크 조회</b>하고(<code>IN</code> 절 등), <b>되채우기도 pipeline이나 MSET으로 묶는</b> 것이다.</p>
+  <p>한 걸음 더 나가면 — <b>"없음"이라는 사실 자체를 캐싱</b>할지도 결정해야 한다. 존재하지 않는 키를 매번 DB까지 물어보는 구조는 <b>캐시가 막아주지 못하는 트래픽</b>을 만든다.</p>
+</div></details>
+
+<details class="q"><summary>Cluster에서 어차피 노드별로 쪼개 보낸다면, MGET을 쓸 이유가 있나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 왕복 수는 노드 수에 비례하지 키 수에 비례하지 않는다</span></summary><div class="a">
+  <p><b>있다.</b> 쪼갠 뒤에도 <b>각 노드로 가는 것은 그 노드 몫의 키를 담은 MGET 한 번</b>이기 때문이다. 노드가 3대라면 왕복은 <b>키 수 N이 아니라 노드 수 3</b>에 비례하고, 그마저 <b>병렬로</b> 나가면 체감 지연은 사실상 왕복 1번에 가깝다.</p>
+  <p>즉 <b>목표는 그대로 유지된다</b> — <a href="#s9">"N에 비례하던 왕복을 N과 무관한 상수로"</a>. Cluster에서는 그 상수가 1이 아니라 <b>노드 수</b>가 될 뿐이다.</p>
+  <p><b>다만 확인할 것이 셋이다.</b> ① 쓰는 라이브러리가 <b>자동으로 쪼개 주는지</b>, ② 쪼갠 요청을 <b>병렬로 보내는지 순차로 보내는지</b>(순차면 왕복이 노드 수만큼 직렬로 쌓인다), ③ 결과를 <b>원래 요청 순서로 되돌려 주는지</b>. 이 셋을 확인해 봤다고 말하면 실제로 써 본 사람으로 들린다.</p>
+</div></details>
+
+<details class="q"><summary>왕복 비용을 줄인다면서 Lua 스크립트를 남발하면 어떤 문제가 생기나요?<span class="hint">힌트: 원자성의 대가는 무엇이었나</span></summary><div class="a">
+  <p><b>Lua 스크립트는 실행되는 동안 원자적</b>이다. 뒤집어 말하면 <b>그 시간 내내 다른 어떤 명령도 처리되지 않는다.</b> 왕복을 아끼려고 무거운 로직을 스크립트로 옮기면, <b>9절의 "거대한 단일 명령" 문제를 그대로 만드는 것</b>이 된다.</p>
+  <p>그래서 판단 기준은 이렇다. <b>Lua는 "원자성이 필요할 때" 쓰는 도구이지 "왕복을 줄이려고" 쓰는 도구가 아니다.</b> 왕복만이 목적이라면 <b>MGET이나 pipeline이 더 나은 선택</b>이다 — 서버를 오래 붙들지 않기 때문이다.</p>
+  <p>쓰더라도 <b>짧게 유지하고, 루프 안에서 방대한 키를 도는 스크립트는 피한다.</b> 원자성이라는 이득과 <b>서버 점유라는 비용</b>을 함께 말하면 균형 잡힌 답이 된다.</p>
+</div></details>
+
+<details class="q"><summary>배치 크기는 어떻게 정하나요? "수백~수천"의 근거가 뭔가요?<span class="hint">힌트: 고정된 정답이 아니라 두 곡선이 만나는 지점</span></summary><div class="a">
+  <p><b>고정된 정답은 없다.</b> 두 가지 비용이 반대 방향으로 움직이기 때문이다 — <b>배치를 키우면 왕복 수가 줄고(이득), 한 명령의 서버 점유 시간과 응답 크기가 커진다(비용).</b> 균형점은 <b>값 하나의 크기, 서버가 감당해야 하는 다른 트래픽, 허용 지연</b>에 따라 달라진다.</p>
+  <p><b>결정하는 방식으로 답하면 좋다.</b> ① 값 하나가 크다면(수십 KB) 배치를 작게 — 응답 총량이 먼저 문제가 된다. ② <b>실제로 재 본다</b> — 배치 크기를 바꿔 가며 p99와 서버 지표를 관찰하면 효과가 평평해지는 구간이 보인다. ③ <b>상한을 코드에 박아 둔다</b> — 입력 목록 크기에 상한이 없으면 언젠가 사고가 난다.</p>
+  <p>핵심은 <b>"왕복이 N에 비례하지 않게 만드는 것"</b>이 목적이고, 배치 크기는 그 목적을 지키는 선에서 <b>서버를 오래 붙들지 않을 만큼 작게</b> 잡는다는 것이다.</p>
+</div></details>
+
+<details class="q"><summary>루프 GET을 그냥 병렬 스레드로 100개 동시에 날리면 안 되나요?<span class="hint">힌트: 왕복은 줄었는가, 아니면 자원으로 덮었는가</span></summary><div class="a">
+  <p><b>지연은 줄어든다. 그러나 문제를 자원으로 덮은 것</b>이다. 왕복 100번은 그대로 있고, 그것을 동시에 진행시키기 위해 <b>커넥션 100개와 스레드 100개</b>를 쓴 것뿐이다.</p>
+  <p>대가가 분명하다. ① <b>커넥션 풀이 그만큼 소모</b>되어 같은 풀을 쓰는 다른 요청이 밀린다(3절). ② 스레드 생성·컨텍스트 스위칭 비용이 붙는다. ③ 동시 요청이 늘면 <b>이 방식은 곱하기로 커진다</b> — 요청 10개면 커넥션 1,000개다.</p>
+  <p>반면 MGET·pipeline은 <b>왕복 자체를 없앤다.</b> 커넥션 하나로 같은 일을 끝내므로 <b>동시성이 늘어도 자원 사용이 선형으로 폭증하지 않는다.</b></p>
+  <div class="rule red">"병렬로 덮기"와 "왕복을 없애기"는 <b>부하가 늘었을 때 완전히 다르게 무너진다</b></div>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  여러 키 조회의 비용은 <b>명령 처리(µs)</b>가 아니라 <b>네트워크 왕복(ms)</b>이 지배하므로 루프 GET(왕복 N번)은 MGET이나 pipeline(왕복 1번)으로 묶어야 한다 — MGET은 <b>String 전용 단일 명령</b>이라 중간 개입 없이 통째로 실행되는 반면 <b>pipeline은 전송 방식일 뿐이라 명령 사이에 남의 명령이 끼어들 수 있고(원자성 없음, 원자성이 필요하면 <code>MULTI/EXEC</code>나 Lua)</b>, 여기에 Cluster의 <b>해시 슬롯 제약</b>과 <b>"너무 큰 배치는 그 자체가 블로킹"</b>이라는 균형까지 말하면 왕복을 분해해 본 경험이 증명된다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/05-redis-caching/21-loop-get-vs-mget-vs-pipeline.md</code> · 함께 보면 좋은 문서: 싱글 스레드와 블로킹 명령(01·12) · Cluster 해시 슬롯(09) · MULTI/WATCH vs Lua(27) · Lua 원자성(22)</p>
+</main>
+</body>
+</html>

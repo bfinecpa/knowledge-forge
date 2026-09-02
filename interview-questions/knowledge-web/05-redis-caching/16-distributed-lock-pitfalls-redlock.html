@@ -1,0 +1,1368 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis 분산 락의 함정 — 락은 이미 넘어갔는데 나만 주인인 줄 아는 순간들</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --text:#1f2937; --muted:#6b7280;
+    --accent:#2563eb; --accent-soft:#dbeafe; --warn:#dc2626; --warn-soft:#fee2e2;
+    --ok:#16a34a; --ok-soft:#dcfce7; --amber:#d97706; --amber-soft:#fef3c7;
+    --violet:#7c3aed; --violet-soft:#ede9fe;
+    --code-bg:#1e293b; --code-text:#e2e8f0; --line:#e5e7eb;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    font-size:16px;line-height:1.7;word-break:keep-all}
+  main{max-width:960px;margin:0 auto;padding:24px 16px 80px}
+  h1{font-size:1.6rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+  h2{font-size:1.3rem;margin:56px 0 16px;padding-top:8px;color:var(--accent);
+    border-top:3px solid var(--accent-soft)}
+  h3{font-size:1.08rem;margin:28px 0 10px}
+  p{margin:0 0 14px}
+  a{color:var(--accent)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;
+    background:#e8ecf3;padding:1px 5px;border-radius:4px}
+  pre{background:var(--code-bg);color:var(--code-text);padding:16px;border-radius:10px;
+    overflow-x:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.82rem;line-height:1.6;margin:0 0 16px}
+  pre code{background:none;padding:0;color:inherit;font-size:inherit}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;margin:0 0 16px}
+  .kicker{font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--accent);margin-bottom:6px}
+  .hero{background:var(--card);border:2px solid var(--accent);border-radius:16px;
+    padding:24px 24px 20px;margin:20px 0 20px}
+  .hero .sub{color:var(--muted);font-size:.95rem;margin-bottom:14px}
+  .hero .point{font-size:1.02rem;line-height:1.8}
+  .hero .point b{color:var(--accent)}
+  .toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;
+    list-style:none;padding:0;margin:0}
+  .toc li a{display:block;background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:10px 12px;text-decoration:none;color:var(--text);font-size:.92rem}
+  .toc li a:hover{border-color:var(--accent)}
+  .toc .n{color:var(--accent);font-weight:700;margin-right:6px}
+  .callout{border-left:5px solid var(--accent);background:var(--card);padding:14px 18px;
+    border-radius:0 10px 10px 0;margin:0 0 16px}
+  .callout.warn{border-color:var(--warn);background:#fff7f7}
+  .callout.ok{border-color:var(--ok);background:#f6fdf8}
+  .callout.gap{border-color:var(--amber);background:#fffbeb}
+  .callout .t{font-weight:700;margin-bottom:4px}
+  .badge{display:inline-block;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;
+    vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+  .badge.senior{background:var(--warn);color:#fff}
+  .badge.bonus{background:var(--ok);color:#fff}
+  .badge.gap{background:var(--amber);color:#fff}
+  .badge.blue{background:var(--accent);color:#fff}
+  .badge.extra{background:#6b7280;color:#fff}
+  .fig{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;
+    margin:0 0 16px;overflow-x:auto}
+  .fig svg{display:block;min-width:560px;width:100%;height:auto}
+  .fig .cap{font-size:.85rem;color:var(--muted);margin-top:8px;text-align:center}
+  .wide{width:min(1180px,calc(100vw - 40px));margin-left:50%;transform:translateX(-50%)}
+  .fig.wide svg{min-width:900px}
+  .memo{background:var(--card);border:2px solid var(--accent);border-radius:14px;padding:18px 20px;margin:0 0 16px}
+  .memo .kicker{color:var(--accent)}
+  .memo.warn{border-color:var(--warn)} .memo.warn .kicker{color:var(--warn)}
+  .memo.ok{border-color:var(--ok)} .memo.ok .kicker{color:var(--ok)}
+  .memo.gap{border-color:var(--amber)} .memo.gap .kicker{color:var(--amber)}
+  .memo.vio{border-color:var(--violet)} .memo.vio .kicker{color:var(--violet)}
+  .memo .big{font-size:1.15rem;font-weight:700;line-height:1.55;margin:4px 0 6px}
+  .rule{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px dashed var(--line)}
+  .rule:first-of-type{border-top:none}
+  .rule .num{flex:0 0 34px;height:34px;border-radius:50%;background:var(--accent);color:#fff;
+    font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.95rem}
+  .rule.w .num{background:var(--warn)}
+  .rule.v .num{background:var(--violet)}
+  .rule.g .num{background:var(--ok)}
+  .rule.a .num{background:var(--amber)}
+  .rule .body b{display:block}
+  .rule .body span{font-size:.92rem;color:var(--muted)}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:0 0 16px}
+  .grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:0 0 16px}
+  .mini{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .mini .h{font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .mini .tag{font-size:.7rem;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--accent-soft);color:var(--accent)}
+  .mini .tag.warn{background:var(--warn-soft);color:var(--warn)}
+  .mini .tag.ok{background:var(--ok-soft);color:var(--ok)}
+  .mini .tag.gap{background:var(--amber-soft);color:var(--amber)}
+  .mini p{font-size:.92rem;margin:0}
+  .mini ul{margin:4px 0 0;padding-left:18px;font-size:.9rem}
+  .tbl{overflow-x:auto;margin:0 0 16px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+  table{border-collapse:collapse;width:100%;min-width:560px;font-size:.9rem}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:#f1f4f9;font-weight:700;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.ok{color:var(--ok);font-weight:700} td.warn{color:var(--warn);font-weight:700} td.mid{color:var(--amber);font-weight:700}
+  .ba{display:grid;grid-template-columns:1fr;gap:12px;margin:0 0 16px}
+  @media(min-width:700px){.ba{grid-template-columns:1fr 1fr}}
+  .ba .col{background:var(--card);border-radius:12px;border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column}
+  .ba .head{padding:8px 14px;font-weight:700;font-size:.9rem;color:#fff}
+  .ba .head.bad{background:var(--warn)} .ba .head.good{background:var(--ok)}
+  .ba pre{border-radius:0;margin:0;flex:1}
+  .ba.single{grid-template-columns:1fr}
+  .hl-bad{background:rgba(220,38,38,.28);display:inline-block;width:100%}
+  .hl-good{background:rgba(22,163,74,.28);display:inline-block;width:100%}
+  .cmt{color:#94a3b8}
+  details{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:0 0 12px;padding:0}
+  details summary{cursor:pointer;padding:14px 18px;font-weight:700;list-style:none;position:relative;padding-right:40px}
+  details summary::-webkit-details-marker{display:none}
+  details summary::after{content:"+";position:absolute;right:16px;top:10px;font-size:1.4rem;color:var(--accent);font-weight:400}
+  details[open] summary::after{content:"−"}
+  details .ans{padding:0 18px 16px;border-top:1px dashed var(--line);padding-top:12px;font-size:.95rem}
+  details .ans .key{font-weight:700;color:var(--accent)}
+  details .ans ol,details .ans ul{margin:6px 0 8px;padding-left:20px}
+  .banner{margin-top:56px;background:var(--accent);color:#fff;border-radius:16px;padding:24px 26px;font-size:1.05rem;line-height:1.8}
+  .banner .kicker{color:#bfdbfe}
+  .banner b{color:#fff;background:rgba(255,255,255,.18);padding:0 4px;border-radius:4px}
+  .small{font-size:.88rem;color:var(--muted)}
+  .qa{font-size:.92rem;color:var(--muted)}
+  .kv{display:flex;gap:10px;align-items:baseline;font-size:.94rem;padding:7px 0;border-top:1px dashed var(--line)}
+  .kv:first-child{border-top:none}
+  .kv .k{flex:0 0 132px;font-weight:700;color:var(--muted);font-size:.86rem;text-align:right}
+
+  /* ---- 이 페이지 전용 ---- */
+  .chant{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:0 0 16px}
+  .chant .c{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 10px;text-align:center}
+  .chant .c .syl{font-size:2rem;font-weight:900;line-height:1.1;color:var(--warn)}
+  .chant .c .eng{font-size:.76rem;color:var(--muted);margin:2px 0 8px}
+  .chant .c .q{font-size:.86rem;font-weight:700;padding:6px 6px;border-radius:8px;background:#f8fafc;border:1px dashed var(--line)}
+  .chant.def .c .syl{color:var(--accent)}
+  .flow3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0 4px}
+  .flow3 .st{background:var(--warn-soft);border:1px solid var(--warn);border-radius:10px;padding:10px 8px;text-align:center;font-size:.84rem}
+  .flow3 .st b{display:block;font-size:.95rem;color:var(--warn)}
+  .flow3.blue .st{background:var(--accent-soft);border-color:var(--accent)}
+  .flow3.blue .st b{color:var(--accent)}
+  .args{background:#1e293b;color:#e2e8f0;border-radius:10px;padding:16px 18px;margin:0 0 12px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.95rem;text-align:center;letter-spacing:.01em}
+  .args .k{color:#93c5fd;font-weight:700}
+  .args .v{color:#fca5a5;font-weight:700}
+  .args .nx{color:#86efac;font-weight:700}
+  .args .px{color:#fcd34d;font-weight:700}
+  .argtbl .kv .k{flex:0 0 96px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent);text-align:right}
+  .rq{display:block;width:100%;text-align:left;font:inherit;font-size:.93rem;background:var(--card);border:1px solid var(--line);
+    border-radius:10px;padding:10px 14px;margin-bottom:8px;cursor:pointer;position:relative;padding-right:230px}
+  .rq:hover{border-color:var(--accent)}
+  .rq .a{position:absolute;right:12px;top:50%;transform:translateY(-50%);display:none;font-weight:800;color:var(--accent);font-size:.86rem;text-align:right;max-width:210px}
+  .rq.open .a{display:inline-block}
+  .rq:not(.open)::after{content:"어느 함정?";position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#cbd5e1;font-size:.8rem;font-weight:700}
+  .drillbar{display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap}
+  .drillbar button{font:inherit;font-size:.88rem;font-weight:700;padding:7px 14px;border-radius:8px;border:1px solid var(--accent);
+    background:var(--card);color:var(--accent);cursor:pointer}
+  .drillbar button:hover{background:var(--accent-soft)}
+</style>
+</head>
+<body>
+<main>
+
+<div class="kicker">05 · Redis / 캐싱 — 심화 ⭐⭐⭐ · 분산 락의 함정과 Redlock</div>
+<h1>Redis 분산 락의 함정 — 락은 이미 넘어갔는데 나만 주인인 줄 아는 순간들</h1>
+<p class="small">원본: <code>interview-questions/knowledge/05-redis-caching/16-distributed-lock-pitfalls-redlock.md</code></p>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="kicker">30초 카드 — 함정 3개 · 방어 3층 · 기준 1개</div>
+  <div class="sub">질문: "Redis 기반 분산 락을 구현할 때의 함정(TTL 만료, 락 소유자 검증, 시계 문제)을 설명해주세요. Redlock 논쟁에 대한 본인의 견해는?" — <b>함정 셋을 한 문장으로 묶고</b>, 방어 가능한 영역과 구조적으로 남는 영역을 가른 뒤, 마지막에 <b>자기 기준</b>을 말하면 첫 답변이 끝난다.</div>
+
+  <div class="chant">
+    <div class="c"><div class="syl">만</div><div class="eng">① TTL 만료</div><div class="q">작업이 락보다 오래 산다</div></div>
+    <div class="c"><div class="syl">해</div><div class="eng">② 소유자 미검증 해제</div><div class="q"><code style="background:#fee2e2;color:#dc2626">DEL</code>은 주인을 안 가린다</div></div>
+    <div class="c"><div class="syl">시</div><div class="eng">③ 시계 의존</div><div class="q">유효 시간이 물리 시계에 기댄다</div></div>
+  </div>
+  <p class="small" style="margin:6px 0 4px">셋 다 결국 같은 문장이다 — <b style="color:#dc2626">"내가 락을 쥐고 있다"는 믿음과 락의 실제 상태가 어긋나는 순간, 임계 구간에 둘이 들어간다.</b></p>
+
+  <div class="flow3 blue">
+    <div class="st"><b>원 — 원자화</b><code>SET NX PX</code> · Lua</div>
+    <div class="st"><b>토 — 소유자 토큰</b>내 것일 때만 해제</div>
+    <div class="st"><b>펜 — 자원 측 방어</b>fencing · 조건부 갱신</div>
+  </div>
+
+  <div class="kicker" style="margin-top:16px">핵심 관전 포인트 — 그대로 말하기</div>
+  <div class="point">
+    분산 락의 함정 세 가지는 전부 한 문장으로 수렴한다 — <b>"내가 락을 쥐고 있다"는 프로세스의 믿음과 락의 실제 상태가 어긋나는 순간, 임계 구간에 두 프로세스가 동시에 들어간다.</b>
+    ① <b>TTL 만료</b>: GC 일시 정지나 네트워크 지연으로 작업이 TTL보다 길어지면, 락은 만료되어 이미 남에게 넘어갔는데 원래 주인은 그걸 모른 채 계속 쓴다.
+    ② <b>소유자 검증 없는 해제</b>: <code>DEL</code>은 주인을 가리지 않는다. 늦게 깨어난 프로세스가 남의 락을 지우는 사고를 막으려면 락 값에 고유 토큰을 넣고 "내 토큰일 때만 삭제"를 <b>Lua로 원자화</b>해야 한다.
+    ③ <b>시계 문제</b>: Redlock은 락 유효 시간 판정을 각 노드의 물리 시계에 의존하는데, 시계가 점프하면(NTP 보정, 관리자 조작) 안전성 가정이 무너진다.
+    Redlock 논쟁에 대한 내 기준은 이렇다 — <b>분산 락은 "같은 일을 두 번 하지 않기 위한 효율성 장치"로만 신뢰하고, 정확성(돈·정합성)이 걸린 작업의 최종 방어선은 락이 아니라 데이터 쪽(DB 유니크 제약·조건부 갱신·fencing token)에 둔다.</b>
+    이 기준이면 단일 Redis + <code>SET NX PX</code>로 충분하며, Redlock의 복잡도는 사지 않는다.
+  </div>
+</section>
+
+<div class="callout gap">
+  <div class="t">출제 의도 — 명령어 암기가 아니라 <u>타이밍</u>과 <u>기준</u>을 본다</div>
+  <div class="qa">
+    rationale은 이렇게 적고 있다 — "TTL 만료 후에도 자기가 락 주인인 줄 아는 프로세스, 남의 락 해제 — 이 함정들은 '락을 얻었다'는 착각 속에 정합성을 조용히 깬다.
+    Redlock 논쟁에 견해를 묻는 건 정답이 아니라 <b>안전성과 실용성의 트레이드오프에 자기 기준이 있는지</b>를 보기 위해서다."
+    즉 채점 지점은 셋이다 — ① 각 함정이 <b>어떤 타이밍에, 왜 발생하는지</b>를 그림으로 그릴 수 있는가(<a href="#s4">§4</a>·<a href="#s7">§7</a>·<a href="#s8">§8</a>)
+    ② 함정마다 <b>어디까지가 방어 가능하고 어디부터는 구조적으로 불가능한지</b>를 구분하는가(<a href="#s5">§5</a>·<a href="#s6">§6</a>)
+    ③ 그 불가능성 위에서 <b>자기 기준</b>을 세웠는가(<a href="#s9">§9</a>·<a href="#s10">§10</a>).
+  </div>
+</div>
+
+<ul class="toc">
+  <li><a href="#s1"><span class="n">1</span>자물쇠를 바깥에 두는 순간</a></li>
+  <li><a href="#s2"><span class="n">2</span>왜 <code>SET NX PX</code> 한 문장인가</a></li>
+  <li><a href="#s3"><span class="n">3</span>TTL 다이얼 — 안전성 vs 가용성 ★</a></li>
+  <li><a href="#s4"><span class="n">4</span>함정① TTL 만료 · STW 타임라인 ★</a></li>
+  <li><a href="#s5"><span class="n">5</span>watchdog — 완화지 해결이 아니다</a></li>
+  <li><a href="#s6"><span class="n">6</span>fencing token — 방어선을 옮긴다 ★</a></li>
+  <li><a href="#s7"><span class="n">7</span>함정② 남의 락을 지운다 · Lua</a></li>
+  <li><a href="#s8"><span class="n">8</span>함정③ failover 유실 · 시계 · Redlock</a></li>
+  <li><a href="#s9"><span class="n">9</span>논쟁 — 두 층위와 내 견해 ★</a></li>
+  <li><a href="#s10"><span class="n">10</span>실무 선택 기준 한 장</a></li>
+  <li><a href="#s11"><span class="n">11</span>판별 드릴 — 어느 함정인가</a></li>
+  <li><a href="#s12"><span class="n">12</span>꼬리질문 셀프 테스트</a></li>
+</ul>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 자물쇠를 바깥에 두는 순간 — 분산 락이 무엇을 하는 물건인가</h2>
+
+<p>용어부터 정리하자. <b>락(lock, 자물쇠)</b>은 "한 번에 한 명만 이 구간에 들어오게 한다"는 장치이고, 그 구간을 <b>임계 구간(critical section)</b>이라고 부른다 — 여러 실행 주체가 동시에 들어오면 결과가 깨지는 코드 구간이라는 뜻이다.</p>
+
+<p>한 JVM 안이라면 <code>synchronized</code>나 <code>ReentrantLock</code>으로 끝난다. 자물쇠의 상태가 그 JVM의 메모리에 있고, 그 메모리를 모든 스레드가 함께 보기 때문이다. 그런데 <b>같은 애플리케이션을 서버 3대로 늘리는 순간 이 전제가 무너진다.</b></p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 300" role="img" aria-label="JVM 내부 락과 분산 락의 구조 대비 — 자물쇠가 3개면 자물쇠가 없는 것과 같다">
+  <defs>
+    <marker id="f1r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="f1b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+  </defs>
+
+  <rect x="8" y="8" width="560" height="284" rx="12" fill="#f8fafc" stroke="#dc2626" stroke-width="2"/>
+  <text x="288" y="36" text-anchor="middle" font-size="14.5" font-weight="800" fill="#dc2626">✕ 서버 3대 × JVM 내부 락</text>
+
+  <rect x="30" y="56" width="150" height="86" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="105" y="78" text-anchor="middle" font-size="12" font-weight="700">JVM #1</text>
+  <rect x="52" y="90" width="106" height="34" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="105" y="112" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">자기 메모리의 락</text>
+
+  <rect x="205" y="56" width="150" height="86" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="280" y="78" text-anchor="middle" font-size="12" font-weight="700">JVM #2</text>
+  <rect x="227" y="90" width="106" height="34" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="280" y="112" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">자기 메모리의 락</text>
+
+  <rect x="380" y="56" width="150" height="86" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="455" y="78" text-anchor="middle" font-size="12" font-weight="700">JVM #3</text>
+  <rect x="402" y="90" width="106" height="34" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="455" y="112" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">자기 메모리의 락</text>
+
+  <line x1="105" y1="142" x2="105" y2="196" stroke="#dc2626" stroke-width="2" marker-end="url(#f1r)"/>
+  <line x1="280" y1="142" x2="280" y2="196" stroke="#dc2626" stroke-width="2" marker-end="url(#f1r)"/>
+  <line x1="455" y1="142" x2="455" y2="196" stroke="#dc2626" stroke-width="2" marker-end="url(#f1r)"/>
+
+  <rect x="60" y="200" width="440" height="46" rx="10" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
+  <text x="280" y="228" text-anchor="middle" font-size="13" font-weight="800" fill="#dc2626">임계 구간 — 셋이 나란히 들어와 있다</text>
+  <text x="288" y="272" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">자물쇠가 세 개가 되면 자물쇠가 없는 것과 같다</text>
+
+  <rect x="592" y="8" width="560" height="284" rx="12" fill="#f8fafc" stroke="#2563eb" stroke-width="2"/>
+  <text x="872" y="36" text-anchor="middle" font-size="14.5" font-weight="800" fill="#2563eb">✓ 분산 락 — 자물쇠를 바깥의 한곳에</text>
+
+  <rect x="614" y="56" width="150" height="60" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="689" y="92" text-anchor="middle" font-size="12" font-weight="700">JVM #1</text>
+  <rect x="789" y="56" width="150" height="60" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="864" y="92" text-anchor="middle" font-size="12" font-weight="700">JVM #2</text>
+  <rect x="964" y="56" width="150" height="60" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="1039" y="92" text-anchor="middle" font-size="12" font-weight="700">JVM #3</text>
+
+  <line x1="689" y1="116" x2="820" y2="152" stroke="#2563eb" stroke-width="2" marker-end="url(#f1b)"/>
+  <line x1="864" y1="116" x2="864" y2="152" stroke="#2563eb" stroke-width="2" marker-end="url(#f1b)"/>
+  <line x1="1039" y1="116" x2="910" y2="152" stroke="#2563eb" stroke-width="2" marker-end="url(#f1b)"/>
+
+  <rect x="700" y="158" width="330" height="60" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="865" y="182" text-anchor="middle" font-size="13" font-weight="800" fill="#2563eb">Redis — 모두가 함께 보는 한 칸짜리 좌석</text>
+  <text x="865" y="204" text-anchor="middle" font-size="11.5" fill="#1f2937">키 <tspan font-weight="700">lock:order:42</tspan> 가 있으면 누가 앉아 있는 것</text>
+
+  <text x="872" y="248" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">좌석은 하나 — 앉을 수 있는 것도 한 명</text>
+  <text x="872" y="272" text-anchor="middle" font-size="11.5" fill="#6b7280">이 페이지의 모든 함정은 "그 좌석에 대한 오해"에서 나온다</text>
+</svg>
+<div class="cap">3대의 JVM은 서로의 메모리를 볼 수 없으므로 각자 자기 자물쇠를 잡고 셋이 동시에 들어간다. 그래서 <b>자물쇠의 상태를 모두가 볼 수 있는 바깥의 한곳</b>에 두는 것이 분산 락이고, 그 바깥을 Redis로 삼은 것이다.</div>
+</div>
+
+<div class="memo">
+  <div class="kicker">이 페이지 내내 쓸 비유 — 좌석과 이름표</div>
+  <div class="big">Redis 키 하나 = <u>한 칸짜리 좌석</u>, 키의 값 = <u>거기 앉은 사람의 이름표</u>, TTL = <u>안 돌아오면 치우는 시각</u></div>
+  <p style="margin:0;font-size:.94rem">이 비유 하나로 세 함정이 전부 설명된다 — <b>만</b>: 자리를 비운 사이 이름표가 치워졌는데 본인은 모른다. <b>해</b>: 자리를 뜨면서 남의 이름표를 치운다. <b>시</b>: 치울 시각을 각자 다른 손목시계로 판정한다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 왜 <code>SET NX PX</code> "한 문장"인가 — 두 문장으로 나누면 그 사이가 뚫린다</h2>
+
+<p>락 구현의 첫 함정은 알고리즘이 아니라 <b>명령을 몇 개로 쪼갰는가</b>에서 나온다. 흔히 시도하는 두 가지 형태가 각각 다른 방식으로 실패한다.</p>
+
+<h3>2-1. 실패 1 — "있는지 확인하고 없으면 잡는다"를 두 문장으로</h3>
+
+<div class="fig">
+<svg viewBox="0 0 900 250" role="img" aria-label="check-then-act 결함 — 확인과 쓰기 사이에 다른 프로세스가 끼어든다">
+  <defs>
+    <marker id="f2r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+  </defs>
+  <text x="90" y="26" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1f2937">프로세스 A</text>
+  <text x="450" y="26" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">Redis · lock:order:42</text>
+  <text x="810" y="26" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1f2937">프로세스 B</text>
+  <line x1="90" y1="36" x2="90" y2="222" stroke="#cbd5e1" stroke-width="2"/>
+  <line x1="450" y1="36" x2="450" y2="222" stroke="#94a3b8" stroke-width="2"/>
+  <line x1="810" y1="36" x2="810" y2="222" stroke="#cbd5e1" stroke-width="2"/>
+
+  <line x1="96" y1="58" x2="440" y2="58" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f2r)"/>
+  <text x="264" y="52" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">EXISTS → 0 (없음)</text>
+
+  <line x1="804" y1="86" x2="460" y2="86" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f2r)"/>
+  <text x="636" y="80" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">EXISTS → 0 (아직도 없음)</text>
+
+  <line x1="96" y1="120" x2="440" y2="120" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f2r)"/>
+  <text x="264" y="114" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">SET "A"</text>
+
+  <line x1="804" y1="148" x2="460" y2="148" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f2r)"/>
+  <text x="636" y="142" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">SET "B" — 덮어쓴다</text>
+
+  <rect x="18" y="168" width="144" height="34" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="90" y="190" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dc2626">"내가 주인이다"</text>
+  <rect x="738" y="168" width="144" height="34" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="810" y="190" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dc2626">"내가 주인이다"</text>
+
+  <rect x="300" y="164" width="300" height="42" rx="10" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
+  <text x="450" y="190" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">임계 구간에 A와 B가 동시 진입</text>
+
+  <text x="450" y="236" text-anchor="middle" font-size="12" font-weight="700" fill="#6b7280">확인 시점의 사실("키가 없다")이 쓰기 시점까지 유지된다는 보장이 <tspan fill="#dc2626" font-weight="800">아무 데도 없다</tspan></text>
+</svg>
+<div class="cap"><b>check-then-act(확인하고 행동하기)</b> 결함의 전형. 그 사이에 다른 프로세스가 끼어들면 두 프로세스가 똑같이 "내가 처음이다"라고 판단한다.</div>
+</div>
+
+<h3>2-2. 실패 2 — "잡고 나서 TTL을 건다"를 두 문장으로</h3>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">✕ before 1 — 확인과 쓰기를 나눔</div>
+<pre><code><span class="cmt">// 프로세스 A와 B가 같은 순간에 실행</span>
+<span class="hl-bad">EXISTS lock:order:42   <span class="cmt">// → 0 (둘 다 0을 본다)</span></span>
+<span class="hl-bad">SET    lock:order:42 "A"</span>
+<span class="cmt">// 둘 다 "내가 처음이다"라고 판단한다</span>
+<span class="cmt">// → 임계 구간 동시 진입</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head bad">✕ before 2 — 획득과 TTL을 나눔</div>
+<pre><code>SETNX  lock:order:42 "1"   <span class="cmt">// → 1 (획득 성공)</span>
+<span class="hl-bad"><span class="cmt">// ← 바로 여기서 프로세스가 죽는다</span></span>
+<span class="hl-bad"><span class="cmt">//    (배포 중 SIGKILL, OOM Kill, 크래시)</span></span>
+EXPIRE lock:order:42 30    <span class="cmt">// 실행되지 못한다</span>
+
+<span class="cmt">// 만료 시간이 없는 키가 Redis에 영원히 남는다.</span>
+<span class="cmt">// 사람이 손으로 지울 때까지 아무도 못 잠근다.</span></code></pre>
+  </div>
+</div>
+
+<p><code>SETNX</code>는 "없을 때만 SET"을 해주는 명령이라 실패 1은 막아준다. 그런데 만료 시간을 붙이는 <code>EXPIRE</code>가 별도 명령이라, 그 사이에 죽으면 <b>영구 락</b>이 남는다. 락이 정합성을 지키는 장치가 아니라 <b>서비스를 멈추는 장치</b>가 되는 것이다.</p>
+
+<div class="callout warn">
+  <div class="t">이 실패가 특히 고약한 이유 — <u>조용하다</u></div>
+  <div class="qa">예외도 알람도 없이 그 자원만 영원히 잠긴 채로, 나중에 <b>"왜 이 배치가 며칠째 안 돌지?"</b>로 발견된다. 이 문서의 함정들이 전부 공유하는 성질이다 — <b>명령은 전부 정상 성공으로 응답하고, 깨지는 것은 정합성뿐이다.</b></div>
+</div>
+
+<h3>2-3. 인자를 하나씩 뜯어보면</h3>
+
+<p>두 실패를 동시에 없애는 방법은 하나다. <b>획득 판정과 만료 설정을 명령 하나에 담는 것.</b></p>
+
+<div class="args">
+SET <span class="k">lock:order:42</span> <span class="v">"550e8400-…-c8f1"</span> <span class="nx">NX</span> <span class="px">PX 30000</span>
+</div>
+
+<div class="card argtbl">
+  <div class="kv"><div class="k">키</div><div><b>lock:order:42</b> — 잠글 대상을 가리키는 이름(좌석 이름). "주문 42번"이라는 자원 하나에 좌석 하나가 대응되도록 <b>자원 식별자를 키에 넣는다.</b> 여기를 <code>lock:order</code>처럼 뭉뚱그리면 서로 상관없는 주문끼리 줄을 서게 되어 처리량이 죽는다.</div></div>
+  <div class="kv"><div class="k">값</div><div><b>"550e8400-…-c8f1"</b> — 요청마다 새로 만든 고유 문자열(UUID 등). "이 좌석에 앉은 사람이 누구인가"를 적어두는 <b>이름표</b>다. <code>"1"</code> 같은 상수가 아니라 고유 값이어야 하는 이유는 <a href="#s7">§7</a>에서 회수한다.</div></div>
+  <div class="kv"><div class="k">NX</div><div><b>N</b>ot e<b>X</b>ists의 줄임. <b>키가 없을 때만 설정하고, 이미 있으면 아무것도 하지 않고 <code>nil</code>을 돌려준다.</b> 반대 옵션 <code>XX</code>는 키가 있을 때만 설정한다. 이 두 글자가 "빈 좌석일 때만 앉는다"는 <b>경쟁 판정을 애플리케이션에서 Redis 안으로 밀어 넣는다.</b></div></div>
+  <div class="kv"><div class="k">PX 30000</div><div>만료 시간을 <b>밀리초</b> 단위로 지정. 30000ms = 30초. 초 단위로 주고 싶으면 <code>EX 30</code>.</div></div>
+</div>
+
+<p>핵심은 이 네 가지가 <b>한 명령</b>이라는 점이다. Redis는 명령 하나를 처리하는 동안 다른 클라이언트의 명령을 끼워 넣지 않으므로, "없는지 확인 + 값 쓰기 + 만료 설정"이 쪼개지지 않는다. §2-1과 §2-2의 두 실패가 함께 사라진다.</p>
+
+<div class="memo ok">
+  <div class="kicker">이 문서 전체를 관통하는 원리 — 여기서 한 번 붙잡고 간다</div>
+  <div class="big">명령을 나누지 말고, <u>조건을 명령 안에 실어 보낸다.</u></div>
+  <p style="margin:0;font-size:.94rem">이 발상은 뒤의 <b>Lua 해제</b>(<a href="#s7">§7</a>), <b>fencing token의 조건부 <code>UPDATE</code></b>(<a href="#s6">§6</a>), 그리고 <b>락 없이 푸는 재고·쿠폰 문제</b>(<a href="#s10">§10</a>)까지 그대로 이어진다. 함정을 하나씩 외우는 대신 <b>이 한 줄에서 파생시키면</b> 답변이 흔들리지 않는다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. TTL은 정합성 장치가 아니라 <u>가용성</u> 장치다</h2>
+
+<p>왜 애초에 만료 시간을 거는지 정확히 말할 수 있어야 한다. 락을 쥔 프로세스가 죽으면 <b>해제 명령을 실행할 주체가 사라진다.</b> TTL이 없으면 §2-2의 영구 락이 남는다. 그래서 TTL은 <b>"주인이 돌아오지 않으면 좌석을 강제로 비운다"</b>는 규칙이다.</p>
+
+<div class="memo warn">
+  <div class="kicker">한 문장으로 고정 — 여기서 답변의 층이 갈린다</div>
+  <div class="big">TTL이 지키는 것은 정합성이 아니라 <u>가용성</u>이다.<br>그리고 <u>"강제로 비운다"는 것은 주인이 아직 일하고 있어도 비운다</u>는 뜻이다.</div>
+  <p style="margin:0;font-size:.94rem"><b>보험이 그대로 다음 함정의 원인이 된다</b> — §4의 TTL 만료 함정은 TTL의 버그가 아니라 <b>TTL이 설계대로 동작한 결과</b>다. 이 인과를 뒤집어 말하는 순간 "TTL을 잘 잡으면 되는 문제"로 답이 후퇴한다.</p>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 300" role="img" aria-label="TTL 다이얼 — 안전성과 가용성이 하나의 값을 사이에 두고 서로를 밀어낸다">
+  <defs>
+    <linearGradient id="g3" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#fee2e2"/><stop offset="50%" stop-color="#fef3c7"/><stop offset="100%" stop-color="#fee2e2"/>
+    </linearGradient>
+    <marker id="f3r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+  </defs>
+
+  <text x="580" y="28" text-anchor="middle" font-size="14" font-weight="800" fill="#1f2937">TTL 다이얼 — 손잡이는 하나뿐인데 지켜야 할 것은 둘이다</text>
+
+  <rect x="120" y="52" width="920" height="34" rx="17" fill="url(#g3)" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="180" y="75" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">TTL 짧게</text>
+  <text x="980" y="75" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">TTL 길게</text>
+  <circle cx="580" cy="69" r="15" fill="#ffffff" stroke="#2563eb" stroke-width="3"/>
+  <text x="580" y="110" text-anchor="middle" font-size="11.5" font-weight="700" fill="#2563eb">어디에 놓아도 한쪽은 포기하게 되어 있다</text>
+
+  <rect x="60" y="136" width="480" height="132" rx="12" fill="#f8fafc" stroke="#dc2626" stroke-width="2"/>
+  <text x="300" y="162" text-anchor="middle" font-size="13.5" font-weight="800" fill="#dc2626">TTL을 짧게 잡으면</text>
+  <rect x="84" y="176" width="200" height="36" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="184" y="199" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">✓ 주인이 죽어도 빨리 복구</text>
+  <rect x="300" y="176" width="216" height="36" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="408" y="199" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dc2626">✕ 작업이 TTL을 넘길 확률 ↑</text>
+  <text x="300" y="238" text-anchor="middle" font-size="11.5" fill="#1f2937">가용성 <tspan font-weight="800" fill="#16a34a">좋음</tspan> · 안전성 <tspan font-weight="800" fill="#dc2626">나쁨</tspan></text>
+  <text x="300" y="258" text-anchor="middle" font-size="11" fill="#6b7280">→ §4의 TTL 만료 함정이 자주 열린다</text>
+
+  <rect x="620" y="136" width="480" height="132" rx="12" fill="#f8fafc" stroke="#dc2626" stroke-width="2"/>
+  <text x="860" y="162" text-anchor="middle" font-size="13.5" font-weight="800" fill="#dc2626">TTL을 길게 잡으면</text>
+  <rect x="644" y="176" width="216" height="36" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="752" y="199" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">✓ 작업이 TTL을 넘길 확률 ↓</text>
+  <rect x="876" y="176" width="200" height="36" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="976" y="199" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dc2626">✕ 주인이 죽으면 그만큼 정지</text>
+  <text x="860" y="238" text-anchor="middle" font-size="11.5" fill="#1f2937">안전성 <tspan font-weight="800" fill="#16a34a">좋음</tspan> · 가용성 <tspan font-weight="800" fill="#dc2626">나쁨</tspan></text>
+  <text x="860" y="258" text-anchor="middle" font-size="11" fill="#6b7280">→ 10분짜리 TTL이면 10분짜리 부분 장애</text>
+
+  <line x1="300" y1="136" x2="300" y2="100" stroke="#dc2626" stroke-width="2" marker-end="url(#f3r)"/>
+  <line x1="860" y1="136" x2="860" y2="100" stroke="#dc2626" stroke-width="2" marker-end="url(#f3r)"/>
+  <text x="580" y="292" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">그래서 "적절한 TTL"만으로는 이 문제가 끝나지 않는다</text>
+</svg>
+<div class="cap"><b>락의 안전성과 가용성이 TTL 하나를 사이에 두고 서로를 밀어내는 구조</b> — 이 긴장을 인식하는 것이 이 문항의 절반이다. "TTL을 얼마로 잡나요?"라는 꼬리질문이 오면 값이 아니라 <b>이 그림</b>을 먼저 꺼낸다.</div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 함정① TTL 만료 — 작업이 락보다 오래 사는 순간</h2>
+
+<h3>4-1. 전제 지식 — GC 일시 정지(stop-the-world)란 무엇인가</h3>
+
+<p>TTL을 30초로 잡았다고 하자. "30초면 충분하지"라는 가정은 <b>애플리케이션이 그동안 멈추지 않는다</b>는 가정 위에 서 있다. 그런데 JVM은 멈춘다.</p>
+
+<p>JVM은 개발자 대신 메모리를 정리한다. 더 이상 참조되지 않는 객체를 찾아 회수하는 일이 <b>가비지 컬렉션(GC)</b>이다. 회수 대상을 판정하는 도중에 애플리케이션 스레드가 계속 참조 관계를 바꾸면 판정이 어긋나므로, GC는 특정 구간 동안 <b>애플리케이션 스레드를 전부 멈춘다.</b> 세상이 통째로 정지한 것처럼 보인다고 해서 <b>stop-the-world(STW) 일시 정지</b>라고 부른다.</p>
+
+<div class="ba single">
+  <div class="col">
+    <div class="head bad">애플리케이션 코드 입장에서 STW가 어떻게 보이는가 — 이게 결정적이다</div>
+<pre><code>long t1 = System.currentTimeMillis();
+<span class="hl-bad"><span class="cmt">// ← 여기서 STW 정지가 일어난다.</span></span>
+<span class="hl-bad"><span class="cmt">//    이 스레드는 아무것도 하지 않은 채 시간만 흐른다.</span></span>
+long t2 = System.currentTimeMillis();
+
+<span class="cmt">// t2 - t1 이 800ms 일 수 있다. 두 줄 사이에 아무 코드도 없는데도.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">이 함정의 심장 — 외울 것은 이 한 줄</div>
+  <div class="big">한 줄과 다음 줄 사이에서 수백 ms에서 수 초가 사라지고,<br><u>스레드는 자기가 멈췄었다는 사실을 모른다.</u></div>
+  <p style="margin:0;font-size:.94rem">깨어나서 그냥 다음 줄을 실행한다. <b>"내가 5초 동안 정지해 있었으니 락을 다시 확인해야지"라는 판단 자체가 불가능하다.</b> 이 불가능성이 §5(watchdog으로도 못 막는 이유)와 §6(그래서 방어선을 자원 쪽으로 옮기는 이유)의 근거가 된다.</p>
+</div>
+
+<p>최신 수집기(G1, ZGC 등)는 정지 시간을 짧게 유지하도록 설계돼 있지만 0이 되지는 않고, 힙이 크거나 메모리 압박이 심하면 여전히 긴 정지가 나온다. 그리고 <b>같은 효과를 내는 원인이 GC만도 아니다.</b></p>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">컨테이너 CPU 스로틀링 <span class="tag warn">k8s에서 가장 흔함</span></div>
+    <p>CPU limit을 넘긴 파드는 다음 주기까지 CPU를 배정받지 못한다. 스레드는 <b>실행 가능 상태로 대기만</b> 한다 — GC 로그에는 아무것도 안 찍히는데 시간은 사라진다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">스왑 · 디스크 I/O 블로킹 <span class="tag warn">OS 계층</span></div>
+    <p>페이지 폴트 한 번이 수십에서 수백 ms를 먹는다. 애플리케이션은 그냥 <b>느린 메모리 접근</b>으로만 인식한다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">네트워크 지연 <span class="tag warn">임계 구간을 늘린다</span></div>
+    <p>Redis 호출이 나갔다가 돌아오는 시간 자체도 임계 구간에 포함된다. 단절되면 <b>연장 요청조차 도달하지 못한다</b>(§5).</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">VM 라이브 마이그레이션 · 스냅샷 복원 <span class="tag warn">인프라 계층</span></div>
+    <p>게스트 <b>전체</b>가 잠깐 멈춘다. 그리고 스냅샷 복원은 §8의 <b>시계 점프</b>까지 함께 데려온다.</p>
+  </div>
+</div>
+
+<div class="callout warn">
+  <div class="t">정리 — TTL 30초의 진짜 의미</div>
+  <div class="qa"><b>TTL 30초는 "작업이 30초 안에 끝난다"가 아니라 "작업 시간 + 그 사이에 끼어들 수 있는 모든 정지의 합이 30초 안"이라야 성립한다.</b> 그리고 두 번째 조건은 <b>애플리케이션이 통제할 수 없는 것들</b>로 채워져 있다.</div>
+</div>
+
+<h3>4-2. 사고의 타임라인 — 이 그림 하나가 답변의 절반</h3>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 420" role="img" aria-label="TTL 만료 타임라인 — STW 정지 중 락이 만료되고 B가 획득해 임계 구간에 둘이 들어간다">
+  <defs>
+    <marker id="f4r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="f4b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+    <pattern id="stw" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="10" height="10" fill="#e2e8f0"/><line x1="0" y1="0" x2="0" y2="10" stroke="#94a3b8" stroke-width="4"/>
+    </pattern>
+    <pattern id="dbl" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="10" height="10" fill="#fee2e2"/><line x1="0" y1="0" x2="0" y2="10" stroke="#dc2626" stroke-width="4"/>
+    </pattern>
+  </defs>
+
+  <line x1="150" y1="52" x2="150" y2="360" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 4"/>
+  <line x1="560" y1="52" x2="560" y2="360" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 4"/>
+  <line x1="700" y1="52" x2="700" y2="360" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <line x1="880" y1="52" x2="880" y2="360" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 4"/>
+
+  <text x="150" y="42" text-anchor="middle" font-size="11.5" font-weight="800" fill="#6b7280">t=0 · A 락 획득</text>
+  <text x="560" y="42" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">t=30s · TTL 만료 (좌석이 비워진다)</text>
+  <text x="700" y="30" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">t=31s · B 획득</text>
+  <text x="880" y="42" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">t=35s · A가 정지에서 깨어난다</text>
+
+  <rect x="8" y="66" width="130" height="76" rx="8" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="73" y="100" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1f2937">프로세스 A</text>
+  <text x="73" y="120" text-anchor="middle" font-size="10.5" fill="#6b7280">원래 주인</text>
+
+  <rect x="8" y="162" width="130" height="76" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+  <text x="73" y="196" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">Redis</text>
+  <text x="73" y="216" text-anchor="middle" font-size="10.5" fill="#6b7280">lock:order:42</text>
+
+  <rect x="8" y="258" width="130" height="76" rx="8" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="73" y="292" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1f2937">프로세스 B</text>
+  <text x="73" y="312" text-anchor="middle" font-size="10.5" fill="#6b7280">새 주인</text>
+
+  <rect x="150" y="76" width="120" height="40" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="210" y="101" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">작업 시작</text>
+  <rect x="270" y="76" width="610" height="40" fill="url(#stw)" stroke="#64748b" stroke-width="1.5"/>
+  <text x="575" y="94" text-anchor="middle" font-size="12.5" font-weight="800" fill="#334155">==== STW GC 일시 정지 ====</text>
+  <text x="575" y="110" text-anchor="middle" font-size="10.5" fill="#334155">(또는 CPU 스로틀링 · 스왑 · 네트워크 단절)</text>
+  <rect x="880" y="76" width="260" height="40" fill="url(#dbl)" stroke="#dc2626" stroke-width="2"/>
+  <text x="1010" y="101" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">계속 쓴다 (아직 주인인 줄 안다)</text>
+
+  <line x1="150" y1="128" x2="1140" y2="128" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="645" y="146" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">A의 <tspan font-weight="900">믿음</tspan>: "t=0부터 지금까지 계속 내가 주인이다" — 한 번도 갱신되지 않는다</text>
+
+  <rect x="150" y="172" width="410" height="42" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="355" y="198" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">락 보유 — 주인 A</text>
+  <rect x="560" y="172" width="140" height="42" rx="6" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="630" y="198" text-anchor="middle" font-size="11" font-weight="700" fill="#6b7280">빈 좌석</text>
+  <rect x="700" y="172" width="440" height="42" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="920" y="198" text-anchor="middle" font-size="11.5" font-weight="700" fill="#2563eb">락 보유 — 주인 B (Redis 입장에선 전부 정상)</text>
+
+  <line x1="700" y1="278" x2="700" y2="220" stroke="#2563eb" stroke-width="2" marker-end="url(#f4b)"/>
+  <text x="712" y="252" font-size="10.5" font-weight="700" fill="#2563eb">SET … NX PX 30000 → 성공</text>
+
+  <rect x="700" y="282" width="440" height="40" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="1.8"/>
+  <text x="920" y="307" text-anchor="middle" font-size="11.5" font-weight="700" fill="#2563eb">B 작업 중 — 정당하게 락을 잡았다</text>
+
+  <rect x="880" y="342" width="260" height="30" rx="6" fill="#dc2626"/>
+  <text x="1010" y="363" text-anchor="middle" font-size="12" font-weight="800" fill="#ffffff">임계 구간에 A와 B가 동시에</text>
+  <line x1="1010" y1="322" x2="1010" y2="338" stroke="#dc2626" stroke-width="2" marker-end="url(#f4r)"/>
+
+  <text x="560" y="398" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">A는 자신이 멈췄었다는 사실조차 모른다 — 그래서 "재개 전에 다시 확인"이라는 코드를 쓸 수 없다</text>
+</svg>
+<div class="cap">파란 점선이 <b>A의 믿음</b>, 가운데 줄이 <b>락의 실제 상태</b>다. 두 줄이 t=30s부터 어긋나 있고, 그 어긋남을 A만 모른다 — <b>이 페이지의 모든 함정이 이 그림의 변주</b>다.</div>
+</div>
+
+<div class="callout warn">
+  <div class="t">"그럼 쓰기 직전에 락이 아직 내 것인지 확인하면 되지 않나?" — 답이 아니다</div>
+  <div class="qa"><b>확인과 쓰기 사이에서 또 멈출 수 있기 때문</b>이다. 확인은 그 순간의 사실일 뿐 다음 순간을 보장하지 않는다. 이 구조는 분산 락 논의 내내 반복해서 나온다 — <b style="color:#dc2626">어떤 검사도 검사와 행동 사이의 시간을 없애지는 못한다.</b> §2-1의 check-then-act와 정확히 같은 결함이고, 이번에는 <b>명령을 합쳐서 해결할 수도 없다</b>(행동이 Redis 밖에서 일어나므로).</div>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 완화책① watchdog 락 연장 — <u>완화</u>지 해결이 아니다</h2>
+
+<p><b>watchdog(감시견)</b>은 락을 잡은 클라이언트가 별도의 백그라운드 스레드를 띄워, <b>락을 쥐고 있는 동안 주기적으로 TTL을 원래 값으로 다시 밀어주는</b> 기능이다. Redisson의 락이 이 방식을 쓴다. <b>주차 미터기에 동전을 계속 넣어 주차 시간을 이어가는 것</b>과 같고, 다르게 말하면 "내가 아직 살아 있다"는 심장박동을 Redis에 계속 보내는 셈이다.</p>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#16a34a">
+    <div class="h">watchdog이 실제로 지우는 문제 <span class="tag ok">효과는 분명하다</span></div>
+    <ul>
+      <li>작업 시간이 예상보다 길어져도 <b>프로세스가 살아 있는 한 락이 만료되지 않는다.</b></li>
+      <li>프로세스가 죽으면 연장하는 주체가 사라지므로 <b>TTL이 자연 소멸</b>한다 — §2-2의 영구 락 문제도 재발하지 않는다.</li>
+      <li>즉 <b>"작업 시간을 잘못 예측했다"는 가장 흔한 원인 하나</b>를 지워준다.</li>
+    </ul>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">그래도 남는 구조적 한계 <span class="tag warn">여기가 채점 지점</span></div>
+    <ul>
+      <li><b>연장 스레드도 같은 JVM 안에 있다.</b> STW GC는 애플리케이션 스레드를 <b>전부</b> 멈추므로, 워커가 멈출 때 연장 스레드도 함께 멈춘다.</li>
+      <li>정지가 TTL보다 길면 <a href="#s4">§4</a>의 타임라인이 <b>그대로 재현</b>된다.</li>
+      <li>네트워크가 끊겼다면 <b>연장 요청 자체가 Redis에 도달하지 못한다.</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 300" role="img" aria-label="watchdog이 막는 경우와 못 막는 경우의 대비 타임라인">
+  <defs>
+    <marker id="f5g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+    <marker id="f5r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <pattern id="stw2" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="10" height="10" fill="#e2e8f0"/><line x1="0" y1="0" x2="0" y2="10" stroke="#94a3b8" stroke-width="4"/>
+    </pattern>
+  </defs>
+
+  <text x="20" y="24" font-size="13" font-weight="800" fill="#16a34a">A. 살아 있는 프로세스의 시간 예측 실패 — watchdog이 막는다</text>
+  <rect x="150" y="36" width="880" height="34" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="590" y="58" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">작업이 45초 걸려도 락은 계속 살아 있다 (TTL 30초, 10초마다 연장)</text>
+  <text x="75" y="58" text-anchor="middle" font-size="11.5" font-weight="800" fill="#1f2937">워커 스레드</text>
+  <text x="75" y="96" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">연장 스레드</text>
+  <line x1="250" y1="88" x2="250" y2="72" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+  <line x1="400" y1="88" x2="400" y2="72" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+  <line x1="550" y1="88" x2="550" y2="72" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+  <line x1="700" y1="88" x2="700" y2="72" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+  <line x1="850" y1="88" x2="850" y2="72" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+  <line x1="1000" y1="88" x2="1000" y2="72" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+  <text x="590" y="106" text-anchor="middle" font-size="10.5" fill="#16a34a" font-weight="700">PEXPIRE 로 TTL을 원래 값으로 되돌린다 — "아직 살아 있다"</text>
+
+  <line x1="20" y1="126" x2="1140" y2="126" stroke="#e5e7eb" stroke-width="1.5"/>
+
+  <text x="20" y="152" font-size="13" font-weight="800" fill="#dc2626">B. 프로세스 자신이 인지하지 못하는 정지 — watchdog도 함께 멈춘다</text>
+  <rect x="150" y="164" width="200" height="34" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="250" y="186" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">작업 중</text>
+  <rect x="350" y="164" width="500" height="34" fill="url(#stw2)" stroke="#64748b" stroke-width="1.5"/>
+  <text x="600" y="186" text-anchor="middle" font-size="12" font-weight="800" fill="#334155">STW 정지 — JVM의 모든 스레드가 멈춘다</text>
+  <rect x="850" y="164" width="180" height="34" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="940" y="186" text-anchor="middle" font-size="11" font-weight="700" fill="#dc2626">재개 (모른 채)</text>
+  <text x="75" y="186" text-anchor="middle" font-size="11.5" font-weight="800" fill="#1f2937">워커 스레드</text>
+
+  <text x="75" y="226" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">연장 스레드</text>
+  <line x1="250" y1="218" x2="250" y2="202" stroke="#16a34a" stroke-width="2" marker-end="url(#f5g)"/>
+  <rect x="350" y="206" width="500" height="26" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="600" y="224" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">연장 요청이 한 번도 나가지 않는다</text>
+
+  <line x1="640" y1="238" x2="640" y2="256" stroke="#dc2626" stroke-width="2" marker-end="url(#f5r)"/>
+  <rect x="430" y="258" width="420" height="30" rx="6" fill="#dc2626"/>
+  <text x="640" y="279" text-anchor="middle" font-size="12" font-weight="800" fill="#ffffff">TTL 만료 → 남이 락을 가져간다 → §4 타임라인 재현</text>
+</svg>
+<div class="cap">두 트랙의 차이는 <b>"연장 스레드가 살아서 돌 수 있느냐"</b> 하나다. 그리고 그 조건이 깨지는 상황이 바로 <b>이 함정이 실제로 터지는 상황</b>이라는 것이 watchdog의 역설이다.</div>
+</div>
+
+<div class="memo warn">
+  <div class="kicker">한 줄로 정리 — 꼬리질문 단골</div>
+  <div class="big">watchdog은 <u>"살아서 정상 동작 중인 프로세스의 시간 예측 실패"</u>를 막을 뿐,<br><u>"프로세스 자신이 인지하지 못하는 정지"</u>는 못 막는다.</div>
+</div>
+
+<div class="callout gap">
+  <div class="t">실무 함정 — Redisson을 쓴다고 자동으로 연장되는 것이 아니다 <span class="badge gap">디테일</span></div>
+  <div class="qa">Redisson에서 <b>임대 시간을 명시적으로 지정하면</b>(<code>lock(10, TimeUnit.SECONDS)</code> 같은 형태) <b>watchdog은 동작하지 않고</b> 그 시간이 지나면 그냥 만료된다. "Redisson을 쓰니 알아서 연장되겠지"라고 믿으면서 임대 시간을 지정하는 <b>조합</b>이 실제 사고로 이어진다.</div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 완화책② fencing token — 방어선을 락에서 <u>자원</u> 쪽으로 옮긴다</h2>
+
+<p>지금까지의 대응은 전부 <b>락을 더 정확하게 만들려는 시도</b>였다. 그런데 "정지를 인지하지 못하는 프로세스"라는 근본 문제는 락 쪽에서 풀 수 없다는 것이 §5에서 드러났다. 그래서 발상을 뒤집는다.</p>
+
+<div class="memo vio">
+  <div class="kicker">발상의 전환 — 이 문장이 §9(논쟁)와 §10(실무 기준)의 뼈대다</div>
+  <div class="big">락을 쥔 쪽이 아무리 착각해도,<br><u>자원을 받는 쪽이 낡은 요청을 거부하면</u> 결과는 안전하다.</div>
+</div>
+
+<p><b>fencing token</b>은 <b>락을 발급할 때마다 1씩 증가시켜 함께 내주는 번호</b>다. 이름은 울타리(fence)에서 왔다 — 자원 앞에 <b>"이 번호 미만은 들어올 수 없음"</b>이라는 울타리를 세워두고, 새 주인이 다녀갈 때마다 그 울타리를 한 칸씩 올린다. 뒤늦게 깨어난 옛 주인은 자기 번호가 울타리보다 낮아서 튕겨 나간다.</p>
+
+<div class="card">
+  <div class="rule v"><div class="num">1</div><div class="body">
+    <b>락 서비스가 락을 줄 때마다 단조 증가 번호를 함께 발급한다</b>
+    <span><b>단조 증가(monotonically increasing)</b> = 절대 줄어들지 않는다는 뜻이다. A가 33번을 받았다면 그다음 주인 B는 <b>반드시 그보다 큰 번호</b>를 받는다.</span>
+  </div></div>
+  <div class="rule v"><div class="num">2</div><div class="body">
+    <b>자원을 만지는 모든 요청이 그 번호를 실어 보낸다</b>
+    <span>번호를 안 실은 경로가 하나라도 남아 있으면 그 경로로 낡은 쓰기가 통과한다 — <b>울타리에 난 구멍</b>이다.</span>
+  </div></div>
+  <div class="rule v"><div class="num">3</div><div class="body">
+    <b>자원(DB·스토리지)이 지금까지 본 번호보다 큰 요청만 받아들인다</b>
+    <span>나머지는 거부한다. <b>판정하는 주체가 락이 아니라 자원</b>이라는 점이 핵심이다.</span>
+  </div></div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 390" role="img" aria-label="fencing token 타임라인 — 낡은 토큰 33의 쓰기가 자원 쪽 조건에서 거부된다">
+  <defs>
+    <marker id="f6r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="f6g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+    <pattern id="stw3" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="10" height="10" fill="#e2e8f0"/><line x1="0" y1="0" x2="0" y2="10" stroke="#94a3b8" stroke-width="4"/>
+    </pattern>
+  </defs>
+
+  <rect x="8" y="52" width="140" height="70" rx="8" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="78" y="82" text-anchor="middle" font-size="12.5" font-weight="800">프로세스 A</text>
+  <text x="78" y="102" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">토큰 33</text>
+
+  <rect x="8" y="152" width="140" height="86" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.4"/>
+  <text x="78" y="182" text-anchor="middle" font-size="12.5" font-weight="800" fill="#7c3aed">자원 (DB 행)</text>
+  <text x="78" y="202" text-anchor="middle" font-size="10.5" fill="#6b7280">fence 컬럼</text>
+  <text x="78" y="222" text-anchor="middle" font-size="10.5" fill="#6b7280">= 울타리 높이</text>
+
+  <rect x="8" y="268" width="140" height="70" rx="8" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="78" y="298" text-anchor="middle" font-size="12.5" font-weight="800">프로세스 B</text>
+  <text x="78" y="318" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">토큰 34</text>
+
+  <text x="230" y="34" text-anchor="middle" font-size="11.5" font-weight="800" fill="#6b7280">t=0</text>
+  <text x="520" y="34" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">TTL 만료</text>
+  <text x="740" y="34" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">B가 쓴다</text>
+  <text x="980" y="34" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">A가 뒤늦게 쓴다</text>
+  <line x1="230" y1="40" x2="230" y2="350" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <line x1="520" y1="40" x2="520" y2="350" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <line x1="740" y1="40" x2="740" y2="350" stroke="#16a34a" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <line x1="980" y1="40" x2="980" y2="350" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4"/>
+
+  <rect x="230" y="66" width="80" height="42" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="270" y="92" text-anchor="middle" font-size="10.5" font-weight="700" fill="#16a34a">락 획득</text>
+  <rect x="310" y="66" width="670" height="42" fill="url(#stw3)" stroke="#64748b" stroke-width="1.5"/>
+  <text x="645" y="92" text-anchor="middle" font-size="12" font-weight="800" fill="#334155">==== STW 정지 ==== (A는 자기가 아직 주인인 줄 안다)</text>
+  <rect x="980" y="66" width="160" height="42" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="1060" y="92" text-anchor="middle" font-size="10.5" font-weight="700" fill="#dc2626">재개 → 쓰기 시도</text>
+
+  <rect x="180" y="162" width="340" height="34" rx="6" fill="#f8fafc" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="350" y="185" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">fence = 32</text>
+  <rect x="740" y="162" width="400" height="34" rx="6" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"/>
+  <text x="940" y="185" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">fence = 34 (울타리가 한 칸 올라갔다)</text>
+
+  <line x1="950" y1="278" x2="950" y2="200" stroke="#16a34a" stroke-width="2" marker-end="url(#f6g)"/>
+  <rect x="560" y="206" width="360" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="740" y="224" text-anchor="middle" font-size="10.5" font-weight="800" fill="#16a34a">UPDATE … WHERE fence &lt; 34 → 32 &lt; 34 참 → 1행 갱신</text>
+
+  <line x1="1060" y1="112" x2="1060" y2="156" stroke="#dc2626" stroke-width="2" marker-end="url(#f6r)"/>
+  <rect x="940" y="240" width="216" height="44" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="1048" y="260" text-anchor="middle" font-size="10.5" font-weight="800" fill="#dc2626">WHERE fence &lt; 33</text>
+  <text x="1048" y="277" text-anchor="middle" font-size="10.5" font-weight="800" fill="#dc2626">34 &lt; 33 거짓 → 영향 행 0</text>
+
+  <rect x="230" y="282" width="290" height="42" rx="6" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <text x="375" y="308" text-anchor="middle" font-size="10.5" fill="#6b7280">아직 대기 (락 없음)</text>
+  <rect x="740" y="282" width="180" height="42" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="830" y="308" text-anchor="middle" font-size="10.5" font-weight="700" fill="#16a34a">락 획득 + 작업</text>
+
+  <rect x="300" y="350" width="640" height="32" rx="8" fill="#7c3aed"/>
+  <text x="620" y="372" text-anchor="middle" font-size="12.5" font-weight="800" fill="#ffffff">A는 영향 행 0을 보고 "내가 낡았다"를 알고 자기 작업 결과를 버린다</text>
+</svg>
+<div class="cap">A의 <b>락</b>은 여전히 틀렸다 — 달라진 것은 <b>그 틀림이 자원에 반영되지 않는다</b>는 점이다. 판정 주체가 락에서 자원으로 옮겨 갔다.</div>
+</div>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">✕ before — 락만 믿고 무조건 쓴다</div>
+<pre><code><span class="cmt">-- 락을 잡았으니 내가 주인이라고 가정한다</span>
+UPDATE resource
+   SET data = ?
+ WHERE id = ?
+<span class="hl-bad"><span class="cmt">-- 낡은 주인의 쓰기도 그대로 통과한다.</span></span>
+<span class="hl-bad"><span class="cmt">-- 자원은 "누가 지금 주인인지" 알 방법이 없다.</span></span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">✓ after — 자원이 낡은 토큰을 직접 거부한다</div>
+<pre><code>UPDATE resource
+   SET data = ?, fence = ?   <span class="cmt">-- fence = 내 토큰(33)</span>
+ WHERE id = ?
+<span class="hl-good">   AND fence &lt; ?             <span class="cmt">-- 기록된 토큰보다 클 때만</span></span>
+
+<span class="hl-good"><span class="cmt">-- 영향 행 수 0 = 나보다 새 주인이 이미 다녀갔다</span></span>
+<span class="hl-good"><span class="cmt">--            → 내 작업 결과를 버린다</span></span></code></pre>
+  </div>
+</div>
+
+<div class="memo vio">
+  <div class="kicker">여기서 무슨 일이 일어났는지 정확히 짚자</div>
+  <div class="big">정확성의 근거가 <u>"락이 옳았다"</u>에서 <u>"자원이 검사했다"</u>로 옮겨 갔다.</div>
+  <p style="margin:0;font-size:.94rem">락은 여전히 틀릴 수 있다. 하지만 락이 틀려도 자원이 막아주므로 최종 결과는 깨지지 않는다. 즉 fencing token이 있으면 <b>정확성이 더 이상 락의 정확성에 의존하지 않는다.</b> 락은 <b>"대부분의 경우 헛수고를 줄여주는 최적화"로 강등</b>되고, 정확성은 자원 쪽 조건부 쓰기가 책임진다. — <b>락을 강화하는 방향과 자원을 방어하는 방향 중, 뚫렸을 때 잃는 것이 클수록 후자가 답이다.</b></p>
+</div>
+
+<div class="callout ok">
+  <div class="t">낯선 구조가 아니다 — JPA <code>@Version</code> 낙관적 락과 같은 뼈대</div>
+  <div class="qa">조건을 갱신문 안에 넣고, <b>영향 행 수 0으로 "내가 낡았다"를 감지</b>한다는 점이 동일하다. 다른 점은 비교 대상이 <b>그 행의 버전</b>이 아니라 <b>락 발급 순번</b>이라는 것뿐이다. 그리고 §2-3의 원리 — <b>"조건을 명령 안에 실어 보낸다"</b> — 가 여기서 세 번째로 반복된다.</div>
+</div>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">전제 — 자원이 조건부 쓰기를 지원해야 한다 <span class="tag warn">한계</span></div>
+    <p>DB라면 <code>WHERE</code>에 조건을 얹으면 되지만, <b>"메일 발송 API 호출", "외부 결제 승인 요청"</b>처럼 조건부 쓰기를 받아주지 않는 자원은 fencing으로 보호할 수 없다. 이때 다음 수단은 <b>그 자원 쪽에 멱등성 키를 받아주는 API가 있는지</b> 확인하는 것이다.</p>
+  </div>
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">Redlock은 fencing token을 제공하지 않는다 <span class="tag warn">가산점 포인트</span></div>
+    <p>여러 노드에 각각 <b>독립적으로</b> <code>SET NX</code>를 할 뿐이라, <b>"전역에서 단조 증가하는 번호"를 만들어 낼 수단이 알고리즘 안에 없기 때문</b>이다. <a href="#s9">§9</a> Kleppmann 비판의 핵심 중 하나가 여기다.</p>
+  </div>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 함정② 락 해제 — <code>DEL</code>은 주인을 확인하지 않는다</h2>
+
+<p><code>DEL</code>은 "이 키를 지워라"라는 명령일 뿐이다. <b>누가 요청했는지, 그 사람이 지금 주인인지 묻지 않는다.</b> 그래서 §4에서 지연됐던 A는 <b>자기 락을 정리한다고 믿으면서 B의 락을 지운다.</b></p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 400" role="img" aria-label="남의 락을 지우는 연쇄 — A의 DEL이 B의 락을 지우고 C가 들어온다">
+  <defs>
+    <marker id="f7r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+  </defs>
+
+  <text x="250" y="28" text-anchor="middle" font-size="11.5" font-weight="800" fill="#6b7280">t=0 · A 획득 (TTL 30s)</text>
+  <text x="560" y="28" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">t=30s · 만료</text>
+  <text x="700" y="46" text-anchor="middle" font-size="11.5" font-weight="800" fill="#2563eb">t=31s · B 획득</text>
+  <text x="880" y="28" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">t=35s · A가 DEL</text>
+  <text x="1030" y="46" text-anchor="middle" font-size="11.5" font-weight="800" fill="#7c3aed">t=36s · C 획득</text>
+  <line x1="250" y1="52" x2="250" y2="330" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <line x1="560" y1="52" x2="560" y2="330" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <line x1="700" y1="52" x2="700" y2="330" stroke="#2563eb" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <line x1="880" y1="52" x2="880" y2="330" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 4"/>
+  <line x1="1030" y1="52" x2="1030" y2="330" stroke="#7c3aed" stroke-width="1.3" stroke-dasharray="5 4"/>
+
+  <rect x="8" y="66" width="130" height="46" rx="8" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="73" y="94" text-anchor="middle" font-size="12.5" font-weight="800">프로세스 A</text>
+  <rect x="250" y="70" width="630" height="38" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="565" y="94" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dc2626">작업이 35초 걸린다 (TTL은 30초)</text>
+  <rect x="880" y="70" width="150" height="38" rx="6" fill="#dc2626"/>
+  <text x="955" y="94" text-anchor="middle" font-size="11.5" font-weight="800" fill="#ffffff">DEL lock:order:42</text>
+
+  <rect x="8" y="150" width="130" height="60" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+  <text x="73" y="176" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">Redis</text>
+  <text x="73" y="196" text-anchor="middle" font-size="10.5" fill="#6b7280">lock:order:42</text>
+
+  <rect x="250" y="152" width="310" height="38" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="405" y="176" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">주인 A</text>
+  <rect x="560" y="152" width="140" height="38" rx="6" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <text x="630" y="176" text-anchor="middle" font-size="10.5" fill="#6b7280">빈 좌석</text>
+  <rect x="700" y="152" width="180" height="38" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+  <text x="790" y="176" text-anchor="middle" font-size="11" font-weight="700" fill="#2563eb">주인 B</text>
+  <rect x="880" y="152" width="150" height="38" rx="6" fill="#f1f4f9" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4"/>
+  <text x="955" y="176" text-anchor="middle" font-size="10.5" font-weight="800" fill="#dc2626">지워짐(B의 락)</text>
+  <rect x="1030" y="152" width="110" height="38" rx="6" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+  <text x="1085" y="176" text-anchor="middle" font-size="11" font-weight="700" fill="#7c3aed">주인 C</text>
+
+  <line x1="955" y1="112" x2="955" y2="146" stroke="#dc2626" stroke-width="2.4" marker-end="url(#f7r)"/>
+  <text x="962" y="136" font-size="10.5" font-weight="800" fill="#dc2626">주인을 묻지 않는다</text>
+
+  <rect x="8" y="222" width="130" height="46" rx="8" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="73" y="250" text-anchor="middle" font-size="12.5" font-weight="800">프로세스 B</text>
+  <rect x="700" y="226" width="440" height="38" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+  <text x="920" y="250" text-anchor="middle" font-size="11" font-weight="700" fill="#2563eb">B는 락을 잃은 줄 모른 채 작업을 계속한다</text>
+
+  <rect x="8" y="284" width="130" height="46" rx="8" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="73" y="312" text-anchor="middle" font-size="12.5" font-weight="800">프로세스 C</text>
+  <rect x="1030" y="288" width="110" height="38" rx="6" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+  <text x="1085" y="312" text-anchor="middle" font-size="11" font-weight="700" fill="#7c3aed">C 진입</text>
+
+  <rect x="700" y="344" width="440" height="32" rx="8" fill="#dc2626"/>
+  <text x="920" y="366" text-anchor="middle" font-size="12.5" font-weight="800" fill="#ffffff">이제 B와 C가 동시 진입 — 그리고 C도 끝날 때 남의 락을 지울 수 있다</text>
+  <text x="360" y="366" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">한 번의 지연이 락 시스템 전체를 "있으나 마나"로 만든다</text>
+</svg>
+<div class="cap">무서운 점은 <b>연쇄</b>다. A의 지연 하나가 B의 락을 지우고, 그 빈자리가 C를 불러들이고, C가 작업을 마치며 또 남의 락을 지운다. 그리고 이 붕괴는 <b>로그를 남기지 않는다</b> — <code>DEL</code>도 <code>SET NX</code>도 전부 <b>정상 성공</b>으로 응답하기 때문이다.</div>
+</div>
+
+<h3>7-1. 해제의 올바른 형태 — 소유자 확인과 삭제를 한 덩어리로</h3>
+
+<p><a href="#s2">§2-3</a>에서 락 값에 상수가 아니라 <b>요청마다 고유한 토큰</b>을 넣은 이유가 여기서 회수된다. 해제할 때 <b>"지금 이 키에 적힌 이름표가 내 것인가"</b>를 확인하고, 내 것일 때만 지우면 된다. 단, <b>확인과 삭제를 두 문장으로 쓰면 §2-1과 똑같은 구멍이 다시 열린다.</b></p>
+
+<div class="ba">
+  <div class="col">
+    <div class="head bad">✕ before — check-then-act를 두 문장으로</div>
+<pre><code>GET lock:order:42
+<span class="cmt">// → "내 토큰이 맞네"</span>
+
+<span class="hl-bad"><span class="cmt">// ← 이 찰나에 TTL이 만료되고</span></span>
+<span class="hl-bad"><span class="cmt">//    B가 락을 획득한다</span></span>
+
+DEL lock:order:42
+<span class="cmt">// → B의 락을 지운다</span>
+
+<span class="cmt">// 토큰을 넣어 뒀는데도 뚫렸다.</span>
+<span class="cmt">// 문제는 토큰이 아니라 "두 문장"이었다.</span></code></pre>
+  </div>
+  <div class="col">
+    <div class="head good">✓ after — Lua 스크립트 하나로 (Redis가 원자적으로 실행)</div>
+<pre><code><span class="cmt">-- KEYS[1] = "lock:order:42"</span>
+<span class="cmt">-- ARGV[1] = 내 소유자 토큰(UUID)</span>
+<span class="hl-good">if redis.call("GET", KEYS[1]) == ARGV[1] then</span>
+    <span class="cmt">-- 이름표가 내 것일 때만 지운다.</span>
+    <span class="cmt">-- GET 과 DEL 사이에 다른 명령이 못 끼어든다.</span>
+<span class="hl-good">    return redis.call("DEL", KEYS[1])</span>
+else
+    <span class="cmt">-- 남의 락이거나 이미 만료돼 사라진 상태.</span>
+    <span class="cmt">-- 예외를 던지지 않는 이유: 해제 실패는 오류가 아니라</span>
+    <span class="cmt">-- "TTL 이 나보다 먼저 일했다"는 정상적 결과이기 때문.</span>
+    return 0
+end</code></pre>
+  </div>
+</div>
+
+<div class="callout gap">
+  <div class="t">왜 <code>MULTI/EXEC</code>가 아니라 <u>Lua</u>인가 — 자주 묻는다</div>
+  <div class="qa"><code>MULTI</code>는 명령들을 큐에 모아 한꺼번에 실행할 뿐 <b>중간 조회 결과를 보고 분기할 수 없다.</b> "GET 결과가 내 토큰이면 DEL, 아니면 아무것도 안 함"이라는 <b>조건 분기</b>를 표현할 방법이 없는 것이다. 반면 Redis는 Lua 스크립트를 <b>한 덩어리로 실행</b>하며 그 사이에 다른 클라이언트의 명령을 끼워 넣지 않고, 스크립트 안에서는 <b>조회 결과로 자유롭게 분기</b>할 수 있다.</div>
+</div>
+
+<div class="memo gap">
+  <div class="kicker">이 스크립트가 0을 돌려줬다면 — 그냥 넘기지 않는다</div>
+  <div class="big">0 = <u>"작업하는 동안 내가 락을 쥐고 있었다는 보장이 이미 깨졌다"</u>는 신호</div>
+  <p style="margin:0;font-size:.94rem">예외는 아니지만 무의미한 값도 아니므로, <b>로그나 메트릭으로 남겨 그 빈도를 본다.</b> 이 값이 늘어난다면 <b>TTL이 작업 시간에 비해 짧다는 증거</b>다 — <a href="#s3">§3</a>의 다이얼을 조정하거나 watchdog을 도입할 근거가 여기서 나온다. <b>"측정 가능한 신호로 바꿔 둔다"</b>는 대답이 실무 경험의 신호가 된다.</p>
+</div>
+
+<h3>7-2. 여기까지가 단일 Redis 기준의 완성형</h3>
+
+<div class="memo ok">
+  <div class="kicker">외울 조합 — 이 네 개가 한 세트</div>
+  <div class="big"><code style="background:#dcfce7;color:#166534">SET NX PX</code> + <u>요청마다 고유한 소유자 토큰</u> + <u>Lua 해제</u> (+ 필요 시 watchdog)</div>
+  <p style="margin:0;font-size:.94rem">Redisson의 락이 대략 이 구성이다. 그리고 <b>직접 구현하지 않고 검증된 라이브러리를 쓰는 것 자체가 실무 답안의 일부</b>다 — 재진입(같은 스레드가 같은 락을 중첩해서 잡는 경우) 처리, 대기 중인 클라이언트를 pub/sub으로 깨우는 로직, 연장 스레드의 수명 관리 같은 것을 직접 만들면 <b>그 구현 자체가 새로운 버그의 원천</b>이 된다.</p>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 함정③ failover 유실과 시계 문제 — Redlock이 나온 자리</h2>
+
+<h3>8-1. 단일 Redis에 남은 구멍 — 복제는 비동기다</h3>
+
+<p>§7까지 만들어도 구멍이 하나 남는다. <b>Redis 복제는 비동기다.</b> 마스터는 쓰기를 받아 자기 메모리에 반영하고 <b>클라이언트에 OK를 먼저 응답한 뒤에</b> 그 내용을 레플리카로 흘려보낸다. <b>응답과 복제가 묶여 있지 않다.</b></p>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 340" role="img" aria-label="failover 시 락 유실 — 마스터 다운과 레플리카 승격 사이에 락이 사라진다">
+  <defs>
+    <marker id="f8r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <marker id="f8b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+    <marker id="f8g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#16a34a"/></marker>
+  </defs>
+
+  <text x="300" y="26" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">① A가 마스터에서 락 획득</text>
+  <text x="560" y="26" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">② 복제 전에 마스터 다운</text>
+  <text x="810" y="26" text-anchor="middle" font-size="11.5" font-weight="800" fill="#d97706">③ 레플리카 승격</text>
+  <text x="1040" y="26" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">④ B도 획득 성공</text>
+  <line x1="300" y1="34" x2="300" y2="280" stroke="#16a34a" stroke-width="1.3" stroke-dasharray="4 4"/>
+  <line x1="560" y1="34" x2="560" y2="280" stroke="#dc2626" stroke-width="1.7" stroke-dasharray="5 4"/>
+  <line x1="810" y1="34" x2="810" y2="280" stroke="#d97706" stroke-width="1.3" stroke-dasharray="5 4"/>
+  <line x1="1040" y1="34" x2="1040" y2="280" stroke="#dc2626" stroke-width="1.7" stroke-dasharray="5 4"/>
+
+  <rect x="8" y="52" width="150" height="46" rx="8" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="83" y="80" text-anchor="middle" font-size="12.5" font-weight="800">클라이언트 A</text>
+  <rect x="180" y="56" width="240" height="38" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="300" y="80" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">SET NX PX → OK 응답을 받았다</text>
+  <rect x="420" y="56" width="720" height="38" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="780" y="80" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dc2626">A는 자기가 주인이라고 믿으며 임계 구간을 실행 중</text>
+
+  <rect x="8" y="122" width="150" height="52" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+  <text x="83" y="146" text-anchor="middle" font-size="12" font-weight="800" fill="#2563eb">마스터</text>
+  <text x="83" y="164" text-anchor="middle" font-size="10" fill="#6b7280">쓰기를 받는 노드</text>
+  <rect x="300" y="126" width="260" height="40" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+  <text x="430" y="151" text-anchor="middle" font-size="11" font-weight="700" fill="#2563eb">lock:order:42 = A의 토큰</text>
+  <rect x="560" y="126" width="580" height="40" rx="6" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="6 4"/>
+  <text x="850" y="151" text-anchor="middle" font-size="11.5" font-weight="800" fill="#64748b">✕ 다운 — 메모리와 함께 락도 사라진다</text>
+
+  <line x1="430" y1="170" x2="430" y2="204" stroke="#dc2626" stroke-width="2" marker-end="url(#f8r)"/>
+  <text x="440" y="192" font-size="10.5" font-weight="800" fill="#dc2626">복제가 아직 도달하지 못했다 (비동기)</text>
+
+  <rect x="8" y="208" width="150" height="52" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.4"/>
+  <text x="83" y="232" text-anchor="middle" font-size="12" font-weight="800" fill="#d97706">레플리카</text>
+  <text x="83" y="250" text-anchor="middle" font-size="10" fill="#6b7280">→ 새 마스터</text>
+  <rect x="180" y="212" width="630" height="40" rx="6" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="495" y="237" text-anchor="middle" font-size="11.5" font-weight="800" fill="#6b7280">이 노드에는 A의 락이 없다 — 빈 좌석으로 보인다</text>
+  <rect x="810" y="212" width="330" height="40" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="1.8"/>
+  <text x="975" y="237" text-anchor="middle" font-size="11.5" font-weight="800" fill="#d97706">Sentinel/Cluster가 새 마스터로 승격</text>
+
+  <line x1="1040" y1="284" x2="1040" y2="256" stroke="#dc2626" stroke-width="2" marker-end="url(#f8r)"/>
+  <rect x="860" y="288" width="280" height="38" rx="6" fill="#dc2626"/>
+  <text x="1000" y="312" text-anchor="middle" font-size="11.5" font-weight="800" fill="#ffffff">B: SET NX PX → 성공</text>
+  <text x="430" y="312" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">A와 B가 동시에 락을 보유 — 둘 다 정당한 토큰을 들고 있다</text>
+</svg>
+<div class="cap">이건 락의 <b>존재 자체가 유실</b>되는 문제라 <b>소유자 토큰 검증으로도 못 막는다</b> — A와 B가 각자 정당한 토큰을 들고 있고, <b>서로의 존재를 알 방법이 없기 때문</b>이다. Redlock은 정확히 이 구멍을 메우기 위해 제안됐다.</div>
+</div>
+
+<h3>8-2. Redlock 알고리즘 — 절차를 그대로 따라가 보면</h3>
+
+<p>Redlock은 <b>서로 복제 관계가 아닌, 완전히 독립적인 Redis 마스터 N대</b>(관례적으로 5대)를 두고 <b>다수결</b>로 락을 판정하는 알고리즘이다. 노드끼리 복제하지 않으므로 <b>한 대가 죽어도 다른 노드의 기억이 함께 사라지지 않는다.</b></p>
+
+<div class="card">
+  <div class="rule"><div class="num">1</div><div class="body">
+    <b>현재 시각을 밀리초 단위로 기록한다</b>
+    <span>뒤에서 "획득에 얼마나 걸렸는지"를 계산해야 하기 때문이다.</span>
+  </div></div>
+  <div class="rule"><div class="num">2</div><div class="body">
+    <b>N대 전부에 순서대로 락 획득을 시도한다</b>
+    <span>모든 노드에 <b>같은 키, 같은 소유자 토큰, 같은 TTL</b>로 <code>SET NX PX</code>를 보낸다. 이때 <b>노드별 요청 타임아웃을 락 TTL보다 훨씬 짧게</b> 잡는다(TTL이 10초라면 노드당 수십 ms 수준). 응답 없는 노드 하나에 오래 붙잡혀 있으면 절차 전체가 늦어지므로, <b>빠르게 실패로 치고 다음 노드로 넘어가야 한다.</b></span>
+  </div></div>
+  <div class="rule"><div class="num">3</div><div class="body">
+    <b>성공한 노드 수를 세고, 걸린 시간을 계산한다</b>
+    <span>걸린 시간 = "지금 시각 − 1에서 기록한 시각".</span>
+  </div></div>
+  <div class="rule w"><div class="num">4</div><div class="body">
+    <b>성공 조건은 두 개이고 둘 다 만족해야 한다</b>
+    <span>(가) <b>과반</b>, 즉 <code>N/2 + 1</code>대 이상에서 성공했다(5대라면 3대). (나) <b>획득에 쓴 시간이 TTL보다 충분히 짧다.</b></span>
+  </div></div>
+  <div class="rule w"><div class="num">5</div><div class="body">
+    <b>실제로 쓸 수 있는 유효 시간 = TTL − 획득 소요 시간 − 시계 오차 여유</b>
+    <span>TTL이 10초인데 획득에 3초가 걸렸다면 남은 유효 시간은 약 7초다. <b>이 시간이 남아 있는 동안만 임계 구간을 실행</b>하고, 계산 결과가 <b>0 이하이면 획득 실패로 처리</b>한다.</span>
+  </div></div>
+  <div class="rule"><div class="num">6</div><div class="body">
+    <b>실패하면 성공했던 노드들까지 포함해 모든 노드에 해제를 보낸다</b>
+    <span>일부 노드에만 락이 남아 있으면 <b>다음 시도들이 계속 과반을 못 채워 아무도 락을 못 잡는 상태</b>가 되기 때문이다. 해제는 <a href="#s7">§7</a>의 Lua(내 토큰일 때만 삭제)를 그대로 쓴다.</span>
+  </div></div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 330" role="img" aria-label="Redlock의 과반 판정과 유효 시간 계산">
+  <defs>
+    <marker id="f9r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+  </defs>
+  <text x="20" y="24" font-size="13" font-weight="800" fill="#2563eb">A. 과반 판정 — 독립 마스터 5대에 각각 SET NX PX</text>
+
+  <rect x="30" y="40" width="150" height="70" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="105" y="66" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">노드 1 ✓</text>
+  <text x="105" y="90" text-anchor="middle" font-size="10.5" fill="#6b7280">40ms</text>
+  <rect x="196" y="40" width="150" height="70" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="271" y="66" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">노드 2 ✓</text>
+  <text x="271" y="90" text-anchor="middle" font-size="10.5" fill="#6b7280">35ms</text>
+  <rect x="362" y="40" width="150" height="70" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="437" y="66" text-anchor="middle" font-size="12" font-weight="800" fill="#16a34a">노드 3 ✓</text>
+  <text x="437" y="90" text-anchor="middle" font-size="10.5" fill="#6b7280">50ms</text>
+  <rect x="528" y="40" width="150" height="70" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="603" y="66" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">노드 4 ✕</text>
+  <text x="603" y="90" text-anchor="middle" font-size="10.5" fill="#6b7280">타임아웃</text>
+  <rect x="694" y="40" width="150" height="70" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="769" y="66" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">노드 5 ✕</text>
+  <text x="769" y="90" text-anchor="middle" font-size="10.5" fill="#6b7280">다운</text>
+
+  <rect x="880" y="40" width="250" height="70" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="1005" y="66" text-anchor="middle" font-size="13" font-weight="800" fill="#2563eb">3 ≥ 5/2 + 1 = 3</text>
+  <text x="1005" y="90" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">(가) 과반 조건 만족</text>
+
+  <line x1="20" y1="132" x2="1140" y2="132" stroke="#e5e7eb" stroke-width="1.5"/>
+  <text x="20" y="158" font-size="13" font-weight="800" fill="#dc2626">B. 유효 시간 계산 — TTL은 "첫 노드에 SET이 성공한 순간부터" 이미 흐른다</text>
+
+  <rect x="150" y="176" width="900" height="44" rx="8" fill="#f1f4f9" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="80" y="204" text-anchor="middle" font-size="11.5" font-weight="800" fill="#1f2937">TTL 10초</text>
+  <rect x="150" y="176" width="270" height="44" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+  <text x="285" y="196" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">획득에 쓴 시간 3초</text>
+  <text x="285" y="213" text-anchor="middle" font-size="10.5" fill="#dc2626">(5대를 도는 동안 이미 소진)</text>
+  <rect x="990" y="176" width="60" height="44" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.8"/>
+  <text x="1020" y="204" text-anchor="middle" font-size="10" font-weight="800" fill="#d97706">시계여유</text>
+  <rect x="420" y="176" width="570" height="44" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+  <text x="705" y="204" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">실제로 쓸 수 있는 유효 시간 ≈ 7초 — 이 안에서만 임계 구간 실행</text>
+
+  <text x="600" y="252" text-anchor="middle" font-size="12" font-weight="700" fill="#1f2937">유효 시간 = TTL − 획득 소요 시간 − 시계 오차 여유  ·  <tspan fill="#dc2626" font-weight="800">0 이하면 획득 실패로 처리하고 전부 해제</tspan></text>
+
+  <rect x="150" y="272" width="900" height="42" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="600" y="298" text-anchor="middle" font-size="12.5" font-weight="800" fill="#2563eb">한두 대가 죽거나 데이터를 유실해도 나머지가 과반을 기억한다 — 여기까지가 Redlock이 실제로 해결하는 범위</text>
+</svg>
+<div class="cap">4의 (나) 조건이 가장 헷갈리는데, 이유는 이렇다 — <b>락의 TTL은 첫 번째 노드에 <code>SET</code>이 성공한 순간부터 이미 흐르기 시작한다.</b> 5대를 도는 데 시간이 걸리므로, 마지막 노드에서 성공을 확인한 시점에는 <b>첫 노드의 TTL이 이미 상당히 소진돼 있다.</b> 그래서 "걸린 시간을 빼고 남은 만큼만 내 것"이라고 계산한다.</div>
+</div>
+
+<h3>8-3. 시계 점프란 무엇인가 — 세 번째 함정의 실체</h3>
+
+<p>서버의 물리 시계는 조금씩 어긋나고, <b>NTP(Network Time Protocol)</b>가 이를 표준 시각에 맞춘다. 보통은 시계가 가는 <b>속도를 미세하게 조정해 서서히</b> 맞추지만, 오차가 크면 시각을 <b>한 번에 건너뛰게</b> 만든다. 관리자가 수동으로 시각을 바꾸거나, 가상 머신이 스냅샷에서 복원되거나, 윤초 처리가 어긋나도 같은 일이 생긴다.</p>
+
+<div class="memo warn">
+  <div class="kicker">시계 점프가 락에 하는 일 — 한 문장</div>
+  <div class="big">시각이 앞으로 확 뛰면, <u>Redis가 보기에 아직 안 끝난 TTL이 이미 지난 것으로 판정된다.</u></div>
+  <p style="margin:0;font-size:.94rem">비유하면 <b>심판 다섯 명이 각자 자기 손목시계로 경기 종료를 판정하는 것</b>과 같다. 한 명의 시계가 2초 앞으로 튀면 그 심판만 먼저 종료를 선언하고, 그 순간 <b>과반 계산이 무너진다.</b> 그리고 결정적으로 — <b>노드를 5대로 늘리는 것은 <u>노드 장애</u>에 대한 대비이지 <u>시계 오작동</u>에 대한 대비가 아니다.</b> 다섯 개의 시계가 함께 틀릴 수 있고, 늘어난 노드 수만큼 <b>틀릴 시계도 늘어난다.</b></p>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. Redlock 논쟁 — 두 사람은 서로 다른 <u>층위</u>에서 말하고 있다</h2>
+
+<div class="grid2">
+  <div class="mini" style="border-color:#dc2626">
+    <div class="h">Kleppmann의 비판 <span class="tag warn">"보장이란 무엇인가"의 층위</span></div>
+    <p style="margin-bottom:8px"><span class="small">『Designing Data-Intensive Applications』 저자.</span> 논지를 한 문장으로 압축하면 — Redlock의 안전성은 <b>타이밍 가정</b>(프로세스가 오래 멈추지 않는다, 시계가 튀지 않는다, 네트워크 지연에 상한이 있다) 위에 서 있는데, <b>비동기 네트워크에서는 그 가정 중 어느 것도 성립을 보장할 수 없으므로</b> Redlock은 안전성을 증명할 수 없다.</p>
+    <ul>
+      <li><b>시계 점프에 취약하다</b> — 유효 시간 계산과 각 노드의 만료 판정이 <b>물리 시계</b>에 기대고 있다. 노드 5대는 <b>노드 장애</b>의 대비이지 시계 오작동의 대비가 아니다.</li>
+      <li><b>프로세스 정지에는 어차피 똑같이 뚫린다</b> — 유효 시간을 확인한 <b>직후에</b> STW 정지가 오면 <a href="#s4">§4</a>의 타임라인이 그대로 반복된다. <b>노드 수를 늘려도 이 구멍은 그대로다.</b></li>
+      <li><b>fencing token이 없다</b> — 락이 뚫렸을 때 자원을 지켜줄 마지막 수단이 <b>알고리즘 안에 없다</b>(<a href="#s6">§6</a>).</li>
+    </ul>
+  </div>
+  <div class="mini" style="border-color:#16a34a">
+    <div class="h">antirez의 반박 <span class="tag ok">"실무에서 무엇을 위해 락을 쓰는가"의 층위</span></div>
+    <p style="margin-bottom:8px"><span class="small">Redis 창시자.</span> 요지도 셋이다.</p>
+    <ul>
+      <li><b>다수 사용례는 효율성 목적이다</b> — 배치 중복 실행 방지처럼 <b>뚫려도 "일을 두 번 한다"로 끝나는</b> 용도가 압도적으로 많고, 그 목적에는 Redlock의 보장 수준이 충분하다.</li>
+      <li><b>시계 점프는 운영으로 통제 가능하다</b> — 시각을 건너뛰지 않고 미세 조정하도록 NTP를 설정하고, 관리자의 수동 시각 변경을 금지하면 실무 빈도가 크게 낮아진다. <b>이론적 가능성과 운영상의 발생 확률은 다르다.</b></li>
+      <li><b>유효 시간 확인 이후의 정지는 Redlock만의 결함이 아니다</b> — fencing 없이는 <b>어떤 락 시스템도</b> 그 구멍을 막지 못한다. 그리고 <b>획득 과정 중에 생긴 지연</b>은 유효 시간 계산이 이미 걸러낸다.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="fig wide">
+<svg viewBox="0 0 1160 300" role="img" aria-label="두 층위의 질문이 하나의 새 질문으로 수렴한다">
+  <defs>
+    <marker id="fAb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+  </defs>
+  <rect x="60" y="26" width="440" height="96" rx="12" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="280" y="54" text-anchor="middle" font-size="13.5" font-weight="800" fill="#dc2626">Kleppmann이 던지는 질문</text>
+  <text x="280" y="82" text-anchor="middle" font-size="14" font-weight="800" fill="#1f2937">"최악의 경우에도 깨지지 않음을</text>
+  <text x="280" y="104" text-anchor="middle" font-size="14" font-weight="800" fill="#1f2937">증명할 수 있는가?"</text>
+
+  <rect x="660" y="26" width="440" height="96" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="880" y="54" text-anchor="middle" font-size="13.5" font-weight="800" fill="#16a34a">antirez가 답하는 질문</text>
+  <text x="880" y="82" text-anchor="middle" font-size="14" font-weight="800" fill="#1f2937">"현실에서 얼마나 자주</text>
+  <text x="880" y="104" text-anchor="middle" font-size="14" font-weight="800" fill="#1f2937">문제가 되는가?"</text>
+
+  <text x="580" y="82" text-anchor="middle" font-size="20" font-weight="800" fill="#6b7280">≠</text>
+  <text x="580" y="106" text-anchor="middle" font-size="10.5" font-weight="700" fill="#6b7280">애초에 다른 질문</text>
+
+  <line x1="280" y1="122" x2="480" y2="176" stroke="#2563eb" stroke-width="2.2" marker-end="url(#fAb)"/>
+  <line x1="880" y1="122" x2="680" y2="176" stroke="#2563eb" stroke-width="2.2" marker-end="url(#fAb)"/>
+  <text x="580" y="152" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">승패가 아니라 <tspan font-weight="800" fill="#2563eb">질문을 다시 세우는 것</tspan>으로 정리한다</text>
+
+  <rect x="230" y="182" width="700" height="72" rx="14" fill="#2563eb"/>
+  <text x="580" y="212" text-anchor="middle" font-size="15" font-weight="800" fill="#ffffff">"Redlock을 쓸까 말까"가 아니라</text>
+  <text x="580" y="240" text-anchor="middle" font-size="16" font-weight="800" fill="#ffffff">"이 락이 뚫리면 무엇을 잃는가"</text>
+
+  <text x="580" y="284" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1f2937">잃는 것이 크면 <tspan fill="#dc2626">락을 강화할 게 아니라</tspan> <tspan fill="#16a34a">락 없이도 안전한 데이터 설계를 먼저 깐다</tspan></text>
+</svg>
+<div class="cap">두 사람이 끝내 합의하지 못한 이유는 <b>서로 다른 층위에서 말하고 있기 때문</b>이다. 면접에서 한쪽 편을 드는 답변보다, <b>이 그림처럼 층위를 분리해 보이는 답변</b>이 강하다.</div>
+</div>
+
+<h3>9-1. 내 견해 — "효율성의 락"과 "정확성의 락"을 나누면 논쟁이 정리된다</h3>
+
+<p>이 논쟁에서 가장 값진 산출물은 승패가 아니라 <b>Kleppmann이 제시한 구분</b>이다. <b>락을 쓰는 이유가 무엇인지</b>를 먼저 물으면 두 층위가 갈라지고, 답도 함께 갈라진다.</p>
+
+<div class="ba">
+  <div class="col">
+    <div class="head" style="background:#2563eb">효율성(efficiency)의 락 — 뚫려도 "일을 두 번 함"</div>
+    <div style="padding:14px 16px">
+      <p style="font-size:.93rem"><b>목적</b>: 같은 계산, 같은 배치, 같은 캐시 갱신을 여러 인스턴스가 중복 수행하지 않게 한다.</p>
+      <p style="font-size:.93rem"><b>뚫리면 잃는 것</b>: 중복 실행 비용뿐이다 — <b>결과 자체는 여전히 옳다.</b></p>
+      <p style="font-size:.93rem;margin:0"><b style="color:#16a34a">→ 단일 Redis + <code>SET NX PX</code> + 고유 토큰 + Lua 해제로 충분하다.</b> 드물게 중복 실행되는 비용보다 <b>독립 Redis 5대를 운영하는 비용이 크다.</b> 여기에 Redlock은 과잉이다.</p>
+    </div>
+  </div>
+  <div class="col">
+    <div class="head bad">정확성(correctness)의 락 — 뚫리면 돈이 새거나 데이터가 깨짐</div>
+    <div style="padding:14px 16px">
+      <p style="font-size:.93rem"><b>예</b>: 중복 결제, 이중 차감, 재고 초과 판매.</p>
+      <p style="font-size:.93rem"><b>어떤 Redis 락도, Redlock을 포함해서, 단독으로는 부족하다.</b> <a href="#s4">§4</a>의 정지 문제와 <a href="#s6">§6</a>의 fencing 부재가 그대로 남기 때문이다.</p>
+      <p style="font-size:.93rem;margin:0"><b style="color:#dc2626">→ 방어선을 데이터 쪽에 이중으로 깐다.</b> DB 유니크 제약, 조건부 갱신(영향 행 수 확인), 멱등성 키. <b>락은 있어도 "경합을 줄여 재시도 횟수를 낮추는 성능 최적화"일 뿐, 정합성의 근거가 아니다.</b></p>
+    </div>
+  </div>
+</div>
+
+<div class="memo">
+  <div class="kicker">면접에서 이 순서로 — 견해 질문의 답변 골격</div>
+  <div class="big">① 두 사람이 <u>다른 층위</u>임을 짚고 → ② <u>효율성/정확성</u>으로 용도를 가르고 → ③ 각각에 <u>내 선택</u>을 붙인다</div>
+  <p style="margin:0;font-size:.94rem">"Redlock은 좋다/나쁘다"로 답하면 어느 쪽을 골라도 반쪽이 된다. <b>"이 락이 뚫리면 무엇을 잃는가"라는 질문으로 되돌린 뒤 답을 두 갈래로 나누는 것</b>이 이 문항이 실제로 요구하는 형태다.</p>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 실무 선택 기준 한 장</h2>
+
+<div class="tbl">
+<table>
+  <thead><tr><th>상황</th><th>선택</th><th>이유</th></tr></thead>
+  <tbody>
+    <tr><td>스케줄러·배치 중복 실행 방지</td><td class="ok">단일 Redis 락 (Redisson)</td><td>뚫려도 중복 실행일 뿐. 단순함이 이긴다</td></tr>
+    <tr><td>같은 DB 안의 행 경합</td><td class="ok">DB 락 / 원자적 <code>UPDATE</code></td><td>락과 데이터가 같은 시스템 = 실패 모드 최소</td></tr>
+    <tr><td>재고·쿠폰 카운트</td><td class="ok">원자적 연산 (<code>INCR</code>/Lua)</td><td>애초에 락이 필요 없는 문제다</td></tr>
+    <tr><td>돈이 걸린 임계 구간</td><td class="warn">락 + <b>데이터 측 최종 방어선</b></td><td>락은 최적화, 정합성은 제약·조건부 갱신이</td></tr>
+    <tr><td>시스템 여러 개를 가로지르는 조정</td><td class="mid">그때가 분산 락의 자리</td><td>단, <b>fencing 가능 여부</b>부터 확인</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="card">
+  <div class="rule g"><div class="num">배</div><div class="body">
+    <b>배치 중복 실행 방지 — 전형적인 효율성의 락</b>
+    <span>새벽 정산 배치가 두 인스턴스에서 동시에 돌면 <b>같은 계산이 두 번 될 뿐</b>이고, 결과가 멱등하게 설계돼 있으면 최종 상태도 같다. 이런 문제에 <b>5대짜리 Redlock을 세우는 것은 리스크 대비 운영 비용이 맞지 않는다.</b></span>
+  </div></div>
+  <div class="rule g"><div class="num">행</div><div class="body">
+    <b>같은 DB 안의 행 경합에 Redis 락을 끌어오면 실패 모드가 늘어난다</b>
+    <span>"Redis는 살아 있는데 DB만 죽었다", <b>"DB 트랜잭션은 롤백됐는데 Redis 락은 남아 있다"</b> 같은 <b>반쪽 실패</b>가 생긴다. DB 락은 <b>트랜잭션 롤백과 락 해제가 같은 시스템 안에서 원자적으로 묶이므로</b> 그런 어긋남이 애초에 없다.</span>
+  </div></div>
+  <div class="rule g"><div class="num">수</div><div class="body">
+    <b>재고나 쿠폰 카운트는 락을 고를 문제가 아니다</b>
+    <span>조건부 <code>UPDATE</code> 한 문장이나 Redis의 원자 연산 하나로 판정이 끝나면 <b>잠글 틈 자체가 존재하지 않는다.</b> <a href="#s2">§2-3</a>의 원리 — "명령을 나누지 말고 조건을 명령 안에 실어 보낸다" — 가 그대로 적용되는 자리다.</span>
+  </div></div>
+</div>
+
+<div class="fig">
+<svg viewBox="0 0 900 320" role="img" aria-label="락을 꺼내기 전에 지켜야 할 세 단계 순서">
+  <defs>
+    <marker id="fBr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#2563eb"/></marker>
+  </defs>
+  <text x="450" y="26" text-anchor="middle" font-size="14" font-weight="800" fill="#2563eb">락을 꺼내기 전에 지켜야 할 순서</text>
+
+  <rect x="90" y="42" width="720" height="62" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="450" y="68" text-anchor="middle" font-size="13.5" font-weight="800" fill="#16a34a">① 한 문장짜리 원자 연산으로 못 푸나?</text>
+  <text x="450" y="90" text-anchor="middle" font-size="11.5" fill="#1f2937">조건부 UPDATE · SET NX · INCR · Lua</text>
+
+  <line x1="450" y1="104" x2="450" y2="128" stroke="#2563eb" stroke-width="2.2" marker-end="url(#fBr)"/>
+  <text x="480" y="122" font-size="11" font-weight="700" fill="#2563eb">안 되면</text>
+
+  <rect x="90" y="132" width="720" height="62" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="450" y="158" text-anchor="middle" font-size="13.5" font-weight="800" fill="#2563eb">② 경합 지점이 같은 DB 안이면 DB 락으로 안 되나?</text>
+  <text x="450" y="180" text-anchor="middle" font-size="11.5" fill="#1f2937">SELECT … FOR UPDATE · 조건부 UPDATE</text>
+
+  <line x1="450" y1="194" x2="450" y2="218" stroke="#2563eb" stroke-width="2.2" marker-end="url(#fBr)"/>
+  <text x="480" y="212" font-size="11" font-weight="700" fill="#2563eb">안 되면</text>
+
+  <rect x="90" y="222" width="720" height="62" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="450" y="248" text-anchor="middle" font-size="13.5" font-weight="800" fill="#d97706">③ 그때 비로소 분산 락</text>
+  <text x="450" y="270" text-anchor="middle" font-size="11.5" fill="#1f2937">단, <tspan font-weight="800" fill="#dc2626">fencing 가능한 자원인지부터 확인한다</tspan></text>
+
+  <text x="450" y="306" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b7280">순서를 건너뛰고 ③부터 꺼내면, 원자 연산 하나면 끝날 문제에 <tspan fill="#dc2626" font-weight="800">락 왕복 지연 + TTL 만료·오해제라는 실패 모드</tspan>를 얹게 된다</text>
+</svg>
+<div class="cap">분산 락은 성능 해법이 아니라 <b>경계를 넘는 조정이 필요할 때의 마지막 도구</b>다.</div>
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 판별 드릴 — 이 상황은 어느 함정인가</h2>
+<p class="small">시나리오를 읽고 <b>먼저 스스로 이름을 붙여 본 뒤</b> 클릭해 확인한다. 함정 이름이 아니라 <b>"무엇이 어긋났는가"</b>를 말하는 연습이다.</p>
+
+<div class="drillbar">
+  <button id="q-all" type="button">전부 펼치기</button>
+  <button id="q-reset" type="button">다시 접기</button>
+  <span class="small">만 = TTL 만료 · 해 = 소유자 미검증 해제 · 시 = 시계/노드</span>
+</div>
+
+<button class="rq" type="button">배포로 파드가 <code>SIGKILL</code>을 받아 <code>unlock()</code>이 실행되지 않았다.<span class="a">TTL이 막아준다 — 이게 TTL의 존재 이유(가용성)</span></button>
+<button class="rq" type="button"><code>SETNX</code>로 락을 잡은 직후 OOM Kill로 프로세스가 죽었다.<span class="a">영구 락 — 명령을 두 문장으로 나눈 대가(§2-2)</span></button>
+<button class="rq" type="button">작업이 35초 걸렸고 TTL은 30초였는데, 끝나고 <code>DEL</code>로 정리했다.<span class="a">해 — 지운 것은 남의 락이다(§7)</span></button>
+<button class="rq" type="button">GC가 3초 멈춘 뒤 깨어나 아무 확인 없이 계속 썼다.<span class="a">만 — 자기 정지를 인지하지 못한 채 재개(§4)</span></button>
+<button class="rq" type="button">마스터가 죽고 레플리카가 승격됐는데 그 락이 없었다.<span class="a">시(노드) — 비동기 복제로 인한 락 유실(§8-1)</span></button>
+<button class="rq" type="button">NTP가 한 노드의 시각을 2초 앞으로 점프시켰다.<span class="a">시 — 그 노드만 조기 만료, 과반 계산이 무너진다</span></button>
+<button class="rq" type="button">Redisson <code>lock(10, SECONDS)</code>로 잡았는데 작업이 12초 걸렸다.<span class="a">만 — 임대 시간을 명시하면 watchdog이 동작하지 않는다</span></button>
+<button class="rq" type="button">락 로직은 완벽한데 결제가 두 번 승인됐다.<span class="a">정확성의 락 — 데이터 측 방어선이 없다(§9-1)</span></button>
+<button class="rq" type="button">해제 Lua가 0을 자주 반환하는데 아무도 보고 있지 않다.<span class="a">TTL이 작업 시간보다 짧다는 신호를 놓친 것(§7-1)</span></button>
+<button class="rq" type="button">Redlock 노드 하나가 영속화 없이 재시작해 자기 락을 잊었다.<span class="a">시(노드) — 과반이 둘이 될 수 있다 → delayed restart(§12)</span></button>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 꼬리질문 셀프 테스트</h2>
+<p class="small">질문만 보고 <b>먼저 스스로 답한 뒤</b> 펼쳐서 확인한다. <span class="badge senior">시니어 변별</span> 문항은 <b>정답 하나를 고르지 말고 판단 기준을 말하는</b> 연습을 한다.</p>
+
+<details>
+  <summary>TTL을 아주 길게(10분) 잡으면 만료 문제가 없어지지 않나요?</summary>
+  <div class="ans">
+    <p>만료 함정(<a href="#s4">§4</a>)이 발생할 <b>확률은 줄지만 반대쪽 비용이 그만큼 커진다.</b> <a href="#s3">§3</a>의 다이얼을 그대로 꺼내 답하면 된다.</p>
+    <p><span class="key">락 주인이 크래시로 죽으면 그 자원은 TTL이 다할 때까지 아무도 못 잠근다</span> — <b>10분짜리 부분 장애</b>다. 게다가 TTL을 길게 잡아도 §4의 근본 문제는 남는다. <b>정지가 10분보다 짧아지는 것이 아니라 "10분보다 긴 정지"의 확률이 낮아질 뿐</b>이고, 확률을 0으로 만들 수는 없다.</p>
+    <p>그래서 실무 답은 <b>조합</b>이다. <span class="key">작업 예상 시간보다 여유 있게 잡고 + watchdog으로 연장하고 + 그래도 뚫리는 경우는 fencing이나 데이터 제약으로 받는다.</span> <b>TTL은 안전성과 가용성 사이의 다이얼이지, 한쪽으로 끝까지 돌려서 해결되는 값이 아니다.</b></p>
+  </div>
+</details>
+
+<details>
+  <summary>Redisson watchdog이 있으면 TTL 만료 문제는 해결된 것 아닌가요?</summary>
+  <div class="ans">
+    <p><span class="key">아니다. watchdog은 "살아 있는 프로세스의 시간 예측 실패"만 지운다.</span></p>
+    <p>연장 스레드도 <b>같은 JVM 안에 있으므로</b> STW GC나 컨테이너 스로틀링 앞에서는 워커 스레드와 함께 멈춘다. 네트워크가 끊기면 <b>연장 요청 자체가 Redis에 도달하지 못한다</b>(<a href="#s5">§5</a>).</p>
+    <p><span class="key">"자신이 정지했다는 사실을 인지하지 못한 채 재개하는 프로세스"라는 근본 문제는 락 쪽에서 풀 수 없고,</span> 자원 쪽 방어(fencing token, 조건부 갱신)로만 막을 수 있다.</p>
+    <p>여기에 더해 <b>Redisson에서 임대 시간을 명시하면 watchdog이 아예 동작하지 않는다</b>는 점도 함께 말하면, <b>라이브러리를 읽어본 사람이라는 신호</b>가 된다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>락 획득에 실패한 요청은 어떻게 처리하나요?</summary>
+  <div class="ans">
+    <p><span class="key">용도에 따라 갈라서 답한다.</span> 이 구분을 못 하면 <b>모든 실패를 재시도로 처리하게 되고, 그게 장애로 번진다.</b></p>
+    <ul>
+      <li><b>중복 실행 방지 목적이면 즉시 포기</b>가 정답이다. 락을 못 잡았다는 것은 "누군가 이미 그 일을 하고 있다"는 뜻이므로 기다릴 이유가 없다. <b>기다렸다가 잡아서 또 하면 애초에 막으려던 중복 실행을 스스로 하는 셈</b>이다.</li>
+      <li><b>순서 대기 목적이면 재시도(스핀) 또는 대기</b>다. 다만 스핀 재시도는 <b>Redis에 폴링 부하</b>를 만들므로 재시도 간격과 상한을 둬야 하고, Redisson처럼 <b>pub/sub으로 "락이 해제됐다"는 신호를 받아 깨어나는 구현</b>이 폴링보다 낫다.</li>
+    </ul>
+    <p>어느 쪽이든 <span class="key">대기 시간 상한과 실패 응답 경로가 반드시 있어야 한다.</span> 없으면 <b>락 경합이 스레드 고갈로 번진다</b> — 대기하는 스레드가 톰캣 워커를 붙잡고, 워커가 마르면 <b>락과 무관한 API까지 함께 죽는다.</b> 비관적 락이 커넥션을 고갈시키는 것과 정확히 같은 구조의 문제다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>그냥 DB 비관적 락(<code>SELECT FOR UPDATE</code>)을 쓰면 안 되나요? 언제 Redis 분산 락이 필요한가요? <span class="badge senior">시니어 변별</span></summary>
+  <div class="ans">
+    <p><span class="key">보호 대상이 그 DB 안에 있다면 DB 락이 우선이다.</span></p>
+    <p>이유는 <b>실패 모드의 개수</b>다. 락과 데이터가 같은 시스템이면 <b>"락은 살았는데 데이터 시스템만 죽는" 반쪽 실패가 없고, 트랜잭션 롤백과 락 해제가 원자적으로 묶인다.</b> 반면 Redis 락 + PostgreSQL 데이터 조합은 두 시스템이 각각 죽을 수 있고, <b>그 조합마다 다른 사고가 난다.</b></p>
+    <p>Redis 분산 락이 정당해지는 경우는 둘이다.</p>
+    <ol>
+      <li><b>보호 대상이 DB 바깥일 때.</b> 외부 API 호출, 파일 작업, 여러 저장소에 걸친 절차처럼 <b>DB의 행 락으로는 감쌀 수 없는 자원</b>이다.</li>
+      <li><b>DB 커넥션을 락 대기에 붙잡아두는 비용이 감당 불가일 때.</b> 대기 줄을 DB 밖으로 빼야 커넥션 풀이 마르지 않는다.</li>
+    </ol>
+    <p>단, 2의 경우에도 순서가 있다. <b>대기 줄을 옮기기 전에 임계 구간 자체를 줄이는 설계</b>(조건부 <code>UPDATE</code> 한 문장으로 접기)가 먼저다.</p>
+    <p><span class="key">"분산 환경이니까 분산 락"은 근거가 아니다</span> — <b>분산 환경에서도 경합 지점이 단일 DB면 그 DB가 이미 훌륭한 조정자다.</b></p>
+  </div>
+</details>
+
+<details>
+  <summary>Redlock 5대 중 2대가 죽으면 어떻게 되나요? <span class="badge bonus">가산점</span></summary>
+  <div class="ans">
+    <p>과반인 3대가 살아 있으므로 <b>락 발급은 계속된다.</b> 그게 Redlock의 설계 목적이므로 <b>여기까지는 정상 동작</b>이다.</p>
+    <p><span class="key">진짜 문제는 다른 시나리오다.</span> <b>락을 발급한 노드 중 하나가 디스크 영속화 없이 재시작하면</b> 그 노드는 <b>자기가 발급했던 락을 잊은 채</b> 돌아온다. 그러면 다른 클라이언트가 <b>"그 노드 + 원래 실패했던 노드들"로 새 과반을 만들어</b> 같은 락을 획득할 수 있다. <b>노드가 죽지도 않았는데 과반이 두 개가 되는 것이다.</b></p>
+    <p>그래서 antirez는 <b>delayed restart</b> — <b>재시작한 노드가 락 TTL만큼 기다린 뒤에야 요청을 받게 하는 방식</b> — 를 제안했다. 그 시간이 지나면 <b>자기가 잊은 락들도 어차피 만료됐을 것</b>이기 때문이다.</p>
+    <p>이 답을 할 수 있으면 <b>"알고리즘을 외운 사람"과 "실패 모드를 따져본 사람"이 갈린다.</b></p>
+  </div>
+</details>
+
+<details>
+  <summary>락 해제와 DB 트랜잭션 커밋 중 어느 것이 먼저여야 하나요? <span class="badge senior">시니어 변별</span> <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key">반드시 커밋이 먼저, 락 해제가 나중이다.</span> 순서가 뒤집히면 <b>락을 제대로 구현해 놓고도 정합성이 깨진다.</b></p>
+    <p>왜인지 그림으로 보면 이렇다 — 락을 먼저 풀면 <b>다음 획득자가 "아직 커밋되지 않은 상태"의 데이터를 읽고</b> 판단한다. 재고 차감이라면, B는 <b>A가 이미 차감했지만 아직 커밋 전인 값</b>을 보고 "재고가 남아 있네"라고 결론 내린다. <b>임계 구간을 한 명씩 통과시켰는데도 결과는 동시 진입과 똑같아진다.</b></p>
+    <p>스프링에서 이 사고가 나는 전형적인 모양이 있다.</p>
+    <ul>
+      <li><b>✕ 위험</b> — <code>@Transactional</code>이 붙은 메서드 <b>안에서</b> 락을 잡고 풀면, 락 해제가 <b>커밋(메서드 종료 시점)보다 먼저</b> 실행된다.</li>
+      <li><b>✓ 안전</b> — <b>락을 잡는 계층이 트랜잭션보다 바깥</b>이어야 한다. 락을 잡는 메서드가 <code>@Transactional</code> 메서드를 <b>호출</b>하는 구조로 두면, 호출이 반환될 때 커밋이 끝나 있고 그 뒤에 락을 푼다.</li>
+    </ul>
+    <p>정리하면 <span class="key">락의 범위는 트랜잭션의 범위를 완전히 감싸야 한다.</span> 이 질문에 답할 수 있으면 <b>"락을 써 본 사람"과 "락과 트랜잭션을 함께 써 본 사람"이 갈린다.</b></p>
+  </div>
+</details>
+
+<details>
+  <summary>락 키는 어떻게 설계하나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>기준은 <span class="key">"동시에 만지면 깨지는 자원 하나 = 좌석 하나"</span>다. 그 자원의 식별자를 키에 넣는다(<code>lock:order:42</code>). 여기서 <b>양쪽으로 실수할 수 있다.</b></p>
+    <ul>
+      <li><b>너무 굵으면</b>(<code>lock:order</code>) 서로 상관없는 주문끼리 줄을 서게 되어 <b>처리량이 죽는다.</b> 정합성은 지켜지지만 <b>락이 병목 그 자체</b>가 된다.</li>
+      <li><b>너무 잘게 쪼개면</b> 보호 범위가 새어 나간다. 한 작업이 <b>자원 두 개를 함께 바꿔야 하는데</b> 각각 잠그면, 그 사이에 다른 프로세스가 한쪽만 바꿔 <b>어긋난 중간 상태</b>를 만든다.</li>
+      <li>자원 두 개를 잠가야 한다면 <b>획득 순서를 고정한다</b>(예: 항상 키 문자열이 작은 쪽부터). 순서가 뒤섞이면 서로가 서로를 기다리는 <b>데드락</b>이 생긴다. — 이건 락 일반의 규칙이고, 분산 락이라고 예외가 아니다.</li>
+    </ul>
+    <p>운영 관점도 하나 붙이면 좋다 — <b><code>lock:</code> 같은 접두사로 네임스페이스를 분리</b>해 두면, 사고 시 "지금 잡혀 있는 락이 무엇인가"를 <code>SCAN</code>으로 확인하기 쉽고 <b>캐시 키와 섞이지 않는다.</b></p>
+  </div>
+</details>
+
+<details>
+  <summary>ZooKeeper나 etcd는 왜 fencing token을 줄 수 있나요? <span class="badge bonus">가산점</span> <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><span class="key">노드들이 합의(consensus) 알고리즘으로 "연산의 순서"를 하나로 확정하기 때문</span>이다. 순서가 확정되면 <b>그 순서 자체가 전역에서 단조 증가하는 번호</b>가 된다 — ZooKeeper의 순차 노드 번호나 트랜잭션 ID(zxid), etcd의 revision이 그 역할을 한다. 그 번호를 그대로 <b>fencing token</b>으로 쓸 수 있다.</p>
+    <p>반면 <b>Redlock은 노드들이 서로 조율하지 않는다.</b> 클라이언트가 독립적인 마스터 N대에 <b>각각 따로</b> <code>SET NX</code>를 보낼 뿐이라, <b>"전역에서 하나뿐인 순서"라는 개념이 알고리즘 안에 존재하지 않는다.</b> 그래서 단조 증가 번호를 만들어 낼 수단도 없다(<a href="#s6">§6</a>).</p>
+    <p><b>대가도 함께 말해야 균형이 잡힌다</b> — 합의 기반 시스템은 쓰기마다 <b>노드 간 합의 왕복</b>이 필요해 Redis보다 느리고, 클러스터를 하나 더 운영해야 한다. 그래서 답은 <span class="key">"정확성이 걸린 락이 정말 필요하다면 합의 기반 시스템을 쓰거나, 애초에 정확성을 락이 아닌 데이터 쪽에서 지킨다"</span>이고, 실무에서는 <b>후자가 훨씬 자주 정답</b>이다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>재진입(reentrant) 락은 왜 필요하고, 값이 단순 토큰이면 왜 안 되나요? <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p><b>재진입</b>은 <span class="key">같은 실행 주체가 이미 자기가 쥔 락을 한 번 더 잡는 것</span>이다. 예를 들어 락을 잡은 메서드가 <b>내부에서 같은 락을 잡는 다른 메서드를 호출</b>하는 경우다. 재진입이 안 되면 <b>자기가 자기를 기다리는 교착</b>이 발생한다 — 상대가 없는데도 영원히 대기한다.</p>
+    <p>값이 <b>단순 문자열 토큰</b>이면 이걸 표현할 수 없다. <b>"몇 번 잡았는지"를 셀 자리가 없기 때문</b>이다. 안쪽 메서드가 끝나며 락을 풀어 버리면, <b>바깥 메서드는 아직 임계 구간에 있는데 좌석이 비어 버린다.</b></p>
+    <p>그래서 Redisson은 락 키를 <b>Hash 자료구조</b>로 두고 <b>"누가(스레드 식별자) 몇 번 잡았는지"를 카운터로 관리</b>한다. 잡을 때 카운트를 <b>+1</b>, 풀 때 <b>−1</b>, <b>0이 되는 순간에만 키를 삭제</b>한다. 이 판정도 당연히 <b>Lua로 원자화</b>되어 있다(<a href="#s7">§7</a>의 원리 그대로다).</p>
+    <p>이 답의 실전 가치는 결론에 있다 — <b>재진입, pub/sub 대기 해제, watchdog 수명 관리처럼 직접 만들면 새 버그가 되는 요소들</b>이 이미 라이브러리에 들어 있다는 것이 <b>"직접 구현하지 말라"의 구체적 근거</b>다.</p>
+  </div>
+</details>
+
+<details>
+  <summary>이 락이 실제로 잘 동작하는지 어떻게 확인하나요? 어떤 지표를 보나요? <span class="badge senior">시니어 변별</span> <span class="badge extra">추가</span></summary>
+  <div class="ans">
+    <p>먼저 <span class="key">"락 지표만으로는 이 문제를 볼 수 없다"</span>는 점을 짚는 것이 이 질문의 핵심이다. <b>동시 진입이 일어나도 Redis 명령은 전부 정상 성공으로 응답하기 때문</b>이다(<a href="#s7">§7</a>). 그래서 <b>락 쪽 지표와 자원 쪽 지표를 함께</b> 본다.</p>
+    <p><b>락 쪽 — "위험이 커지고 있다"는 선행 신호</b></p>
+    <ul>
+      <li><b>락 보유 시간 p99 ÷ TTL</b>. 이 비율이 1에 가까워지면 <b>만료 함정이 곧 열린다.</b> 단일 지표로 가장 유용하다.</li>
+      <li><b>해제 Lua의 0 반환 횟수</b> — "내 락이 이미 남에게 넘어갔다"가 실제로 발생한 횟수다(<a href="#s7">§7-1</a>).</li>
+      <li><b>watchdog 연장 횟수</b>가 예상 밖으로 많으면 작업 시간 추정이 틀린 것이고, <b>갑자기 끊기면</b> 정지나 네트워크 문제다.</li>
+      <li><b>획득 실패율과 대기 시간</b> — 락이 병목이 되고 있는지(키가 너무 굵은지) 판단하는 근거.</li>
+    </ul>
+    <p><b>자원 쪽 — "실제로 뚫렸다"는 확정 신호</b></p>
+    <ul>
+      <li><b>fencing 조건에 걸려 영향 행 0으로 거부된 건수</b>. 이 값이 0이 아니라는 것은 <b>락이 이미 뚫렸고 데이터 쪽 방어선이 실제로 일했다</b>는 뜻이다.</li>
+      <li><b>DB 유니크 제약 위반 건수</b>, 멱등성 키 중복 감지 건수도 같은 성격의 신호다.</li>
+    </ul>
+    <p>정리하면 <span class="key">"락이 뚫렸다"를 감지할 수 있는 유일한 지점은 방어선을 깔아 둔 자원 쪽</span>이다. <b>방어선을 깔면 안전해질 뿐 아니라 관측 가능해진다</b>는 것까지 말하면 답변이 닫힌다.</p>
+  </div>
+</details>
+
+<!-- ===================== SUM ===================== -->
+<div class="banner" id="sum">
+  <div class="kicker">한 줄 요약</div>
+  Redis 분산 락의 세 함정 — <b>TTL 만료</b>(자신의 정지를 인지하지 못한 채 재개하는 프로세스), <b>소유자 미검증 해제</b>(<code style="background:rgba(255,255,255,.18);color:#fff">DEL</code>은 주인을 안 가림), <b>시계 의존</b>(Redlock의 유효 시간 판정) — 은 모두
+  <b>"락을 쥐고 있다는 믿음"과 실제의 어긋남</b>이며, <b>SET NX PX</b>(없을 때만 설정 + 밀리초 TTL을 한 명령으로) + <b>고유 토큰</b> + <b>Lua 해제</b> + <b>watchdog</b>까지가 방어 가능한 영역이고 그 너머는 구조적으로 남는다.
+  그래서 Redlock 논쟁의 내 결론은 <b>락의 용도 구분</b>이다 — 효율성(중복 작업 방지)은 단일 Redis 락으로 충분하고,
+  정확성이 걸린 작업은 Redlock으로 락을 강화할 게 아니라 <b>최종 방어선을 데이터 쪽(유니크 제약·조건부 갱신·fencing token)에 두고 락은 경합 완화 최적화로 강등</b>시킨다.
+</div>
+
+</main>
+<script>
+(function(){
+  var rqs = document.querySelectorAll('.rq');
+  for (var i = 0; i < rqs.length; i++){
+    rqs[i].addEventListener('click', function(){ this.classList.toggle('open'); });
+  }
+  var all = document.getElementById('q-all');
+  var reset = document.getElementById('q-reset');
+  if (all) all.addEventListener('click', function(){
+    for (var j = 0; j < rqs.length; j++) rqs[j].classList.add('open');
+  });
+  if (reset) reset.addEventListener('click', function(){
+    for (var k = 0; k < rqs.length; k++) rqs[k].classList.remove('open');
+  });
+})();
+</script>
+</body>
+</html>
