@@ -25,7 +25,7 @@ AI가 모든 지식 질문에 답할 수 있는 시대에 면접관이 여전히
 - [3. JPA / ORM](03-jpa-orm.md)
 - [4. RDB / SQL / 데이터 모델링](04-rdb-sql.md)
 - [5. Redis / 캐싱](05-redis-caching.md)
-- [6. Kafka / 메시징 / 이벤트 기반 아키텍처](06-kafka-messaging.md)
+- [6. 메시징 — 메시지 큐 · RabbitMQ · Kafka](06-messaging.md)
 - [7. 대용량 트래픽 / 성능 최적화](07-traffic-performance.md)
 - [8. 네트워크 / HTTP / 웹](08-network-http.md)
 - [9. REST API 설계](09-rest-api.md)

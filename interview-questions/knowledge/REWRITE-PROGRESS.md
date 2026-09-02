@@ -10,7 +10,7 @@
 | 디렉토리 | 건수 | 완료 | 상태 |
 |---|---|---|---|
 | 05-redis-caching | 27 | 27 | 완료 |
-| 06-kafka-messaging | 24 | 24 | 완료 |
+| 06-messaging | 36 | 24 | 부분 (RabbitMQ 12건 구조 미달) |
 | 07-traffic-performance | 23 | 23 | 완료 |
 | 08-network-http | 22 | 22 | 완료 |
 | 09-rest-api | 18 | 18 | 완료 |
@@ -60,37 +60,51 @@
 | 26-cold-cache-and-cache-warming.md | 완료 |
 | 27-multi-exec-watch-vs-lua.md | 완료 |
 
-## 06-kafka-messaging (24/24 — 완료)
+## 06-messaging (24/36 — RabbitMQ 12건 구조 미달)
+
+> 2026-09-02 질문지 재편(MQ 공통 → RabbitMQ → Kafka)에 맞춰 파일 번호를 01~36으로 재부여했다. 아래 표는 **새 번호** 기준이다.
 
 | 파일 | 상태 |
 |---|---|
 | 01-why-message-queue-sync-vs-async.md | 완료 |
-| 02-kafka-core-components.md | 완료 |
-| 03-partition-vs-consumer-count.md | 완료 |
-| 04-kafka-vs-rabbitmq.md | 완료 |
-| 05-offset-commit-and-auto-commit-risk.md | 완료 |
-| 06-message-ordering-partition-key.md | 완료 |
-| 07-delivery-semantics-and-exactly-once-reality.md | 완료 |
-| 08-consumer-retry-dlq-design.md | 완료 |
-| 09-consumer-rebalancing-and-in-flight-messages.md | 완료 |
-| 10-producer-acks-durability.md | 완료 |
-| 11-idempotent-consumer-implementation.md | 완료 |
-| 12-transactional-outbox-cdc-kafka.md | 완료 |
-| 13-partition-count-sizing.md | 완료 |
-| 14-single-consumer-throughput-and-offset-commit.md | 완료 |
-| 15-fat-vs-thin-event-payload.md | 완료 |
-| 16-consumer-lag-diagnosis-and-resolution.md | 완료 |
-| 17-partition-increase-side-effects.md | 완료 |
-| 18-schema-evolution-compatibility.md | 완료 |
-| 19-bulk-replay-isolation.md | 완료 |
-| 20-eventual-consistency-ux.md | 완료 |
-| 21-saga-choreography-orchestration-compensation.md | 완료 |
-| 22-max-poll-interval-vs-session-timeout.md | 완료 |
-| 23-log-compaction-compacted-topic.md | 완료 |
-| 24-large-payload-claim-check.md | 완료 |
+| 02-kafka-vs-rabbitmq.md | 완료 |
+| 03-delivery-semantics-and-exactly-once-reality.md | 완료 |
+| 04-idempotent-consumer-implementation.md | 완료 |
+| 05-fat-vs-thin-event-payload.md | 완료 |
+| 06-schema-evolution-compatibility.md | 완료 |
+| 07-eventual-consistency-ux.md | 완료 |
+| 08-saga-choreography-orchestration-compensation.md | 완료 |
+| 09-large-payload-claim-check.md | 완료 |
+| 10-rabbitmq-core-components.md | 구조 미달 |
+| 11-rabbitmq-exchange-types-routing.md | 구조 미달 |
+| 12-rabbitmq-ack-nack-prefetch.md | 구조 미달 |
+| 13-rabbitmq-durability-publisher-confirms.md | 구조 미달 |
+| 14-rabbitmq-retry-dlx-dlq.md | 구조 미달 |
+| 15-rabbitmq-message-ordering.md | 구조 미달 |
+| 16-rabbitmq-consumer-throughput-prefetch.md | 구조 미달 |
+| 17-classic-vs-quorum-queue.md | 구조 미달 |
+| 18-rabbitmq-queue-backlog-diagnosis.md | 구조 미달 |
+| 19-rabbitmq-delayed-message-scheduling.md | 구조 미달 |
+| 20-rabbitmq-outbox-polling-publisher.md | 구조 미달 |
+| 21-kafka-core-components.md | 완료 |
+| 22-partition-vs-consumer-count.md | 완료 |
+| 23-offset-commit-and-auto-commit-risk.md | 완료 |
+| 24-message-ordering-partition-key.md | 완료 |
+| 25-consumer-retry-dlq-design.md | 완료 |
+| 26-consumer-rebalancing-and-in-flight-messages.md | 완료 |
+| 27-producer-acks-durability.md | 완료 |
+| 28-transactional-outbox-cdc-kafka.md | 완료 |
+| 29-partition-count-sizing.md | 완료 |
+| 30-single-consumer-throughput-and-offset-commit.md | 완료 |
+| 31-consumer-lag-diagnosis-and-resolution.md | 완료 |
+| 32-partition-increase-side-effects.md | 완료 |
+| 33-bulk-replay-isolation.md | 완료 |
+| 34-rabbitmq-to-kafka-migration.md | 구조 미달 |
+| 35-max-poll-interval-vs-session-timeout.md | 완료 |
+| 36-log-compaction-compacted-topic.md | 완료 |
 
-메모: 12번은 MySQL binlog 중심 서술을 PostgreSQL(WAL·논리적 디코딩·복제 슬롯) 기준으로 전환한다.
-22번은 꼬리질문이 `## 3.`에 있던 것을 본문 3섹션 + 꼬리질문 `## 4.`로 재구성 완료.
+메모: 28번은 MySQL binlog 중심 서술을 PostgreSQL(WAL·논리적 디코딩·복제 슬롯) 기준으로 전환한다.
+35번은 꼬리질문이 `## 3.`에 있던 것을 본문 3섹션 + 꼬리질문 `## 4.`로 재구성 완료.
 
 
 ## 07-traffic-performance (23/23) — 완료
@@ -154,7 +168,7 @@
 ## 기계 검증
 
 `/private/tmp/.../scratchpad/verify.py` 로 구조 6요소·섹션 번호 연속성·이모지·하드랩 해제·꼬리질문 표기를 확인한다.
-06-kafka-messaging 01~24는 전부 통과한다(기준선). 25~36(RabbitMQ 12건, 커밋 `3ff7425`)은 `## 5.`~`## 7.`까지 쓰는 다른 관례라 이 검증에서는 실패로 나온다 — 별도 판단 사항.
+06-messaging의 공통·Kafka 24건(새 번호 01~09·21~33·35~36)은 전부 통과한다(기준선). RabbitMQ 12건(새 번호 10~20·34, 커밋 `3ff7425`)은 `## 5.`~`## 7.`까지 쓰는 다른 관례라 이 검증에서는 실패로 나온다 — 별도 판단 사항.
 
 ## 08-network-http (22/22) — 완료
 
@@ -466,7 +480,7 @@ KST 23:59:59 = `14:59:59Z`.
 ### 장 밖에서 발견한 것
 
 - **04-rdb-sql이 비었다.** 커밋 `8deef26`("4장 knowledge 문서 35건 삭제")로 디렉토리가 비어 있다. 재작성 대상 243건 중 35건이 사라진 셈이라 남은 범위는 02-spring 35건 + 03-jpa-orm 27건이다.
-- **06-kafka-messaging에 12건이 기준 미달이다.** 24건 완료로 기록돼 있으나 현재 36건이 있다. 25~36번(RabbitMQ 12건)이 나중에 추가됐고, 이 중 11건은 꼬리질문이 `## 5.`에 있어 0~4 규약에서 벗어난다. 04번(kafka-vs-rabbitmq)에는 번호 없는 h2가 하나 있다. 내용 자체는 새 기준으로 쓰인 것으로 보이므로 구조 정리만 필요하다.
+- **06-messaging에 12건이 기준 미달이다.** 24건 완료로 기록돼 있으나 현재 36건이 있다. RabbitMQ 12건(새 번호 10~20·34)이 나중에 추가됐고, 이 중 11건은 꼬리질문이 `## 5.`에 있어 0~4 규약에서 벗어난다. 02번(kafka-vs-rabbitmq)에는 번호 없는 h2가 하나 있다. 내용 자체는 새 기준으로 쓰인 것으로 보이므로 구조 정리만 필요하다.
 
 ### 파일별 현황
 

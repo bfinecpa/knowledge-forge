@@ -10,7 +10,7 @@
 
 **출제 의도**: 내 배포가 남의 앱을 깨는 구조(특히 강제 업데이트가 불가능한 모바일)에서 일해봤는지를 본다. "필드 삭제는 왜 위험하고 추가는 왜 안전한가"를 서버 편의가 아니라 **소비자(클라이언트) 관점**에서 설명할 수 있는지가 관건이다.
 
-> 이 문서는 **동기 REST API의 요청/응답 계약**에 집중한다. 버전 번호를 어디에 붙일지(URI 대 헤더)와 폐기 운영은 `03-api-versioning-strategies.md`, 이벤트/메시지 스키마의 호환성(backward/forward, Schema Registry)은 `06-kafka-messaging/18-schema-evolution-compatibility.md`에서 다룬다.
+> 이 문서는 **동기 REST API의 요청/응답 계약**에 집중한다. 버전 번호를 어디에 붙일지(URI 대 헤더)와 폐기 운영은 `03-api-versioning-strategies.md`, 이벤트/메시지 스키마의 호환성(backward/forward, Schema Registry)은 `06-messaging/06-schema-evolution-compatibility.md`에서 다룬다.
 
 ## 1. 왜 "하위 호환"이 문제가 되는가 — 배포 주기가 다른 세계
 

@@ -16,9 +16,9 @@
 |---|---|
 | **이 문서** | **스프링에서 어떻게 구현하는가** — 스프링 이벤트에서 출발해 아웃박스로 넘어가는 경로, 폴링 릴레이 구현, 운영 |
 | `16-spring-event-transactional-event-listener.md` | `ApplicationEventPublisher`와 phase의 기본 동작·함정 |
-| `06-kafka-messaging/12-transactional-outbox-cdc-kafka.md` | Kafka·CDC 관점 — WAL 논리적 디코딩, Debezium, 복제 슬롯 운영 |
-| `06-kafka-messaging/35-rabbitmq-outbox-polling-publisher.md` | RabbitMQ 관점 — publisher confirms 결합의 상세 |
-| `06-kafka-messaging/11-idempotent-consumer-implementation.md` | 소비자 쪽 중복 제거 구현 |
+| `06-messaging/28-transactional-outbox-cdc-kafka.md` | Kafka·CDC 관점 — WAL 논리적 디코딩, Debezium, 복제 슬롯 운영 |
+| `06-messaging/20-rabbitmq-outbox-polling-publisher.md` | RabbitMQ 관점 — publisher confirms 결합의 상세 |
+| `06-messaging/04-idempotent-consumer-implementation.md` | 소비자 쪽 중복 제거 구현 |
 | `10-payment-consistency/10-distributed-saga-compensation-idempotency.md` | 분산 트랜잭션 일반론(Saga·보상)에서 아웃박스가 놓이는 위치 |
 
 기준 버전은 Spring Boot 3.x / Spring Framework 6.x, DB는 PostgreSQL 14 이상이다.
@@ -501,7 +501,7 @@ public class RabbitOutboxPublisher implements EventPublishPort {
 }
 ```
 
-메시지가 실제로 살아남으려면 세 가지가 동시에 필요하다는 것도 함께 알아 두자 — **메시지 persistent + 큐 durable + 브로커 확인(confirm)**. 셋 중 하나라도 빠지면 브로커 재시작 시 메시지가 사라진다. (상세는 `06-kafka-messaging/28-rabbitmq-durability-publisher-confirms.md`, 아웃박스와의 결합 전체는 `06-kafka-messaging/35-rabbitmq-outbox-polling-publisher.md`.)
+메시지가 실제로 살아남으려면 세 가지가 동시에 필요하다는 것도 함께 알아 두자 — **메시지 persistent + 큐 durable + 브로커 확인(confirm)**. 셋 중 하나라도 빠지면 브로커 재시작 시 메시지가 사라진다. (상세는 `06-messaging/13-rabbitmq-durability-publisher-confirms.md`, 아웃박스와의 결합 전체는 `06-messaging/20-rabbitmq-outbox-polling-publisher.md`.)
 
 ### 3-7. Kafka로 발행할 때의 차이
 
@@ -531,7 +531,7 @@ CDC는 애플리케이션 릴레이를 아예 없앤다. Debezium 커넥터가 P
 
 핵심 성질은 **커밋이 WAL에 남는 순간 발행이 예약된 것과 같다**는 것이다. 폴링처럼 주기를 기다리지 않고, 조회 쿼리로 DB를 때리지도 않는다.
 
-대가는 인프라다. Debezium과 Kafka Connect라는 운영 대상이 늘고, 그중에서도 **복제 슬롯(replication slot)**이 급소다. 슬롯은 "아직 이 소비자가 안 읽은 WAL"을 서버가 지우지 못하게 붙잡는 장치라, 커넥터가 오래 죽어 있으면 데이터가 사라지는 게 아니라 **WAL이 계속 쌓여 디스크가 차고 DB 전체가 멈춘다.** (이 운영 상세는 `06-kafka-messaging/12-transactional-outbox-cdc-kafka.md`에 있다.)
+대가는 인프라다. Debezium과 Kafka Connect라는 운영 대상이 늘고, 그중에서도 **복제 슬롯(replication slot)**이 급소다. 슬롯은 "아직 이 소비자가 안 읽은 WAL"을 서버가 지우지 못하게 붙잡는 장치라, 커넥터가 오래 죽어 있으면 데이터가 사라지는 게 아니라 **WAL이 계속 쌓여 디스크가 차고 DB 전체가 멈춘다.** (이 운영 상세는 `06-messaging/28-transactional-outbox-cdc-kafka.md`에 있다.)
 
 그리고 RabbitMQ에는 Debezium 같은 표준 경로가 없다. Kafka로 흘린 뒤 다시 옮기는 구성은 배보다 배꼽이 크므로, **RabbitMQ 환경의 사실상 기본 선택은 폴링 퍼블리셔**다.
 
@@ -656,7 +656,7 @@ public void consume(OrderCompletedMessage message) {
 }
 ```
 
-**"아웃박스를 씁니다"라고만 답하고 멱등 소비자를 빠뜨리면 반쪽 답변이다.** 생산 측은 유실을 막고(아웃박스), 소비 측은 중복을 제거해야(멱등 소비자) 비로소 "커밋됐으면 정확히 한 번의 효과가 반영된다"에 도달한다. 키 선정·원자성·이력 보관 기간 같은 구현 디테일은 `06-kafka-messaging/11-idempotent-consumer-implementation.md`에 있다.
+**"아웃박스를 씁니다"라고만 답하고 멱등 소비자를 빠뜨리면 반쪽 답변이다.** 생산 측은 유실을 막고(아웃박스), 소비 측은 중복을 제거해야(멱등 소비자) 비로소 "커밋됐으면 정확히 한 번의 효과가 반영된다"에 도달한다. 키 선정·원자성·이력 보관 기간 같은 구현 디테일은 `06-messaging/04-idempotent-consumer-implementation.md`에 있다.
 
 ## 4. 꼬리질문 대비 포인트
 
