@@ -16,8 +16,8 @@
 | 09-rest-api | 18 | 18 | 완료 |
 | 01-java-kotlin | 32 | 32 | 완료 |
 | 02-spring | 35 | 35 | 완료 |
-| 03-jpa-orm | 27 | 10 | 진행 중 (이미 깊이 있음 — 조정 위주) |
-| 04-rdb-sql | 35 | 0 | 대기 (이미 깊이 있음 — 조정 위주). `8deef26`의 삭제는 `f1b2a4f`로 revert되어 35건 복구됨 |
+| 03-jpa-orm | 27 | 27 | 완료 |
+| 04-rdb-sql | 35 | 3 | 진행 중 (이미 깊이 있음 — 조정 위주). `8deef26`의 삭제는 `f1b2a4f`로 revert되어 35건 복구됨 |
 
 ## 작업 규약 (세션이 끊겨도 동일하게 이어간다)
 
@@ -542,7 +542,7 @@ KST 23:59:59 = `14:59:59Z`.
 02-spring의 트랜잭션 문서들(07·11·12·13·22·24)이 JPA 내용을 상당히 참조하므로 상호 링크를 맞춰야 한다.
 
 
-## 03-jpa-orm (10/27) — 진행 중
+## 03-jpa-orm (27/27) — 완료
 
 ### 착수 전 기계 진단 (2026-09-02)
 
@@ -582,3 +582,51 @@ KST 23:59:59 = `14:59:59Z`.
 ### 부수 정리
 
 비표준 코드펜스 ` ```flow `를 ` ```text ` 박스드로잉으로 전환 중이다(02·03·04 완료, 17·21 진행 중).
+
+### 11~27번 현황 (요약)
+
+| 파일 | 비고 |
+|---|---|
+| 11 | flushAutomatically(반영)/clearAutomatically(폐기)를 한 타임라인에. 픽토그램 36건 제거 |
+| 12 | opt-out/opt-in 정의 신설 + password_hash 추가 PR의 응답 JSON before/after. OSIV "조용한 실패"를 SQL 로그 대비로 |
+| 13 | Q타입 생성 파이프라인을 전제로. 통(가변) vs 값(불변)을 합성·재사용·단위테스트 세 코드로. null 비대칭 3행 표 |
+| 14 | check-then-act의 틈을 두 스레드 타임라인으로. **정정** — JPA 경로에서 `DuplicateKeyException`은 안 잡힌다(`HibernateJpaDialect`가 `DataIntegrityViolationException`으로만 변환, `jdbcExceptionTranslator` 기본 null). spring-orm 6.2.19 소스 대조 |
+| 15 | query space를 역방향 논증으로 정의. **정정** — `ActionQueue.OrderedActions`는 7단계가 아니라 **9단계**(맨 앞 `OrphanCollectionRemoveAction`, UPDATE 뒤 `QueuedOperationCollectionAction` 누락) |
+| 16 | 예외 두 갈래를 세션 생존 여부 판정 흐름도로. **정정 2건** — 프록시 클래스명은 6.x에서 `<타입명>$HibernateProxy` 고정 접미사(5.x 난수형 아님), `canBeDeletedWithoutLoading()` 조건은 7개가 아니라 **8개**(`!implementsLifecycle()` 누락) |
+| 17 | 세 전략 테이블 그림 3장. 자식 15종이 "조인 비용"이 아니라 옵티마이저 문제로 성질이 바뀌는 인과(16! = 20,922,789,888,000, `geqo_threshold` 12) |
+| 18 | readOnly로 없어지는 것 2 / 남는 것 3을 근거 열이 붙은 표로. 1층 비용 수치화(643KB 중 2.7KB 유효, 하루 2.59TB vs 10.9GB) — 오케스트레이터 검산 완료 |
+| 19 | "성능이 아니라 계약" 축을 논증으로. **정정 3건** — `in_clause_parameter_padding`은 1~1000에서 10종이 아니라 **11종**, MySQL `max_allowed_packet`(기본 64MB)에는 10만 건이 안 걸린다, Oracle in-list 상한은 23부터 65,535. 추가 확인 — `PostgreSQLDialect`는 `getInExpressionCountLimit()`을 재정의하지 않아 0(무제한) |
+| 20 | 임계 구간을 lost update에서 유도해 정의. 분산 락이 뚫리는 세 경로를 각각 타임라인으로. 픽토그램 17건 제거 |
+| 21 | IDENTITY 무력화 4단계 도식. "켰는데 왜 안 묶이나" 8행 체크리스트. **정정** — `hibernate.jdbc.batch_versioned_data`는 6.x 기본값이 이미 `true`(`SessionFactoryOptionsBuilder:540`). MySQL `rewriteBatchedStatements` 중심 서술을 PostgreSQL(pgjdbc 파이프라이닝, `reWriteBatchedInserts`)로 재정렬 |
+| 22 | 네 경계가 왜 같은 선인지를 세 물리적 사실로. 락 점유 타임라인. **정정** — `AFTER_COMMIT`에서 `REQUIRED`는 "애매해서"가 아니라 이미 끝난 트랜잭션에 **확실히 참여해 변경이 버려진다**. PostgreSQL 데드락은 `40P01` → `LockAcquisitionException`(`PostgreSQLDialect:1084`) |
+| 23 | `LazyConnectionDataSourceProxy` 함정을 커넥션 획득 시점 타임라인으로. 복제 지연을 `pg_stat_replication`의 3구간(write/flush/replay)으로. **정정** — 동기 복제 답변이 PostgreSQL에서는 틀렸다(`synchronous_commit = remote_apply`는 재생까지 기다려 실제로 보인다) |
+| 24 | 방아쇠 개수 차이 6행 표. JPA cascade vs DB `ON DELETE CASCADE` 세 축 대비. **정정** — orphan deletion 예외 문구가 5 이전 것이었다(6.x는 `A collection with orphan deletion was no longer referenced...`), `@Where`는 6.3부터 deprecated |
+| 25 | HashSet 버킷을 t1/t2/t3 세 시점 도식으로. **정정 4건** — 프록시 이름(6.x), "상수 hashCode라 프록시가 초기화 안 된다"는 서술이 틀림(`BasicLazyInitializer.invoke()`는 `!overridesEquals`일 때만 가로챈다), **문서의 테스트 코드 2건이 실제로는 아무것도 검증하지 못하고 있었다**(`findById`가 기존 프록시를 그대로 돌려줘 자기 자신과 비교) |
+| 26 | `NULL`의 유니크 통과 성질을 전제로 분리하고 부분 유니크 인덱스를 기본 해법으로 승격. PG 15+ `nulls not distinct` 추가. **정정** — 삭제 행은 죽은 튜플이 아니라 살아 있는 행이라 VACUUM으로 회수되지 않는다. `@Filter`의 `autoEnabled`·`applyToLoadByKey` 현행화 |
+| 27 | 콜백 발화 8단계와 벌크 경로의 건너뜀을 겹쳐 그림. **정정** — `AuditorAware`가 비면 `updatedBy`가 `null`이 되는 게 아니라 **직전 값이 남는다**(`touchAuditor`는 조기 리턴, `touchDate`는 아님) — 행이 엉뚱한 사람을 지목한다 |
+
+### 03-jpa-orm 마감
+
+27건 전부 `## ` 헤딩 6개, 질문·출제 의도 원문 일치, 이모지 0건, 하드랩 0건.
+비표준 ` ```flow ` 펜스는 전부 ` ```text `로 전환했다(잔존 0건).
+소스 대조로 잡은 사실 오류가 **누적 20여 건**이고, 오케스트레이터가 Hibernate 6.6.53 / spring-orm 6.2.19 /
+spring-data-commons 3.5.12 소스와 산술로 **전건 재확인**했다. 확인 못 한 것은 MySQL 중복 키 메시지 형식 1건뿐이다
+(로컬에 MySQL이 없다. 이 저장소 기준 DB가 아니라 영향은 작다).
+
+## 04-rdb-sql (3/35) — 진행 중
+
+### 착수 전 기계 진단 (2026-09-02)
+
+- **35건 전부 하드랩**(산문 최대 줄폭 100~170), 32건에 픽토그램 잔존
+- 섹션 구조는 **8건(03·04·05·06·07·18·23·30)이 이미 규약을 지키고** 있고 나머지 27건이 `## 5.`~`## 11.`까지 뻗어 있다(최다: 32번 11개)
+- 이 장은 자체 3분할 관례가 있다 — `## 1. 개념/구조` → `## 2. 동작·설계·판별` → `## 3. 실무 사례·안전망`.
+  03장처럼 임의로 묶지 않고 이 관례에 맞춘다.
+- PostgreSQL 기준(`ae54d88`)을 되돌리지 않는지를 각 배치의 자가 점검 항목에 명시적으로 넣는다.
+
+### 파일별 현황
+
+| 파일 | 상태 | 비고 |
+|---|---|---|
+| 05-transaction-acid.md | 완료 | 29KB → 41KB. 메커니즘 네 개를 이름이 아니라 동작으로(롤백은 되돌리기가 아니라 새 버전 버리기 + `pg_xact` 판정, WAL이 빠르면서 안전한 이유). 이체 T1/T2를 t0~t6 타임라인에 놓고 A·I·D·C 개입 지점 표시. 3절을 "DB가 강제 가능/불가능"으로 갈라 전체 DDL과 "제약이 없으면 생기는 깨진 상태" 표 |
+| 06-join-types-and-execution.md | 완료 | 30KB → 39KB. 자바 의사코드 / EXPLAIN 노드 / 비용의 모양 / 필요한 것 4열 대응표. 선택 기준을 비용 공식과 손익분기로(`N×c` vs `S`, 2.5만~4.5만 행). LEFT JOIN이 WHERE로 INNER가 되는 것을 3행 미니 데이터의 TRUE/UNKNOWN/FALSE 판정표로 |
+| 07-where-vs-having.md | 완료 | 18KB → 27KB. 6단계 실행 순서 도식에서 세 귀결(집계 불가·별칭 불가·ORDER BY는 가능)을 각각 에러 메시지와 함께 유도. 부서 3개·5행으로 단계마다 표 추적. GROUP BY가 `HashAggregate`/`GroupAggregate`라 비용이 입력 행 수에 달렸다는 사슬 |
