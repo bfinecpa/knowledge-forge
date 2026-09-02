@@ -17,7 +17,7 @@
 | 01-java-kotlin | 32 | 32 | 완료 |
 | 02-spring | 35 | 35 | 완료 |
 | 03-jpa-orm | 27 | 27 | 완료 |
-| 04-rdb-sql | 35 | 3 | 진행 중 (이미 깊이 있음 — 조정 위주). `8deef26`의 삭제는 `f1b2a4f`로 revert되어 35건 복구됨 |
+| 04-rdb-sql | 35 | 25 | 진행 중 (이미 깊이 있음 — 조정 위주). `8deef26`의 삭제는 `f1b2a4f`로 revert되어 35건 복구됨 |
 
 ## 작업 규약 (세션이 끊겨도 동일하게 이어간다)
 
@@ -613,7 +613,7 @@ KST 23:59:59 = `14:59:59Z`.
 spring-data-commons 3.5.12 소스와 산술로 **전건 재확인**했다. 확인 못 한 것은 MySQL 중복 키 메시지 형식 1건뿐이다
 (로컬에 MySQL이 없다. 이 저장소 기준 DB가 아니라 영향은 작다).
 
-## 04-rdb-sql (3/35) — 진행 중
+## 04-rdb-sql (25/35) — 진행 중
 
 ### 착수 전 기계 진단 (2026-09-02)
 
@@ -630,3 +630,68 @@ spring-data-commons 3.5.12 소스와 산술로 **전건 재확인**했다. 확�
 | 05-transaction-acid.md | 완료 | 29KB → 41KB. 메커니즘 네 개를 이름이 아니라 동작으로(롤백은 되돌리기가 아니라 새 버전 버리기 + `pg_xact` 판정, WAL이 빠르면서 안전한 이유). 이체 T1/T2를 t0~t6 타임라인에 놓고 A·I·D·C 개입 지점 표시. 3절을 "DB가 강제 가능/불가능"으로 갈라 전체 DDL과 "제약이 없으면 생기는 깨진 상태" 표 |
 | 06-join-types-and-execution.md | 완료 | 30KB → 39KB. 자바 의사코드 / EXPLAIN 노드 / 비용의 모양 / 필요한 것 4열 대응표. 선택 기준을 비용 공식과 손익분기로(`N×c` vs `S`, 2.5만~4.5만 행). LEFT JOIN이 WHERE로 INNER가 되는 것을 3행 미니 데이터의 TRUE/UNKNOWN/FALSE 판정표로 |
 | 07-where-vs-having.md | 완료 | 18KB → 27KB. 6단계 실행 순서 도식에서 세 귀결(집계 불가·별칭 불가·ORDER BY는 가능)을 각각 에러 메시지와 함께 유도. 부서 3개·5행으로 단계마다 표 추적. GROUP BY가 `HashAggregate`/`GroupAggregate`라 비용이 입력 행 수에 달렸다는 사슬 |
+
+### 완료 파일 (01~24 + transaction-isolation-levels)
+
+| 파일 | 비고 |
+|---|---|
+| 01-index-and-bplus-tree.md | 팬아웃 계산을 처음부터(8,152B ÷ 20B = 407 → 보수적으로 300 → 3층 2,700만 행). 조회당 페이지 4장 대 Seq Scan 28.6만 장 = 약 7만 배. B-Tree vs B+Tree가 사는 것 둘을 각각 그림으로(내부 노드 팬아웃 40 대 400 / 범위 스캔 옆으로 훑기) |
+| 02-index-not-used-full-scan.md | 다섯 원인이 한 문장의 변형임을 되짚는 절 신설. **부류 A(못 탄다) / B(안 탄다) 대조표** — 선택도 90%면 인덱스 경로가 108배 패배, 1%면 3.4배 승리 |
+| 03-clustered-vs-secondary-index.md | 클러스터드 있는 구조와 힙 구조를 나란히 그린 뒤 "전부 세컨더리"로. `ctid`를 핵심 어휘로 승격 + HOT으로 인덱스 유지 비용 연결. UUID PK 반박을 MySQL(행 물리 정렬)과 PostgreSQL(B-tree 삽입 지역성·워킹셋·WAL FPI)로 분리 |
+| 04-normalization-vs-denormalization.md | 수정/삽입/삭제 이상을 4행 실제 데이터로. 정규형을 "이 단계가 막는 이상"으로만 서술. 핫 로우 사슬을 동시성 축과 저장 축 둘로 |
+| 05-transaction-acid.md | 롤백은 되돌리기가 아니라 새 버전 버리기 + `pg_xact` 판정. 이체 T1/T2를 t0~t6 타임라인에 놓고 A·I·D·C 개입 지점 표시 |
+| 06-join-types-and-execution.md | 자바 의사코드 / EXPLAIN 노드 / 비용의 모양 4열 대응표. 손익분기 `N×c` vs `S`(2.5만~4.5만 행). LEFT JOIN이 WHERE로 INNER가 되는 것을 TRUE/UNKNOWN/FALSE 판정표로. **정정** — Hash Join 총비용 내부 산술 1.2 어긋남 |
+| 07-where-vs-having.md | 6단계 실행 순서에서 세 귀결(집계 불가·별칭 불가·ORDER BY는 가능)을 각각 에러 메시지와 함께 유도 |
+| 08-composite-index-column-order.md | 리프를 11행 목록으로 펼치고 구간을 그어 "범위 뒤는 못 거른다" 실증. BitmapAnd 우회와 부분 인덱스. **정정** — `shared hit=42`는 3,000행 Index Scan에서 불가능(힙 접근만 3,000회) → 4,203 대 3,015. "순서 틀리면 100배"는 인덱스 페이지 기준이고 총 버퍼로는 1.4배 |
+| 09-covering-index.md | 인덱스 스캔 2단계를 그림으로 먼저. visibility map을 독립 소절로. "취약"을 EXPLAIN 전후로 — `Heap Fetches` 줄이 값 0이 아니라 **아예 사라진다** |
+| 10-explain-and-slow-query-process.md | 계획 트리를 안쪽부터 읽는 법을 실제 출력에 번호를 달아. 오추정 연쇄를 계획 두 벌로(추정 1,000행 → NL 선택 → 실제 50만 행이면 21배 패배). `BUFFERS`로 I/O 병목과 CPU 병목 가르기 |
+| 11-mvcc-postgresql.md | MVCC가 없는 세계를 먼저 그리고 도입. UPDATE 한 번의 힙 페이지 before/after. 긴 트랜잭션이 VACUUM을 막는 이유를 `xmin horizon` 도식으로 |
+| 12-gap-lock-next-key-lock-deadlock.md | 갭 락·넥스트 키 락이 무엇인지를 먼저 깔고 "PG에는 없다"로 순서를 뒤집음. SSI 사후 감지와 `40001` 재시도 코드 |
+| 13-deep-pagination-offset-vs-cursor.md | 복합 키 비교를 5행 데이터로 실증(누락 / 중복 / 정답). **오케스트레이터 지시 정정** — `OFFSET`이 버린 행은 `Rows Removed by Filter`에 안 잡힌다 |
+| 14-online-ddl-zero-downtime-schema-change.md | 락 큐 2단 전달을 세션 3개 타임라인으로 — "위험한 것은 실행 시간이 아니라 대기 시간". 재작성 여부를 "저장된 행의 바이트 배치를 바꿔야 하는가"로 원리화. 번호 없는 h2 강등 |
+| 15-connection-count-vs-throughput.md | 처리량 곡선과 p99 곡선을 나란히 — "정점 이후엔 교환조차 없다". 네 사슬에 "왜 커넥션 수에 비례하나" 열(락 충돌 쌍 `n(n-1)/2`라 동시성 2배면 약 4배). **정정** — "8코어 → 20 전후"는 식과 안 맞는다(`(8×2)+1 = 17`), 문서 내부 모순(17 대 120)도 해소 |
+| 16-long-transaction-harm-and-shortening.md | "길다"를 자원으로 정의하고 "언제 놓아주나" 열로 다섯 기법의 근거 연결. `transaction_timeout`은 PostgreSQL 17로 버전 명시 |
+| 17-total-count-cost-and-alternatives.md | "어떤 인덱스도 개수를 미리 알고 있지 않다"는 따름정리(리프에 `xmin`/`xmax`가 없다). `Page` 2쿼리 / `Slice` 1쿼리를 실제 SQL 로그로. **정정** — Before 계획의 "힙 페이지 수십만 장"을 Buffers(41만 장)와 정합화 |
+| 18-json-column-tradeoffs.md | 반납 목록을 "공짜로 오는 것 / 없음 / 없으면 나는 사고" 3열 표로. 통계를 독립 소절로 — 추정이 60배 빗나가면 조인 방식이 뒤집힌다. 표현식 인덱스의 식 일치 함정(타는 조건 1개 / 안 타는 조건 4개). 스키마 진화 = 마이그레이션이 읽는 쪽 분기로 옮겨간 것 |
+| 19-select-for-update-lock-scope.md | 행 락 4종을 두 축으로 유도하고 충돌 행렬을 빈칸 없이. `synchronize_seqscans` 때문에 세션마다 스캔 시작점이 달라져 락 순서가 어긋난다는 PG 고유 사슬. **정정** — `LockRows`의 startup은 Seq Scan과 같아야 한다(통과 노드), 비용도 29786.01 → 29784.01. **출제 의도에서 `(§5 경험 대조)` → `(§4 경험 대조)` 한 곳 변경** — 재편으로 옛 §5가 §4가 되어 같은 대상을 계속 가리키기 위한 갱신. 규칙에서 벗어난 유일한 변경이니 되돌리려면 이 한 글자만 고치면 된다 |
+| 20-like-wildcard-fulltext-search-engine.md | `pg_trgm`의 전환을 실제 절단 과정으로(패딩 → 길이 3 창 → 7조각). 층위 ④에서 처음으로 색인이 DB 밖에 산다는 점을 대가 목록 앞에. **제거** — 한글 `show_trgm` 출력 예시(멀티바이트 트라이그램은 내부 압축되어 단정 불가). **미확인**: 한글 `show_trgm` 실제 반환 형태는 실행 환경에서 확인할 값이 있다 |
+| 21-dashboard-stats-oltp-olap-separation.md | OLTP/OLAP 정의 + 캐시 오염 도식(전부 적중 0.4ms → 랜덤 읽기 8ms). 사다리 각 단에 "얻는 것 / 못 막는 것 / 비용 / 올라갈 신호" 4칸 표. MV의 `CONCURRENTLY`가 유니크 인덱스를 요구하는 이유. **정정** — EXPLAIN 예시가 문서 자신의 `work_mem 4MB` 전제와 모순(Sort Disk 1.6GB → 20MB, Parallel Hash 버킷 4194304개는 포인터 배열만 32MB로 24MB 예산 초과) |
+| 22-db-cpu-spike-without-deployment.md | "우리가 안 바꿨다 ≠ 아무것도 안 바뀌었다"로 일곱 방향이 전부 팀 통제 밖임을 명시. 사슬을 "변한 것 → 늘어난 일 → 그 일이 쓰는 자원" 3마디로. 안전망을 "사후에 되살릴 수 있나"로 채점해 `auto_explain` 1순위 |
+| 23-high-frequency-counter-hot-row.md | 처리량 상한을 `1 ÷ 락 보유 시간`으로 공식화 + 대입표. "줄은 두 군데에 선다"로 서버 증설이 무효인 이유. 행 샤딩 완성 SQL과 N 결정 공식. **정정** — 유실 창이 "약 3분 → 90만 건"이었으나 60+60+10 = **130초 → 65만 건**. "샤드 수 변경이 어렵다"도 절반만 참(늘리는 것은 합계가 SUM이라 쉽다) |
+| 24-sharding-timing-shard-key-and-cross-shard.md | 사다리 표에 "이 칸이 늘려 주는 자원" 열 — 세로로 읽으면 쓰기 처리량을 대수만큼 늘리는 칸은 샤딩뿐. 크로스 샤드가 비싼 이유를 정렬·페이징·집계·조인 넷으로(조인은 느려짐이 아니라 **불가능**). **정정** — "`hash % 4`에서 8대로 늘리면 거의 전량 재분배"는 틀렸다. `h % 8`이 0~3인 키는 제자리라 **정확히 50%**만 이동한다(오케스트레이터가 해시 10만 개로 실측 확인). 4→5는 80%, 8→10도 80% |
+| transaction-isolation-levels.md | 격리 수준을 "남의 중간 상태가 얼마나 보이는가의 눈금"으로 정의하고 교환 관계를 표로. non-repeatable vs phantom을 네 축으로(특히 "잠글 대상이 존재하는가"). RR 스냅샷은 `BEGIN`이 아니라 **첫 문장** 시점. 스프링에서 조용히 무시되는 경우는 기존 트랜잭션 합류 하나뿐. `40001` 재시도를 spring-retry / `TransactionTemplate` 두 형태로, 판정은 예외 타입이 아니라 **SQLSTATE로** |
+
+### 남은 10건 — 다음 세션 인수인계
+
+| 파일 | 크기 | 하드랩 | 픽토그램 | 현재 본문 섹션 | 비고 |
+|---|---|---|---|---|---|
+| 25-mass-delete-archiving-and-partitioning.md | 95KB | 401줄 | 10 | `## 1.`~`## 6.` | **번호 없는 h2 `## 대량 삭제/아카이빙 체크리스트 (PostgreSQL)`가 `## 4.`와 `## 5.` 사이에 있다 — `###`로 강등할 것** |
+| 26-unique-id-generation-at-scale.md | 72KB | 373줄 | 8 | `## 1.`~`## 4.` | 4섹션이라 병합 폭이 작다 |
+| 27-payment-succeeded-order-missing-incident.md | 75KB | 382줄 | 3 | `## 1.`~`## 6.` | 장애 대응 시나리오 문항. 10-payment-consistency 장과 주제가 겹치니 중복 대신 참조 |
+| 28-db-failover-application-behavior.md | 97KB | 475줄 | 21 | `## 1.`~`## 5.` | 이 장 최대. 픽토그램도 최다급 |
+| 29-order-by-index-and-filesort.md | 64KB | 273줄 | 29 | `## 1.`~`## 5.` | **픽토그램 29개로 04장 최다.** 제목의 "filesort"는 MySQL 용어 — 본문이 PG 기준인지 확인 필요(파일명은 바꾸지 말 것) |
+| 30-datetime-vs-timestamp-timezone.md | 65KB | 279줄 | 11 | `## 1.`~`## 3.` | **섹션 구조는 이미 규약을 지킨다.** 하드랩·픽토그램·설명 보강만 |
+| 31-execution-plan-sudden-change.md | 76KB | 373줄 | 7 | `## 1.`~`## 5.` | 10번(EXPLAIN)·22번(CPU 스파이크)과 인접 주제 — 중복 대신 참조 |
+| 32-bulk-upsert-side-effects.md | 84KB | 341줄 | 6 | `## 1.`~`## 11.` | **본문 11섹션으로 04장에서 가장 많이 어긋나 있다** |
+| 33-backup-vs-restore-pitr-recovery-drill.md | 61KB | 369줄 | 2 | `## 1.`~`## 4.` | |
+| 34-fk-constraint-in-production-debate.md | 69KB | 315줄 | 13 | `## 1.`~`## 5.` | 찬반 논쟁형 문항 — 양면 유지가 핵심 |
+
+권장 배치(2건씩, 동시 5개 유지): `25+30` / `26+33` / `27+31` / `28` / `29+34` / `32`
+
+### 04-rdb-sql 작업 규약 (앞의 25건에서 확립된 것)
+
+- 이 장의 3분할 관례는 **① 개념/구조 → ② 동작·설계·판별 → ③ 실무 사례·안전망**이다. 03장처럼 임의로 묶지 말고 이 관례에 맞춘다.
+- 톤 견본: `01-index-and-bplus-tree.md`, `03-clustered-vs-secondary-index.md`, `10-explain-and-slow-query-process.md`
+- **PostgreSQL 기준(`ae54d88`)을 되돌리지 않았는지**를 배치마다 자가 점검 항목에 넣는다.
+  MySQL 대조를 하려면 **같은 줄에 "MySQL"을 명시**한다(이 규칙으로 25건 전부 통과시켰다).
+- 다이어그램 코드펜스는 ` ```text `로 통일(무표기 펜스 금지).
+- 서브에이전트 프롬프트에는 파일별 진단(무엇이 주니어에게 불친절한지)을 미리 넣는다 — 이것이 결과 품질을 가장 크게 갈랐다.
+
+### 오케스트레이터 검증 (반드시 직접 할 것)
+
+에이전트 보고를 그대로 믿지 않는다. 실제로 **에이전트가 정정했다고 보고한 것 중 오케스트레이터 지시가 틀렸던 경우가 1건**(13번 `Rows Removed by Filter`) 있었고, 계산 정정은 전건 재검산해 전부 맞았다.
+
+- `scratchpad/audit.py` — 하드랩·픽토그램·섹션 번호·구조 요소
+- `scratchpad/cmp.py` — **재작성 착수 전 커밋(`e4531f7`) 기준**으로 질문·출제 의도 원문이 새 파일에 부분 문자열로 남아 있는지.
+  (커밋된 파일을 `HEAD`와 비교하면 검사가 무의미해진다. 첫 문단만 비교하면 문단이 나뉜 것을 누락으로 오탐한다 — 둘 다 겪었다.)
+- 수치·계산은 `python3 -c`로 직접 검산. 소스 대조가 가능하면 로컬 jar에 직접 확인.
