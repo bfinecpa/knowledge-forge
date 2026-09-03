@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>응답 압축(gzip/brotli) 트레이드오프 — "켜면 좋은 옵션"에도 비용 계산이 필요하다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">08 네트워크 · HTTP · 웹 &nbsp;|&nbsp; 알면 좋은 +α ⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>응답 압축(gzip/brotli)의 트레이드오프<br><span class="sub">"켜면 좋은 옵션"에도 비용 계산이 필요하다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"응답 압축(gzip/brotli)의 트레이드오프는? 압축하지 말아야 할 응답은?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 응답 압축은 <b>CPU 시간을 지불하고 전송량(대역폭·전송 시간)을 사는 교환</b>이다. 텍스트 계열(HTML, JSON, JS, CSS)은 같은 문자열이 반복돼 압축률이 크므로 남는 장사지만, <b>세 종류의 응답은 예외로 걸러야 한다</b> — ① <b>이미 압축된 포맷</b>(JPEG/PNG/WebP, 동영상, zip, woff2)은 더 줄지 않고 CPU만 태우며 gzip 컨테이너 오버헤드 때문에 오히려 커질 수도 있고, ② <b>수백 바이트짜리 응답</b>은 gzip 최소 오버헤드 <b>23바이트</b>를 회수하지 못하는 데다 어차피 패킷 하나에 들어가 전송 시간 이득이 없으며, ③ <b>비밀값과 공격자가 반사시킬 수 있는 입력이 한 응답에 섞이면</b> 압축 후 크기가 비밀을 누설하는 부채널(BREACH 계열)이 된다. 압축 방식은 gzip이 호환성의 기본값이고 brotli는 같은 비용에서 더 작지만, <b>이 주제의 진짜 결론은 방식이 아니라 압축 레벨의 판단</b>이다 — 레벨을 올릴수록 크기 절감은 완만해지고 CPU는 가파르게 올라가는 <b>수확 체감</b> 구조라서, <b>"몇 번 압축해 몇 번 쓰이는가"</b>로 갈라야 한다. 정적 자산은 1번 압축해 N번 서빙하므로 빌드 시점에 최고 레벨로 미리 압축해 <code>.br</code>/<code>.gz</code> 파일을 서빙(<code>gzip_static</code>/<code>brotli_static</code>)하고, 동적 응답은 1번 압축해 1번 서빙하므로 낮은 레벨에서 멈춘다. 그리고 압축을 켠 순간 <b><code>Vary: Accept-Encoding</code>이 필수</b>가 된다 — 이 헤더가 없으면 캐시가 gzip 본문을 압축을 모르는 클라이언트에게 그대로 내보내 <b>응답이 통째로 깨진다.</b>
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>CPU를 내고 전송량을 사는 교환입니다</b> — 반복이 많은 텍스트(HTML·JSON·JS·CSS)는 크게 줄어 남는 장사지만, <b>세 종류는 걸러야 합니다</b>: <b>①이미 압축된 포맷</b>(줄지 않고 CPU만 태우며 오히려 커질 수 있음) <b>②수백 바이트 응답</b>(gzip 오버헤드 23바이트를 못 건지고 어차피 패킷 하나) <b>③비밀값과 공격자 입력이 함께 실리는 응답</b>(BREACH 부채널).</div></li>
+    <li><span class="n">2</span><div><b>진짜 결론은 gzip이냐 brotli냐가 아니라 압축 레벨입니다</b> — 레벨은 <b>수확 체감</b>이라 최고 레벨이 항상 정답이 아닙니다. 기준은 <b>"몇 번 압축해 몇 번 쓰이는가"</b> — <b>정적 자산은 1번 압축해 N번 서빙</b>하므로 빌드 시점 최고 레벨 사전 압축(<code>gzip_static</code>/<code>brotli_static</code>), <b>동적 응답은 1번 압축해 1번 서빙</b>하므로 낮은 레벨에서 멈춥니다.</div></li>
+    <li><span class="n">3</span><div><b>압축 스위치 하나에 딸려오는 세트가 있습니다</b> — <b><code>Vary: Accept-Encoding</code></b>(없으면 캐시가 압축본을 못 푸는 클라이언트에 내보내 응답이 깨집니다), <b>최소 크기 문턱</b>(<code>gzip_min_length</code>), <b>타입 allowlist</b>, <b>스트리밍 경로 제외</b>(SSE는 압축 버퍼에 갇히면 지연이 아니라 고장입니다).</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">본질 — CPU를 내고 전송량을 산다</a></li>
+    <li><a href="#s2">콘텐츠 협상 — 누가 무엇을 정하는가</a></li>
+    <li><a href="#s3">Content-Encoding vs Transfer-Encoding</a></li>
+    <li><a href="#s4">무엇으로 압축하나 — gzip · brotli</a></li>
+    <li><a href="#s5">압축 레벨 — 진짜 변별 포인트</a></li>
+    <li><a href="#s6">"몇 번 압축해 몇 번 쓰이는가"</a></li>
+    <li><a href="#s7">압축 금지 3종 — "압·작·비"</a></li>
+    <li><a href="#s8">TTFB와 스트리밍 — 압축 버퍼링</a></li>
+    <li><a href="#s9">어디서 압축할 것인가</a></li>
+    <li><a href="#s10">캐시와의 상호작용 — Vary와 ETag</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "응답 압축(gzip/brotli)의 트레이드오프는? 압축하지 말아야 할 응답은?"</p>
+  <p><b>출제 의도</b>: 압축은 <b>CPU와 대역폭의 교환</b>이며, 이미 압축된 포맷(이미지)엔 낭비임을 아는지 — <b>"켜면 좋은 옵션"에도 비용 계산을 하는 습관의 표본</b>이다. 설정 하나에도 <b>무엇을 내주고 무엇을 얻는지</b> 따지는 사고방식이 있는지를 보는 질문이다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"압축은 켜면 좋은 것"으로 끝내는 것</b> → 1절에서 <b>내는 것 셋 / 얻는 것 둘</b>을 저울로 갈라놓고, 어떤 응답에서 저울이 뒤집히는지를 본다.<br>
+    ② <b>"gzip이냐 brotli냐"에서 답이 멈추는 것</b> → 5·6절에서 진짜 변별 포인트인 <b>압축 레벨의 수확 체감</b>과 <b>"1번 압축해 몇 번 쓰이는가"</b>로 넘어간다. 여기서 답이 갈린다.<br>
+    ③ <b>압축을 켜면 딸려오는 부작용을 모르는 것</b> → 8·10절에서 <b>TTFB 증가와 SSE 고장</b>, <b><code>Vary</code> 누락으로 응답이 깨지는 사고</b>, <b>ETag 약화로 이어받기가 안 되는 현상</b>까지 짚는다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 본질 — CPU를 내고 전송량을 산다</h2>
+
+<p>이 질문의 절반은 <b>손익 구조를 한 문장으로 말할 수 있는가</b>에서 끝난다. 압축은 공짜 최적화가 아니라 <b>거래</b>다 — <b>서버(와 클라이언트)의 CPU 시간을 지불하고, 네트워크로 나가는 바이트를 줄인다.</b> 이 거래가 남는지 손해인지는 <b>응답의 성격</b>이 정한다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 306" role="img" aria-label="왼쪽에 압축으로 지불하는 세 가지(서버 CPU, TTFB 지연, 클라이언트 해제 비용)와 오른쪽에 얻는 두 가지(대역폭 비용 절감, 전송 시간 단축)를 화살표로 교환하는 도식. 아래 붉은 띠에 이 거래가 뒤집히는 세 지점이 표시되어 있다">
+    <defs>
+      <marker id="c1r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="c1g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">응답 압축의 손익 저울 — 공짜가 아니라 교환이다</text>
+
+    <!-- LEFT: pay -->
+    <rect x="24" y="44" width="430" height="196" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="68" font-size="13.5" font-weight="700" fill="#b91c1c">내는 것 — CPU 시간 (셋)</text>
+    <rect x="44" y="80" width="390" height="44" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="58" y="99" font-size="12.5" fill="#7f1d1d" font-weight="700">① 서버 CPU — 응답마다 압축 연산이 돈다</text>
+    <text x="58" y="116" font-size="11.5" fill="#991b1b">비용은 입력 크기에 비례한다. 5MB를 압축하려면 5MB를 전부 훑어야 한다</text>
+    <rect x="44" y="130" width="390" height="44" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="58" y="149" font-size="12.5" fill="#7f1d1d" font-weight="700">② TTFB 지연 — 첫 바이트가 늦게 나간다</text>
+    <text x="58" y="166" font-size="11.5" fill="#991b1b">압축기가 어느 정도 모아야 첫 블록을 낸다 (8절의 스트리밍 고장)</text>
+    <rect x="44" y="180" width="390" height="44" rx="8" fill="#fff" stroke="#e5e7eb"/>
+    <text x="58" y="199" font-size="12.5" fill="#6b7280" font-weight="700">③ 클라이언트 해제 비용 — 대체로 무시 가능</text>
+    <text x="58" y="216" font-size="11.5" fill="#9ca3af">압축 해제는 압축보다 훨씬 싸다. 셋 중 유일하게 신경 안 써도 되는 항목</text>
+
+    <!-- CENTER exchange -->
+    <path d="M466 108 L646 108" fill="none" stroke="#dc2626" stroke-width="2.2" marker-end="url(#c1r)"/>
+    <text x="556" y="100" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">CPU 시간을 낸다</text>
+    <path d="M646 176 L466 176" fill="none" stroke="#16a34a" stroke-width="2.2" marker-end="url(#c1g)"/>
+    <text x="556" y="168" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">바이트를 산다</text>
+    <text x="556" y="142" font-size="11.5" fill="#6b7280" text-anchor="middle">환율은 응답마다 다르다</text>
+
+    <!-- RIGHT: get -->
+    <rect x="666" y="44" width="430" height="196" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="686" y="68" font-size="13.5" font-weight="700" fill="#166534">얻는 것 — 전송량 감소 (둘)</text>
+    <rect x="686" y="80" width="390" height="66" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="700" y="100" font-size="12.5" fill="#14532d" font-weight="700">① 대역폭 비용 절감</text>
+    <text x="700" y="118" font-size="11.5" fill="#166534">클라우드 아웃바운드 트래픽은 실제로 청구되는 항목이다.</text>
+    <text x="700" y="136" font-size="11.5" fill="#166534">트래픽 규모가 커질수록 이것이 압축의 가장 큰 명분이 된다</text>
+    <rect x="686" y="154" width="390" height="70" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="700" y="174" font-size="12.5" fill="#14532d" font-weight="700">② 전송 시간 단축</text>
+    <text x="700" y="192" font-size="11.5" fill="#166534">100Mbps 사무실에서는 1MB와 300KB 차이가 안 느껴지지만,</text>
+    <text x="700" y="210" font-size="11.5" fill="#166534">지하철 모바일 회선에서는 몇 초 차이가 된다</text>
+
+    <!-- bottom strip -->
+    <rect x="24" y="250" width="1072" height="46" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="270" font-size="12.5" fill="#b91c1c" font-weight="700">저울이 뒤집히는 세 지점 (7절) —</text>
+    <text x="264" y="270" font-size="12.5" fill="#7f1d1d">① 이미 압축된 포맷: 얻는 것이 0인데 내는 것은 그대로</text>
+    <text x="700" y="270" font-size="12.5" fill="#7f1d1d">② 수백 바이트 응답: 오버헤드 23B를 못 건진다</text>
+    <text x="264" y="288" font-size="12.5" fill="#7f1d1d">③ 비밀값 + 공격자 입력이 섞인 응답: 압축 후 크기가 비밀을 누설한다 (BREACH)</text>
+  </svg>
+  <figcaption><b>왼쪽 셋을 내고 오른쪽 둘을 산다.</b> 면접에서 "트레이드오프는?"이라는 질문에 <b>"CPU와 대역폭"</b>만 말하면 절반이다 — <b>TTFB 지연</b>까지 비용 항목에 넣는 순간 8절의 SSE 고장까지 자연스럽게 이어진다.</figcaption>
+</figure>
+
+<h3>1-1. 이삿짐 압축팩 비유 — 세 장면이 곧 세 가지 예외다</h3>
+
+<div class="grid g3">
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">옷 · 이불 → 텍스트 응답</div>
+    <div class="d">부피가 확 줄어 트럭 비용을 아낀다. <b>같은 천이 겹겹이 반복</b>되므로 눌러 담을 여지가 크다. HTML·JSON·JS·CSS가 여기다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">이미 진공포장된 물건 → JPEG</div>
+    <div class="d">압축팩에 다시 넣어도 <b>포장 시간만 들고 부피는 그대로</b>. 이미지·동영상·zip·woff2가 여기다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">양말 한 켤레 → 수백 바이트 응답</div>
+    <div class="d"><b>압축팩 자체의 부피</b> 때문에 오히려 커진다. gzip의 그 "압축팩 부피"가 <b>최소 23바이트</b>다.</div>
+  </div>
+</div>
+
+<h3>1-2. 이득의 크기는 알고리즘이 아니라 <span style="color:#dc2626">데이터의 반복</span>이 정한다</h3>
+
+<p>gzip 계열 압축의 원리는 한 줄이다 — <b>"앞에서 이미 나온 문자열을 다시 쓰지 않고, '몇 바이트 앞의 몇 글자와 같다'는 짧은 참조로 바꾼다."</b> 그러니 <b>반복이 많을수록 많이 줄어든다.</b> 이 관점에서 API JSON은 압축에 이상적인 데이터다.</p>
+
+<div class="codehead plain"><span class="tag">압축에 이상적인 데이터</span> 목록 응답 — 행마다 같은 문자열이 반복된다</div>
+<pre><code>[
+  {<span class="st">"userId"</span>:1001,<span class="st">"userName"</span>:<span class="st">"..."</span>,<span class="st">"status"</span>:<span class="st">"ACTIVE"</span>,<span class="st">"createdAt"</span>:<span class="st">"2025-08-25T09:00:00Z"</span>},
+  {<span class="st">"userId"</span>:1002,<span class="st">"userName"</span>:<span class="st">"..."</span>,<span class="st">"status"</span>:<span class="st">"ACTIVE"</span>,<span class="st">"createdAt"</span>:<span class="st">"2025-08-25T09:00:01Z"</span>},
+  {<span class="st">"userId"</span>:1003,<span class="st">"userName"</span>:<span class="st">"..."</span>,<span class="st">"status"</span>:<span class="st">"ACTIVE"</span>,<span class="st">"createdAt"</span>:<span class="st">"2025-08-25T09:00:02Z"</span>}
+]
+<span class="cm">
+   ↑ "userId": , "status":"ACTIVE" , 날짜 앞부분이 행마다 그대로 반복된다.
+     행이 많아질수록 새로 나오는 정보는 값 몇 개뿐이고,
+     나머지는 전부 "앞에 나온 것과 같다"는 참조로 접힌다.
+     → 목록 응답은 길수록 압축률이 좋아진다.</span></code></pre>
+
+<div class="memo red">
+  <h4>여기서 태도가 갈린다 — <span style="color:#dc2626">"보통 몇 배 줄어든다"는 숫자를 외워 말하지 않는다</span></h4>
+  <p>압축률은 <b>응답 구조에 따라 편차가 크다.</b> 같은 gzip이라도 반복이 빽빽한 목록 JSON과 난수 토큰이 잔뜩 박힌 응답은 결과가 전혀 다르다. 그래서 <b>"gzip은 보통 N배 줄어듭니다"</b>는 근거 없는 문장이 된다.</p>
+  <div class="rule red">시니어의 답변: <b>"우리 서비스의 대표 응답 몇 개를 실제로 압축해 보고, 크기와 소요 시간을 재서 정합니다"</b></div>
+  <p style="margin-bottom:0" class="sub"><b>압축 여부와 레벨 판단의 근거는 전부 실측이어야 한다.</b> 이 태도 한 문장이 5절의 레벨 논의에서 그대로 다시 쓰인다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 콘텐츠 협상 — 누가 무엇을 정하는가</h2>
+
+<p>압축은 서버가 마음대로 하는 것이 아니다. <b>클라이언트가 무엇을 풀 수 있는지 모른 채 압축해 보내면 상대가 못 읽기 때문</b>이다. 그래서 HTTP는 <b>콘텐츠 협상(content negotiation)</b>이라는 절차를 둔다 — 클라이언트가 자기가 지원하는 방식을 알리고, 서버가 그중 하나를 골라 쓰고, 무엇을 골랐는지 응답에 적어 보내는 <b>세 단계</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 356" role="img" aria-label="클라이언트가 Accept-Encoding br, gzip 헤더로 지원 방식을 알리고 서버가 그중 하나를 골라 Content-Encoding gzip, Content-Length 4820, Vary Accept-Encoding 헤더와 함께 압축 본문을 돌려주는 3단계 콘텐츠 협상 도식">
+    <defs>
+      <marker id="c2b" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="c2g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <rect x="30" y="24" width="180" height="52" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="120" y="47" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">클라이언트</text>
+    <text x="120" y="65" font-size="11" fill="#3b82f6" text-anchor="middle">브라우저 · 앱 · 스크립트</text>
+    <rect x="910" y="24" width="180" height="52" rx="10" fill="#f1f5f9" stroke="#475569"/>
+    <text x="1000" y="47" font-size="13.5" font-weight="700" fill="#334155" text-anchor="middle">서버 / 프록시</text>
+    <text x="1000" y="65" font-size="11" fill="#64748b" text-anchor="middle">Nginx · Tomcat · CDN</text>
+    <line x1="120" y1="80" x2="120" y2="316" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="5 5"/>
+    <line x1="1000" y1="80" x2="1000" y2="316" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="5 5"/>
+
+    <!-- step 1: request -->
+    <circle cx="120" cy="112" r="12" fill="#2563eb"/><text x="120" y="117" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+    <line x1="136" y1="112" x2="256" y2="112" stroke="#2563eb" stroke-width="1.8"/>
+    <rect x="256" y="90" width="620" height="46" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="270" y="109" font-size="12.5" fill="#1d4ed8" class="mono" font-weight="700">GET /api/articles   ·   Accept-Encoding: br, gzip</text>
+    <text x="270" y="127" font-size="11.5" fill="#1e40af">"나는 brotli와 gzip을 풀 수 있다" — q값으로 선호도 표시 가능: <tspan class="mono">br;q=1.0, gzip;q=0.8</tspan> (q=0은 "쓰지 마라")</text>
+    <line x1="876" y1="112" x2="994" y2="112" stroke="#2563eb" stroke-width="1.8" marker-end="url(#c2b)"/>
+
+    <!-- step 2: server picks -->
+    <circle cx="1000" cy="164" r="12" fill="#475569"/><text x="1000" y="169" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+    <rect x="596" y="146" width="392" height="38" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="610" y="163" font-size="12" fill="#334155" font-weight="700">서버가 이 목록 중 하나를 고른다</text>
+    <text x="610" y="178" font-size="11.5" fill="#64748b">아무것도 고르지 않아도 된다 — 압축하지 않고 원본을 보내도 규격 위반이 아니다</text>
+
+    <!-- step 3: response -->
+    <circle cx="1000" cy="228" r="12" fill="#16a34a"/><text x="1000" y="233" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+    <line x1="984" y1="228" x2="876" y2="228" stroke="#16a34a" stroke-width="1.8"/>
+    <rect x="230" y="196" width="646" height="94" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="244" y="215" font-size="12.5" fill="#14532d" class="mono" font-weight="700">HTTP/1.1 200 OK</text>
+    <text x="244" y="234" font-size="12.5" fill="#14532d" class="mono">Content-Encoding: gzip</text>
+    <text x="520" y="234" font-size="11.5" fill="#166534">← "gzip으로 압축해 보냈다" (종단 간 — 3절)</text>
+    <text x="244" y="253" font-size="12.5" fill="#14532d" class="mono">Content-Length: 4820</text>
+    <text x="520" y="253" font-size="11.5" fill="#166534">← <tspan font-weight="700">압축된 뒤의 크기</tspan>다. 미리 모르면 청크 전송으로 나간다</text>
+    <text x="244" y="272" font-size="12.5" fill="#b91c1c" class="mono" font-weight="700">Vary: Accept-Encoding</text>
+    <text x="520" y="272" font-size="11.5" fill="#b91c1c" font-weight="700">← 캐시에게: 이 헤더도 키에 넣어라 (없으면 10절의 사고)</text>
+    <text x="244" y="288" font-size="11" fill="#6b7280">[압축된 본문]</text>
+    <line x1="230" y1="228" x2="126" y2="228" stroke="#16a34a" stroke-width="1.8" marker-end="url(#c2g)"/>
+
+    <rect x="30" y="300" width="1060" height="46" rx="7" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="44" y="318" font-size="12" fill="#1e40af">클라이언트는 <tspan class="mono" font-weight="700">Content-Encoding</tspan>을 보고 gzip으로 해제한 뒤 원래 JSON을 얻는다.</text>
+    <text x="44" y="337" font-size="12" fill="#1e40af"><tspan class="mono" font-weight="700">identity</tspan> = "압축하지 않은 원본"을 가리키는 이름 — <tspan class="mono">Accept-Encoding: identity</tspan>는 압축하지 말라는 명시적 요청이다</text>
+  </svg>
+  <figcaption>세부 사항을 알아두면 트러블슈팅이 쉬워진다. <b>서버는 아무것도 고르지 않아도 된다</b>(그래서 "설정했는데 압축이 안 된다"가 성립한다 — 11절 체크리스트), <b><code>Content-Length</code>는 압축 후 크기</b>이며, <b>응답의 <code>Content-Encoding</code>을 무시하고 원본으로 파싱하면 깨진 바이트가 나온다</b> — 이것이 10절 <code>Vary</code> 누락 사고의 실체다.</figcaption>
+</figure>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. <code>Content-Encoding</code>과 <code>Transfer-Encoding</code>은 다른 층이다</h2>
+
+<p>면접에서 자주 헷갈리는 짝이라 여기서 갈라두자. 이름이 비슷하지만 <b>적용되는 층이 다르다.</b> 한쪽은 <b>본문의 성질</b>이고, 다른 쪽은 <b>한 구간의 운반 방식</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 292" role="img" aria-label="클라이언트, Nginx, Tomcat 세 노드 사이를 구간 A와 구간 B로 나누고, 위쪽 파란 띠는 Content-Encoding gzip이 두 구간 전체를 관통하는 종단 간 성질임을, 아래쪽 주황 띠 두 개는 Transfer-Encoding chunked가 구간마다 따로 정해지는 홉 단위 성질임을 보여주는 도식">
+    <defs>
+      <marker id="c3a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 응답, 다른 층 — 종단 간(end-to-end) vs 홉 단위(hop-by-hop)</text>
+
+    <!-- e2e band -->
+    <rect x="130" y="40" width="860" height="44" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="146" y="60" font-size="12.5" fill="#1d4ed8" class="mono" font-weight="700">Content-Encoding: gzip</text>
+    <text x="360" y="60" font-size="12" fill="#1e40af" font-weight="700">— 본문 자체가 어떤 형태로 인코딩되어 있는가. 구간을 몇 개 지나든 값이 유지된다.</text>
+    <text x="146" y="77" font-size="11.5" fill="#3b82f6">압축된 바이트가 곧 이 리소스의 표현이다 → 최종 수신자가 푼다 · ETag도 이 표현 기준(10절) · Content-Length도 인코딩 후 크기</text>
+    <line x1="130" y1="62" x2="130" y2="130" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <line x1="990" y1="62" x2="990" y2="130" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+    <!-- nodes -->
+    <rect x="30" y="106" width="196" height="48" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="128" y="136" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">클라이언트</text>
+    <rect x="462" y="106" width="196" height="48" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="560" y="136" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">Nginx</text>
+    <rect x="894" y="106" width="196" height="48" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="992" y="136" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">Tomcat</text>
+    <line x1="226" y1="130" x2="456" y2="130" stroke="#64748b" stroke-width="1.6"/>
+    <line x1="658" y1="130" x2="888" y2="130" stroke="#64748b" stroke-width="1.6"/>
+    <text x="341" y="123" font-size="11.5" fill="#475569" text-anchor="middle" font-weight="700">구간 A</text>
+    <text x="773" y="123" font-size="11.5" fill="#475569" text-anchor="middle" font-weight="700">구간 B (내부망)</text>
+
+    <!-- hop bands -->
+    <rect x="226" y="172" width="230" height="42" rx="8" fill="#fffbeb" stroke="#d97706"/>
+    <text x="341" y="190" font-size="11.5" fill="#b45309" class="mono" font-weight="700" text-anchor="middle">Content-Length: 82931</text>
+    <text x="341" y="206" font-size="11" fill="#92400e" text-anchor="middle">Nginx가 버퍼링해 길이를 알아냈다</text>
+    <rect x="658" y="172" width="230" height="42" rx="8" fill="#fffbeb" stroke="#d97706"/>
+    <text x="773" y="190" font-size="11.5" fill="#b45309" class="mono" font-weight="700" text-anchor="middle">Transfer-Encoding: chunked</text>
+    <text x="773" y="206" font-size="11" fill="#92400e" text-anchor="middle">Tomcat은 전체 크기를 몰라 청크로 흘렸다</text>
+    <text x="560" y="196" font-size="12" fill="#b45309" text-anchor="middle" font-weight="700">≠</text>
+
+    <text x="130" y="238" font-size="12" fill="#b45309" font-weight="700">홉 단위(hop-by-hop) — 이 한 구간에서 본문을 어떻게 쪼개 전송할지의 약속이라, 다음 구간에서는 그 구간 사정에 맞게 다시 정해진다.</text>
+
+    <rect x="30" y="250" width="1060" height="34" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="44" y="264" font-size="11.5" fill="#334155"><tspan font-weight="700">프로토콜 버전</tspan> — HTTP/2 이상은 프레임 단위라 <tspan class="mono">Transfer-Encoding: chunked</tspan>를 쓰지 않는다. 반면 <tspan class="mono">Content-Encoding: gzip</tspan>은 버전과 무관하게 그대로 쓰인다.</text>
+    <text x="44" y="279" font-size="11.5" fill="#334155"><tspan font-weight="700">참고</tspan> — <tspan class="mono">Transfer-Encoding: gzip</tspan> 조합도 규격상 존재하지만 지원 구현이 거의 없다. <tspan font-weight="700">압축은 Content-Encoding으로 한다</tspan>고 알아두면 된다.</text>
+  </svg>
+  <figcaption>실무에서 이 구분이 중요해지는 지점은 두 곳이다. 하나는 <b>디버깅</b> — 응답이 깨졌을 때 "압축이 문제인가, 청크 전송이 문제인가"를 갈라 봐야 한다. 다른 하나는 <b>프로토콜 버전</b> — HTTP/2 이상에서 <code>Transfer-Encoding</code>이 사라진다는 사실이 09번 문서의 프레이밍 설명과 이어진다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>두 헤더의 대비. 면접에서 값이 나가는 줄은 <b>"어디까지 유지되나"</b>다.</caption>
+  <thead><tr><th style="width:150px">축</th><th><code>Content-Encoding</code></th><th><code>Transfer-Encoding</code></th></tr></thead>
+  <tbody>
+    <tr><th>무엇을 말하나</th><td>본문 <b>자체</b>가 어떤 형태로 인코딩되어 있는가</td><td>이 <b>한 구간</b>에서 본문을 어떻게 쪼개 전송할 것인가</td></tr>
+    <tr class="hl"><th>적용 범위</th><td><b>종단 간(end-to-end)</b> — 프록시를 몇 개 지나든 유지</td><td><b>홉 단위(hop-by-hop)</b> — 구간마다 다시 정해짐</td></tr>
+    <tr><th>대표 값</th><td><code>gzip</code>, <code>br</code>, <code>deflate</code>, <code>identity</code></td><td><code>chunked</code></td></tr>
+    <tr><th>누가 푸나</th><td><b>최종 수신자</b>(브라우저·클라이언트)</td><td><b>다음 홉</b>이 받아서 바로 재조립</td></tr>
+    <tr><th>ETag · Content-Length</th><td>둘 다 <b>인코딩된 표현 기준</b>으로 매겨짐</td><td>무관 — <code>chunked</code>면 <code>Content-Length</code>가 아예 없다</td></tr>
+    <tr><th>HTTP/2 이상</th><td class="good">그대로 쓰인다</td><td class="bad">쓰지 않는다 (프레임이 대신한다)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 무엇으로 압축하나 — gzip과 brotli는 대체가 아니라 <span style="color:#16a34a">병행</span></h2>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k" style="font-family:inherit">gzip — 호환성의 기본값</div>
+    <div class="d">DEFLATE 알고리즘에 <b>파일 헤더와 무결성 검사값</b>을 씌운 형식. 사실상 <b>모든 브라우저·프록시·HTTP 클라이언트가 지원</b>하므로 "지원 여부를 걱정하지 않아도 되는" 유일한 선택지다. 레벨 <b>1~9</b>.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">brotli (<code>br</code>) — 같은 비용에서 더 작게</div>
+    <div class="d">gzip보다 나중에 나온 형식. <b>내장 사전</b>과 <b>더 넓은 레벨 범위(0~11)</b>가 우위다. 최고 레벨의 압축률은 gzip 9보다 확실히 좋지만 <b>상당히 느려서 실시간에는 부담</b> — 진가는 6절의 사전 압축에서 나온다.</div>
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">brotli의 "내장 사전"이 왜 작은 응답에서 특히 유리한가 — 미리 약속한 암호책</span>
+  gzip은 <b>본문 안에 이미 나온 문자열</b>만 참조할 수 있다. 그래서 <b>본문이 짧으면 참조할 거리 자체가 없다.</b> brotli는 웹에서 흔히 등장하는 문자열 — HTML 태그, 흔한 영어 단어, 자주 쓰이는 자바스크립트 토큰 — 을 <b>미리 사전에 담아두고</b> 본문에 그 문자열이 나오면 <b>사전 참조로 짧게</b> 바꾼다. <b>양쪽이 같은 암호책을 이미 갖고 있어서, 짧은 편지에서도 줄일 거리가 생기는 것</b>과 같다. 그래서 <b>자체 반복이 적은 작은 텍스트 응답</b>에서 gzip보다 유리하다.
+</div>
+
+<div class="memo red">
+  <h4>실무에서 brotli가 "안 먹는 것처럼 보이는" 두 가지 이유</h4>
+  <div class="grid g2" style="margin-top:8px">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 평문 HTTP에서는 <code>br</code>이 광고되지 않는다</div><div class="d">브라우저는 보통 <b>HTTPS 연결에서만</b> <code>Accept-Encoding</code>에 <code>br</code>을 넣는다. <b>로컬 개발 환경(평문)에서 brotli가 안 먹는 것처럼 보이는 이유가 대개 이것</b>이고, gzip으로 조용히 떨어진다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② Nginx는 brotli를 기본 내장하지 않는다</div><div class="d">별도 모듈을 넣어 빌드하거나 모듈이 포함된 패키지를 써야 한다. 반면 gzip은 표준 배포판에 들어 있다. 그래서 <b>"gzip은 켜져 있는데 brotli는 없는" 구성이 흔하다.</b></div></div>
+  </div>
+  <div class="rule ok" style="margin-bottom:0">둘은 <b>대체 관계가 아니라 병행 관계</b> — <code>br</code>을 지원하면 brotli를, 아니면 gzip을. <b>2절의 협상 절차가 이 병행을 자동으로 처리한다</b></div>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 압축 레벨 — 이 주제의 진짜 변별 포인트</h2>
+
+<p><b>압축 방식을 고르는 것보다 중요한 판단이 "레벨을 어디에 둘 것인가"</b>이다. 여기에 답하려면 레벨이 무엇을 바꾸는지부터 알아야 한다. 압축 알고리즘이 "앞에 나온 문자열과 같은지"를 찾을 때, <b>얼마나 넓은 범위를 얼마나 꼼꼼히 뒤질 것인가</b>가 레벨이다. 레벨이 높으면 더 멀리, 더 여러 후보를 비교해 더 좋은 참조를 찾는다 — <b>탐색을 더 하니 CPU를 더 쓰고, 대신 결과물이 조금 더 작아진다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 384" role="img" aria-label="가로축이 압축 레벨인 그래프. 파란 곡선인 압축 후 크기는 낮은 레벨에서 급격히 떨어지다가 곧 완만해지고, 빨간 곡선인 CPU 시간은 초반에 평평하다가 높은 레벨에서 가파르게 치솟는다. 두 곡선의 방향이 반대라서 오른쪽 구간은 조금 더 줄이려고 CPU를 훨씬 더 쓰는 손해 구간이 된다">
+    <defs>
+      <marker id="c4r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="445" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">수확 체감(diminishing returns) — 두 곡선의 방향이 반대다</text>
+
+    <!-- zones -->
+    <rect x="130" y="48" width="315" height="272" fill="#f0fdf4"/>
+    <rect x="445" y="48" width="157" height="272" fill="#fffbeb"/>
+    <rect x="602" y="48" width="158" height="272" fill="#fef2f2"/>
+    <text x="287" y="66" font-size="12" fill="#16a34a" text-anchor="middle" font-weight="700">쉬운 반복이 대부분 잡히는 구간 — 조금 내고 많이 얻는다</text>
+    <text x="523" y="66" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">경계</text>
+    <text x="681" y="66" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">손해 구간</text>
+
+    <!-- axes -->
+    <line x1="130" y1="320" x2="760" y2="320" stroke="#94a3b8" stroke-width="1.5"/>
+    <line x1="130" y1="320" x2="130" y2="44" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="126" y="60" font-size="11" fill="#2563eb" text-anchor="end" font-weight="700">크다</text>
+    <text x="126" y="316" font-size="11" fill="#2563eb" text-anchor="end" font-weight="700">작다</text>
+    <text x="52" y="190" font-size="12" fill="#2563eb" transform="rotate(-90 52 190)" text-anchor="middle" font-weight="700">압축 후 크기</text>
+    <text x="782" y="190" font-size="12" fill="#dc2626" transform="rotate(90 782 190)" text-anchor="middle" font-weight="700">CPU 시간</text>
+    <text x="445" y="366" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">압축 레벨 — gzip 1~9 · brotli 0~11 (라이브러리 기본은 대개 6, Nginx <tspan class="mono">gzip_comp_level</tspan> 기본은 1)</text>
+    <g font-size="10.5" fill="#6b7280" class="mono" text-anchor="middle">
+      <text x="130" y="338">1</text><text x="209" y="338">2</text><text x="288" y="338">3</text><text x="366" y="338">4</text><text x="445" y="338">5</text><text x="524" y="338">6</text><text x="602" y="338">7</text><text x="681" y="338">8</text><text x="760" y="338">9</text>
+    </g>
+
+    <!-- size curve (blue, decreasing) -->
+    <polyline points="130,90 209,140 288,175 366,200 445,216 524,228 602,236 681,242 760,246"
+              fill="none" stroke="#2563eb" stroke-width="2.8"/>
+    <g fill="#2563eb">
+      <circle cx="130" cy="90" r="4"/><circle cx="209" cy="140" r="4"/><circle cx="288" cy="175" r="4"/><circle cx="366" cy="200" r="4"/><circle cx="445" cy="216" r="4"/><circle cx="524" cy="228" r="4"/><circle cx="602" cy="236" r="4"/><circle cx="681" cy="242" r="4"/><circle cx="760" cy="246" r="4"/>
+    </g>
+    <text x="300" y="128" font-size="11.5" fill="#1d4ed8" font-weight="700">초반에 급격히 줄고 곧 완만해진다 — 얻는 것의 증가폭이 작아진다</text>
+
+    <!-- cpu curve (red, increasing) -->
+    <polyline points="130,305 209,300 288,294 366,286 445,275 524,258 602,232 681,190 760,120"
+              fill="none" stroke="#dc2626" stroke-width="2.8"/>
+    <g fill="#dc2626">
+      <circle cx="130" cy="305" r="4"/><circle cx="209" cy="300" r="4"/><circle cx="288" cy="294" r="4"/><circle cx="366" cy="286" r="4"/><circle cx="445" cy="275" r="4"/><circle cx="524" cy="258" r="4"/><circle cx="602" cy="232" r="4"/><circle cx="681" cy="190" r="4"/><circle cx="760" cy="120" r="4"/>
+    </g>
+    <text x="700" y="106" font-size="11.5" fill="#b91c1c" font-weight="700" text-anchor="end">뒤로 갈수록 가파르게 오른다</text>
+    <text x="700" y="122" font-size="11.5" fill="#b91c1c" font-weight="700" text-anchor="end">— 내는 것의 증가폭이 커진다</text>
+
+    <!-- crossing annotation -->
+    <line x1="640" y1="300" x2="681" y2="252" stroke="#dc2626" stroke-width="1.6" marker-end="url(#c4r)"/>
+    <text x="620" y="312" font-size="11.5" fill="#b91c1c" text-anchor="end" font-weight="700">여기서부터: 크기는 거의 안 줄고 CPU만 뛴다</text>
+
+    <!-- right panel -->
+    <rect x="812" y="48" width="284" height="130" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="828" y="70" font-size="12.5" fill="#1d4ed8" font-weight="700">왜 체감하는가</text>
+    <text x="828" y="90" font-size="11.5" fill="#1e40af">쉽게 찾을 수 있는 반복은</text>
+    <text x="828" y="107" font-size="11.5" fill="#1e40af"><tspan font-weight="700">낮은 레벨에서 이미 거의 다 잡힌다.</tspan></text>
+    <text x="828" y="127" font-size="11.5" fill="#1e40af">레벨을 올려서 추가로 얻는 것은</text>
+    <text x="828" y="144" font-size="11.5" fill="#1e40af">"찾기 어려운 곳에 숨어 있던</text>
+    <text x="828" y="161" font-size="11.5" fill="#1e40af">소수의 반복"뿐이다.</text>
+
+    <rect x="812" y="190" width="284" height="90" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="828" y="212" font-size="12.5" fill="#b91c1c" font-weight="700">그래서 최고 레벨이 정답이 아니다</text>
+    <text x="828" y="232" font-size="11.5" fill="#7f1d1d">동적 응답에 최고 레벨을 쓰면</text>
+    <text x="828" y="249" font-size="11.5" fill="#7f1d1d">CPU를 더 태워 처리량이 떨어지고,</text>
+    <text x="828" y="266" font-size="11.5" fill="#7f1d1d"><tspan font-weight="700">지연이 늘어 압축으로 아낀 전송</tspan></text>
+    <text x="828" y="283" font-size="11.5" fill="#7f1d1d"><tspan font-weight="700">시간을 도로 까먹을 수 있다.</tspan></text>
+
+    <rect x="812" y="292" width="284" height="52" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="828" y="313" font-size="12" fill="#b45309" font-weight="700">이 그래프는 개형이다</text>
+    <text x="828" y="332" font-size="11.5" fill="#92400e">실제 값은 데이터마다 다르다 — 반드시 실측</text>
+  </svg>
+  <figcaption><b>얻는 것은 완만해지고 내는 것은 가팔라진다.</b> 두 곡선의 방향이 반대라서 <b>어느 지점부터는 "조금 더 줄이려고 CPU를 훨씬 더 쓰는" 손해 구간</b>이 된다. 그 지점이 어디인지는 <b>응답 데이터가 정하므로 실측으로만 알 수 있다.</b> Nginx의 <code>gzip_comp_level</code> 기본값이 라이브러리 기본(6)이 아니라 <b>1</b>인 것도, <b>웹서버가 실시간으로 돌리는 작업이라 속도 쪽에 치우친 기본값을 골라 둔 것</b>이다.</figcaption>
+</figure>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 판단 기준은 <span style="color:#16a34a">"몇 번 압축해서 몇 번 쓰이는가"</span></h2>
+
+<p>수확 체감을 인정하면 자연스럽게 하나의 기준이 나온다 — <b>압축 비용이 몇 번의 서빙에 나눠지는가.</b> <b>이것이 이 주제의 핵심 결론이다.</b> "gzip이냐 brotli냐"보다 이 구분이 실무 성능을 좌우한다.</p>
+
+<div class="memo green">
+  <h4>레벨을 정하는 한 줄 규칙</h4>
+  <div class="rule ok"><b>1번 압축해 N번 쓰면 최고 레벨</b> &nbsp;·&nbsp; <b>1번 압축해 1번 쓰면 낮은 레벨</b></div>
+  <p style="margin-bottom:0" class="sub">레벨 숫자를 외우는 것이 아니라 <b>"압축 비용이 요청 수에 비례하는가, 무관한가"</b>를 묻는 것이다. 비례하지 않으면 마음껏 태워도 되고, 비례하면 아껴야 한다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 256" role="img" aria-label="왼쪽은 정적 자산을 빌드 시점에 한 번만 최고 레벨로 압축해 파일로 저장하고 이후 모든 요청에 런타임 압축 CPU 없이 서빙하는 흐름, 오른쪽은 동적 응답이 요청마다 새로 압축돼 CPU 비용이 요청 수에 비례하는 흐름을 대비한 도식">
+    <defs>
+      <marker id="c5g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="c5w" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+    <line x1="560" y1="16" x2="560" y2="240" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- LEFT static -->
+    <text x="286" y="26" font-size="14.5" font-weight="700" fill="#16a34a" text-anchor="middle">정적 자산 — 1번 압축해 N번 서빙</text>
+    <rect x="30" y="44" width="112" height="42" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="86" y="62" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">빌드 파이프라인</text>
+    <text x="86" y="78" font-size="10.5" fill="#64748b" text-anchor="middle">배포당 1회</text>
+    <line x1="142" y1="65" x2="182" y2="65" stroke="#16a34a" stroke-width="1.8" marker-end="url(#c5g)"/>
+    <rect x="188" y="44" width="150" height="42" rx="8" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="263" y="62" font-size="11.5" fill="#14532d" text-anchor="middle" font-weight="700">압축 1회 · 최고 레벨</text>
+    <text x="263" y="78" font-size="11" fill="#166534" text-anchor="middle" class="mono">brotli -q 11 / gzip -9</text>
+    <line x1="338" y1="65" x2="378" y2="65" stroke="#16a34a" stroke-width="1.8" marker-end="url(#c5g)"/>
+    <rect x="384" y="40" width="150" height="50" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="459" y="56" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">app.a1b2.js</text>
+    <text x="459" y="70" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">app.a1b2.js.gz</text>
+    <text x="459" y="84" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">app.a1b2.js.br</text>
+
+    <path d="M459 90 L459 106 L82 106 L82 122" fill="none" stroke="#16a34a" stroke-width="1.4"/>
+    <path d="M178 106 L178 122 M274 106 L274 122 M370 106 L370 122 M459 106 L459 122" stroke="#16a34a" stroke-width="1.4" fill="none"/>
+    <g>
+      <rect x="38" y="122" width="88" height="34" rx="7" fill="#fff" stroke="#bbf7d0"/><text x="82" y="137" font-size="11" fill="#14532d" text-anchor="middle" font-weight="700">요청 #1</text><text x="82" y="151" font-size="10" fill="#16a34a" text-anchor="middle" class="mono">압축 CPU 0</text>
+      <rect x="134" y="122" width="88" height="34" rx="7" fill="#fff" stroke="#bbf7d0"/><text x="178" y="137" font-size="11" fill="#14532d" text-anchor="middle" font-weight="700">요청 #2</text><text x="178" y="151" font-size="10" fill="#16a34a" text-anchor="middle" class="mono">압축 CPU 0</text>
+      <rect x="230" y="122" width="88" height="34" rx="7" fill="#fff" stroke="#bbf7d0"/><text x="274" y="137" font-size="11" fill="#14532d" text-anchor="middle" font-weight="700">요청 #3</text><text x="274" y="151" font-size="10" fill="#16a34a" text-anchor="middle" class="mono">압축 CPU 0</text>
+      <rect x="326" y="122" width="88" height="34" rx="7" fill="#fff" stroke="#bbf7d0"/><text x="370" y="137" font-size="11" fill="#14532d" text-anchor="middle" font-weight="700">요청 #4</text><text x="370" y="151" font-size="10" fill="#16a34a" text-anchor="middle" class="mono">압축 CPU 0</text>
+      <rect x="422" y="122" width="88" height="34" rx="7" fill="#fff" stroke="#bbf7d0"/><text x="466" y="137" font-size="11" fill="#14532d" text-anchor="middle" font-weight="700">… 요청 #N</text><text x="466" y="151" font-size="10" fill="#16a34a" text-anchor="middle" class="mono">압축 CPU 0</text>
+    </g>
+    <rect x="24" y="172" width="524" height="66" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="40" y="192" font-size="12" fill="#14532d" font-weight="700">압축 CPU 비용이 요청 수와 무관해진다 → 가장 느리고 가장 강한 레벨을 마음껏 쓴다.</text>
+    <text x="40" y="210" font-size="11.5" fill="#166534">빌드가 몇 초 더 걸릴 뿐이고, 그 대가로 <tspan font-weight="700">모든 사용자가 더 작은 파일을 받는다.</tspan></text>
+    <text x="40" y="228" font-size="11.5" fill="#166534">서빙은 <tspan class="mono" font-weight="700">brotli_static</tspan> / <tspan class="mono" font-weight="700">gzip_static</tspan> — 이것을 <tspan font-weight="700">사전 압축(precompression)</tspan>이라 한다.</text>
+
+    <!-- RIGHT dynamic -->
+    <text x="834" y="26" font-size="14.5" font-weight="700" fill="#d97706" text-anchor="middle">동적 응답 — 1번 압축해 1번 서빙</text>
+    <g>
+      <rect x="586" y="42" width="86" height="32" rx="7" fill="#fff" stroke="#cbd5e1"/><text x="629" y="63" font-size="11" fill="#334155" text-anchor="middle" font-weight="700">요청 #1</text>
+      <line x1="672" y1="58" x2="704" y2="58" stroke="#d97706" stroke-width="1.6" marker-end="url(#c5w)"/>
+      <rect x="710" y="42" width="130" height="32" rx="7" fill="#fffbeb" stroke="#d97706"/><text x="775" y="63" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">압축 (낮은 레벨)</text>
+      <line x1="840" y1="58" x2="872" y2="58" stroke="#d97706" stroke-width="1.6" marker-end="url(#c5w)"/>
+      <rect x="878" y="42" width="82" height="32" rx="7" fill="#fff" stroke="#cbd5e1"/><text x="919" y="63" font-size="11" fill="#334155" text-anchor="middle">응답 #1</text>
+      <rect x="972" y="42" width="118" height="32" rx="7" fill="#fef2f2" stroke="#fecaca"/><text x="1031" y="63" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">CPU 1회분 소모</text>
+    </g>
+    <g>
+      <rect x="586" y="84" width="86" height="32" rx="7" fill="#fff" stroke="#cbd5e1"/><text x="629" y="105" font-size="11" fill="#334155" text-anchor="middle" font-weight="700">요청 #2</text>
+      <line x1="672" y1="100" x2="704" y2="100" stroke="#d97706" stroke-width="1.6" marker-end="url(#c5w)"/>
+      <rect x="710" y="84" width="130" height="32" rx="7" fill="#fffbeb" stroke="#d97706"/><text x="775" y="105" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">압축 (낮은 레벨)</text>
+      <line x1="840" y1="100" x2="872" y2="100" stroke="#d97706" stroke-width="1.6" marker-end="url(#c5w)"/>
+      <rect x="878" y="84" width="82" height="32" rx="7" fill="#fff" stroke="#cbd5e1"/><text x="919" y="105" font-size="11" fill="#334155" text-anchor="middle">응답 #2</text>
+      <rect x="972" y="84" width="118" height="32" rx="7" fill="#fef2f2" stroke="#fecaca"/><text x="1031" y="105" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">CPU 1회분 소모</text>
+    </g>
+    <g>
+      <rect x="586" y="126" width="86" height="32" rx="7" fill="#fff" stroke="#cbd5e1"/><text x="629" y="147" font-size="11" fill="#334155" text-anchor="middle" font-weight="700">… 요청 #N</text>
+      <line x1="672" y1="142" x2="704" y2="142" stroke="#d97706" stroke-width="1.6" marker-end="url(#c5w)"/>
+      <rect x="710" y="126" width="130" height="32" rx="7" fill="#fffbeb" stroke="#d97706"/><text x="775" y="147" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">압축 (낮은 레벨)</text>
+      <line x1="840" y1="142" x2="872" y2="142" stroke="#d97706" stroke-width="1.6" marker-end="url(#c5w)"/>
+      <rect x="878" y="126" width="82" height="32" rx="7" fill="#fff" stroke="#cbd5e1"/><text x="919" y="147" font-size="11" fill="#334155" text-anchor="middle">응답 #N</text>
+      <rect x="972" y="126" width="118" height="32" rx="7" fill="#fef2f2" stroke="#fecaca"/><text x="1031" y="147" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">CPU N회분 소모</text>
+    </g>
+    <rect x="572" y="172" width="524" height="66" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="588" y="192" font-size="12" fill="#b45309" font-weight="700">압축 비용이 요청 수에 그대로 비례한다 → 수확 체감 구간에 들어가기 전에 멈춘다.</text>
+    <text x="588" y="210" font-size="11.5" fill="#92400e"><tspan font-weight="700">미리 압축해 둘 수가 없다</tspan> — 내용이 요청마다 다르다. API JSON, SSR HTML.</text>
+    <text x="588" y="228" font-size="11.5" fill="#92400e">낮은 레벨에서 멈추고, <tspan font-weight="700">최종 값은 실측으로 조정</tspan>한다.</text>
+  </svg>
+  <figcaption><b>같은 "압축 1회"라도 분모가 다르다.</b> 정적 자산은 압축 비용을 <b>N번의 서빙이 나눠 갖고</b>, 동적 응답은 <b>매 요청이 온전히 부담</b>한다. 그래서 같은 레벨 9라도 한쪽은 공짜에 가깝고 다른 쪽은 비싸다.</figcaption>
+</figure>
+
+<h3>6-1. 정적 자산 — 빌드 시점에 최고 레벨로 미리 압축</h3>
+
+<div class="codehead good"><span class="tag">build</span> 빌드 파이프라인의 마지막 단계 — 산출물 옆에 압축본을 만들어 둔다</div>
+<pre><code><span class="cm"># 이 비용은 배포당 1회이므로 최고 레벨을 쓴다.</span>
+find dist -type f \( -name <span class="st">'*.js'</span> -o -name <span class="st">'*.css'</span> -o -name <span class="st">'*.svg'</span> \) \
+<span class="ln-good">  -exec gzip -9 -k {} \; \</span>
+<span class="ln-good">  -exec brotli -q 11 -k {} \;</span>
+<span class="cm">
+# 결과:
+#   dist/app.a1b2c3.js       (원본)
+#   dist/app.a1b2c3.js.gz    (gzip 최고 레벨)
+#   dist/app.a1b2c3.js.br    (brotli 최고 레벨)</span></code></pre>
+
+<div class="codehead good"><span class="tag">nginx</span> 미리 만들어 둔 압축본을 서빙한다 — 런타임 압축 CPU가 0이 된다</div>
+<pre><code><span class="kw">location</span> /static/ {
+    <span class="kw">root</span> /var/www;
+
+    <span class="cm"># 요청에 br이 있고 같은 이름의 .br 파일이 있으면 그것을 보낸다.
+    # 없으면 아래 gzip_static, 그것도 없으면 원본을 보낸다.</span>
+<span class="ln-good">    brotli_static on;     <span class="cm"># 별도 모듈이 있어야 동작한다 (4절)</span></span>
+<span class="ln-good">    gzip_static  on;      <span class="cm"># 표준 배포판에 포함된 모듈</span></span>
+
+    <span class="cm"># 실시간 압축은 여기서 꺼둔다. 미리 압축한 파일이 있는데 켜 두면
+    # .gz/.br 이 없는 파일에 대해서만 도는데, 그런 파일은 대개
+    # 이미 압축된 포맷(이미지)이라 압축할 이유가 없다.</span>
+    gzip off;
+
+    add_header Cache-Control <span class="st">"public, max-age=31536000, immutable"</span>;
+}</code></pre>
+
+<div class="callout warn">
+  <span class="t">사전 압축과 <code>Vary</code>는 짝이다</span>
+  <code>gzip_static</code>으로 서빙하면 <b>같은 URL에 원본과 <code>.gz</code>와 <code>.br</code> 세 가지 응답이 존재</b>하게 된다. 중간 캐시가 이들을 구분하도록 <b><code>Vary: Accept-Encoding</code>이 반드시 붙어야 한다.</b> 실시간 압축이 아니어서 <code>gzip_vary</code>를 잊기 쉬운 자리다 — 10절에서 그 사고를 본다.
+</div>
+
+<h3>6-2. 동적 응답 — 낮은 레벨 + 문턱 + allowlist</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 타입 구분 없이 최고 레벨로 전부 압축</div>
+<pre><code>gzip on;
+<span class="ln-bad">gzip_comp_level 9;    <span class="cm"># 요청마다 최고 레벨</span></span>
+<span class="ln-bad">gzip_types *;         <span class="cm"># 이미지·zip까지 압축 시도</span></span>
+<span class="cm">
+# 문제 1) 수확 체감 구간에서 CPU를 태운다.
+#         → 처리량이 떨어지고 지연이 늘어
+#           압축으로 아낀 전송 시간을 도로 까먹는다.
+#
+# 문제 2) 이미 압축된 포맷까지 훑는다 (7-1).
+#         → 절감은 0인데 CPU는 입력 크기에 비례해
+#           그대로 든다. 순수 낭비.
+#
+# 문제 3) 최소 크기 문턱이 없다 (7-2).
+#         → Nginx 기본 gzip_min_length는 20바이트라
+#           사실상 없는 것과 같다. 수백 바이트 응답까지
+#           23바이트 오버헤드를 얹으며 압축한다.
+#
+# 문제 4) Vary가 없다 (10절).
+#         → 캐시가 압축본을 못 푸는 클라이언트에게
+#           그대로 내보내 응답이 통째로 깨진다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 텍스트 계열만 · 문턱을 두고 · 중간 이하 레벨로</div>
+<pre><code>gzip on;
+<span class="ln-good">gzip_comp_level 4;              <span class="cm"># 실측해서 조정</span></span>
+<span class="ln-good">gzip_min_length 1024;           <span class="cm"># 1KB 미만 제외 (7-2)</span></span>
+gzip_types text/plain
+           text/css
+           application/json
+           application/javascript
+           application/xml
+<span class="ln-good">           image/svg+xml;       <span class="cm"># SVG는 이름과 달리 텍스트다</span></span>
+<span class="cm">                                # text/html 은 지정하지 않아도
+                                # 항상 포함된다</span>
+<span class="ln-good">gzip_vary on;                   <span class="cm"># Vary: Accept-Encoding (10절)</span></span>
+
+<span class="cm"># 이 서버가 다른 프록시(CDN·LB) 뒤에 있다면 반드시 함께 볼 설정.
+# Nginx는 앞단 프록시를 거쳐 온 요청(Via 헤더가 붙은 요청)의
+# 응답을 기본적으로 압축하지 않는다.
+# "설정을 다 했는데 압축이 안 된다"의 흔한 원인이다.</span>
+<span class="ln-good">gzip_proxied any;</span></code></pre>
+  </div>
+</div>
+
+<div class="codehead plain"><span class="tag">spring boot</span> 앱에서 켜는 설정 — 다만 <b>켤지 말지는 9절의 판단이 먼저다</b></div>
+<pre><code><span class="kw">server</span>:
+  <span class="kw">compression</span>:
+    <span class="kw">enabled</span>: true
+    <span class="cm"># 이 크기 미만의 응답은 압축하지 않는다. Spring Boot 기본값은 2KB다.</span>
+    <span class="kw">min-response-size</span>: 2KB
+    <span class="cm"># 압축할 콘텐츠 타입. 텍스트 계열만 남기는 것이 요점이다.</span>
+    <span class="kw">mime-types</span>: text/html,text/css,application/json,application/javascript</code></pre>
+
+<div class="callout trap">
+  <span class="t">Spring Boot의 한계 — <b>압축 레벨을 지정하는 항목이 없다</b></span>
+  내장 서블릿 컨테이너가 정한 값을 그대로 쓴다. <b>레벨을 조정해 CPU와 크기의 균형을 직접 잡고 싶다면 앞단 프록시에서 압축하는 편이 유리하다</b>는 뜻이고, 이것이 <b>9절 "어디서 압축할 것인가"의 판단에 들어가는 근거 하나</b>가 된다.
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 압축하면 안 되는 응답 3종 — <span style="color:#dc2626">"압 · 작 · 비"</span></h2>
+
+<div class="memo red">
+  <h4>질문의 후반부("압축하지 말아야 할 응답은?")는 <span style="color:#dc2626">이 셋으로 답한다</span></h4>
+  <div class="grid g3" style="margin-top:8px">
+    <div class="tile red"><div class="k" style="font-family:inherit">압 — 이미 <b>압</b>축된 포맷</div><div class="d">JPEG·PNG·WebP·AVIF, 동영상, zip/gz, woff2. <b>줄지 않는데 CPU는 입력 크기에 비례해 그대로 든다.</b> 오히려 커질 수도 있다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">작 — 아주 <b>작</b>은 응답</div><div class="d">gzip 최소 오버헤드 <b>23바이트</b>를 못 건지고, <b>어차피 패킷 하나</b>라 전송 시간 이득도 없다. TTFB만 늘어난다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">비 — <b>비</b>밀값 + 반사 입력</div><div class="d">한 응답에 비밀값과 공격자 제어 입력이 함께 실리면 <b>압축 후 크기가 비밀을 누설</b>한다(BREACH). 조건 셋이 동시에 성립할 때만이다.</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">그래서 압축 대상은 <b>텍스트 계열만 명시적으로 나열하는 allowlist</b>로 지정한다 — <code>gzip_types</code>가 그 구현이다</div>
+</div>
+
+<h3>7-1. 압축 금지 ① — 이미 압축된 포맷</h3>
+
+<p>JPEG, PNG, WebP, AVIF, 동영상 컨테이너, zip/gz 아카이브, 그리고 대부분의 웹폰트(woff2)는 <b>포맷 자체가 이미 압축 결과물</b>이다. <b>woff2가 폰트를 brotli로 압축해 담는 형식</b>이라는 것을 알면 왜 목록에 들어가는지 바로 이해된다 — <b>이미 brotli로 압축된 것을 다시 gzip으로 감싸는 셈</b>이다.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>gzip을 덧씌우면 무슨 일이 생기나</h4>
+    <ul>
+      <li><b>줄어드는 양이 사실상 0</b> — 압축 알고리즘이 찾는 것은 반복 패턴인데, 잘 압축된 데이터에는 반복이 거의 남아 있지 않다.</li>
+      <li><b>CPU 비용은 그대로</b> — 입력 크기에 비례한다. <b>5MB 이미지를 압축하려면 5MB를 전부 훑어야 한다.</b></li>
+      <li><b>오히려 커질 수 있다</b> — 압축 결과가 원본보다 커지면 알고리즘은 "압축하지 않고 그대로 담기"를 택하는데, <b>그래도 gzip 컨테이너의 고정 오버헤드는 붙는다.</b></li>
+      <li>이미지 비중이 큰 서비스에서는 이 낭비가 <b>서버 전체 CPU에서 유의미한 몫</b>이 된다.</li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>이미지 용량을 줄이는 <b>올바른 도구</b></h4>
+    <ul>
+      <li><b>포맷 차원의 최적화</b> — WebP/AVIF로 변환</li>
+      <li><b>품질 파라미터 조정</b></li>
+      <li><b>실제 표시 크기에 맞춘 리사이징</b></li>
+    </ul>
+    <p style="margin:8px 0 0;font-size:.94rem">이쪽이 <b>몇 배 단위의 효과</b>를 낸다. <b>줄이려는 대상이 무엇인지에 따라 도구가 다르다</b>는 판단을 보여주는 것이 이 항목의 포인트다.</p>
+  </div>
+</div>
+
+<h3>7-2. 압축 금지 ② — 아주 작은 응답 (오버헤드 23바이트 · 패킷 1,400바이트)</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="왼쪽은 gzip 스트림 최소 구성이 헤더 10바이트, 저장 블록 헤더 5바이트, 트레일러 8바이트로 합계 23바이트임을 보여주는 막대 도식. 오른쪽은 TCP 패킷 하나에 약 1400바이트가 실리므로 200바이트 응답은 압축하든 안 하든 패킷 하나라서 전송 시간 차이가 없음을 보여주는 도식">
+    <defs>
+      <marker id="c6r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <line x1="560" y1="16" x2="560" y2="284" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- LEFT: 23 bytes -->
+    <text x="286" y="26" font-size="14" font-weight="700" fill="#dc2626" text-anchor="middle">gzip 스트림의 최소 구성 — 압축이 전혀 안 되는 데이터 기준</text>
+    <rect x="44" y="44" width="174" height="38" fill="#fecaca" stroke="#dc2626"/>
+    <text x="131" y="68" font-size="13" fill="#7f1d1d" text-anchor="middle" font-weight="700" class="mono">헤더 10B</text>
+    <rect x="218" y="44" width="87" height="38" fill="#fed7aa" stroke="#ea580c"/>
+    <text x="261" y="68" font-size="12" fill="#7c2d12" text-anchor="middle" font-weight="700" class="mono">블록 5B</text>
+    <rect x="305" y="44" width="139" height="38" fill="#fde68a" stroke="#d97706"/>
+    <text x="374" y="68" font-size="13" fill="#78350f" text-anchor="middle" font-weight="700" class="mono">트레일러 8B</text>
+    <path d="M44 88 L44 94 L444 94 L444 88" fill="none" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="244" y="110" font-size="13.5" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">합계 23바이트</text>
+
+    <text x="44" y="134" font-size="11.5" fill="#7f1d1d"><tspan font-weight="700">헤더 10B</tspan> = 매직 2 + 압축 방식 1 + 플래그 1 + 타임스탬프 4 + 추가 플래그 1 + OS 1</text>
+    <text x="44" y="152" font-size="11.5" fill="#7c2d12"><tspan font-weight="700">저장 블록 헤더 5B</tspan> = 블록 헤더 비트 + 길이 2 + 길이의 보수 2</text>
+    <text x="44" y="170" font-size="11.5" fill="#78350f"><tspan font-weight="700">트레일러 8B</tspan> = 원본 CRC32 4 + 원본 크기 4</text>
+
+    <rect x="24" y="184" width="524" height="98" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="206" font-size="12.5" fill="#b91c1c" font-weight="700">압축이 전혀 안 되는 200바이트 응답을 gzip으로 감싸면 → 약 223바이트</text>
+    <rect x="40" y="216" width="150" height="20" rx="4" fill="#e2e8f0" stroke="#94a3b8"/>
+    <text x="115" y="230" font-size="11" fill="#334155" text-anchor="middle" class="mono">원본 200B</text>
+    <line x1="196" y1="226" x2="222" y2="226" stroke="#dc2626" stroke-width="1.6" marker-end="url(#c6r)"/>
+    <rect x="228" y="216" width="150" height="20" rx="4" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="303" y="230" font-size="11" fill="#7f1d1d" text-anchor="middle" class="mono">200B</text>
+    <rect x="378" y="216" width="18" height="20" rx="3" fill="#dc2626"/>
+    <text x="404" y="231" font-size="11" fill="#b91c1c" class="mono" font-weight="700">+23B</text>
+    <text x="40" y="256" font-size="12" fill="#7f1d1d"><tspan font-weight="700">줄이려고 CPU를 쓴 결과가 10% 이상 증가다.</tspan></text>
+    <text x="40" y="274" font-size="11.5" fill="#991b1b">압축이 돼도 200B에서 잘 줄여야 몇십 바이트인데, 오버헤드 23B를 빼면 남는 게 없다.</text>
+
+    <!-- RIGHT: packet -->
+    <text x="834" y="26" font-size="14" font-weight="700" fill="#dc2626" text-anchor="middle">전송 시간 관점 — 여기서는 이득이 아예 <tspan text-decoration="underline">0</tspan>이다</text>
+    <text x="592" y="52" font-size="11.5" fill="#475569">이더넷 환경에서 TCP 패킷 하나에 실리는 데이터 ≈ <tspan font-weight="700" class="mono">1,400바이트</tspan></text>
+
+    <text x="592" y="80" font-size="11.5" fill="#334155" font-weight="700">압축 없음</text>
+    <rect x="592" y="86" width="420" height="30" rx="5" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4"/>
+    <rect x="594" y="88" width="60" height="26" rx="3" fill="#bfdbfe" stroke="#2563eb"/>
+    <text x="624" y="105" font-size="10.5" fill="#1d4ed8" text-anchor="middle" class="mono">200B</text>
+    <text x="840" y="105" font-size="11" fill="#64748b" text-anchor="middle">← 패킷 하나의 여유 공간 —</text>
+    <rect x="1024" y="86" width="66" height="30" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="1057" y="105" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">패킷 1개</text>
+
+    <text x="592" y="142" font-size="11.5" fill="#334155" font-weight="700">gzip 압축</text>
+    <rect x="592" y="148" width="420" height="30" rx="5" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4"/>
+    <rect x="594" y="150" width="52" height="26" rx="3" fill="#bbf7d0" stroke="#16a34a"/>
+    <text x="620" y="167" font-size="10.5" fill="#14532d" text-anchor="middle" class="mono">180B</text>
+    <text x="840" y="167" font-size="11" fill="#64748b" text-anchor="middle">← 몇십 바이트 줄었지만 여전히 —</text>
+    <rect x="1024" y="148" width="66" height="30" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="1057" y="167" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">패킷 1개</text>
+
+    <rect x="572" y="196" width="524" height="86" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="588" y="218" font-size="12.5" fill="#b91c1c" font-weight="700">패킷 수가 같으면 전송 왕복 수도 같고, 결국 시간 차이가 없다.</text>
+    <text x="588" y="238" font-size="11.5" fill="#7f1d1d">아낀 것은 <tspan font-weight="700">회선의 바이트 몇 개뿐</tspan>이고, CPU와 TTFB 지연은 <tspan font-weight="700">실제로 냈다.</tspan></text>
+    <text x="588" y="260" font-size="11.5" fill="#7f1d1d"><tspan font-weight="700">→ 그래서 최소 크기 문턱을 둔다.</tspan> Nginx <tspan class="mono">gzip_min_length</tspan> 기본 <tspan class="mono" font-weight="700">20B</tspan>(사실상 없음),</text>
+    <text x="588" y="277" font-size="11.5" fill="#7f1d1d">Spring Boot <tspan class="mono">min-response-size</tspan> 기본 <tspan class="mono" font-weight="700">2KB</tspan>. <tspan font-weight="700">1KB 안팎이 흔한 출발점.</tspan></text>
+  </svg>
+  <figcaption><b>작은 응답에는 두 겹의 이유가 있다.</b> ① 크기 관점 — 23바이트 오버헤드를 회수하지 못한다. ② 전송 시간 관점 — <b>1,400바이트 이하는 압축하든 안 하든 패킷 하나</b>라 시간 이득이 없다. <b>Nginx의 기본값이 사실상 없는 것과 같으므로, 압축을 켤 때 이 값을 명시적으로 올려 주는 것이 실무의 첫 조정</b>이고, 최종 값은 자기 서비스의 응답 크기 분포를 보고 정한다.</figcaption>
+</figure>
+
+<h3>7-3. 압축 금지 ③ — 비밀값과 공격자 입력이 한 응답에 섞일 때 <span class="badge bonus">가산점</span></h3>
+
+<p>압축이 보안 문제가 될 수 있다는 것은 <b>그 자체로 변별력 있는 지식</b>이다. 다만 <b>"BREACH라는 게 있다" 한 줄로 끝내면 이해한 것이 아니므로</b>, 왜 그런 일이 가능한지를 <b>전제 셋</b>으로 풀어 보자.</p>
+
+<div class="step"><span class="n">전1</span><div class="body"><b>압축은 반복이 많을수록 결과가 작아진다.</b> 1-2에서 본 그대로다. 같은 문자열이 앞에 이미 나왔다면 <b>짧은 참조로 대체</b>되므로 출력이 줄어든다.</div></div>
+<div class="step red"><span class="n">전2</span><div class="body"><b>TLS는 내용을 숨기지만 길이는 숨기지 못한다.</b> 암호화된 응답을 중간에서 본 사람은 내용을 읽을 수 없지만, <b>몇 바이트가 오갔는지는 볼 수 있다.</b> 길이는 암호화 대상이 아니기 때문이다.</div></div>
+<div class="step red"><span class="n">전3</span><div class="body"><b>한 응답 안에 두 가지가 함께 들어 있는 경우가 있다.</b> 하나는 <b>비밀값</b>(예: 페이지에 심어지는 CSRF 토큰), 다른 하나는 <b>공격자가 값을 정할 수 있고 응답에 그대로 다시 나타나는 입력</b>(예: 검색어를 그대로 되비추는 "'xyz'에 대한 검색 결과" 문구). 후자를 <b>반사(reflection)</b>라고 부른다.</div></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 352" role="img" aria-label="한 응답 안에 CSRF 토큰 같은 비밀값과 공격자가 넣은 검색어가 함께 있을 때, 추측이 비밀값 앞부분과 일치하면 같은 문자열이 두 번 나타나 압축기가 접어 응답이 짧아지고, 틀리면 접힐 반복이 없어 상대적으로 길어진다. 공격자는 TLS 암호문의 길이만 비교해 비밀값을 한 글자씩 좁혀 간다">
+    <defs>
+      <marker id="c7r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="c7s" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#dc2626" text-anchor="middle">BREACH — 내용을 못 읽어도 "길이"만으로 비밀을 한 글자씩 좁힌다</text>
+
+    <!-- response body -->
+    <rect x="24" y="40" width="484" height="92" rx="10" fill="#fff" stroke="#94a3b8"/>
+    <text x="40" y="60" font-size="12" fill="#334155" font-weight="700">한 응답 본문 안에 이런 두 조각이 함께 있다</text>
+    <rect x="40" y="68" width="452" height="26" rx="5" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="50" y="86" font-size="11" fill="#7f1d1d" class="mono">... &lt;input name="csrf" value="a3f8c2d1..."&gt; ...</text>
+    <text x="470" y="86" font-size="10.5" fill="#b91c1c" text-anchor="end" font-weight="700">← 비밀값</text>
+    <rect x="40" y="98" width="452" height="26" rx="5" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="50" y="116" font-size="11" fill="#78350f" class="mono">... "검색어: &lt;공격자가 넣은 문자열&gt;에 대한 결과" ...</text>
+    <text x="470" y="116" font-size="10.5" fill="#b45309" text-anchor="end" font-weight="700">← 반사 입력</text>
+
+    <!-- attacker -->
+    <rect x="24" y="146" width="484" height="52" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="40" y="166" font-size="12.5" fill="#334155" font-weight="700">공격자가 검색어에 추측값을 넣어 요청을 보낸다</text>
+    <text x="40" y="186" font-size="11" fill="#64748b"><tspan class="mono">GET /search?q=a3f8...</tspan> → 같은 페이지가 렌더링되어 응답에 그대로 반사된다</text>
+    <line x1="512" y1="106" x2="546" y2="86" stroke="#64748b" stroke-width="1.6" marker-end="url(#c7s)"/>
+    <line x1="512" y1="172" x2="546" y2="200" stroke="#64748b" stroke-width="1.6" marker-end="url(#c7s)"/>
+
+    <!-- branch A: match -->
+    <rect x="552" y="40" width="544" height="94" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="568" y="60" font-size="12.5" fill="#b91c1c" font-weight="700">추측이 비밀값의 앞부분과 <tspan text-decoration="underline">일치</tspan>하면</text>
+    <text x="568" y="78" font-size="11.5" fill="#7f1d1d">→ 응답 안에 같은 문자열이 <tspan font-weight="700">두 번</tspan> 등장한다 → 압축기가 뒤엣것을 <tspan font-weight="700">참조로 접는다</tspan></text>
+    <text x="568" y="100" font-size="11.5" fill="#7f1d1d" font-weight="700">→ 압축된 응답이 (아주 조금) 작아진다</text>
+    <rect x="568" y="106" width="330" height="18" rx="4" fill="#fca5a5" stroke="#dc2626"/>
+    <text x="912" y="120" font-size="11" fill="#b91c1c" class="mono" font-weight="700">암호문 길이: 짧다</text>
+
+    <!-- branch B: miss -->
+    <rect x="552" y="146" width="544" height="80" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="568" y="166" font-size="12.5" fill="#334155" font-weight="700">추측이 <tspan text-decoration="underline">틀리면</tspan></text>
+    <text x="568" y="184" font-size="11.5" fill="#475569">→ 접힐 반복이 없다 → 압축된 응답이 <tspan font-weight="700">상대적으로 크다</tspan></text>
+    <rect x="568" y="194" width="378" height="18" rx="4" fill="#cbd5e1" stroke="#64748b"/>
+    <text x="960" y="208" font-size="11" fill="#334155" class="mono" font-weight="700">암호문 길이: 길다</text>
+
+    <!-- observer -->
+    <rect x="24" y="240" width="1072" height="46" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="44" y="261" font-size="12.5" fill="#b45309" font-weight="700">공격자는 내용을 못 읽어도 암호문의 길이는 관측할 수 있으므로 —</text>
+    <text x="470" y="261" font-size="12.5" fill="#92400e">추측을 바꿔가며 <tspan font-weight="700">"어느 쪽이 더 짧은가"만 비교해</tspan> 비밀값을 한 글자씩 좁혀 간다.</text>
+    <text x="44" y="279" font-size="11.5" fill="#92400e"><tspan font-weight="700">TLS 계층 자체의 압축</tspan>을 노렸던 것이 <tspan font-weight="700">CRIME</tspan>이고, 그래서 <tspan font-weight="700">TLS 1.3에서 압축은 제거됐다.</tspan> 다만 <tspan font-weight="700">HTTP 본문 압축은 우리가 켜는 것</tspan>이라 BREACH 조건은 남는다.</text>
+
+    <!-- conditions -->
+    <rect x="24" y="296" width="1072" height="44" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="316" font-size="12.5" fill="#b91c1c" font-weight="700">세 조건이 <tspan text-decoration="underline">동시에</tspan> 성립해야 한다 — "압 · 비 · 반"</text>
+    <text x="330" y="316" font-size="12" fill="#7f1d1d">① 응답 본문이 <tspan font-weight="700">압</tspan>축된다 &#160; ② 그 응답 안에 <tspan font-weight="700">비</tspan>밀값이 들어 있다 &#160; ③ 같은 응답 안에 공격자 입력이 <tspan font-weight="700">반</tspan>사된다</text>
+    <text x="44" y="333" font-size="11.5" fill="#991b1b">비밀이 없거나 입력이 반사되지 않는 응답은 <tspan font-weight="700">해당이 없다</tspan> — <tspan font-weight="700">"압축은 위험하다"가 아니라 "이 세 조건이 겹치는 응답이 위험하다"</tspan>가 정확한 표현이다.</text>
+  </svg>
+  <figcaption><b>답을 들을 수는 없고 상자의 무게만 잴 수 있는 스무고개</b>라고 생각하면 된다. 상자 안을 볼 수는 없지만, <b>정답과 겹치는 물건을 넣었을 때만 상자가 살짝 가벼워진다면</b> 무게만 재고도 정답을 좁힐 수 있다. TLS가 "상자 안을 못 보게" 해 주지만 <b>무게는 가려주지 않는다</b>는 것이 전제 2다.</figcaption>
+</figure>
+
+<h4>방어는 조건을 하나씩 깨는 것이다</h4>
+
+<div class="step ok"><span class="n">①</span><div class="body"><b>비밀값을 압축 대상 응답에 넣지 않는다.</b> 가장 깨끗한 해법이다 — <b>조건 ②를 깬다.</b> 토큰을 HTML 본문이 아니라 별도 경로로 내려보내거나, <b>응답 헤더로 전달</b>한다.</div></div>
+<div class="step ok"><span class="n">②</span><div class="body"><b>비밀값을 요청마다 다른 형태로 바꾼다(마스킹).</b> 같은 토큰이라도 <b>매 응답에서 다른 바이트로 보이면</b> "추측과 일치해 반복이 생기는" 상황 자체가 성립하지 않는다 — <b>전제 1을 무력화한다.</b></div></div>
+<div class="step ok"><span class="n">③</span><div class="body"><b>민감한 엔드포인트만 압축에서 제외한다.</b> 위 둘이 어려운 레거시 경로에 쓰는 대응이다 — <b>조건 ①을 깬다.</b> <b>전체 압축을 끄는 것은 과잉</b>이므로 경로 단위로 좁힌다.</div></div>
+<div class="step"><span class="n">④</span><div class="body"><b>응답 길이 자체를 흔든다.</b> 응답에 임의 길이의 무의미한 바이트를 섞어 길이 신호를 흐리는 방법도 있지만, <b>근본 대응이 아니라 관측을 어렵게 만드는 완화책</b>이다. <b>①·②를 먼저 검토하는 것이 순서</b>다.</div></div>
+
+<div class="codehead good"><span class="tag">방어 ②</span> Spring Security — 매 응답마다 CSRF 토큰을 난수로 마스킹한다</div>
+<pre><code><span class="kw">@Bean</span>
+SecurityFilterChain <span class="fn">filterChain</span>(HttpSecurity http) <span class="kw">throws</span> Exception {
+    http.<span class="fn">csrf</span>(csrf -&gt; csrf
+            <span class="cm">// 매 응답마다 토큰을 난수로 마스킹해 내려보낸다.
+            // 같은 토큰이 반복 문자열로 잡히지 않으므로 압축 길이가
+            // 추측 성공 여부를 누설하지 않는다.</span>
+<span class="ln-good">            .<span class="fn">csrfTokenRequestHandler</span>(<span class="kw">new</span> XorCsrfTokenRequestAttributeHandler()));</span>
+    <span class="kw">return</span> http.<span class="fn">build</span>();
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">이 핸들러가 정확히 무슨 일을 하나</span>
+  <code>XorCsrfTokenRequestAttributeHandler</code>는 <b>매 요청 난수를 만들어 CSRF 토큰과 XOR 해서 내려보낸다.</b> 그래서 <b>응답에 실리는 값이 매번 달라진다.</b> 서버는 난수를 함께 받아 원래 토큰을 복원해 검증하므로 기능은 그대로다. <b>이 핸들러의 문서가 밝히는 목적이 BREACH 대응</b>이다 — "왜 이 핸들러가 존재하는가"를 설명할 수 있으면 이해한 것이다.
+</div>
+
+<div class="codehead good"><span class="tag">방어 ③</span> nginx — 사용자 입력이 반사되면서 비밀값도 담기는 경로만 압축을 끈다</div>
+<pre><code><span class="kw">location</span> /account/settings {
+<span class="ln-good">    gzip off;</span>
+    proxy_pass http://app_upstream;
+}</code></pre>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 운영 주의 — TTFB와 스트리밍, <span style="color:#dc2626">압축 버퍼링</span></h2>
+
+<p>압축을 켜면 <b>첫 바이트가 나가는 시각이 늦어진다.</b> 압축기는 <b>어느 정도 데이터를 모아야 압축 블록을 만들 수 있기 때문</b>이다. <b>TTFB(Time To First Byte)</b>는 요청을 보낸 뒤 응답의 첫 바이트가 도착하기까지의 시간인데, 이 지연이 <b>이득이 되는 경우와 손해가 되는 경우와 고장이 되는 경우</b>가 나뉜다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="압축 없음, 압축 있는 큰 응답, 압축 있는 SSE 스트리밍 세 가지 타임라인 비교. 압축 없음은 30밀리초에 첫 바이트가 나가고 80밀리초에 끝나며, 압축 큰 응답은 45밀리초에 첫 바이트가 나가지만 60밀리초에 끝나 전체는 더 빠르다. SSE는 이벤트가 압축 버퍼에 갇혀 2초 뒤에 한꺼번에 전송된다">
+    <defs>
+      <marker id="c8r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="c8g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">압축 버퍼링이 만드는 세 가지 결과 — 이득 · 손해 · 고장</text>
+
+    <!-- row 1 -->
+    <rect x="20" y="44" width="176" height="52" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="34" y="64" font-size="12.5" fill="#14532d" font-weight="700">압축 없음</text>
+    <text x="34" y="82" font-size="11" fill="#166534">본문 300KB · 기준선</text>
+    <line x1="200" y1="90" x2="960" y2="90" stroke="#cbd5e1" stroke-width="1.4"/>
+    <line x1="200" y1="84" x2="200" y2="96" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="200" y="110" font-size="10.5" fill="#6b7280" text-anchor="middle" class="mono">t=0</text>
+    <rect x="410" y="82" width="350" height="16" rx="4" fill="#bfdbfe" stroke="#2563eb"/>
+    <text x="585" y="94" font-size="10.5" fill="#1d4ed8" text-anchor="middle" class="mono">본문 300KB 전송</text>
+    <circle cx="410" cy="90" r="5" fill="#16a34a"/>
+    <text x="410" y="74" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">t=30 첫 조각이 만들어지자마자 소켓으로 ← TTFB</text>
+    <circle cx="760" cy="90" r="5" fill="#2563eb"/>
+    <text x="770" y="112" font-size="11" fill="#1d4ed8" class="mono" font-weight="700">t=80 완료</text>
+
+    <!-- row 2 -->
+    <rect x="20" y="132" width="176" height="52" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="34" y="152" font-size="12.5" fill="#b45309" font-weight="700">압축 있음 — 큰 응답</text>
+    <text x="34" y="170" font-size="11" fill="#92400e">본문 80KB로 줄었다</text>
+    <line x1="200" y1="178" x2="960" y2="178" stroke="#cbd5e1" stroke-width="1.4"/>
+    <line x1="200" y1="172" x2="200" y2="184" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="200" y="198" font-size="10.5" fill="#6b7280" text-anchor="middle" class="mono">t=0</text>
+    <rect x="410" y="170" width="105" height="16" rx="4" fill="#fde68a" stroke="#d97706"/>
+    <text x="462" y="182" font-size="10" fill="#92400e" text-anchor="middle" class="mono">압축 버퍼 대기</text>
+    <circle cx="410" cy="178" r="5" fill="#94a3b8"/>
+    <text x="410" y="162" font-size="11" fill="#64748b" text-anchor="middle">t=30 압축 버퍼로 들어감 (아직 안 나감)</text>
+    <rect x="515" y="170" width="105" height="16" rx="4" fill="#bbf7d0" stroke="#16a34a"/>
+    <text x="567" y="182" font-size="10" fill="#14532d" text-anchor="middle" class="mono">80KB 전송</text>
+    <circle cx="515" cy="178" r="5" fill="#d97706"/>
+    <text x="640" y="162" font-size="11" fill="#b45309" font-weight="700">t=45 첫 압축 블록이 나감 ← TTFB (15ms 늦어짐)</text>
+    <circle cx="620" cy="178" r="5" fill="#16a34a"/>
+    <text x="630" y="200" font-size="11" fill="#166534" class="mono" font-weight="700">t=60 완료</text>
+    <line x1="760" y1="98" x2="760" y2="196" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <line x1="620" y1="186" x2="620" y2="196" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <line x1="756" y1="208" x2="628" y2="208" stroke="#16a34a" stroke-width="1.8" marker-end="url(#c8g)"/>
+    <text x="768" y="206" font-size="11.5" fill="#166534" font-weight="700">시작은 늦었지만 전체는 20ms 빨리 끝났다</text>
+    <text x="768" y="221" font-size="11.5" fill="#166534" font-weight="700">— 큰 응답에서는 남는 거래</text>
+
+    <!-- row 3 -->
+    <rect x="20" y="234" width="176" height="52" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="34" y="254" font-size="12.5" fill="#b91c1c" font-weight="700">압축 있음 — SSE</text>
+    <text x="34" y="272" font-size="11" fill="#991b1b">이벤트를 즉시 흘려야 한다</text>
+    <line x1="200" y1="280" x2="960" y2="280" stroke="#cbd5e1" stroke-width="1.4"/>
+    <g>
+      <circle cx="200" cy="280" r="5" fill="#dc2626"/><text x="200" y="264" font-size="10.5" fill="#b91c1c" text-anchor="middle" class="mono">t=0 이벤트 1</text>
+      <circle cx="550" cy="280" r="5" fill="#dc2626"/><text x="550" y="264" font-size="10.5" fill="#b91c1c" text-anchor="middle" class="mono">t=1000 이벤트 2</text>
+      <circle cx="900" cy="280" r="5" fill="#dc2626"/><text x="900" y="264" font-size="10.5" fill="#b91c1c" text-anchor="middle" class="mono">t=2000 이벤트 3</text>
+    </g>
+    <rect x="200" y="288" width="700" height="14" rx="4" fill="#fecaca" stroke="#dc2626"/>
+    <text x="550" y="299" font-size="10.5" fill="#7f1d1d" text-anchor="middle" font-weight="700">전부 압축 버퍼에 갇혀 있다 — 아무것도 안 나간다</text>
+    <line x1="900" y1="304" x2="948" y2="304" stroke="#dc2626" stroke-width="1.8" marker-end="url(#c8r)"/>
+    <text x="960" y="296" font-size="11.5" fill="#b91c1c" font-weight="700">버퍼가 차서 그제야</text>
+    <text x="960" y="312" font-size="11.5" fill="#b91c1c" font-weight="700">한꺼번에 전송</text>
+    <text x="200" y="322" font-size="11.5" fill="#7f1d1d">→ 실시간 알림이 <tspan font-weight="700">2초씩 뭉쳐서 도착</tspan>한다. 지연이 아니라 <tspan font-weight="700" text-decoration="underline">기능이 망가진 것</tspan>이다.</text>
+  </svg>
+  <figcaption><b>같은 원인이 세 가지 다른 결과를 낸다.</b> 큰 응답에서는 TTFB가 조금 늦어져도 <b>전체 완료 시각이 앞당겨지므로 이득</b>, 작은 응답에서는 <b>늦어진 TTFB만 남고 이득이 없으며</b>(7-2와 같은 결론), 스트리밍에서는 <b>실시간성이라는 존재 이유가 사라진다.</b></figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>가장 자주 틀리는 지점 — <span style="color:#dc2626">압축 버퍼링과 프록시 버퍼링은 별개의 층이다</span></h4>
+  <div class="chain">
+    <span class="chip r">SSE가 뭉쳐서 온다</span><span class="arrow">→</span>
+    <span class="chip b">proxy_buffering off 로 해결 시도</span><span class="arrow">→</span>
+    <span class="chip r">증상 그대로</span><span class="arrow">→</span>
+    <span class="chip g">gzip off 까지 해야 풀린다</span>
+  </div>
+  <p style="margin-bottom:0"><code>proxy_buffering off</code>만 끄고 <b>gzip을 그대로 두면 증상이 그대로 남는다.</b> 같은 원인으로 응답이 뭉치는 문제를 13번(Nginx·Tomcat 버퍼 불일치)·14번(WebSocket·SSE·폴링) 문서가 <b>프록시 버퍼링 관점</b>으로 다루는데, <b>압축 버퍼링은 그와 별개의 층에서 같은 증상을 만든다.</b> 둘 다 꺼야 한다.</p>
+</div>
+
+<div class="codehead good"><span class="tag">nginx</span> 스트리밍 경로 — 두 버퍼링을 모두 끈다</div>
+<pre><code><span class="kw">location</span> /api/events {          <span class="cm"># SSE 엔드포인트</span>
+    proxy_pass http://app_upstream;
+<span class="ln-good">    gzip off;                   <span class="cm"># 압축 버퍼링 제거</span></span>
+<span class="ln-good">    proxy_buffering off;        <span class="cm"># 프록시 버퍼링 제거 — 둘 다 꺼야 한다</span></span>
+    proxy_read_timeout 1h;      <span class="cm"># 장시간 열려 있는 연결이므로 타임아웃도 늘린다</span>
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">대응은 셋이다</span>
+  ① <b>스트리밍 경로에서 압축을 끄거나</b>, ② <b>이벤트 경계마다 버퍼를 강제로 비우는(flush) 동작이 지원되는지 확인하거나</b>, ③ <b>애초에 스트리밍 경로를 압축 대상 경로에서 분리</b>하는 것이다. 실무에서는 <b>③으로 설계하고 ①로 방어</b>하는 조합이 가장 안전하다.
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 어디서 압축할 것인가 — 앱 · 프록시 · CDN</h2>
+
+<p>압축을 수행할 수 있는 위치는 세 곳이다. <b>애플리케이션(Tomcat/Spring), 리버스 프록시(Nginx), CDN.</b> 어디서 할지는 <b>취향이 아니라 판단의 문제</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 248" role="img" aria-label="클라이언트에서 CDN, Nginx, Tomcat으로 이어지는 경로에서 사용자 구간은 느리고 유료이며 내부망 구간은 빠르고 무료임을 표시하고, 압축을 수행할 수 있는 세 위치를 표시한 도식">
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">압축은 "줄여야 할 구간" 바로 앞에서 한다</text>
+
+    <rect x="30" y="46" width="170" height="54" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="115" y="78" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">클라이언트</text>
+    <rect x="330" y="46" width="170" height="54" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="415" y="70" font-size="13" fill="#334155" text-anchor="middle" font-weight="700">CDN</text>
+    <text x="415" y="88" font-size="11" fill="#64748b" text-anchor="middle">③ 여기?</text>
+    <rect x="620" y="46" width="170" height="54" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="705" y="70" font-size="13" fill="#14532d" text-anchor="middle" font-weight="700">Nginx (리버스 프록시)</text>
+    <text x="705" y="88" font-size="11.5" fill="#16a34a" text-anchor="middle" font-weight="700">② 기본값 — 여기</text>
+    <rect x="910" y="46" width="170" height="54" rx="10" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="995" y="70" font-size="13" fill="#334155" text-anchor="middle" font-weight="700">Tomcat / Spring</text>
+    <text x="995" y="88" font-size="11" fill="#64748b" text-anchor="middle">① 여기?</text>
+
+    <line x1="200" y1="73" x2="326" y2="73" stroke="#dc2626" stroke-width="2.4"/>
+    <line x1="500" y1="73" x2="616" y2="73" stroke="#d97706" stroke-width="2"/>
+    <line x1="790" y1="73" x2="906" y2="73" stroke="#16a34a" stroke-width="2"/>
+    <text x="263" y="122" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">사용자 구간</text>
+    <text x="263" y="138" font-size="11" fill="#991b1b" text-anchor="middle">느리다 · 유료다 · <tspan font-weight="700">여기가 병목</tspan></text>
+    <text x="558" y="122" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">오리진 ↔ CDN 구간</text>
+    <text x="558" y="138" font-size="11" fill="#92400e" text-anchor="middle">트래픽 비용이 클 수 있다</text>
+    <text x="848" y="122" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">내부망 구간</text>
+    <text x="848" y="138" font-size="11" fill="#16a34a" text-anchor="middle">같은 VPC — 빠르고 대체로 무료</text>
+
+    <rect x="24" y="156" width="1072" height="80" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="44" y="177" font-size="13" fill="#14532d" font-weight="700">기본 원칙: 앞단 한 곳으로 일원화한다.</text>
+    <text x="266" y="177" font-size="12" fill="#166534">압축 대상은 <tspan font-weight="700">사용자 구간</tspan>이지 내부 구간이 아니다 — 병목은 사용자의 모바일 회선이지 VPC 안의 Nginx↔Tomcat이 아니다.</text>
+    <text x="44" y="199" font-size="12" fill="#166534">① 내부 구간까지 압축하면 <tspan font-weight="700">압축·해제를 한 번씩 더 하면서 정작 줄여야 할 구간에는 영향이 없다.</tspan></text>
+    <text x="44" y="221" font-size="12" fill="#166534">② <tspan font-weight="700">애플리케이션 CPU는 비즈니스 로직에 쓰는 것이 낫다</tspan> — 압축은 순수 계산 작업이라 앱 스레드를 붙잡으면 그만큼 처리량이 준다.</text>
+  </svg>
+  <figcaption>세 번째 이유가 6-2에서 본 것이다 — <b>레벨·대상 타입·최소 크기 같은 조정 손잡이가 프록시 쪽이 더 많다.</b> Spring Boot에는 <b>압축 레벨 설정이 아예 없다.</b></figcaption>
+</figure>
+
+<div class="split">
+  <div class="pane b">
+    <h4>그럼에도 <b>앱에서 압축해야 하는 경우</b> <span class="badge senior">시니어 변별</span></h4>
+    <ul>
+      <li><b>앞단에 압축할 수 있는 계층이 없을 때</b> — 앱이 직접 노출돼 있거나, 앞단이 <b>L4 로드밸런서</b>라서 HTTP 본문을 다루지 않는 경우. L4는 <b>TCP 수준에서만 동작하므로 압축을 할 수 없다</b>(16번 문서).</li>
+      <li><b>내부망 구간의 응답이 비정상적으로 클 때</b> — 리전 간 호출처럼 <b>내부 구간에도 실제 비용과 지연이 있는 경우</b>는 예외가 된다.</li>
+      <li><b>응답 성격을 앱만 아는 경우</b> — 어떤 경로가 스트리밍이고 어떤 경로에 비밀값이 반사되는지는 앱이 가장 잘 안다. 다만 이 경우도 <b>앱이 응답 헤더로 신호를 주고 앞단이 판단하게</b> 만드는 편이 관리하기 쉽다.</li>
+    </ul>
+    <p style="margin:8px 0 0;font-size:.92rem;color:#1d4ed8"><b>원칙만 외운 게 아니라 이해했음을 보여주는 자리가 이 예외 목록이다.</b></p>
+  </div>
+  <div class="pane r">
+    <h4>양쪽에서 <b>동시에 켜지는 상황</b>은 피한다</h4>
+    <ul>
+      <li>대부분의 프록시는 <b>이미 <code>Content-Encoding</code>이 붙은 응답을 다시 압축하지 않으므로</b> 이중 압축이 실제로 일어나지는 않는다.</li>
+      <li>그러나 <b>어느 계층이 압축했는지 모르는 상태</b>가 된다. → <b>레벨 조정과 예외 경로 관리가 어디에도 걸리지 않는다.</b></li>
+      <li>7-3의 "이 경로만 압축 제외", 8절의 "SSE 경로 제외"가 <b>둘 중 어디에 걸려 있는지 아무도 모르는</b> 상태가 진짜 위험이다.</li>
+    </ul>
+    <p style="margin:8px 0 0;font-size:.94rem;color:#b91c1c"><b>압축의 책임 지점은 한 곳이어야 한다.</b></p>
+  </div>
+</div>
+
+<div class="callout warn">
+  <span class="t">CDN에서 압축하면 오리진은 아예 손을 뗄 수 있다 — 다만</span>
+  <b>오리진과 CDN 사이 구간은 압축되지 않은 채 오간다.</b> 그 구간의 트래픽 비용이 큰 구조라면 <b>오리진에서 압축해 보내는 편이 나을 수도 있다.</b> 결론은 하나다 — <b>"어디가 병목이고 어디가 유료 구간인가"로 판단한다.</b>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 캐시와의 상호작용 — <code>Vary: Accept-Encoding</code>과 ETag</h2>
+
+<p>압축을 켠 순간 <b>같은 URL에 응답 표현이 여러 개 존재하게 된다</b> — brotli 본, gzip 본, 원본. 클라이언트가 무엇을 지원하느냐에 따라 다른 것을 줘야 한다. 그런데 <b>캐시는 기본적으로 메서드와 URL만으로 사본을 식별한다</b>(20번 문서 3-2). 서버가 캐시에게 <b>"이 응답은 <code>Accept-Encoding</code> 값에 따라 달라진다"</b>고 알려주지 않으면 사고가 난다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 306" role="img" aria-label="Vary 헤더가 없을 때 캐시가 gzip 압축본을 GET과 URL만으로 키를 만들어 저장하고, 이후 gzip을 지원하지 않는 클라이언트에게 그 압축본을 그대로 내보내 응답이 깨지는 과정을 두 단계 타임라인으로 보여주는 도식">
+    <defs>
+      <marker id="c9s" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="c9r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#dc2626" text-anchor="middle"><tspan class="mono">Vary: Accept-Encoding</tspan>이 없을 때 — 캐시가 압축본과 원본을 섞는다</text>
+
+    <!-- t=0 -->
+    <text x="30" y="62" font-size="12" fill="#6b7280" class="mono" font-weight="700">t=0</text>
+    <rect x="72" y="42" width="176" height="52" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="160" y="62" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">최신 브라우저</text>
+    <text x="160" y="80" font-size="10.5" fill="#3b82f6" text-anchor="middle" class="mono">Accept-Encoding: gzip</text>
+    <line x1="248" y1="68" x2="290" y2="68" stroke="#475569" stroke-width="1.6" marker-end="url(#c9s)"/>
+    <rect x="296" y="42" width="200" height="52" rx="9" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="396" y="62" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">캐시 (CDN · 프록시)</text>
+    <text x="396" y="80" font-size="10.5" fill="#64748b" text-anchor="middle">사본 없음 → 오리진 호출</text>
+    <line x1="496" y1="68" x2="538" y2="68" stroke="#475569" stroke-width="1.6" marker-end="url(#c9s)"/>
+    <rect x="544" y="42" width="150" height="52" rx="9" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="619" y="72" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">오리진</text>
+    <line x1="694" y1="80" x2="736" y2="80" stroke="#16a34a" stroke-width="1.6" marker-end="url(#c9s)"/>
+    <rect x="742" y="42" width="354" height="52" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="756" y="61" font-size="11.5" fill="#b91c1c" font-weight="700">캐시 키 = <tspan class="mono">(GET, /api/articles)</tspan></text>
+    <text x="756" y="79" font-size="11" fill="#7f1d1d">← <tspan font-weight="700">인코딩 정보가 키에 없다.</tspan> gzip 압축본을 이 키로 저장</text>
+
+    <line x1="396" y1="98" x2="396" y2="126" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <line x1="919" y1="98" x2="919" y2="126" stroke="#dc2626" stroke-width="1.4" stroke-dasharray="4 3"/>
+
+    <!-- t=5 -->
+    <text x="30" y="152" font-size="12" fill="#6b7280" class="mono" font-weight="700">t=5</text>
+    <rect x="72" y="126" width="176" height="60" rx="9" fill="#fffbeb" stroke="#d97706"/>
+    <text x="160" y="145" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">gzip 미지원 클라이언트</text>
+    <text x="160" y="161" font-size="10" fill="#92400e" text-anchor="middle">오래된 임베디드 기기,</text>
+    <text x="160" y="175" font-size="10" fill="#92400e" text-anchor="middle">헤더를 안 보내는 배치 스크립트</text>
+    <line x1="248" y1="156" x2="290" y2="156" stroke="#475569" stroke-width="1.6" marker-end="url(#c9s)"/>
+    <rect x="296" y="126" width="200" height="60" rx="9" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="396" y="148" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">키 <tspan class="mono">(GET, /api/articles)</tspan></text>
+    <text x="396" y="166" font-size="11" fill="#dc2626" text-anchor="middle" font-weight="700">→ 저장된 gzip 압축본 발견</text>
+    <text x="396" y="181" font-size="10.5" fill="#64748b" text-anchor="middle">HIT — 캐시는 잘못한 게 없다</text>
+    <line x1="496" y1="156" x2="538" y2="156" stroke="#dc2626" stroke-width="2" marker-end="url(#c9r)"/>
+    <rect x="544" y="126" width="552" height="60" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="560" y="147" font-size="12.5" fill="#b91c1c" font-weight="700">압축본을 그대로 전달한다</text>
+    <text x="560" y="165" font-size="11.5" fill="#7f1d1d">클라이언트는 압축을 풀 줄 모르므로 <tspan font-weight="700">압축된 바이트를 JSON으로 파싱하려 한다</tspan></text>
+    <text x="560" y="181" font-size="12" fill="#b91c1c" font-weight="700">→ 응답 전체가 깨진다. 특정 클라이언트만, 캐시가 살아 있는 동안만 재현되는 사고다.</text>
+
+    <!-- reverse direction -->
+    <rect x="24" y="198" width="1072" height="30" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="44" y="217" font-size="11.5" fill="#92400e"><tspan font-weight="700">반대 방향도 성립한다.</tspan> 원본이 먼저 캐시되면 gzip을 기대한 쪽이 원본을 받는다 — <tspan font-weight="700">이쪽은 대개 무해하다</tspan>(<tspan class="mono">Content-Encoding</tspan>이 없어 해제를 시도하지 않는다).</text>
+
+    <!-- fix -->
+    <rect x="24" y="238" width="1072" height="56" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="44" y="259" font-size="13" fill="#14532d" font-weight="700">해결: <tspan class="mono">Vary: Accept-Encoding</tspan> → 캐시 키 = <tspan class="mono">(GET, /api/articles, Accept-Encoding 값)</tspan></text>
+    <text x="640" y="259" font-size="12" fill="#166534">압축본과 원본이 <tspan font-weight="700">서로 다른 칸에 저장</tspan>된다.</text>
+    <text x="44" y="280" font-size="12" fill="#166534">Nginx는 <tspan class="mono" font-weight="700">gzip_vary on;</tspan>으로 이 헤더를 자동으로 붙인다. <tspan font-weight="700">사전 압축(<tspan class="mono">gzip_static</tspan>)을 쓸 때도 마찬가지로 필요하다</tspan> — 실시간 압축이 아니라 잊기 쉬운 자리다.</text>
+  </svg>
+  <figcaption><b>도수 상관없이 먼저 만든 안경을 다음 손님에게 그대로 내주는 안경점</b>과 같다. 캐시는 규칙대로 동작했을 뿐이고, <b>"손님마다 도수가 다르다"고 알려주지 않은 쪽이 잘못</b>이다. 그 알림이 <code>Vary</code>다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>반대 방향의 부작용 — <code>Vary</code>는 <span style="color:#dc2626">캐시 히트율을 떨어뜨린다</span> <span class="badge senior">시니어 변별</span></h4>
+  <p><code>Vary</code>는 <b>캐시 키를 쪼갠다.</b> 그런데 <code>Accept-Encoding</code> 헤더의 실제 값은 클라이언트마다 미묘하게 다르다.</p>
+  <div class="chain">
+    <span class="chip b">gzip, deflate, br</span><span class="chip b">br, gzip</span><span class="chip b">gzip;q=1.0, *;q=0.5</span><span class="arrow">→</span><span class="chip r">문자열 그대로 키에 넣으면 사실상 같은 응답이 여러 칸에 중복 저장</span>
+  </div>
+  <p style="margin-bottom:0">그래서 CDN은 대개 <code>Accept-Encoding</code> 값을 <b>몇 개의 대표 값으로 정규화(normalize)해 키를 만든다.</b> <b>직접 리버스 프록시 캐시를 운영한다면 같은 정규화를 해 줘야 히트율이 유지된다.</b> — "<code>Vary</code>를 붙여야 한다"까지가 기본이고, <b>"붙이면 히트율이 떨어지므로 정규화한다"</b>까지 말하면 한 칸 더 간다.</p>
+</div>
+
+<div class="callout trap">
+  <span class="t">압축은 ETag에도 영향을 준다 — "압축을 켰더니 이어받기가 안 된다"의 정체</span>
+  20번 문서에서 본 대로 <b>강한 ETag는 "바이트 단위로 동일함"을 보증</b>하는데, <b>압축 필터가 본문 바이트를 바꾸면 그 보증이 깨진다.</b> 그래서 압축 계층을 통과한 응답의 ETag는 <b>약한 검증자(<code>W/"..."</code>)로 낮아지거나 제거된다</b> — Nginx는 약한 ETag로 낮춘다.<br>
+  그 결과 <b>범위 요청(이어받기)이 성립하지 않게 된다</b> — <code>If-Range</code>는 <b>강한 검증자만 받기 때문</b>이다. <b>대용량 다운로드 경로를 압축 대상에서 빼야 하는 또 하나의 이유</b>이기도 하다(어차피 대용량 파일은 대개 이미 압축된 포맷이다).
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>11-1. "설정을 다 했는데 압축이 안 됩니다" — 체크리스트 7</h3>
+
+<div class="memo red">
+  <h4>순서대로 짚으면 대부분 여기서 걸린다</h4>
+  <div class="grid g2" style="margin-top:8px">
+    <div class="tile red"><div class="k" style="font-family:inherit">① <code>gzip_proxied</code></div><div class="d">Nginx는 <b>앞단 프록시를 거쳐 온 요청</b>(<code>Via</code> 헤더가 붙은 요청)의 응답을 <b>기본적으로 압축하지 않는다.</b> CDN·LB 뒤에 있다면 <code>gzip_proxied any;</code>가 필요하다. <b>가장 흔한 원인.</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② 최소 크기 문턱</div><div class="d">응답이 <code>gzip_min_length</code>(또는 Spring Boot <code>min-response-size</code>, 기본 <b>2KB</b>)보다 작다. <b>의도한 동작인 경우가 많다</b> — 7-2를 다시 읽고 진짜 문제인지 판단한다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ <code>Content-Type</code> 불일치</div><div class="d">allowlist에 나열한 타입과 실제 응답 타입이 다르다. <b>커스텀 타입</b>(<code>application/vnd.api+json</code> 등)은 명시적으로 넣어야 한다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">④ 이미 <code>Content-Encoding</code>이 붙어 있다</div><div class="d">다른 계층이 이미 압축했다. <b>프록시는 재압축하지 않는다</b>(9절). 압축이 "안 되는" 게 아니라 <b>이미 되어 있는</b> 상태다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">⑤ 평문 HTTP인데 brotli를 기대했다</div><div class="d">브라우저가 <b>HTTPS에서만 <code>br</code>을 광고</b>한다. 로컬 개발 환경에서 gzip으로 조용히 떨어진다(4절).</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">⑥ brotli 모듈이 없다</div><div class="d">Nginx 표준 배포판에 <b>brotli는 들어 있지 않다.</b> <code>brotli_static on;</code>을 적어도 모듈이 없으면 동작하지 않는다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">⑦ 클라이언트가 요청하지 않았다</div><div class="d"><code>curl</code>은 <b>기본적으로 <code>Accept-Encoding</code>을 보내지 않는다</b> — <code>--compressed</code>가 필요하다. 그리고 <b>서버는 목록 중 아무것도 고르지 않아도 된다</b>(2절).</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">확인 명령</div><div class="d">응답 헤더에서 <code>Content-Encoding</code> · <code>Content-Length</code> · <code>Vary</code> 세 줄을 본다. 셋을 같이 봐야 <b>"압축됐나"와 "캐시가 안전한가"</b>를 동시에 판정할 수 있다.</div></div>
+  </div>
+</div>
+
+<div class="codehead plain"><span class="tag">확인</span> 헤더 세 줄로 판정한다</div>
+<pre><code><span class="cm"># -D - : 응답 헤더를 표준출력으로, -o /dev/null : 본문은 버림</span>
+curl -s -D - -o /dev/null \
+     -H <span class="st">'Accept-Encoding: br, gzip'</span> \
+     https://example.com/api/articles
+<span class="cm">
+# 봐야 할 세 줄:
+#   Content-Encoding: br        ← 무엇으로 압축됐나 (없으면 압축 안 된 것)
+#   Content-Length: 4820        ← 압축된 뒤의 크기
+#   Vary: Accept-Encoding       ← 없으면 캐시 사고 대기 상태 (10절)
+#
+# 압축 전후를 비교하려면 같은 요청을 identity 로 한 번 더 보낸다:
+#   -H 'Accept-Encoding: identity'  → 원본 크기를 얻는다</span></code></pre>
+
+<h3>11-2. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">트레이드오프 한 문장?</div><div class="d"><b>CPU 시간을 내고 전송량(대역폭 + 전송 시간)을 산다.</b> 비용 항목은 셋 — <b>서버 CPU · TTFB 지연 · 클라이언트 해제</b>(마지막은 무시 가능).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">압축하지 말아야 할 응답 셋?</div><div class="d"><b>압 · 작 · 비</b> — 이미 <b>압</b>축된 포맷 / 아주 <b>작</b>은 응답 / <b>비</b>밀값 + 반사 입력이 섞인 응답.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">gzip 최소 오버헤드와 구성?</div><div class="d"><b>23바이트</b> = 헤더 <b>10</b> + 저장 블록 헤더 <b>5</b> + 트레일러 <b>8</b>. 200B 응답이 <b>약 223B</b>가 된다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">작은 응답에서 전송 시간 이득이 0인 이유?</div><div class="d"><b>1,400바이트 이하는 압축하든 안 하든 패킷 하나</b>다. 패킷 수가 같으면 왕복 수도 같고 시간 차이가 없다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">레벨 판단 기준 한 줄?</div><div class="d"><b>1번 압축해 N번 쓰면 최고 레벨, 1번 압축해 1번 쓰면 낮은 레벨.</b> 근거는 <b>수확 체감</b> — 얻는 것은 완만해지고 내는 것은 가팔라진다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">정적 자산 처방?</div><div class="d">빌드 시점 <b>사전 압축</b>(<code>gzip -9</code>, <code>brotli -q 11</code>) → <code>gzip_static</code>/<code>brotli_static</code>으로 서빙. <b>런타임 압축 CPU 0.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">BREACH 3조건과 방어?</div><div class="d"><b>압 · 비 · 반</b>(압축된다 / 비밀값이 있다 / 반사된다). 방어는 <b>비밀값 분리 · 마스킹(<code>XorCsrfTokenRequestAttributeHandler</code>) · 경로 단위 제외</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">압축 켜면 딸려오는 세트?</div><div class="d"><b><code>Vary: Accept-Encoding</code> · 최소 크기 문턱 · 타입 allowlist · 스트리밍 경로 제외</b> (+ 프록시 뒤면 <code>gzip_proxied</code>).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>Vary</code> 누락 사고와 부작용?</div><div class="d">캐시 키에 인코딩이 없어 <b>압축본이 못 푸는 클라이언트에 전달 → 응답이 깨진다.</b> 반대로 <code>Vary</code>는 <b>키를 쪼개 히트율을 떨어뜨리므로 값을 정규화</b>한다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">두 Encoding 헤더의 차이?</div><div class="d"><code>Content-Encoding</code> = <b>종단 간</b>(본문의 성질, 최종 수신자가 푼다) / <code>Transfer-Encoding</code> = <b>홉 단위</b>(구간마다 다시 정해짐, HTTP/2에서는 안 쓴다).</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">외워둘 기본값 숫자?</div><div class="d">gzip 레벨 <b>1~9</b> · brotli <b>0~11</b> · Nginx <code>gzip_comp_level</code> <b>1</b> · <code>gzip_min_length</code> <b>20B</b> · Spring Boot <code>min-response-size</code> <b>2KB</b>.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">압축 위치 원칙과 예외?</div><div class="d">원칙은 <b>앞단 한 곳으로 일원화</b>(사용자 구간이 병목이고 유료). 예외는 <b>앞단이 L4라 HTTP 본문을 못 다룰 때 · 내부 구간이 리전 간일 때 · 응답 성격을 앱만 알 때</b>.</div></div>
+</div>
+
+<h3>11-3. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>이미지도 어쨌든 조금은 줄지 않나요? 왜 손해라고 하죠? <span class="badge core">필수</span><span class="hint">힌트: "안 줄어든다"로 끝내지 말고, 비용은 왜 그대로인지와 올바른 도구가 무엇인지를 붙인다</span></summary><div class="a">
+  <p>JPEG·PNG·WebP·AVIF는 <b>포맷 내부에서 이미 압축이 끝난 결과물</b>입니다. gzip이 찾는 것은 <b>반복되는 문자열</b>인데, 잘 압축된 데이터에는 반복이 거의 남아 있지 않습니다. 그래서 <b>절감이 사실상 0</b>이고, 압축 결과가 원본보다 커지는 경우에는 <b>gzip 컨테이너의 고정 오버헤드(최소 23바이트)만 붙습니다.</b></p>
+  <p>반면 <b>CPU 비용은 입력 크기에 비례해 그대로 듭니다.</b> 5MB 이미지를 압축하려면 5MB를 전부 훑어야 합니다. <b>이미지 비중이 큰 서비스에서는 이 낭비가 서버 전체 CPU에서 유의미한 몫</b>을 차지합니다.</p>
+  <p>이미지 용량을 줄이는 올바른 도구는 gzip이 아니라 <b>포맷 차원의 최적화</b>입니다 — WebP/AVIF 변환, 품질 파라미터 조정, 실제 표시 크기에 맞춘 리사이징이 <b>몇 배 단위의 효과</b>를 냅니다.</p>
+  <div class="rule red"><b>줄이려는 대상이 무엇인지에 따라 도구가 다르다</b>는 판단을 보여주는 것이 이 질문의 포인트</div>
+</div></details>
+
+<details class="q"><summary>압축 레벨은 어떻게 정하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 레벨 숫자를 말하면 진다. "몇 번 압축해 몇 번 쓰이는가"로 갈라야 한다</span></summary><div class="a">
+  <p><b>수확 체감 곡선을 근거로 답합니다.</b> 레벨을 올리면 압축기가 <b>더 넓은 범위를 더 꼼꼼히 탐색</b>하는데, <b>쉽게 찾을 수 있는 반복은 이미 낮은 레벨에서 다 잡혔기 때문에</b> 추가로 줄어드는 양은 점점 작아집니다. 반면 탐색 비용은 계속 늘어납니다. 그래서 어느 지점부터는 <b>조금 더 줄이려고 CPU를 훨씬 더 쓰는 손해 구간</b>이 됩니다.</p>
+  <p>그래서 판단 기준은 레벨 숫자가 아니라 <b>"몇 번 압축해서 몇 번 쓰이는가"</b>입니다.</p>
+  <p><b>정적 자산은 1번 압축해 N번 서빙</b>합니다. 압축 비용이 요청 수와 무관하므로 <b>빌드 시점에 최고 레벨(brotli 11, gzip 9)로 미리 압축</b>해 <code>.br</code>/<code>.gz</code> 파일을 만들어 두고, 웹서버가 그것을 골라 서빙하게 합니다(<code>brotli_static</code>/<code>gzip_static</code>). 빌드가 몇 초 길어지는 대가로 <b>모든 사용자가 더 작은 파일을 받습니다.</b></p>
+  <p><b>동적 응답은 1번 압축해 1번 서빙</b>합니다. 압축 비용이 요청 수에 그대로 비례하므로 <b>낮은 레벨에서 멈춥니다.</b> Nginx의 <code>gzip_comp_level</code> 기본값이 라이브러리 기본(6)이 아니라 <b>1</b>인 것도 <b>실시간 압축을 전제한 선택</b>입니다.</p>
+  <p style="margin-bottom:0">마지막으로 <b>최종 결정은 실측으로</b> 합니다. 자기 서비스의 대표 응답 몇 개를 레벨별로 압축해 <b>크기와 소요 시간</b>을 재고, 부하 테스트로 <b>CPU 사용률과 지연 변화</b>를 확인합니다. <b>"기본값이 그래서요"가 아니라 측정 근거를 대는 것</b>이 시니어의 답변입니다.</p>
+</div></details>
+
+<details class="q"><summary>압축했는데 TTFB(첫 바이트까지의 시간)가 늘었다는 리포트가 왔습니다. 왜죠? <span class="badge core">필수</span><span class="hint">힌트: "이득/손해/고장" 세 갈래로 나누면 답이 정리된다</span></summary><div class="a">
+  <p>압축 계층은 <b>어느 정도 데이터를 모아야 압축 블록을 내보낼 수 있습니다.</b> 그래서 첫 바이트가 소켓으로 나가는 시각이 압축 없을 때보다 늦습니다. <b>응답 전체는 더 빨리 끝나지만 시작이 늦어지는 거래</b>입니다. 이 거래가 남는지 손해인지는 <b>응답 성격</b>이 정합니다.</p>
+  <p><b>큰 응답은 이득입니다.</b> 시작이 조금 늦어도 전송할 바이트가 크게 줄어 <b>완료 시각이 앞당겨집니다.</b></p>
+  <p><b>작은 응답은 손해입니다.</b> 어차피 <b>패킷 하나로 끝날 크기</b>라 전송 시간 이득이 없는데 압축 지연만 추가됩니다. <code>gzip_min_length</code> 같은 <b>최소 크기 문턱</b>을 두는 이유입니다.</p>
+  <p><b>스트리밍은 손해가 아니라 고장입니다.</b> SSE처럼 이벤트를 즉시 흘려보내야 하는 응답이 압축 버퍼에 갇히면 <b>여러 이벤트가 뭉쳐서 한꺼번에 도착</b>합니다. 실시간성이라는 존재 이유가 사라집니다.</p>
+  <div class="rule red">여기서 반드시 짚어야 할 것 — <b>압축 버퍼링과 프록시 버퍼링은 별개의 층</b>이다. <code>proxy_buffering off</code>만 끄고 gzip을 켜 둔 채로는 증상이 그대로 남는다</div>
+  <p style="margin-bottom:0">대응은 <b>최소 크기 문턱으로 작은 응답 제외 · 스트리밍 경로는 압축 제외(그리고 프록시 버퍼링도 함께 해제) · 큰 응답만 압축 대상으로 남기기</b>입니다.</p>
+</div></details>
+
+<details class="q"><summary>HTTPS면 어차피 암호화되는데 압축이 왜 보안 문제가 되나요? <span class="badge bonus">가산점</span><span class="hint">힌트: "TLS가 못 숨기는 것"이 무엇인지에서 출발한다. 그리고 조건을 정확히 세 개로 말한다</span></summary><div class="a">
+  <p><b>TLS는 내용을 숨기지만 길이는 숨기지 못하기 때문</b>입니다. 암호문을 관측하는 사람이 <b>내용은 못 읽어도 몇 바이트가 오갔는지는 볼 수 있습니다.</b></p>
+  <p>그리고 압축은 <b>내용의 반복 정도를 길이에 반영</b>합니다. 응답 안에 같은 문자열이 두 번 나오면 뒤엣것이 <b>짧은 참조로 접혀</b> 결과가 작아집니다.</p>
+  <p>이 둘을 합치면 공격이 성립합니다. 한 응답 안에 <b>비밀값(CSRF 토큰 등)</b>과 <b>공격자가 조작해 응답에 반사시킬 수 있는 입력</b>이 함께 있다면, 공격자는 <b>추측값을 넣어 보고 압축 후 길이가 줄어드는지만 관찰</b>하면 됩니다. 줄었다면 추측이 비밀값과 겹쳤다는 뜻입니다. 이런 식으로 <b>한 글자씩 좁혀 가는 것이 BREACH 계열 부채널 공격</b>입니다.</p>
+  <div class="rule red">조건을 정확히 말하는 것이 이 질문의 핵심 — <b>① 응답이 압축되고 ② 그 안에 비밀값이 있고 ③ 같은 응답에 공격자 제어 입력이 반사</b>되는 셋이 <b>동시에</b> 성립해야 한다</div>
+  <p>정적 자원처럼 <b>비밀이 없는 응답은 해당이 없으므로</b> "압축은 위험하다"는 일반화는 틀렸습니다.</p>
+  <p style="margin-bottom:0">방어는 <b>조건을 깨는 것</b>입니다 — 비밀값을 압축되는 응답 본문에서 빼거나, <b>요청마다 다른 값으로 마스킹</b>해 반복이 생기지 않게 하거나(Spring Security의 <code>XorCsrfTokenRequestAttributeHandler</code>가 이 목적으로 제공됩니다), 해당 엔드포인트만 압축에서 제외합니다. 참고로 <b>TLS 계층 자체의 압축</b>을 노렸던 <b>CRIME</b> 때문에 <b>TLS 1.3에서는 압축 기능이 제거됐고</b>, 남은 것은 <b>우리가 켜는 HTTP 응답 압축</b> 쪽입니다.</p>
+</div></details>
+
+<details class="q"><summary>요청(업로드) 본문도 압축하면 안 되나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 응답과 결정적으로 다른 점이 하나 있다. 그리고 받아주기로 했다면 반드시 딸려오는 방어가 있다</span></summary><div class="a">
+  <p><b>응답과 달리 요청 압축은 협상 절차가 없습니다.</b> 응답 쪽은 클라이언트가 <code>Accept-Encoding</code>으로 자기가 풀 수 있는 방식을 먼저 알려주지만, <b>반대 방향에는 그런 사전 통보 수단이 표준에 없습니다.</b> 클라이언트는 서버가 gzip 요청 본문을 받아줄지 미리 알 수 없습니다.</p>
+  <p>그래서 요청 압축은 <b>양쪽이 사전 합의한 구간에서만</b> 씁니다 — 자사 모바일 앱과 자사 API, 서버 간 내부 호출 같은 경우입니다. <b>불특정 클라이언트를 받는 공개 API에서는 쓰기 어렵습니다.</b> (서버가 이해 못 하는 <code>Content-Encoding</code>을 받으면 <b><code>415 Unsupported Media Type</code></b>으로 거절하고 지원 목록을 알려주도록 규격에 정해져 있지만, 클라이언트가 그것을 보고 재시도하게 만들려면 결국 클라이언트 쪽 구현이 필요합니다.)</p>
+  <div class="rule red">받아주기로 했다면 반드시 함께 해야 하는 방어 — <b>압축 해제 폭탄(zip bomb) 대비</b></div>
+  <p style="margin-bottom:0">수십 KB짜리 요청이 압축을 풀면 <b>수 GB</b>가 되도록 만들 수 있고, 서버가 그것을 메모리에 펼치면 그대로 <b>OOM</b>입니다. 그래서 <b>압축 전 크기가 아니라 압축 해제 후 크기에 상한을 걸고, 해제 중에 상한을 넘으면 즉시 중단</b>해야 합니다. <b>다 풀어 놓고 크기를 재면 이미 늦습니다.</b> 그리고 요청 본문 크기 제한(<code>server.tomcat.max-http-form-post-size</code>, Nginx의 <code>client_max_body_size</code>)은 <b>압축된 크기만 보므로 이 방어를 대신하지 못한다</b>는 점까지 말하면 좋습니다.</p>
+</div></details>
+
+<details class="q"><summary>gzip과 deflate는 뭐가 다른가요? <code>Accept-Encoding</code>에 <code>deflate</code>도 보이던데요<span class="hint">힌트: 하나는 알고리즘 이름, 하나는 컨테이너 이름이다</span></summary><div class="a">
+  <p><b>DEFLATE는 압축 알고리즘의 이름</b>이고, <b>gzip은 그 DEFLATE 데이터에 헤더와 무결성 검사값(CRC32)을 씌운 컨테이너 형식</b>입니다. 7-2에서 계산한 <b>23바이트 오버헤드가 바로 그 "씌운 부분"</b>입니다 — 헤더 10 + 저장 블록 5 + 트레일러 8.</p>
+  <p>HTTP의 <code>deflate</code> 인코딩은 <b>구현마다 해석이 갈렸던 역사</b>가 있습니다. 어떤 구현은 zlib 래퍼를 붙여 보내고 어떤 구현은 raw DEFLATE를 그대로 보내서, <b>받는 쪽이 어느 쪽인지 추측해야 하는 상황</b>이 생겼습니다. 그래서 <b>상호운용성이 낮고, 실무에서는 굳이 켜지 않습니다.</b></p>
+  <div class="rule">실무의 선택지는 사실상 <b>gzip(호환성의 기본값)과 br(더 작게)</b> 둘이다</div>
+  <p style="margin-bottom:0">면접에서 <b>"deflate는 왜 안 쓰나요"</b>가 나오면 <b>"알고리즘 이름과 HTTP 인코딩 이름이 다른 층이고, 후자는 구현 혼선 때문에 신뢰도가 낮다"</b>로 답하면 충분합니다.</p>
+</div></details>
+
+<details class="q"><summary>HTTP/2를 쓰면 헤더가 압축되니 gzip은 필요 없지 않나요? <span class="badge trap">함정</span><span class="hint">힌트: 두 압축은 <b>대상</b>이 다르다</span></summary><div class="a">
+  <p><b>대상이 다릅니다.</b> HTTP/2의 <b>HPACK</b>(HTTP/3는 QPACK)은 <b>헤더 압축</b>입니다. 같은 연결에서 반복되는 헤더 필드를 인덱스로 줄이는 것이지, <b>본문에는 손대지 않습니다.</b> 본문 압축은 <b>HTTP 버전과 무관하게 여전히 <code>Content-Encoding</code>으로</b> 합니다.</p>
+  <p>3절과 이어서 정리하면 이렇습니다.</p>
+  <div class="chain">
+    <span class="chip b">Content-Encoding: gzip / br</span><span class="arrow">=</span><span class="chip g">본문 압축 — HTTP 버전 무관, 그대로 쓴다</span>
+  </div>
+  <div class="chain">
+    <span class="chip w">HPACK / QPACK</span><span class="arrow">=</span><span class="chip g">헤더 압축 — 프로토콜이 알아서 한다</span>
+  </div>
+  <div class="chain">
+    <span class="chip r">Transfer-Encoding: chunked</span><span class="arrow">=</span><span class="chip r">HTTP/2 이상에서는 쓰지 않는다 (프레임이 대신)</span>
+  </div>
+  <p style="margin-bottom:0"><b>"HTTP/2로 올렸으니 압축 설정을 지워도 된다"는 잘못된 결론</b>입니다. 헤더는 어차피 수백 바이트 수준이고, <b>줄여야 할 것은 수십~수백 KB짜리 본문</b>입니다.</p>
+</div></details>
+
+<details class="q"><summary>SVG는 이미지인데 왜 압축 대상이고, woff2는 폰트인데 왜 제외인가요?<span class="hint">힌트: 확장자가 아니라 바이트의 성질로 판단한다</span></summary><div class="a">
+  <p><b>SVG는 이름만 이미지고 실제 내용은 XML 텍스트</b>입니다. 태그와 속성 이름이 계속 반복되므로 <b>압축률이 매우 좋습니다.</b> 그래서 <code>gzip_types</code>에 <code>image/svg+xml</code>을 넣습니다 — <b><code>image/</code>로 시작한다고 빼면 손해</b>입니다.</p>
+  <p>반대로 <b>woff2는 폰트를 brotli로 압축해 담는 형식</b>입니다. 이미 압축된 것을 다시 gzip으로 감싸는 셈이라 <b>줄지 않고 CPU만 씁니다.</b></p>
+  <div class="rule">판단 기준은 <b>확장자나 MIME 접두어가 아니라 "그 바이트에 반복이 남아 있는가"</b></div>
+  <p style="margin-bottom:0">같은 기준으로 갈라 보면 — <b>압축 대상</b>: HTML, CSS, JS, JSON, XML, SVG, 일반 텍스트, CSV. <b>제외</b>: JPEG/PNG/WebP/AVIF, 동영상, zip/gz/7z, woff2, 그리고 <b>이미 <code>Content-Encoding</code>이 붙어 온 응답</b>.</p>
+</div></details>
+
+<details class="q"><summary>정적 자산에 <code>gzip_static</code>을 켰는데 <code>.br</code> 파일이 서빙되지 않습니다. 뭘 확인하죠?<span class="hint">힌트: 원인이 셋이고, 그중 둘은 4절에 이미 나왔다</span></summary><div class="a">
+  <p>세 가지를 순서대로 확인합니다.</p>
+  <p><b>① brotli 모듈이 있는가.</b> Nginx는 brotli를 <b>기본 내장하지 않습니다.</b> <code>brotli_static on;</code>을 적었는데 모듈이 없으면 설정이 무시되거나 기동이 실패합니다.</p>
+  <p><b>② 요청이 <code>br</code>을 광고했는가.</b> 브라우저는 보통 <b>HTTPS에서만</b> <code>br</code>을 보냅니다. 로컬 평문 환경에서 확인 중이라면 <code>curl -H 'Accept-Encoding: br'</code>로 직접 광고해 봐야 합니다.</p>
+  <p><b>③ 파일 이름 규칙이 맞는가.</b> <code>brotli_static</code>은 <b>요청 경로에 <code>.br</code>을 덧붙인 이름</b>의 파일을 찾습니다 — <code>/static/app.js</code> 요청이면 <code>/static/app.js.br</code>입니다. 빌드 스크립트가 <b><code>-k</code>(원본 유지) 옵션 없이</b> 압축해 원본이 사라졌거나, 다른 디렉터리에 떨어뜨렸으면 못 찾습니다.</p>
+  <div class="rule red">그리고 하나 더 — <b>사전 압축을 쓸 때도 <code>Vary: Accept-Encoding</code>은 필요하다.</b> 실시간 압축이 아니라 <code>gzip_vary</code>를 잊기 가장 쉬운 자리다</div>
+  <p style="margin-bottom:0">확인은 <b>응답 헤더의 <code>Content-Encoding</code>이 <code>br</code>인지</b>와 <b><code>Content-Length</code>가 원본보다 작은지</b>를 같이 보면 됩니다.</p>
+</div></details>
+
+<details class="q"><summary>대용량 파일 다운로드 경로에 압축을 켜면 안 되는 이유를 두 가지 말해보세요 <span class="badge trap">함정</span><span class="hint">힌트: 하나는 7절, 다른 하나는 10절에 있다. 두 번째가 진짜 변별 포인트다</span></summary><div class="a">
+  <p><b>① 대개 이미 압축된 포맷입니다.</b> 대용량 다운로드의 대부분은 동영상·이미지·아카이브(zip)입니다. <b>줄지 않는데 CPU는 입력 크기에 비례해 그대로 듭니다</b> — 5GB 파일이면 5GB를 전부 훑습니다.</p>
+  <p><b>② ETag가 약해져 이어받기가 깨집니다.</b> 이게 진짜 변별 포인트입니다. <b>강한 ETag는 "바이트 단위로 동일함"을 보증</b>하는데 <b>압축 필터가 본문 바이트를 바꾸면 그 보증이 깨지므로</b>, 압축 계층을 통과한 응답의 ETag는 <b>약한 검증자(<code>W/"..."</code>)로 낮아지거나 제거</b>됩니다(Nginx는 약한 ETag로 낮춥니다). 그런데 <b><code>If-Range</code>는 강한 검증자만 받으므로</b> 범위 요청이 성립하지 않게 됩니다.</p>
+  <div class="rule red">"압축을 켰더니 대용량 파일 <b>이어받기가 안 된다</b>"는 현상의 정체가 이것이다</div>
+  <p style="margin-bottom:0">덧붙이면 <b>③ 압축 버퍼링으로 TTFB도 늘어납니다</b>(8절). 대용량 다운로드는 사용자가 <b>"다운로드가 시작됐다"는 신호를 빨리 봐야 하는</b> 경로라 이 지연도 체감됩니다.</p>
+</div></details>
+
+<details class="q"><summary>압축을 켜면 서버 CPU가 얼마나 오르나요? 어떻게 확인하죠? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 숫자를 대면 진다. 대신 "무엇을 어떤 순서로 재는지"를 말한다</span></summary><div class="a">
+  <p><b>숫자를 외워 말할 수 없습니다.</b> 응답 크기·구조·레벨·트래픽 패턴에 따라 편차가 커서, "gzip을 켜면 CPU가 N% 오릅니다"는 <b>근거 없는 문장</b>입니다. 대신 <b>재는 순서</b>를 말하면 됩니다.</p>
+  <div class="step"><span class="n">1</span><div class="body"><b>대표 응답을 고른다.</b> 트래픽 상위 엔드포인트 몇 개의 실제 응답 본문을 파일로 떠 둔다. <b>합성 데이터가 아니라 진짜 응답</b>이어야 한다 — 압축률은 데이터의 반복이 정하기 때문이다.</div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>레벨별로 압축해 크기와 시간을 잰다.</b> 레벨을 1부터 올려 가며 <b>압축 후 크기</b>와 <b>압축 소요 시간</b>을 기록한다. 여기서 <b>5절의 두 곡선이 우리 데이터에서 어디서 꺾이는지</b>가 보인다.</div></div>
+  <div class="step"><span class="n">3</span><div class="body"><b>부하 테스트로 실제 영향을 본다.</b> 압축 off / 낮은 레벨 / 높은 레벨 세 조건으로 같은 부하를 걸고 <b>CPU 사용률 · TTFB · p99 지연 · 처리량</b>을 비교한다. <b>CPU만 보면 안 된다</b> — CPU가 올라 처리량이 떨어지면 큐잉으로 지연이 비선형으로 튄다.</div></div>
+  <div class="step ok"><span class="n">4</span><div class="body"><b>절감액과 대조한다.</b> 아웃바운드 바이트 감소량 × 대역폭 단가가 <b>얻는 것</b>이고, CPU 증가분이 <b>내는 것</b>이다. <b>두 값을 같은 단위로 놓고 비교하는 것</b>이 이 주제의 최종 판단이다.</div></div>
+  <p style="margin-bottom:0">그리고 켠 뒤에는 <b>세 지표를 대시보드에 남깁니다</b> — <b>CPU 사용률 · TTFB(또는 p99) · 아웃바운드 바이트</b>. 이 셋이 <b>내는 것과 얻는 것을 동시에 보여주는 최소 조합</b>입니다.</p>
+</div></details>
+
+<details class="q"><summary>CDN을 쓰면 오리진 압축은 꺼도 되나요?<span class="hint">힌트: 판단 기준은 "어디가 병목이고 어디가 유료 구간인가"</span></summary><div class="a">
+  <p><b>대체로 그렇습니다.</b> CDN에서 압축하면 <b>오리진은 아예 손을 뗄 수 있고</b>, 앱 CPU를 비즈니스 로직에 쓸 수 있습니다. 사용자 구간(가장 느리고 유료인 구간)에서 압축이 걸리므로 <b>목적도 달성됩니다.</b></p>
+  <p>다만 <b>오리진과 CDN 사이 구간은 압축되지 않은 채 오갑니다.</b> 그 구간의 트래픽 비용이 큰 구조라면 <b>오리진에서 압축해 보내는 편이 나을 수도 있습니다.</b></p>
+  <div class="rule">판단 기준은 하나 — <b>"어디가 병목이고 어디가 유료 구간인가"</b></div>
+  <p style="margin-bottom:0">그리고 어느 쪽을 택하든 <b>책임 지점을 한 곳으로 정해야 합니다.</b> 양쪽에서 동시에 켜 두면 이중 압축이 실제로 일어나지는 않지만(프록시는 <code>Content-Encoding</code>이 붙은 응답을 재압축하지 않습니다), <b>레벨 조정과 예외 경로(SSE·민감 경로) 관리가 어디에도 걸리지 않는 상태</b>가 됩니다. 그게 진짜 위험입니다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  응답 압축은 <b>CPU로 전송량을 사는 교환</b>이라 반복이 많은 텍스트 응답에서는 남는 장사지만, <b>이미 압축된 포맷</b>(줄지 않고 CPU만 태운다)·<b>수백 바이트 응답</b>(gzip 최소 오버헤드 <b>23바이트</b>를 못 건지고 어차피 패킷 하나다)·<b>비밀값과 공격자 입력이 함께 실리는 응답</b>(BREACH 부채널)은 예외로 걸러야 하며, 이 주제의 진짜 결론은 gzip이냐 brotli냐가 아니라 <b>압축 레벨의 수확 체감</b>이다 — <b>정적 자산은 빌드 시점에 최고 레벨로 사전 압축</b>해 <code>gzip_static</code>/<code>brotli_static</code>으로 서빙하고 <b>동적 응답은 낮은 레벨로 실시간 압축</b>하며, 압축을 켠 순간 <code>Vary: Accept-Encoding</code>으로 캐시가 압축본과 원본을 섞지 않게 하고 <b>스트리밍 경로는 압축 버퍼링에서 빼는 것</b>까지가 한 세트다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/08-network-http/21-response-compression-tradeoffs.md</code> · 이어서 볼 문서: HTTP/1.1·2·3과 HOL 블로킹(09) · Nginx·Tomcat 타임아웃·버퍼 불일치(13) · WebSocket·SSE·폴링 선택(14) · 대용량 파일 업로드/다운로드(15) · L4 vs L7 로드밸런서(16) · HTTP 캐싱 헤더와 304(20)</p>
+</main>
+</body>
+</html>

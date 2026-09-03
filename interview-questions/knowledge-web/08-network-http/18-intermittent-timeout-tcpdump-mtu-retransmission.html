@@ -1,0 +1,1669 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>간헐적 timeout의 네트워크 계층 추적 — tcpdump·MTU·재전송으로 앱 로그 밖의 범인을 잡는다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">08 네트워크 · HTTP &nbsp;|&nbsp; 고난이도⭐⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>간헐적 timeout의 네트워크 계층 추적<br><span class="sub">tcpdump · MTU · 재전송으로 앱 로그 밖의 범인을 잡는다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"특정 사용자만 간헐적으로 timeout이 발생합니다. 네트워크 계층에서 어떻게 추적하나요? (tcpdump, MTU, retransmission)"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>"특정 사용자만 + 간헐적"이라는 패턴 자체가 첫 단서다.</b> 코드 버그면 모두에게, 서버 과부하면 그 시간대 모두에게 나타난다. 특정 사용자에게만 나는 timeout은 <b>그 사용자의 네트워크 경로에 의존하는 문제</b>(MTU/PMTUD 블랙홀, 특정 구간 패킷 유실과 재전송, 중간 장비의 유휴 커넥션 드랍)일 가능성이 높다. 추적 절차는 <b>(1) 상관관계로 용의 범위를 좁히고</b> — 어떤 사용자·요청 크기·타이밍·서버 인스턴스에서만 나는가, <b>(2) tcpdump로 패킷이 실제로 어디까지 도달했는지 확인하고</b> — 필요하면 양단 동시 캡처로 유실 구간을 특정, <b>(3) 재전송·MTU·유휴 드랍 각각의 시그니처와 대조하는</b> 순서다. timeout은 앱 로그에 <b>"일어난 일"이 아니라 "일어나지 않은 일"로만</b> 남기 때문에, 스택 아래로 내려가야 잡힌다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>패턴을 먼저 읽는다</b> — "특정 사용자만"은 <b>범위가 좁다는 뜻이 아니라 원인이 경로에 있다는 뜻</b>이다. 코드 버그라면 전원이, 과부하라면 그 시간대 전원이 겪는다. 그래서 <b>크기·시간·대상·경로 네 축</b>으로 현상을 쪼개 가설부터 좁힌다 — <b>tcpdump는 그다음이다.</b></div></li>
+    <li><span class="n">2</span><div><b>증거가 앱 로그에 없는 것은 덜 찍어서가 아니라 원리적으로 없기 때문이다</b> — timeout은 <b>부재(不在)의 기록</b>이라 "무엇이 없었는지"만 알려주고 "왜 없었는지"는 하나도 알려주지 않는다. 게다가 <b>OS의 TCP 스택은 유실이 나도 앱 몰래 재전송</b>하므로, 앱이 보는 것은 "왜인지 모르게 느린 한 건"뿐이다. 그래서 <b>패킷 계층에서 직접 채집</b>한다.</div></li>
+    <li><span class="n">3</span><div><b>조사의 목표는 단 하나 — "패킷이 어디까지 갔고 어디서부터 안 갔는가"의 확정</b>이다. 양단(또는 LB 앞뒤) 동시 캡처의 <b>이분법</b>으로 구간을 자르고, 그 구간에서 <b>재전송(RTO 백오프가 p99 꼬리를 만든다)</b> · <b>PMTUD 블랙홀(큰 패킷만 조용히 사라진다)</b> · <b>유휴 드랍(FIN도 RST도 없이 타임아웃을 꽉 채운다)</b> 세 시그니처와 대조한다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">timeout은 "부재의 기록" — connect vs read</a></li>
+    <li><a href="#s2">앱 로그가 원리적으로 못 보는 것</a></li>
+    <li><a href="#s3">1단계 — 네 축으로 패턴 쪼개기 (크·시·대·경)</a></li>
+    <li><a href="#s4">로그부터 쪼갠다 — LB 구간 시간 남기기</a></li>
+    <li><a href="#s5">2단계 — tcpdump를 정확히 알고 안전하게 켜기</a></li>
+    <li><a href="#s6">캡처에서 읽는 시그니처 5종</a></li>
+    <li><a href="#s7">이분법 — 양단 동시 캡처로 구간 특정</a></li>
+    <li><a href="#s8">범인 ① 재전송과 RTO 백오프 산수</a></li>
+    <li><a href="#s9">범인 ② PMTUD 블랙홀</a></li>
+    <li><a href="#s10">범인 ③ 중간 장비의 유휴 드랍</a></li>
+    <li><a href="#s11">세 범인 감별표 · 평소에 깔아둘 것</a></li>
+    <li><a href="#s12">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "특정 사용자만 간헐적으로 timeout이 발생합니다. 네트워크 계층에서 어떻게 추적하나요? (tcpdump, MTU, retransmission)"</p>
+  <p><b>출제 의도</b>: 애플리케이션 로그에 안 남는 문제를 tcpdump까지 내려가 잡는 능력은 흔치 않고, 이게 되는 사람은 팀에서 <b>"미제 사건 해결사"</b>가 된다. <b>스택 아래로 내려가길 두려워하지 않는지</b> — 프레임워크가 가려주는 계층 밑에서 무슨 일이 벌어지는지 직접 확인할 수 있는지를 본다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 네 가지</span>
+    ① <b>"네트워크가 이상한 것 같아요"에서 멈추는 것</b> → 7절의 <b>이분법</b>으로 <b>구간을 확정</b>해 소유자에게 이관하는 데까지 간다.<br>
+    ② <b>바로 tcpdump부터 켜는 것</b> → 3절에서 <b>네 축(크·시·대·경)</b>으로 가설을 좁히는 것이 왜 캡처보다 먼저인지 보여준다.<br>
+    ③ <b>"재전송이 보인다"를 결론으로 착각하는 것</b> → 8절에서 재전송은 <b>증상이지 원인이 아니라는 것</b>과, <b>RTO 백오프 산수로 3초 타임아웃이 정확히 터지는</b> 과정을 계산한다.<br>
+    ④ <b>운영 서버에서 도구를 쓸 줄 아는가</b> → 5절에서 <b>디스크·CPU·개인정보</b> 세 수칙과 <b>캡처 필터 vs 표시 필터</b>의 구분을 짚는다 — 도구를 아는 것과 운영 중인 서버에서 그 도구를 쓸 수 있는 것은 다른 능력이다.
+  </div>
+</div>
+
+<div class="chain" style="margin-top:18px">
+  <span class="chip b">① 패턴으로 용의 범위 좁히기</span><span class="arrow">→</span>
+  <span class="chip b">② tcpdump로 "어디까지 갔나" 사실 확인</span><span class="arrow">→</span>
+  <span class="chip b">③ 세 시그니처와 대조</span><span class="arrow">→</span>
+  <span class="chip g">구간 소유자에게 증거와 함께 이관</span>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. timeout은 "부재의 기록"이다 — connect vs read</h2>
+
+<p>추적을 시작하기 전에 용어부터 정확히 잡아야 한다. Java에서 만나는 timeout은 대체로 두 종류이고, <b>둘은 완전히 다른 사건</b>이다. 이 구분을 못 하면 조사가 시작부터 엉뚱한 방향으로 간다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="클라이언트와 서버의 시퀀스 다이어그램. 위쪽에 SYN, SYN-ACK, ACK 세 화살표가 오가는 구간이 connect timeout 창이고, 그 아래 요청 바이트 전송과 응답 첫 바이트 사이 구간이 read timeout 창이다. connect timeout이 나면 요청 바이트를 한 개도 못 보낸 것이고, read timeout이 나면 서버가 이미 처리를 끝냈을 수도 있다">
+    <defs>
+      <marker id="a0r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a0l" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <rect x="58" y="20" width="164" height="34" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="140" y="42" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">클라이언트</text>
+    <rect x="478" y="20" width="164" height="34" rx="8" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="560" y="42" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">서버</text>
+    <line x1="140" y1="54" x2="140" y2="300" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+    <line x1="560" y1="54" x2="560" y2="300" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+
+    <line x1="140" y1="86" x2="554" y2="86" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a0r)"/>
+    <text x="350" y="80" font-size="11.5" fill="#1d4ed8" text-anchor="middle" class="mono">SYN</text>
+    <line x1="560" y1="112" x2="146" y2="112" stroke="#16a34a" stroke-width="1.8" marker-end="url(#a0l)"/>
+    <text x="350" y="106" font-size="11.5" fill="#166534" text-anchor="middle" class="mono">SYN-ACK</text>
+    <line x1="140" y1="138" x2="554" y2="138" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a0r)"/>
+    <text x="350" y="132" font-size="11.5" fill="#1d4ed8" text-anchor="middle" class="mono">ACK</text>
+
+    <path d="M108 78 L96 78 L96 146 L108 146" fill="none" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="86" y="116" font-size="11.5" fill="#b91c1c" text-anchor="end" font-weight="700">connect</text>
+    <text x="86" y="130" font-size="11.5" fill="#b91c1c" text-anchor="end" font-weight="700">timeout 창</text>
+
+    <line x1="140" y1="192" x2="554" y2="192" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a0r)"/>
+    <text x="350" y="186" font-size="11.5" fill="#1d4ed8" text-anchor="middle">요청 바이트 전송 완료</text>
+    <rect x="500" y="204" width="120" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="560" y="221" font-size="10.5" fill="#166534" text-anchor="middle">서버가 처리 중</text>
+    <line x1="560" y1="252" x2="146" y2="252" stroke="#16a34a" stroke-width="1.8" marker-end="url(#a0l)"/>
+    <text x="350" y="246" font-size="11.5" fill="#166534" text-anchor="middle">응답 첫 바이트</text>
+
+    <path d="M108 184 L96 184 L96 260 L108 260" fill="none" stroke="#d97706" stroke-width="1.8"/>
+    <text x="86" y="216" font-size="11.5" fill="#b45309" text-anchor="end" font-weight="700">read</text>
+    <text x="86" y="230" font-size="11.5" fill="#b45309" text-anchor="end" font-weight="700">timeout 창</text>
+
+    <rect x="672" y="70" width="424" height="76" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="690" y="92" font-size="12.5" fill="#b91c1c" font-weight="700">connect timeout이 터졌다면</text>
+    <text x="690" y="112" font-size="11.5" fill="#7f1d1d">요청 바이트를 <tspan font-weight="700">한 개도 못 보냈다.</tspan> 상대 서버는 우리가</text>
+    <text x="690" y="129" font-size="11.5" fill="#7f1d1d">뭘 하려 했는지조차 모른다 → <tspan font-weight="700">재시도가 안전하다.</tspan></text>
+
+    <rect x="672" y="176" width="424" height="94" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="690" y="198" font-size="12.5" fill="#b45309" font-weight="700">read timeout이 터졌다면</text>
+    <text x="690" y="218" font-size="11.5" fill="#78350f">서버가 요청을 못 받은 것이 <tspan font-weight="700">아니다.</tspan> 이미 처리를 끝냈는데</text>
+    <text x="690" y="235" font-size="11.5" fill="#78350f">응답이 돌아오는 길에 사라졌을 수도 있다.</text>
+    <text x="690" y="255" font-size="11.5" fill="#7f1d1d" font-weight="700">→ 멱등하지 않은 요청의 재시도는 이중 처리를 만든다.</text>
+
+    <rect x="58" y="284" width="1038" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="78" y="306" font-size="12" fill="#1d4ed8">두 창 어느 쪽에서 터졌는지는 <tspan font-weight="700">예외 타입과 스택으로 즉시 구분된다</tspan> — 이것만으로도 "연결 자체가 안 되는가"와 "연결은 되는데 응답이 안 오는가"라는 가장 큰 분기가 갈린다.</text>
+  </svg>
+  <figcaption><b>같은 "timeout"이라도 창이 다르다.</b> <code>connect timeout</code>은 TCP 3-way handshake가 끝나기까지의 상한, <code>read timeout</code>(응답 timeout)은 요청을 다 보낸 뒤 응답 첫 바이트까지의 상한이다. Java에서는 후자가 <code>SocketTimeoutException: Read timed out</code>으로 나타난다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>이 문제의 성격을 한 문장으로 — timeout은 <span style="color:#dc2626">부재(不在)에 대한 기록</span>이다</h4>
+  <p><b>timeout은 "무언가 일어났다"는 기록이 아니라 "정해진 시간 동안 아무것도 오지 않았다"는 기록</b>이다. 부재에 대한 기록이라서, <b>무엇이 없었는지는 알려주지만 왜 없었는지는 하나도 알려주지 않는다.</b></p>
+  <p style="margin-bottom:0"><b>비유</b> — 택배가 안 왔다는 사실은 집에서 알 수 있지만, <b>택배가 어느 물류센터에서 멈췄는지는 집에서 알 수 없다.</b> 알려면 송장 번호로 각 구간의 통과 기록을 조회해야 한다. <b>네트워크에서 그 통과 기록에 해당하는 것이 패킷 캡처다.</b></p>
+</div>
+
+<div class="callout info">
+  <span class="t">이 구분이 조사 방향을 가른다</span>
+  <b>connect가 터졌다</b> → 볼 곳은 <b>연결 수립 경로</b>(방화벽이 SYN을 버리는가, listen 백로그가 넘치는가, 보안그룹·라우팅). 캡처에서는 <b>SYN만 반복되고 SYN-ACK이 없는</b> 모습이다.<br>
+  <b>read가 터졌다</b> → 볼 곳은 <b>이미 맺힌 연결 위에서 벌어진 일</b>(서버 처리 지연, 응답 유실, 큰 세그먼트 통과 실패, 중간 장비의 세션 삭제). 이 문서의 세 범인은 <b>전부 이쪽</b>이다.
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 앱 로그가 원리적으로 못 보는 것</h2>
+
+<p><code>01-url-to-page-dns-tcp-tls-http.md</code>에서 요청이 지나는 관문을 DNS → TCP → TLS → HTTP 순으로 그렸다. <b>애플리케이션 로그는 그중 마지막 HTTP 구간의 일부만 본다.</b> 그 앞 구간에서 벌어진 일은 <b>기록될 자리가 구조적으로 없다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="클라이언트에서 사내 방화벽, 인터넷 ISP, 클라우드 LB를 거쳐 백엔드 서버 앱으로 가는 경로 도식. 인터넷 구간에서 패킷이 유실되는 지점에 빨간 엑스 표시가 있고, 아래에 세 개의 가시성 띠가 있다. 패킷 캡처는 전 구간을 덮고, LB 액세스 로그는 LB 이후만, 서버 앱 로그는 앱만 덮는다. 유실 지점을 지나는 세로 점선은 패킷 캡처 띠만 통과한다">
+    <defs>
+      <marker id="a1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="14.5" font-weight="700" fill="#1f2937">요청이 지나는 구간 vs 각 기록이 덮는 범위</text>
+
+    <g>
+      <rect x="24" y="46" width="176" height="52" rx="9" fill="#eff6ff" stroke="#2563eb"/><text x="112" y="77" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">클라이언트</text>
+      <rect x="240" y="46" width="176" height="52" rx="9" fill="#f8fafc" stroke="#94a3b8"/><text x="328" y="70" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">사내 방화벽</text><text x="328" y="87" font-size="10.5" fill="#64748b" text-anchor="middle">NAT · VPN</text>
+      <rect x="456" y="46" width="176" height="52" rx="9" fill="#f8fafc" stroke="#94a3b8"/><text x="544" y="70" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">인터넷 · ISP</text><text x="544" y="87" font-size="10.5" fill="#64748b" text-anchor="middle">우리 통제 밖</text>
+      <rect x="672" y="46" width="176" height="52" rx="9" fill="#f0fdf4" stroke="#16a34a"/><text x="760" y="77" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">클라우드 LB</text>
+      <rect x="888" y="46" width="176" height="52" rx="9" fill="#f0fdf4" stroke="#16a34a"/><text x="976" y="70" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">백엔드 서버</text><text x="976" y="87" font-size="10.5" fill="#15803d" text-anchor="middle">애플리케이션</text>
+      <line x1="200" y1="72" x2="236" y2="72" stroke="#475569" stroke-width="1.8" marker-end="url(#a1a)"/>
+      <line x1="416" y1="72" x2="452" y2="72" stroke="#475569" stroke-width="1.8" marker-end="url(#a1a)"/>
+      <line x1="632" y1="72" x2="668" y2="72" stroke="#475569" stroke-width="1.8" marker-end="url(#a1a)"/>
+      <line x1="848" y1="72" x2="884" y2="72" stroke="#475569" stroke-width="1.8" marker-end="url(#a1a)"/>
+    </g>
+
+    <line x1="650" y1="40" x2="650" y2="272" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <g stroke="#dc2626" stroke-width="3" stroke-linecap="round">
+      <line x1="642" y1="64" x2="658" y2="80"/><line x1="658" y1="64" x2="642" y2="80"/>
+    </g>
+    <text x="650" y="34" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">여기서 패킷 유실</text>
+
+    <rect x="24" y="126" width="1040" height="30" rx="7" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="38" y="146" font-size="12" fill="#1d4ed8" font-weight="700">패킷 캡처가 덮는 범위 — 캡처를 건 지점 전부</text>
+    <rect x="672" y="170" width="392" height="30" rx="7" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="686" y="190" font-size="12" fill="#b45309" font-weight="700">LB 액세스 로그가 덮는 범위</text>
+    <rect x="888" y="214" width="176" height="30" rx="7" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="902" y="234" font-size="12" fill="#b91c1c" font-weight="700">서버 앱 로그</text>
+
+    <rect x="24" y="266" width="1040" height="48" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="288" font-size="12.5" fill="#b91c1c" font-weight="700">세로 점선이 통과하는 띠를 보라 — 유실 지점을 덮는 기록은 패킷 캡처밖에 없다.</text>
+    <text x="40" y="306" font-size="12" fill="#7f1d1d">앱 로그에 그 요청이 없다는 것은 "요청이 안 왔다"가 아니다. 증거가 <tspan font-weight="700">덜 찍힌 것이 아니라 원리적으로 존재하지 않는 것</tspan>이다.</text>
+  </svg>
+  <figcaption>로그를 아무리 더 찍어도 앞 구간의 사건은 나오지 않는다. 증거가 있는 곳은 <b>커널이 실제로 주고받은 패킷</b>이고, 그것을 꺼내 보는 도구가 <b>tcpdump</b>다.</figcaption>
+</figure>
+
+<table class="wide">
+  <caption>같은 사건이 각 기록에 어떻게 남는가. <b>3행과 5행</b>이 이 문서의 주인공이다 — 앱 로그에서는 구분이 아예 불가능하다.</caption>
+  <thead><tr><th style="width:240px">무슨 일이 있었나</th><th>서버 앱 로그</th><th>LB 액세스 로그</th><th>패킷 캡처</th></tr></thead>
+  <tbody>
+    <tr><td>요청 패킷이 경로 중간에서 사라졌다</td><td class="bad">아무 기록 없음</td><td class="bad">아무 기록 없음</td><td class="good">보낸 기록은 있고 받은 기록이 없음 (구간 특정 가능)</td></tr>
+    <tr><td>요청은 도착했고 처리가 느렸다</td><td>처리 시간이 길게 찍힘</td><td><code>request_time</code>이 김</td><td>요청과 응답 사이에 긴 공백</td></tr>
+    <tr class="hl"><td>요청은 도착했는데 <b>응답이 사라졌다</b></td><td class="bad">정상 처리로 찍힘</td><td>응답 전송 실패 또는 기록 없음</td><td class="good">서버가 보낸 세그먼트가 재전송만 반복됨</td></tr>
+    <tr><td>TCP 재전송으로 시간을 까먹었다</td><td class="bad">"느리다"로만 보임</td><td class="bad">"느리다"로만 보임</td><td class="good">재전송 패킷이 그대로 보임</td></tr>
+    <tr class="hl"><td>중간 장비가 커넥션을 지웠다</td><td class="bad">timeout</td><td class="bad">기록 없음</td><td class="good">요청 세그먼트가 재전송만 반복되고 응답이 없음</td></tr>
+  </tbody>
+</table>
+
+<h3>2-1. 이 표에서 읽어야 할 세 가지</h3>
+
+<div class="step"><span class="n">1</span><div class="body"><b>"앱 로그에 그 요청이 없다"는 "요청이 안 왔다"가 아니다.</b> 앞 구간에서 반려됐거나 사라졌을 수 있다. 이 둘을 구분하지 못하면 조사가 시작부터 엉뚱한 방향으로 간다.</div></div>
+<div class="step"><span class="n">2</span><div class="body"><b>access log의 "오래 걸림"은 원인을 구분해주지 않는다.</b> 그 시간이 애플리케이션 처리에 쓰였는지, DB 대기에 쓰였는지, 네트워크 재전송 대기에 쓰였는지가 <b>한 숫자에 뭉쳐</b> 있다. 4절에서 이 뭉침을 푼다.</div></div>
+<div class="step red"><span class="n">3</span><div class="body"><b>OS의 TCP 스택은 유실이 나면 앱 몰래 재전송한다 — 이것이 가장 중요하다.</b> TCP가 "빠진 데이터는 알아서 다시 보내 준다"고 약속했기 때문에, <b>재전송이 있었다는 사실 자체가 애플리케이션 계층으로 올라오지 않는다.</b> 앱이 보는 것은 "왜인지 모르게 느린 한 건"뿐이다. <code>03-tcp-vs-udp.md</code> 2-2절의 <b>"대부분 20ms인데 p99만 400ms를 넘는 꼬리"</b>, 그 꼬리의 정체를 확인하는 작업이 바로 이 문서다.</div></div>
+
+<div class="memo green">
+  <h4>조사의 목표를 한 문장으로 고정해 두면 헤매지 않는다</h4>
+  <div class="rule ok">"패킷이 <b>어디까지 갔고 어디서부터 안 갔는가</b>"를 확정하는 것</div>
+  <p style="margin-bottom:0">이것만 확정되면 원인은 <b>그 구간의 소유자</b>(우리 서버, 사내 네트워크, 클라우드, ISP)에게 넘길 수 있다. 확정 못 하면 <b>"네트워크가 이상한 것 같아요"</b>라는, 아무도 움직일 수 없는 말만 남는다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 1단계 — 네 축으로 패턴 쪼개기 (크·시·대·경)</h2>
+
+<div class="callout trap">
+  <span class="t">바로 tcpdump를 켜지 않는다</span>
+  이유는 실무적이다. <b>아무 가설 없이 캡처하면 초당 수만 패킷이 쌓이는데, 그중 어느 것이 문제의 그 순간인지 찾을 방법이 없다.</b> 게다가 "간헐적"이므로 <b>캡처를 켠 몇 분 동안 재현이 안 될 확률이 높다.</b> 먼저 <b>"특정 사용자만·간헐적"이라는 관찰을 여러 축으로 쪼개서</b> 가설을 세운다 — 축마다 의심 대상이 완전히 다르기 때문이다.
+</div>
+
+<div class="memo">
+  <h4>암기 장치 — <span style="color:#2563eb">크 · 시 · 대 · 경</span> (크기 · 시간 · 대상 · 경로)</h4>
+  <div class="grid g4">
+    <div class="tile"><div class="k">크기</div><div class="s">size</div><div class="d">요청·응답이 <b>클 때만</b> 실패하는가</div></div>
+    <div class="tile"><div class="k">시간</div><div class="s">idle</div><div class="d">한동안 <b>쉰 뒤 첫 요청</b>만 실패하는가</div></div>
+    <div class="tile"><div class="k">대상</div><div class="s">target</div><div class="d"><b>특정 인스턴스</b>로 갈 때만 실패하는가</div></div>
+    <div class="tile"><div class="k">경로</div><div class="s">path</div><div class="d"><b>특정 ISP·VPN·지역</b> 사용자만 실패하는가</div></div>
+  </div>
+  <p style="margin:12px 0 0" class="sub">면접에서 이 네 단어를 순서대로 꺼내는 것만으로 "현상 앞에서 무엇을 물어야 할지 아는 사람"이 된다. 이 질문들은 <b>도구 없이, 전화 한 통으로</b> 할 수 있다는 것이 핵심이다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="특정 사용자만 간헐적 timeout이라는 관찰에서 네 갈래로 갈라지는 결정 트리. 크기 축은 MTU PMTUD 블랙홀 가설로, 시간 축은 중간 장비 유휴 드랍으로, 대상 축은 서버 로컬 원인으로, 경로 축은 그 구간의 유실 또는 작은 MTU로 이어지고 각각의 첫 확인 명령이 아래에 붙는다">
+    <defs>
+      <marker id="a2a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <rect x="370" y="12" width="380" height="42" rx="10" fill="#1e293b"/>
+    <text x="560" y="39" font-size="14" fill="#fff" text-anchor="middle" font-weight="700">"특정 사용자만 + 간헐적 timeout"</text>
+
+    <path d="M560 54 L560 72 M148 72 L976 72 M148 72 L148 88 M424 72 L424 88 M700 72 L700 88 M976 72 L976 88" fill="none" stroke="#94a3b8" stroke-width="1.6"/>
+
+    <g font-size="11.5">
+      <rect x="20" y="88" width="256" height="56" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+      <text x="148" y="110" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">크기 축</text>
+      <text x="148" y="130" fill="#1e40af" text-anchor="middle">요청·응답이 클 때만 실패?</text>
+
+      <rect x="296" y="88" width="256" height="56" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+      <text x="424" y="110" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">시간 축</text>
+      <text x="424" y="130" fill="#1e40af" text-anchor="middle">쉰 뒤 첫 요청만 실패?</text>
+
+      <rect x="572" y="88" width="256" height="56" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+      <text x="700" y="110" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">대상 축</text>
+      <text x="700" y="130" fill="#1e40af" text-anchor="middle">특정 인스턴스로 갈 때만?</text>
+
+      <rect x="848" y="88" width="256" height="56" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+      <text x="976" y="110" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">경로 축</text>
+      <text x="976" y="130" fill="#1e40af" text-anchor="middle">특정 ISP·VPN·지역만?</text>
+    </g>
+
+    <path d="M148 144 L148 166 M424 144 L424 166 M700 144 L700 166 M976 144 L976 166" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a2a)"/>
+
+    <g font-size="11">
+      <rect x="20" y="172" width="256" height="66" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="148" y="194" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">MTU / PMTUD 블랙홀</text>
+      <text x="148" y="212" fill="#7f1d1d" text-anchor="middle">경로에 좁은 MTU 구간</text>
+      <text x="148" y="228" fill="#7f1d1d" text-anchor="middle">+ ICMP 통보가 차단됨</text>
+
+      <rect x="296" y="172" width="256" height="66" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="424" y="194" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">중간 장비 유휴 드랍</text>
+      <text x="424" y="212" fill="#7f1d1d" text-anchor="middle">NAT·방화벽·LB가 세션 표에서</text>
+      <text x="424" y="228" fill="#7f1d1d" text-anchor="middle">항목을 통보 없이 삭제</text>
+
+      <rect x="572" y="172" width="256" height="66" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+      <text x="700" y="194" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">서버 로컬 원인</text>
+      <text x="700" y="212" fill="#78350f" text-anchor="middle">NIC 수신 큐 드랍 · conntrack 포화</text>
+      <text x="700" y="228" fill="#78350f" text-anchor="middle">listen 백로그 넘침</text>
+
+      <rect x="848" y="172" width="256" height="66" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="976" y="194" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">그 구간의 유실 또는 작은 MTU</text>
+      <text x="976" y="212" fill="#7f1d1d" text-anchor="middle">"특정 사용자만"이라는 관찰과</text>
+      <text x="976" y="228" fill="#7f1d1d" text-anchor="middle">가장 직접 맞물리는 축</text>
+    </g>
+
+    <path d="M148 238 L148 258 M424 238 L424 258 M700 238 L700 258 M976 238 L976 258" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a2a)"/>
+
+    <g font-size="11">
+      <rect x="20" y="264" width="256" height="52" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="148" y="284" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">첫 확인</text>
+      <text x="148" y="303" fill="#15803d" text-anchor="middle" class="mono">ping -M do -s · tracepath</text>
+
+      <rect x="296" y="264" width="256" height="52" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="424" y="284" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">첫 확인</text>
+      <text x="424" y="303" fill="#15803d" text-anchor="middle">중간 장비 유휴 만료 · 풀 유휴 상한</text>
+
+      <rect x="572" y="264" width="256" height="52" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="700" y="284" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">첫 확인</text>
+      <text x="700" y="303" fill="#15803d" text-anchor="middle" class="mono">ip -s link · nstat · ss -ltn</text>
+
+      <rect x="848" y="264" width="256" height="52" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="976" y="284" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">첫 확인</text>
+      <text x="976" y="303" fill="#15803d" text-anchor="middle">양단 동시 캡처 비교로 구간 특정</text>
+    </g>
+
+    <rect x="20" y="334" width="1084" height="54" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="40" y="356" font-size="13" fill="#1d4ed8" font-weight="700">두 축 이상이 동시에 걸리면 가설은 거의 확정이다.</text>
+    <text x="40" y="376" font-size="12" fill="#1e40af">"VPN 쓰는 사람이 + 파일 업로드할 때만" 실패하면 MTU 외의 후보가 사실상 없다. 반대로 "요청이 몰릴 때만"이면 이 네 축이 아니라 부하 쪽 문제다.</text>
+  </svg>
+  <figcaption>축마다 <b>의심 대상도 첫 확인 명령도 완전히 다르다.</b> 그래서 축을 먼저 가르는 것이 캡처보다 앞에 온다. 대상 축은 <b>LB 액세스 로그의 백엔드 주소 필드 하나만 있으면 즉시 판정</b>된다는 점도 기억할 것.</figcaption>
+</figure>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k" style="font-family:inherit">크기 축이 특히 좋은 이유</div>
+    <div class="d"><b>재현이 오히려 쉽다.</b> 같은 사용자에게 응답 크기가 다른 API를 순서대로 호출하게 하거나 같은 API에 페이지 크기를 바꿔 요청하게 하면 <b>경계가 그대로 드러난다.</b> 캡처를 뜨기 전에 몇 분 만에 검증되는 축이다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">이 단계에서 실제로 하는 작업</div>
+    <div class="d">문제 사용자의 <b>요청 시각과 클라이언트 IP</b>를 받아 <b>LB 액세스 로그와 대조</b>한다. 물어볼 것은 셋 — ① 그 시각에 그 IP의 요청이 <b>LB에는 도달했는가</b> ② <b>어느 백엔드로</b> 갔는가 ③ LB가 기록한 <b>구간별 소요 시간</b>은 어떤가.</div>
+  </div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 로그부터 쪼갠다 — LB 구간 시간 남기기</h2>
+
+<p>그런데 <b>기본 로그 포맷에는 3절이 물어야 할 정보가 하나도 없다.</b> 미리 남겨둬야 한다. 이 한 번의 설정이 <b>패킷 캡처 없이 조사 범위를 절반 이하로 줄인다.</b></p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 기본 combined 포맷</div>
+<pre><code><span class="cm"># 총 소요 시간조차 없다. "느렸다"는 사실도,
+# "어느 백엔드로 갔는지"도 로그에 없어서
+# 사후 조사에서 할 수 있는 말이 아무것도 없다.</span>
+log_format combined
+    <span class="st">'$remote_addr - $remote_user [$time_local] '</span>
+    <span class="st">'"$request" $status $body_bytes_sent '</span>
+    <span class="st">'"$http_referer" "$http_user_agent"'</span>;
+</code></pre>
+    <p class="sub" style="margin-top:8px">사고 후에 "그 시각 그 사용자 요청이 어디까지 갔나"를 물으면 답할 수 있는 것이 <b>상태 코드 하나뿐</b>이다.</p>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 구간별 시간 + 백엔드 주소</div>
+<pre><code>log_format upstream_timing
+    <span class="st">'$remote_addr $time_iso8601 "$request" status=$status '</span>
+<span class="ln-good">    <span class="cm"># 클라이언트 첫 바이트를 읽은 순간부터 응답 마지막
+    # 바이트를 내보낸 순간까지. 클라 회선이 느리면 이 값만 큼.</span>
+    <span class="st">'request_time=$request_time '</span></span>
+<span class="ln-good">    <span class="cm"># 백엔드로 TCP 연결(+TLS)을 맺는 데 걸린 시간.
+    # 이 값만 크면 백엔드 도달 자체가 문제라는 뜻.</span>
+    <span class="st">'upstream_connect_time=$upstream_connect_time '</span></span>
+<span class="ln-good">    <span class="cm"># 백엔드가 응답 헤더를 돌려줄 때까지 = 백엔드 처리 시간.</span>
+    <span class="st">'upstream_header_time=$upstream_header_time '</span></span>
+<span class="ln-good">    <span class="cm"># 백엔드 응답을 전부 받을 때까지.
+    #   header_time은 짧은데 response_time만 길면
+    #   본문 전송 구간이 느린 것 — MTU·유실을 의심할 첫 신호.</span>
+    <span class="st">'upstream_response_time=$upstream_response_time '</span></span>
+<span class="ln-good">    <span class="cm"># 어느 백엔드로 갔는지. "대상 축"을 판정하는 유일한 단서.</span>
+    <span class="st">'upstream_addr=$upstream_addr'</span></span>;
+
+access_log /var/log/nginx/access.log upstream_timing;
+</code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>네 값을 읽는 규칙 — 한 덩어리였던 "느림"이 여기서 쪼개진다</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">request_time만 크다</div><div class="d">지연이 백엔드가 아니라 <b>클라이언트 쪽 구간</b>에 있다. 느린 회선, 큰 업로드, 혹은 이 문서의 세 범인.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">connect_time만 튄다</div><div class="d">LB와 백엔드 사이의 <b>연결 수립</b>에 문제. 백로그 넘침, 보안그룹, conntrack.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">header_time이 크다</div><div class="d">백엔드의 <b>처리</b>가 느린 것. 네트워크가 아니라 애플리케이션·DB를 본다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">header는 짧은데 response만 길다</div><div class="d"><b>본문 전송 구간</b>이 느린 것 — <b>MTU·유실을 의심할 첫 신호</b>다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">upstream_addr</div><div class="d">"대상 축"의 <b>유일한</b> 단서. 이 필드 하나로 "특정 인스턴스만" 가설이 즉시 판정된다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">전부 작은데 사용자는 실패</div><div class="d">요청이 <b>LB에 도달조차 못 했다.</b> 볼 곳은 LB 앞 구간 — 7절의 이분법으로 넘어간다.</div></div>
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">왜 이것이 tcpdump보다 먼저인가</span>
+  로그 조회는 <b>재현을 기다릴 필요가 없다</b> — 이미 지나간 사건에 대해서도 답이 나온다. 반면 캡처는 <b>지금부터 일어나는 일</b>만 잡는다. "간헐적"이라는 조건에서 이 차이는 결정적이다. 그래서 실무 순서는 <b>로그 분해 → 서버 카운터 → 캡처</b>이고, 캡처는 <b>앞의 둘로 좁혀진 가설을 확정하는 단계</b>에 온다.
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 2단계 — tcpdump를 정확히 알고 안전하게 켜기</h2>
+
+<div class="card">
+  <p><b>tcpdump는 커널에게 "이 조건에 맞는 패킷이 지나가면 나에게도 사본을 달라"고 요청해 그것을 출력하거나 파일로 저장하는 프로그램</b>이다. 여기서 두 종류의 필터를 반드시 구분해야 한다.</p>
+</div>
+
+<div class="split">
+  <div class="pane b">
+    <h4>캡처 필터 (capture filter)</h4>
+    <ul>
+      <li><b>커널에게 넘기는 조건.</b> 조건에 안 맞는 패킷은 <b>애초에 tcpdump에게 복사되지 않는다.</b></li>
+      <li>그래서 <b>CPU와 디스크를 아끼는 것은 이쪽 필터뿐이다.</b></li>
+      <li>문법은 <b>BPF</b>(Berkeley Packet Filter) — <code>host</code>, <code>port</code>, <code>tcp</code>, <code>and/or/not</code>.</li>
+      <li>쓰는 곳: <code>tcpdump</code> 명령줄</li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>표시 필터 (display filter)</h4>
+    <ul>
+      <li><b>이미 저장된 파일에서 볼 것만 골라내는 조건.</b></li>
+      <li>이미 캡처된 것을 거르는 것이라 <b>부하와는 무관하다.</b></li>
+      <li>문법은 Wireshark 계열 — <code>tcp.analysis.retransmission</code>.</li>
+      <li>쓰는 곳: Wireshark 상단 입력창, <code>tshark -Y</code></li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>두 문법은 서로 다르고 <span style="color:#dc2626">호환되지 않는다</span></h4>
+  <p style="margin-bottom:0">처음 tcpdump를 쓰는 사람이 가장 많이 걸리는 지점이다. 그리고 면접에서는 이 구분이 <b>변별 지점</b>이 된다 — <b>"Wireshark의 표시 필터는 부하를 전혀 줄여주지 않는다"</b>고 말할 수 있으면 도구를 <b>읽어본 사람</b>이 아니라 <b>운영에서 써 본 사람</b>이다.</p>
+</div>
+
+<h3>5-1. 실제로 치는 명령들</h3>
+
+<div class="codehead plain"><span class="tag">bash</span> 상황별 tcpdump 한 줄</div>
+<pre><code><span class="cm"># [기본] 문제 사용자 IP로 좁혀 화면에 출력한다. 먼저 이걸로 트래픽이 잡히는지 확인한다.
+#   -i any : 리눅스에서 모든 인터페이스를 한꺼번에 캡처한다.
+#            어느 인터페이스로 들어오는지 모를 때 유용하지만, 잡히는 양이 늘고
+#            링크 계층 헤더가 일반 이더넷과 달라 보이므로 확정 후에는 -i eth0처럼 지정한다.
+#   -nn    : 주소와 포트를 이름으로 바꾸지 않는다. n 하나면 주소만, 두 개면 포트까지.
+#            역방향 DNS 조회를 없애 출력이 빨라지고, 조회 실패로 멈추는 일도 없앤다.</span>
+tcpdump -i any -nn host 203.0.113.7
+
+<span class="cm"># [저장] 화면으로는 흐름을 못 따라간다. 파일로 떠서 Wireshark로 여는 것이 정석이다.
+#   -w : 사람이 읽는 텍스트가 아니라 pcap 원본 형식으로 저장한다.
+#        원본이어야 Wireshark가 재전송·중복 ACK 같은 분석을 해줄 수 있다.</span>
+tcpdump -i any -nn host 203.0.113.7 -w /var/tmp/user.pcap
+
+<span class="cm"># [운영 서버용] 링 버퍼. 디스크가 차서 서버를 죽이는 사고를 막는 필수 옵션이다.
+#   -C 100 : 파일이 100,000,000바이트(1,000,000바이트 단위이지 MiB가 아니다)를
+#            넘으면 다음 파일로 넘어간다.
+#   -W 5   : -C와 함께 쓰면 파일을 5개까지만 만들고 처음부터 덮어쓴다.
+#            즉 "최근 약 500MB만 계속 보관"이 되어 며칠을 켜둬도 디스크가 안 찬다.</span>
+<span class="fn">tcpdump -i any -nn host 203.0.113.7 -w /var/tmp/user.pcap -C 100 -W 5</span>
+
+<span class="cm"># [헤더만] 본문을 저장하지 않아 개인정보 노출을 줄이고 용량도 줄인다.
+#   -s 96 : 패킷당 앞 96바이트만 저장한다. 이더넷+IP+TCP 헤더는 여유 있게 들어가고
+#           HTTP 본문은 잘려 나간다. TCP 수준 분석(재전송·RST·윈도)에는 이걸로 충분하다.</span>
+tcpdump -i any -nn host 203.0.113.7 -s 96 -w /var/tmp/hdr.pcap
+
+<span class="cm"># [제어 플래그만] 연결의 생사만 빠르게 본다. 데이터 패킷을 전부 걷어내므로 아주 가볍다.
+#   tcp[tcpflags] : TCP 헤더의 플래그 바이트를 가리키는 BPF 관용구.
+#                   SYN(연결 시작)·FIN(정상 종료)·RST(강제 종료) 중 하나라도 켜진 패킷만 남긴다.
+#   주의: 이 offset 문법은 IPv4 전용이다. IPv6 트래픽에는 걸리지 않는다.</span>
+tcpdump -i any -nn <span class="st">'host 203.0.113.7 and tcp[tcpflags] &amp; (tcp-syn|tcp-fin|tcp-rst) != 0'</span>
+
+<span class="cm"># [ICMP만] PMTUD 통보(9절)가 실제로 도착하는지 확인한다.
+#   type 3 code 4 = "Fragmentation Needed and DF set" — "패킷이 커서 못 보낸다"는 통보다.</span>
+tcpdump -i any -nn <span class="st">'icmp[icmptype] == icmp-unreach and icmp[icmpcode] == 4'</span>
+</code></pre>
+
+<div class="memo red">
+  <h4><code>-s 0</code>은 오늘날 <span style="color:#dc2626">기본값과 같다</span> — 관용구가 낡았다</h4>
+  <p style="margin-bottom:0">예전 tcpdump는 패킷당 저장 길이(snaplen)의 기본값이 작아서 본문이 잘렸고, 그래서 <b>"전체를 뜨려면 <code>-s 0</code>"</b>이라는 관용이 굳었다. <b>지금 tcpdump의 기본 snaplen은 이미 충분히 커서 <code>-s 0</code>은 사실상 기본값과 같다.</b> 즉 오늘날 <code>-s</code>가 의미 있는 방향은 반대다 — 값을 <b>작게</b> 줘서 헤더만 뜨는 쪽이다.</p>
+</div>
+
+<h3>5-2. 운영 서버에서 켤 때 반드시 지킬 것 — <span style="color:#dc2626">디 · 씨 · 개</span></h3>
+
+<div class="step red"><span class="n">디</span><div class="body">
+  <b>디스크.</b> 필터 없이 켜두고 잊으면 몇 시간 만에 디스크가 찬다. 디스크가 차면 로그 기록이 멈추고 애플리케이션이 죽는다 — <b>문제를 잡으러 갔다가 장애를 만드는</b> 전형적인 사고다. <code>-C</code>/<code>-W</code>로 링 버퍼를 거는 것을 습관으로 만들고, <code>-c 100000</code>(패킷 수 도달 시 종료)이나 <code>timeout 600 tcpdump ...</code>(10분 뒤 강제 종료)처럼 <b>종료 조건도 함께</b> 건다. 별도 파티션이나 여유 있는 볼륨에 쓰는 것도 방법이다.
+</div></div>
+<div class="step red"><span class="n">씨</span><div class="body">
+  <b>CPU.</b> 캡처 필터를 좁히면 커널이 대부분의 패킷을 tcpdump에게 복사하지 않으므로 부담이 작다. 반대로 <code>tcpdump -i any -w -</code>처럼 전부 뜨면 커널이 패킷마다 <b>복사와 사용자 공간 전달</b>을 하게 되어 트래픽이 많은 서버에서는 체감되는 부하가 된다. <b>호스트와 포트로 좁히는 것이 곧 성능 대책이다.</b>
+</div></div>
+<div class="step red"><span class="n">개</span><div class="body">
+  <b>개인정보.</b> 평문 프로토콜이라면 페이로드에 아이디, 개인정보, 토큰이 그대로 담긴다. <b>pcap 파일은 그 자체가 민감정보</b>이므로 보관 위치·접근 권한·공유 방법·폐기 시점을 정해두고 시작하고, 가능하면 <code>-s 96</code>으로 헤더만 뜬다. HTTPS 구간이라면 본문은 암호화돼 있지만 <b>SNI(접속 도메인)와 IP·타이밍은 평문</b>이라는 것을 기억한다(<code>06-tls-handshake-symmetric-asymmetric-keys.md</code> 2-6절). <b>외부 벤더에 증거로 넘길 때 무심코 전체 페이로드가 담긴 파일을 보내는 것이 실제로 자주 일어나는 사고다.</b>
+</div></div>
+
+<div class="callout warn">
+  <span class="t">네 번째 현실 — 클라이언트 쪽은 대개 캡처할 수 없다</span>
+  문제의 그 사용자는 우리가 tcpdump를 켤 수 없는 <b>휴대폰이나 사내 PC</b>를 쓴다. 그래서 실무에서는 <b>서버·LB 쪽 캡처를 기준선</b>으로 삼고, 클라이언트 쪽은 <b>브라우저 개발자도구의 HAR 파일이나 앱 로그</b>로 대신한다. 재현 경로가 VPN처럼 특정 가능하다면 <b>우리가 그 경로를 흉내 내 재현하는 것</b>(같은 VPN에 붙어 요청해 보기)이 가장 빠른 길이다.
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 캡처에서 읽는 시그니처 5종</h2>
+
+<p>파일을 열었으면 표시 필터로 시그니처를 골라낸다. 자주 쓰는 것만 추리면 이렇다.</p>
+
+<div class="codehead plain"><span class="tag">Wireshark 표시 필터</span> 자주 쓰는 것</div>
+<pre><code>tcp.analysis.retransmission        <span class="cm">재전송으로 판정된 세그먼트 (유실이 있었다는 직접 증거)</span>
+tcp.analysis.fast_retransmission   <span class="cm">중복 ACK 3회로 촉발된 빠른 재전송</span>
+tcp.analysis.duplicate_ack         <span class="cm">중복 ACK — 수신자가 "아직 그 조각 못 받았다"고 계속 알리는 중</span>
+tcp.analysis.zero_window           <span class="cm">수신 윈도 0 — 상대 앱이 버퍼를 안 비우고 있다</span>
+tcp.flags.reset == 1               <span class="cm">RST — 누군가 연결을 강제로 끊었다</span>
+icmp.type == 3 &amp;&amp; icmp.code == 4   <span class="cm">PMTUD 통보가 실제로 오고 있는가</span>
+tcp.analysis.flags                 <span class="cm">위 분석 표시가 붙은 것 전부 (첫 훑기용)</span>
+</code></pre>
+
+<p>메뉴로는 <b>Statistics → Conversations</b>로 어느 연결이 문제인지 좁히고, <b>Analyze → Expert Information</b>으로 Wireshark가 이상하다고 판단한 것들을 한 화면에 모아 본다. CLI만 있는 서버에서는 <b>tshark</b>로 같은 표시 필터를 쓴다.</p>
+
+<div class="codehead plain"><span class="tag">bash</span> tshark — GUI 없는 서버에서</div>
+<pre><code><span class="cm"># 재전송이 몇 건이나 있는지 센다. 0이면 유실 가설을 접고 다른 축으로 넘어간다.</span>
+tshark -r /var/tmp/user.pcap -Y <span class="st">'tcp.analysis.retransmission'</span> | wc -l
+
+<span class="cm"># RST를 누가 언제 보냈는지 시각과 함께 본다 — 10절의 "빠른 실패"인지 판정한다.</span>
+tshark -r /var/tmp/user.pcap -Y <span class="st">'tcp.flags.reset == 1'</span> -T fields \
+       -e frame.time -e ip.src -e ip.dst -e tcp.srcport -e tcp.dstport
+</code></pre>
+
+<div class="callout trap">
+  <span class="t"><code>tcp.analysis.retransmission</code>은 Wireshark의 <b>추정</b>이다</span>
+  시퀀스 번호가 되돌아온 것을 보고 재전송이라고 판단하는 방식이라, <b>캡처 지점이 송신자와 수신자 사이 어딘가일 때는 오탐이 생길 수 있다.</b> 그래서 카운트를 그대로 믿기보다 <b>서버 카운터(<code>ss</code>·<code>nstat</code>, 8절)와 교차 확인</b>하는 것이 안전하다.
+</div>
+
+<h3>6-1. 곧바로 판정할 수 있는 다섯 패턴</h3>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">① SYN만 반복되고 SYN-ACK이 없다</div>
+    <div class="d"><b>연결 자체가 안 되는 상태.</b> 상대 방화벽이 SYN을 <b>조용히 버리고</b> 있거나(REJECT라면 RST가 왔을 것이다), 서버의 <b>listen 백로그가 넘쳐</b> SYN이 버려지고 있다. 재전송 간격이 <b>1초, 2초, 4초로 배가</b> 되는 모습이 보이면 SYN 재전송의 전형적인 지문이다(8절).</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">② 연결은 됐는데 어느 순간부터 침묵 — 직전 세그먼트가 유난히 크다</div>
+    <div class="d"><b>MTU 냄새다</b>(9절). 작은 세그먼트들은 오갔는데 <b>full-size 세그먼트만</b> 응답 없이 재전송되고 있다면 거의 확정이다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">③ 요청 세그먼트가 재전송만 반복 — 응답도 RST도 FIN도 없다</div>
+    <div class="d"><b>중간에서 조용히 버려지고 있다.</b> 유휴 커넥션 드랍(10절)의 지문이거나 경로 구간의 유실이다.</div>
+  </div>
+  <div class="tile">
+    <div class="k" style="font-family:inherit">④ RST가 즉시 온다</div>
+    <div class="d">이건 "조용한 실패"가 아니라 <b>"빠른 실패"</b>다. 상대 소켓이 이미 없어졌거나 방화벽이 <b>REJECT</b>로 응답한 것이다. <code>10-keepalive-connection-pool-time-wait.md</code> 3-3절의 <b>half-close 경쟁</b>이 이 모습으로 나타난다. <b>timeout을 꽉 채우는 증상과는 원인이 다르다.</b></div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">⑤ Zero Window가 보인다</div>
+    <div class="d"><b>네트워크 문제가 아니다.</b> 수신 측 <b>애플리케이션이 커널 버퍼에서 데이터를 안 꺼내가고</b> 있어서 수신 윈도가 0이 된 것이다(<code>03-tcp-vs-udp.md</code> 1-5절). 볼 곳은 회선이 아니라 <b>그 애플리케이션의 스레드 상태</b>다.</div>
+  </div>
+  <div class="tile">
+    <div class="k" style="font-family:inherit">첫 갈림길로 쓰는 법</div>
+    <div class="d">①은 <b>connect timeout</b>, ②③은 <b>read timeout을 꽉 채운 실패</b>, ④는 <b>즉시 실패</b>, ⑤는 <b>수신 앱 문제</b>. 증상이 <b>"빠른 실패"인가 "느린 타임아웃"인가</b>를 먼저 가르면 절반이 걸러진다.</div>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>3초 판정 규칙</h4>
+  <div class="rule">RST가 <b>온다</b> → 누군가 <b>끊은 것</b> (빠른 실패) &nbsp;&nbsp;|&nbsp;&nbsp; RST가 <b>안 온다</b> → 누군가 <b>버린 것</b> (느린 타임아웃)</div>
+  <p style="margin-bottom:0" class="sub"><b>DROP과 REJECT의 차이</b>가 그대로 증상의 차이가 된다. 방화벽이 REJECT면 RST가 돌아와 밀리초 단위로 실패하고, DROP이면 아무것도 안 와서 재전송을 반복하다 <b>타임아웃을 꽉 채운다.</b></p>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 이분법 — 양단 동시 캡처로 구간 특정</h2>
+
+<div class="callout trap">
+  <span class="t">캡처 한 곳만으로는 "패킷이 사라졌다"를 증명할 수 없다</span>
+  우리 서버에 <b>안 왔다</b>는 것만 알 뿐, <b>애초에 안 보냈는지</b> <b>오다가 사라졌는지</b> 구분이 안 되기 때문이다. 그래서 <b>양쪽에서 동시에 캡처해 비교한다.</b> 클라이언트 쪽 캡처에는 보낸 기록이 있는데 서버 쪽 캡처에는 받은 기록이 없다면, 유실은 <b>그 사이 어딘가</b>에서 일어난 것이 확정된다. 두 캡처에서 같은 패킷을 짝짓는 기준은 <b>TCP 시퀀스 번호와 IP 식별자</b>다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="클라이언트, 사내 방화벽, 인터넷 ISP, 클라우드 LB, 백엔드 서버로 이어지는 경로에 네 개의 캡처 지점을 표시하고, 그 사이 네 구간을 색 막대 A B C D로 나눈 뒤, 어느 지점에 있고 어느 지점에 없느냐에 따라 책임 구간이 사내 방화벽, 경로, LB와 백엔드 사이, 서버 자체로 갈라진다는 판정을 아래에 범례로 정리한 도식">
+    <defs>
+      <marker id="a7a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#475569"/></marker>
+    </defs>
+
+    <rect x="24" y="30" width="176" height="48" rx="9" fill="#eff6ff" stroke="#2563eb"/><text x="112" y="59" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">클라이언트</text>
+    <rect x="240" y="30" width="176" height="48" rx="9" fill="#f8fafc" stroke="#94a3b8"/><text x="328" y="59" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">사내 방화벽</text>
+    <rect x="456" y="30" width="176" height="48" rx="9" fill="#f8fafc" stroke="#94a3b8"/><text x="544" y="59" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">인터넷 · ISP</text>
+    <rect x="672" y="30" width="176" height="48" rx="9" fill="#f0fdf4" stroke="#16a34a"/><text x="760" y="59" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">클라우드 LB</text>
+    <rect x="888" y="30" width="176" height="48" rx="9" fill="#f0fdf4" stroke="#16a34a"/><text x="976" y="59" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">백엔드 서버</text>
+    <line x1="200" y1="54" x2="236" y2="54" stroke="#475569" stroke-width="1.8" marker-end="url(#a7a)"/>
+    <line x1="416" y1="54" x2="452" y2="54" stroke="#475569" stroke-width="1.8" marker-end="url(#a7a)"/>
+    <line x1="632" y1="54" x2="668" y2="54" stroke="#475569" stroke-width="1.8" marker-end="url(#a7a)"/>
+    <line x1="848" y1="54" x2="884" y2="54" stroke="#475569" stroke-width="1.8" marker-end="url(#a7a)"/>
+
+    <g>
+      <line x1="112" y1="78" x2="112" y2="86" stroke="#2563eb" stroke-width="1.5"/>
+      <line x1="328" y1="78" x2="328" y2="86" stroke="#2563eb" stroke-width="1.5"/>
+      <line x1="760" y1="78" x2="760" y2="86" stroke="#2563eb" stroke-width="1.5"/>
+      <line x1="976" y1="78" x2="976" y2="86" stroke="#2563eb" stroke-width="1.5"/>
+      <circle cx="112" cy="99" r="13" fill="#2563eb"/><text x="112" y="104" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+      <circle cx="328" cy="99" r="13" fill="#2563eb"/><text x="328" y="104" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+      <circle cx="760" cy="99" r="13" fill="#2563eb"/><text x="760" y="104" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+      <circle cx="976" cy="99" r="13" fill="#2563eb"/><text x="976" y="104" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">4</text>
+      <text x="1064" y="104" font-size="11" fill="#6b7280">= 캡처 지점</text>
+    </g>
+
+    <rect x="112" y="124" width="216" height="18" rx="4" fill="#dc2626"/><text x="220" y="137" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">A</text>
+    <rect x="328" y="148" width="432" height="18" rx="4" fill="#d97706"/><text x="544" y="161" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">B</text>
+    <rect x="760" y="172" width="216" height="18" rx="4" fill="#2563eb"/><text x="868" y="185" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">C</text>
+    <rect x="976" y="196" width="88" height="18" rx="4" fill="#16a34a"/><text x="1020" y="209" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">D</text>
+
+    <g font-size="12.5">
+      <rect x="44" y="234" width="13" height="13" rx="3" fill="#dc2626"/>
+      <text x="66" y="245" fill="#b91c1c"><tspan font-weight="700">A</tspan> — 1 에 있고 2 에 없다 → <tspan font-weight="700">사내 방화벽이 범인</tspan></text>
+      <rect x="44" y="256" width="13" height="13" rx="3" fill="#d97706"/>
+      <text x="66" y="267" fill="#b45309"><tspan font-weight="700">B</tspan> — 2 에 있고 3 에 없다 → <tspan font-weight="700">경로(ISP·인터넷) 구간</tspan></text>
+      <rect x="44" y="278" width="13" height="13" rx="3" fill="#2563eb"/>
+      <text x="66" y="289" fill="#1d4ed8"><tspan font-weight="700">C</tspan> — 3 에 있고 4 에 없다 → <tspan font-weight="700">LB와 백엔드 사이</tspan> (보안그룹 · conntrack · NIC 큐)</text>
+      <rect x="44" y="300" width="13" height="13" rx="3" fill="#16a34a"/>
+      <text x="66" y="311" fill="#166534"><tspan font-weight="700">D</tspan> — 4 에 있는데 응답이 없다 → <tspan font-weight="700">서버 자체</tspan> (애플리케이션 · 소켓 버퍼)</text>
+    </g>
+
+    <rect x="700" y="228" width="404" height="90" rx="10" fill="#1e293b"/>
+    <text x="722" y="252" font-size="12.5" fill="#e2e8f0">모든 지점에 캡처를 걸 필요는 없다.</text>
+    <text x="722" y="274" font-size="12.5" fill="#e2e8f0"><tspan fill="#fde68a" font-weight="700">가운데 한 곳</tspan>만 정해 "여기까지 왔는가"를 판정하면</text>
+    <text x="722" y="294" font-size="12.5" fill="#e2e8f0">책임 구간이 <tspan fill="#fde68a" font-weight="700">절반</tspan>으로 줄고, 그 절반에서</text>
+    <text x="722" y="312" font-size="12.5" fill="#e2e8f0">다시 반으로 자른다.</text>
+  </svg>
+  <figcaption>구간이 <b>우리 통제 밖(B)</b>으로 특정되면 <b>캡처 파일과 정확한 시각을 붙여 그 구간의 소유자에게 이관</b>한다. <b>이 이분법이 네트워크 디버깅의 기본기이고</b>, 캡처 지점을 몇 곳 확보할 수 있느냐가 조사 속도를 그대로 결정한다. 현실적으로는 클라이언트 쪽을 못 잡는 경우가 많으므로, <b>LB 앞과 LB 뒤 두 곳</b>만 확보해도 <b>"우리 인프라 안인가 밖인가"</b>라는 가장 큰 분기는 판정할 수 있다.</figcaption>
+</figure>
+
+<div class="callout ok">
+  <span class="t">비유로 고정하기 — 송장 조회</span>
+  택배가 안 왔을 때 집에서 할 수 있는 일은 없다. <b>송장 조회 화면에서 "어느 물류센터까지 스캔됐는지"를 보는 순간</b> 책임 구간이 정해진다. 캡처 지점이 곧 <b>물류센터의 스캔 기록</b>이고, 이분법은 <b>"중간 센터 하나만 확인해도 앞뒤 절반이 갈린다"</b>는 이야기다. 지점을 하나 추가할 때마다 <b>책임 범위가 절반으로 준다.</b>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 범인 ① 재전송 — 어딘가에서 패킷이 새고 있다</h2>
+
+<h3>8-1. 유실을 알아채는 두 가지 경로 — 걸리는 시간이 자릿수로 다르다</h3>
+
+<p>TCP는 보낸 세그먼트에 대한 ACK이 안 오면 유실로 판단하고 다시 보내는데, <b>판단하는 경로가 두 개이고 걸리는 시간이 자릿수 단위로 다르다.</b> 이 차이가 진단의 핵심이다.</p>
+
+<div class="split">
+  <div class="pane g">
+    <h4>빠른 재전송 (fast retransmit) — 흔적을 거의 안 남긴다</h4>
+    <ul>
+      <li>같은 ACK 번호가 <b>3번 중복</b>해서 도착하면 그 지점이 유실됐다고 보고 <b>즉시</b> 다시 보낸다.</li>
+      <li>중복 ACK은 <b>뒤에 보낸 세그먼트들이 도착해야</b> 생기므로, 대략 <b>1 RTT 안팎</b>이면 재전송이 나간다.</li>
+      <li>RTT 20ms 경로라면 <b>수십 ms의 손해</b>로 끝난다. 응답시간 그래프에 거의 흔적이 없다.</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>RTO 재전송 — p99 꼬리의 주범</h4>
+    <ul>
+      <li>중복 ACK 3회 조건이 성립하지 않을 때의 <b>안전망</b>이다.</li>
+      <li>중복 ACK이 쌓이려면 유실된 조각 <b>뒤에 보낼 데이터가 더 있어야</b> 하는데, 유실된 것이 <b>그 요청의 마지막 조각</b>이거나 <b>요청 자체가 한 조각</b>이면 뒤에 올 것이 없다.</li>
+      <li>그러면 <b>타이머가 만료될 때까지 기다리는 수밖에</b> 없다. 그리고 <b>RTO에는 OS가 정한 하한이 있어서, 실측 RTT가 20ms라도 RTO는 수백 ms 아래로 잘 안 내려간다.</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th style="width:150px"></th><th>촉발 조건</th><th style="width:220px">대기 시간 규모</th><th style="width:220px">p99 꼬리에 미치는 영향</th></tr></thead>
+  <tbody>
+    <tr><th>빠른 재전송</th><td>중복 ACK 3회 (뒤에 보낼 데이터가 있어야 함)</td><td>대략 1 RTT, 수십 ms</td><td class="good">거의 없음</td></tr>
+    <tr class="hl"><th>RTO 재전송</th><td>타이머 만료 (조건 없음, 항상 동작)</td><td>수백 ms ~ 초 단위, 실패 시 <b>2배씩 증가</b></td><td class="bad">꼬리의 주된 원인</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>8-2. RTO 백오프의 산수 — 왜 하필 3초 타임아웃이 터지는가</h3>
+
+<p>재전송한 것마저 유실되면 TCP는 <b>다음 RTO를 2배로 늘린다.</b> 이미 힘들어 보이는 경로에 같은 속도로 계속 두드리지 않기 위한 장치이고, 이것을 <b>지수 백오프</b>라고 부른다. 첫 RTO가 200ms라고 가정하고 연속 유실이 이어질 때 누적 대기 시간을 한 단계씩 따라가 보자.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="RTO 지수 백오프의 누적 대기 시간 막대 그래프. 1회차 200밀리초, 2회차까지 누적 600밀리초, 3회차까지 1400밀리초, 4회차까지 3000밀리초, 5회차까지 6200밀리초이며, 3000밀리초 지점에 앱 read timeout 3초를 나타내는 세로 점선이 있어 4회차에서 정확히 터진다는 것을 보여준다">
+    <text x="24" y="28" font-size="14.5" font-weight="700" fill="#1f2937">첫 RTO 200ms 가정 · 실패할 때마다 2배 (지수 백오프)</text>
+    <text x="597" y="50" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">앱 read timeout 3초</text>
+    <line x1="597" y1="56" x2="597" y2="258" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="6 4"/>
+
+    <g font-size="11.5" fill="#374151" text-anchor="end">
+      <text x="196" y="94">1회차 재전송 대기</text>
+      <text x="196" y="132">2회차 <tspan fill="#dc2626" font-weight="700">×2</tspan></text>
+      <text x="196" y="170">3회차 <tspan fill="#dc2626" font-weight="700">×2</tspan></text>
+      <text x="196" y="208">4회차 <tspan fill="#dc2626" font-weight="700">×2</tspan></text>
+      <text x="196" y="246">5회차 <tspan fill="#dc2626" font-weight="700">×2</tspan></text>
+    </g>
+
+    <rect x="210" y="78" width="25.8" height="22" rx="3" fill="#dc2626"/>
+    <rect x="210" y="116" width="25.8" height="22" rx="3" fill="#fca5a5"/><rect x="235.8" y="116" width="51.6" height="22" rx="3" fill="#dc2626"/>
+    <rect x="210" y="154" width="77.4" height="22" rx="3" fill="#fca5a5"/><rect x="287.4" y="154" width="103.2" height="22" rx="3" fill="#dc2626"/>
+    <rect x="210" y="192" width="180.6" height="22" rx="3" fill="#fca5a5"/><rect x="390.6" y="192" width="206.5" height="22" rx="3" fill="#dc2626"/>
+    <rect x="210" y="230" width="387.1" height="22" rx="3" fill="#fca5a5"/><rect x="597.1" y="230" width="412.9" height="22" rx="3" fill="#dc2626"/>
+
+    <g font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">
+      <text x="261.6" y="132">400ms</text>
+      <text x="339" y="170">800ms</text>
+      <text x="493.8" y="208">1,600ms</text>
+      <text x="803.5" y="246">3,200ms</text>
+    </g>
+
+    <g font-size="11.5" class="mono">
+      <text x="244" y="94" fill="#374151">누적 200ms &nbsp;<tspan class="mono" fill="#9ca3af">(200)</tspan></text>
+      <text x="296" y="132" fill="#374151">누적 600ms &nbsp;<tspan fill="#9ca3af">(200+400)</tspan></text>
+      <text x="399" y="170" fill="#374151">누적 1,400ms &nbsp;<tspan fill="#9ca3af">(600+800)</tspan></text>
+      <text x="606" y="208" fill="#b91c1c" font-weight="700">누적 3,000ms ← 여기서 터진다</text>
+      <text x="1018" y="246" fill="#374151">6,200ms</text>
+    </g>
+
+    <rect x="24" y="266" width="1080" height="28" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="42" y="285" font-size="12.5" fill="#b91c1c"><tspan font-weight="700">연속 4번 유실되면 순수 대기만 3.0초.</tspan> 서버는 아무 잘못이 없고, DB 쿼리도 정상이고, 앱 로그에는 아무것도 없는데 요청 하나가 timeout으로 죽는다.</text>
+  </svg>
+  <figcaption><b>"간헐적으로 몇 건만 죽는다"의 가장 흔한 정체가 이것이다.</b> 애플리케이션의 read timeout이 3초라면 <b>정확히 4회차에서</b> 터진다 — 그리고 그 3초 동안 애플리케이션은 <b>재전송이 일어나고 있다는 사실조차 모른다.</b></figcaption>
+</figure>
+
+<div class="memo">
+  <h4>외울 수열 — <span style="color:#2563eb">200 → 600 → 1,400 → 3,000 → 6,200</span></h4>
+  <p style="margin-bottom:0">개별 대기가 <b>200 · 400 · 800 · 1,600 · 3,200</b>으로 배가되므로 누적은 위 수열이 된다. 면접에서 <b>"연속 4회 유실이면 3초"</b>라는 숫자 하나를 붙이는 것만으로, 타임아웃 값을 <b>감으로 정한 사람</b>과 <b>근거로 정한 사람</b>이 갈린다. (첫 RTO 값은 경로마다 다르므로 <b>수열의 모양</b>을 외우는 것이지 200ms를 상수로 외우는 것이 아니다.)</p>
+</div>
+
+<div class="callout warn">
+  <span class="t">연결 수립 단계에서도 같은 일이 일어난다 — 그리고 훨씬 길다</span>
+  리눅스는 SYN에 대한 첫 재전송을 <b>1초 뒤</b>에 하고 그 뒤로 <b>2, 4, 8, 16, 32초</b>로 배가하며, 재시도 횟수를 다 쓰면 마지막 대기까지 합쳐 <b>2분 넘게 매달린 뒤에야 포기한다.</b> 그래서 <b>connect timeout을 명시하지 않은 HTTP 클라이언트</b>는 방화벽이 SYN을 조용히 버리는 상황에서 <b>스레드를 그동안 통째로 묶어둔다.</b>
+</div>
+
+<div class="codehead plain"><span class="tag">bash</span> 이 서버가 SYN을 몇 번까지 재전송하는지</div>
+<pre><code><span class="cm"># 위의 1, 2, 4, 8, ... 배가 열의 길이를 이 값이 정한다.</span>
+sysctl net.ipv4.tcp_syn_retries
+</code></pre>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 타임아웃을 하나도 지정하지 않은 클라이언트</div>
+<pre><code><span class="cm">// - 상대가 SYN을 조용히 버리면 커널의 SYN 재전송이
+//   다 끝날 때까지 이 스레드는 묶인다. 그 시간이 2분을
+//   넘길 수 있고, 그동안 톰캣 워커 스레드 하나가 인질로 잡힌다.
+// - 동시 요청이 몰리면 워커 풀이 통째로 마르면서
+//   이 API와 무관한 요청까지 죽는다.
+//   "외부 API 하나가 느려졌는데 서비스 전체가 멈췄다"의 전형이다.</span>
+<span class="ln-bad"><span class="kw">RestTemplate</span> rest = <span class="kw">new</span> <span class="fn">RestTemplate</span>();</span>
+</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 두 타임아웃을 <b>분리해서</b> 명시</div>
+<pre><code><span class="cm">// 분리가 핵심이다. connect가 터지면 "상대에 도달 자체를 못 했다",
+// read가 터지면 "도달했고 처리됐을 수도 있다"로 원인이 갈리고,
+// 그에 따라 재시도의 안전성도 갈린다.</span>
+<span class="kw">RequestConfig</span> cfg = RequestConfig.<span class="fn">custom</span>()
+<span class="ln-good">        <span class="cm">// TCP 연결 수립까지의 상한. 커널의 SYN 재전송이
+        // 다 끝나기를 기다리지 않고 우리가 정한 시점에 포기한다.</span>
+        .<span class="fn">setConnectTimeout</span>(Timeout.<span class="fn">ofSeconds</span>(<span class="st">2</span>))</span>
+<span class="ln-good">        <span class="cm">// 응답을 기다릴 상한. RTO 백오프의 누적 대기가 이 값을
+        // 먹는다는 것을 알고 정해야 한다 —
+        // 3초로 잡으면 연속 4회 유실에서 그대로 터진다.</span>
+        .<span class="fn">setResponseTimeout</span>(Timeout.<span class="fn">ofSeconds</span>(<span class="st">3</span>))</span>
+        .<span class="fn">build</span>();
+</code></pre>
+  </div>
+</div>
+
+<p class="sub">타임아웃 값 자체를 어떻게 배치할지는 <code>07-traffic-performance/10-timeout-layers-and-budget.md</code>에서, 재시도가 만드는 2차 피해는 <code>07-traffic-performance/11-retry-storm-backoff-jitter.md</code>에서 이어서 다룬다.</p>
+
+<h3>8-3. 캡처 없이도 확인할 수 있는 것 — 서버 카운터</h3>
+
+<p>재전송은 캡처를 뜨지 않아도 <b>커널 통계로 규모를 볼 수 있다.</b> 캡처보다 먼저 손대는 것이 순서상 맞다.</p>
+
+<div class="codehead plain"><span class="tag">bash</span> 소켓별 · 시스템 전체 재전송 통계</div>
+<pre><code><span class="cm"># 특정 상대와의 소켓별 상세 정보. 재전송과 RTT를 한 줄로 본다.
+#   -t: TCP만, -i: 내부 정보(internal) 출력</span>
+ss -ti dst 203.0.113.7
+<span class="cm"># 출력에서 볼 값:
+#   rtt:20.5/3.2      측정된 RTT(ms)와 그 변동폭. 변동폭이 크면 경로가 불안정하다.
+#   rto:220           지금 이 소켓의 재전송 타임아웃 값(ms). 위 산수의 첫 200ms에 해당한다.
+#   retrans:0/17      현재 미확인 재전송 수 / 이 연결의 누적 재전송 수.
+#                     누적이 계속 오르면 그 경로에 유실이 있다는 뜻이다.
+#   cwnd:10           혼잡 윈도. 유실이 잦으면 이 값이 올라가지 못해 처리량이 안 나온다.</span>
+
+<span class="cm"># 시스템 전체 재전송 통계. 절대값보다 "평소 대비 얼마나 늘었나"를 본다.</span>
+nstat -az | grep -iE <span class="st">'TcpRetransSegs|TcpOutSegs|TCPLostRetransmit'</span>
+<span class="cm"># TcpRetransSegs / TcpOutSegs 가 재전송 비율이다.
+# 중요: 이 비율의 "정상값"은 환경마다 다르므로 숫자를 외우지 말고
+#       평소 baseline을 먼저 재두고 그 대비 편차로 판단한다.</span>
+
+netstat -s | grep -i retrans   <span class="cm"># nstat이 없는 환경에서의 대안</span>
+</code></pre>
+
+<h3>8-4. 다음 단계 — 유실이 누구 책임인지 가른다</h3>
+
+<div class="memo red">
+  <h4>재전송은 <span style="color:#dc2626">증상이지 원인이 아니다</span></h4>
+  <p style="margin-bottom:0">재전송이 보인다는 것은 <b>"유실이 있었다"까지만</b> 말해준다. 여기서 멈추고 "네트워크 문제입니다"라고 결론 내리면 <b>조사가 끝난 게 아니라 시작도 안 한 것</b>이다. 다음 질문은 <b>"어디서 새는가"</b>다 — 먼저 <b>우리 서버 자체를 배제</b>한다.</p>
+</div>
+
+<div class="codehead plain"><span class="tag">bash</span> 서버 로컬 원인 배제 3종</div>
+<pre><code><span class="cm"># NIC 수준의 드랍·에러 카운터. RX/TX의 dropped, errors, overrun이 오르고 있는지 본다.</span>
+ip -s link show eth0
+ethtool -S eth0 | grep -iE <span class="st">'drop|err|discard|miss'</span>
+
+<span class="cm"># 연결 추적 테이블 포화. 이 테이블이 차면 새 연결의 패킷이 조용히 버려진다 —
+# "간헐적으로만 실패"의 모습으로 나타나는 대표적인 서버 로컬 원인이다.</span>
+sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max
+dmesg | grep -i conntrack   <span class="cm"># "nf_conntrack: table full, dropping packet"가 결정적 증거</span>
+
+<span class="cm"># listen 백로그 넘침. SYN이 서버 문턱에서 버려지는 경우다.</span>
+nstat -az | grep -iE <span class="st">'ListenOverflows|ListenDrops'</span>
+ss -ltn   <span class="cm"># 리스닝 소켓의 Recv-Q(현재 대기)와 Send-Q(백로그 상한)를 대조한다</span>
+</code></pre>
+
+<div class="callout ok">
+  <span class="t">카운터가 전부 조용하면 — 원인은 서버 밖이다</span>
+  그러면 7절의 <b>양단 캡처 비교</b>로 구간을 특정하고, <b>그 구간의 운영 주체(사내 네트워크팀, 클라우드, ISP)에게 캡처 파일과 정확한 시각을 붙여 넘긴다.</b> <b>증거 없는 "네트워크가 이상해요"로는 아무도 움직이지 않는다</b>는 것이 이 절차의 존재 이유다.
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 범인 ② MTU와 PMTUD 블랙홀 — 큰 패킷만 조용히 사라진다</h2>
+
+<h3>9-1. 전제 — MTU와 MSS가 각각 무엇인가</h3>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k" style="font-family:inherit">MTU — Maximum Transmission Unit</div>
+    <div class="d"><b>한 링크가 한 프레임에 실어 나를 수 있는 상위 계층 패킷의 최대 크기.</b> 이더넷의 표준값이 <b>1500바이트</b>이고, 이 숫자는 <b>링크의 성질이지 우리 서버의 설정이 아니다.</b> 경로에 있는 각 구간이 저마다 자기 MTU를 갖는다.</div>
+  </div>
+  <div class="tile">
+    <div class="k" style="font-family:inherit">MSS — Maximum Segment Size</div>
+    <div class="d">그중 <b>TCP 페이로드로 쓸 수 있는 크기.</b> IP 헤더와 TCP 헤더가 자리를 차지하므로 그만큼 빠진다.</div>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>공식 — 헤더가 먹는 만큼 빠진다</h4>
+  <div class="rule">MSS = MTU − IP 헤더 − TCP 헤더 = 1500 − 20 − 20 = <b>1460</b> 바이트</div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="위쪽은 이더넷 프레임 1518바이트의 구성으로 이더넷 헤더 14, IP 헤더 20, TCP 헤더 20, TCP 페이로드 1460, FCS 4바이트이며 MTU 1500과 MSS 1460 구간을 괄호로 표시했다. 아래쪽은 GRE 캡슐화로 바깥 IP 20과 GRE 4가 덧붙어 안쪽 페이로드가 1436으로 줄어드는 것을 보여준다">
+    <text x="24" y="24" font-size="14.5" font-weight="700" fill="#1f2937">바이트가 실제로 어떻게 나뉘는가 <tspan font-size="11.5" font-weight="400" fill="#6b7280">(칸 너비는 실제 비율이 아님)</tspan></text>
+
+    <line x1="1000" y1="40" x2="1000" y2="252" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="994" y="52" font-size="11" fill="#b91c1c" font-weight="700" text-anchor="end">링크 MTU 1500 한계선</text>
+
+    <text x="24" y="58" font-size="12.5" fill="#166534" font-weight="700">[터널 없음] 이더넷 프레임 = 1518바이트</text>
+    <g>
+      <rect x="60" y="66" width="80" height="40" fill="#f1f5f9" stroke="#94a3b8"/><text x="100" y="84" font-size="10.5" fill="#334155" text-anchor="middle">이더넷</text><text x="100" y="98" font-size="10.5" fill="#334155" text-anchor="middle" class="mono">14</text>
+      <rect x="140" y="66" width="80" height="40" fill="#e0e7ff" stroke="#818cf8"/><text x="180" y="84" font-size="10.5" fill="#3730a3" text-anchor="middle">IP 헤더</text><text x="180" y="98" font-size="10.5" fill="#3730a3" text-anchor="middle" class="mono">20</text>
+      <rect x="220" y="66" width="80" height="40" fill="#e0e7ff" stroke="#818cf8"/><text x="260" y="84" font-size="10.5" fill="#3730a3" text-anchor="middle">TCP 헤더</text><text x="260" y="98" font-size="10.5" fill="#3730a3" text-anchor="middle" class="mono">20</text>
+      <rect x="300" y="66" width="700" height="40" fill="#dcfce7" stroke="#16a34a"/><text x="650" y="84" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">TCP 페이로드</text><text x="650" y="99" font-size="11" fill="#166534" text-anchor="middle" class="mono">1460</text>
+      <rect x="1000" y="66" width="50" height="40" fill="#f1f5f9" stroke="#94a3b8"/><text x="1025" y="90" font-size="10.5" fill="#334155" text-anchor="middle" class="mono">FCS 4</text>
+    </g>
+    <path d="M140 114 L140 122 L1000 122 L1000 114" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="570" y="136" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">IP 패킷 = MTU 1500 (20 + 20 + 1460)</text>
+    <path d="M300 142 L300 150 L1000 150 L1000 142" fill="none" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="650" y="164" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">MSS 1460</text>
+
+    <text x="24" y="192" font-size="12.5" fill="#b91c1c" font-weight="700">[GRE 캡슐화] 편지를 봉투에 넣고, 그 봉투를 다시 더 큰 봉투에 넣는다</text>
+    <g>
+      <rect x="60" y="200" width="66" height="40" fill="#f1f5f9" stroke="#94a3b8"/><text x="93" y="217" font-size="9.5" fill="#334155" text-anchor="middle">이더넷</text><text x="93" y="231" font-size="10" fill="#334155" text-anchor="middle" class="mono">14</text>
+      <rect x="126" y="200" width="66" height="40" fill="#fee2e2" stroke="#dc2626"/><text x="159" y="217" font-size="9.5" fill="#b91c1c" text-anchor="middle">바깥IP</text><text x="159" y="231" font-size="10" fill="#b91c1c" text-anchor="middle" class="mono">20</text>
+      <rect x="192" y="200" width="44" height="40" fill="#fee2e2" stroke="#dc2626"/><text x="214" y="217" font-size="9.5" fill="#b91c1c" text-anchor="middle">GRE</text><text x="214" y="231" font-size="10" fill="#b91c1c" text-anchor="middle" class="mono">4</text>
+      <rect x="236" y="200" width="66" height="40" fill="#e0e7ff" stroke="#818cf8"/><text x="269" y="217" font-size="9.5" fill="#3730a3" text-anchor="middle">안쪽IP</text><text x="269" y="231" font-size="10" fill="#3730a3" text-anchor="middle" class="mono">20</text>
+      <rect x="302" y="200" width="66" height="40" fill="#e0e7ff" stroke="#818cf8"/><text x="335" y="217" font-size="9.5" fill="#3730a3" text-anchor="middle">TCP</text><text x="335" y="231" font-size="10" fill="#3730a3" text-anchor="middle" class="mono">20</text>
+      <rect x="368" y="200" width="632" height="40" fill="#dcfce7" stroke="#16a34a"/><text x="684" y="217" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">TCP 페이로드</text><text x="684" y="232" font-size="11" fill="#166534" text-anchor="middle" class="mono">1436 — 24바이트만큼 줄어든다</text>
+    </g>
+    <path d="M126 194 L126 186 L236 186 L236 194" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="181" y="180" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">덧붙은 24바이트</text>
+
+    <rect x="24" y="258" width="1080" height="52" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="42" y="278" font-size="12.5" fill="#b91c1c">여기에 <tspan font-weight="700">1460</tspan>을 그대로 실으면 20+4+20+20+1460 = <tspan font-weight="700">1524</tspan> → MTU 1500 초과 → <tspan font-weight="700">이 링크를 못 지난다.</tspan></text>
+    <text x="42" y="298" font-size="12.5" fill="#7f1d1d">그래서 안쪽 MTU는 <tspan font-weight="700">1476</tspan>, 안쪽 MSS는 1476 − 20 − 20 = <tspan font-weight="700">1436</tspan>이 되어야 한다.</text>
+  </svg>
+  <figcaption>검산: 14 + 20 + 20 + 1460 + 4 = 1518, IP 패킷은 20 + 20 + 1460 = 1500. <b>1460은 "IPv4 + 옵션 없는 TCP + 이더넷 1500"이라는 조건에서의 값이지 상수가 아니다</b> — IP 옵션이나 TCP 타임스탬프 옵션이 붙으면 더 줄고, <b>IPv6는 헤더가 40바이트라 같은 MTU 1500에서 MSS가 1440</b>이 된다.</figcaption>
+</figure>
+
+<h3>9-2. MSS는 협상되는데 왜 문제가 생기나</h3>
+
+<p>TCP는 3-way handshake의 SYN에 <b>MSS 옵션</b>을 실어 "나는 한 조각에 최대 이만큼까지 받을 수 있다"를 서로 알린다. 그러면 크기 문제는 해결된 것 아닌가?</p>
+
+<div class="memo red">
+  <h4>아니다 — 여기가 핵심이다</h4>
+  <p>각 끝단이 알리는 MSS는 <b>자기 쪽 링크의 MTU에서 계산한 값</b>이다. 클라이언트도 이더넷이고 서버도 이더넷이면 둘 다 1460을 알리고 합의는 1460이 된다. <b>그런데 그 사이 경로에 MTU가 1400인 구간이 있다는 사실을 양 끝단은 알 방법이 없다.</b></p>
+  <div class="rule red">끝단은 <b>자기 첫 홉만</b> 볼 뿐 <b>경로 전체를 보지 못한다</b></div>
+  <p style="margin-bottom:0"><b>경로 전체에서 가장 좁은 구간의 MTU</b>를 <b>Path MTU</b>라 부르고, 그것을 알아내는 절차가 <b>PMTUD(Path MTU Discovery, 경로 MTU 탐색)</b>다. 이름 그대로 "경로의 MTU를 발견한다"는 뜻이다.</p>
+</div>
+
+<h3>9-3. 왜 터널을 지나면 MTU가 줄어드는가</h3>
+
+<div class="card">
+  <p><b>터널이란 원래 패킷을 통째로 다른 패킷의 페이로드에 넣어 보내는 방식</b>이다. VPN, IPsec, 클라우드의 오버레이 네트워크(같은 물리망 위에 논리적으로 별도의 가상 네트워크를 얹는 구조)가 전부 이 방식이다.</p>
+  <p><b>비유</b> — 우편으로 치면 <b>편지를 봉투에 넣고 그 봉투를 다시 더 큰 봉투에 넣어 보내는 것</b>이다. 문제는 <b>바깥 봉투에도 주소를 적을 자리가 필요하다</b>는 점이다. 즉 <b>캡슐화 헤더가 덧붙는 만큼 안쪽 패킷이 쓸 수 있는 자리가 줄어든다.</b> 물리 링크의 MTU는 여전히 1500인데, 그 1500 중 일부를 바깥 헤더가 먹으므로 <b>안쪽 패킷의 한도는 1500보다 작아진다.</b></p>
+</div>
+
+<div class="scroll">
+<table>
+  <caption>주요 캡슐화의 오버헤드. <b>덧붙는 헤더 크기만큼 안쪽 MTU가 줄고, 거기서 다시 40(IPv4 20 + TCP 20)을 빼면 안쪽 MSS다.</b></caption>
+  <thead><tr><th style="width:170px">캡슐화</th><th>덧붙는 헤더</th><th style="width:130px">안쪽 MTU</th><th style="width:200px">안쪽 MSS (IPv4+TCP 기본)</th></tr></thead>
+  <tbody>
+    <tr><th>PPPoE</th><td>8바이트</td><td class="mono">1492</td><td class="mono">1452</td></tr>
+    <tr class="hl"><th>GRE over IPv4</th><td>24바이트 (IP 20 + GRE 4)</td><td class="mono">1476</td><td class="mono">1436</td></tr>
+    <tr><th>VXLAN</th><td>50바이트 (이더넷 14 + IP 20 + UDP 8 + VXLAN 8)</td><td class="mono">1450</td><td class="mono">1410</td></tr>
+    <tr><th>IPsec ESP 터널</th><td class="bad">암호·인증 알고리즘과 NAT 통과 여부에 따라 달라진다</td><td class="bad">값을 짐작하지 말고 실측</td><td class="bad">실측</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout trap">
+  <span class="t">IPsec만 범위로 적은 이유</span>
+  <b>ESP의 오버헤드는 쓰는 암호 알고리즘, 인증 알고리즘, NAT 통과(NAT-T)를 위한 UDP 캡슐화 여부에 따라 달라지므로 하나의 숫자로 못 쓴다.</b> 그래서 IPsec 구간이 끼어 있으면 <b>표를 믿지 말고</b> 아래의 <code>ping -M do</code> 이분 탐색으로 <b>직접 재는 것이 원칙</b>이다.
+</div>
+
+<h3>9-4. 정상 PMTUD vs 블랙홀 — ICMP 한 통에 전부가 달려 있다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="왼쪽은 ICMP가 통과할 때의 정상 PMTUD로, 라우터가 ICMP type 3 code 4 통보를 보내 송신자가 PMTU 캐시에 1400을 기록하고 1400바이트로 줄여 재전송해 성공하는 흐름이다. 오른쪽은 방화벽이 ICMP를 전면 차단해 통보가 송신자에게 못 가고, 송신자가 같은 1500바이트로 200, 600, 1400 밀리초 간격으로 계속 재전송하다 앱 타임아웃이 나는 블랙홀 흐름이다">
+    <defs>
+      <marker id="a9g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="a9b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a9r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <rect x="8" y="38" width="540" height="348" rx="12" fill="#f0fdf4"/>
+    <rect x="564" y="38" width="548" height="348" rx="12" fill="#fef2f2"/>
+    <line x1="556" y1="14" x2="556" y2="386" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- LEFT -->
+    <text x="278" y="28" font-size="14" font-weight="700" fill="#16a34a" text-anchor="middle">ICMP가 돌아올 때 — 정상 PMTUD</text>
+    <rect x="24" y="48" width="110" height="38" rx="8" fill="#fff" stroke="#16a34a"/><text x="79" y="72" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">송신자</text>
+    <rect x="190" y="48" width="110" height="38" rx="8" fill="#fff" stroke="#94a3b8"/><text x="245" y="72" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">라우터 A</text>
+    <rect x="356" y="48" width="140" height="38" rx="8" fill="#fff" stroke="#94a3b8"/><text x="426" y="66" font-size="11" fill="#334155" text-anchor="middle">MTU 1400 구간</text><text x="426" y="80" font-size="10" fill="#64748b" text-anchor="middle">경로에서 가장 좁은 곳</text>
+    <line x1="134" y1="67" x2="184" y2="67" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a9b)"/>
+    <text x="159" y="60" font-size="9.5" fill="#1d4ed8" text-anchor="middle" class="mono">1500B DF=1</text>
+    <line x1="300" y1="67" x2="326" y2="67" stroke="#dc2626" stroke-width="1.8"/>
+    <g stroke="#dc2626" stroke-width="2.6" stroke-linecap="round"><line x1="330" y1="60" x2="344" y2="74"/><line x1="344" y1="60" x2="330" y2="74"/></g>
+
+    <path d="M245 86 L245 118 L79 118 L79 92" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#a9g)"/>
+    <text x="162" y="136" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">ICMP type 3 code 4 — "next-hop MTU = 1400"</text>
+
+    <rect x="24" y="152" width="480" height="52" rx="9" fill="#fff" stroke="#bbf7d0"/>
+    <text x="40" y="172" font-size="11.5" fill="#166534">① 목적지별 <tspan font-weight="700">PMTU 캐시</tspan>에 "이 상대에게는 1400까지"를 기록하고</text>
+    <text x="40" y="192" font-size="11.5" fill="#166534">② 세그먼트를 <tspan font-weight="700" class="mono">1400 − 20 − 20 = 1360</tspan>바이트로 줄여 다시 보낸다</text>
+
+    <line x1="79" y1="248" x2="464" y2="248" stroke="#16a34a" stroke-width="2" marker-end="url(#a9g)"/>
+    <text x="270" y="240" font-size="11" fill="#166534" text-anchor="middle" class="mono">1400B, DF=1</text>
+    <text x="478" y="252" font-size="13" fill="#166534" font-weight="700">성공</text>
+
+    <rect x="24" y="296" width="508" height="72" rx="10" fill="#fff" stroke="#16a34a"/>
+    <text x="40" y="318" font-size="12.5" fill="#166534" font-weight="700">한 번의 통보로 자동 해결된다.</text>
+    <text x="40" y="338" font-size="11.5" fill="#15803d">DF(Don't Fragment)는 "쪼개지 말라"는 IP 헤더 플래그다. 쪼개지 말라고</text>
+    <text x="40" y="356" font-size="11.5" fill="#15803d">해야 라우터가 통보하므로 — <tspan font-weight="700">DF는 PMTUD가 동작하기 위한 전제</tspan>다.</text>
+
+    <!-- RIGHT -->
+    <text x="838" y="28" font-size="14" font-weight="700" fill="#dc2626" text-anchor="middle">ICMP가 차단될 때 — PMTUD 블랙홀</text>
+    <rect x="584" y="48" width="110" height="38" rx="8" fill="#fff" stroke="#dc2626"/><text x="639" y="72" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">송신자</text>
+    <rect x="750" y="48" width="110" height="38" rx="8" fill="#fff" stroke="#94a3b8"/><text x="805" y="72" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">라우터 A</text>
+    <rect x="916" y="48" width="140" height="38" rx="8" fill="#fff" stroke="#94a3b8"/><text x="986" y="66" font-size="11" fill="#334155" text-anchor="middle">MTU 1400 구간</text><text x="986" y="80" font-size="10" fill="#64748b" text-anchor="middle">경로에서 가장 좁은 곳</text>
+    <line x1="694" y1="67" x2="744" y2="67" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a9b)"/>
+    <text x="719" y="60" font-size="9.5" fill="#1d4ed8" text-anchor="middle" class="mono">1500B DF=1</text>
+    <line x1="860" y1="67" x2="886" y2="67" stroke="#dc2626" stroke-width="1.8"/>
+    <g stroke="#dc2626" stroke-width="2.6" stroke-linecap="round"><line x1="890" y1="60" x2="904" y2="74"/><line x1="904" y1="60" x2="890" y2="74"/></g>
+
+    <line x1="805" y1="86" x2="805" y2="104" stroke="#94a3b8" stroke-width="1.8"/>
+    <rect x="700" y="104" width="150" height="30" rx="7" fill="#1e293b"/>
+    <text x="775" y="124" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">방화벽 — ICMP 전면 차단</text>
+    <line x1="775" y1="134" x2="775" y2="150" stroke="#dc2626" stroke-width="1.8"/>
+    <g stroke="#dc2626" stroke-width="2.6" stroke-linecap="round"><line x1="768" y1="152" x2="782" y2="166"/><line x1="782" y1="152" x2="768" y2="166"/></g>
+    <text x="775" y="184" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">통보가 송신자에게 도달하지 못한다</text>
+
+    <rect x="584" y="196" width="504" height="38" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="600" y="220" font-size="11.5" fill="#b91c1c"><tspan font-weight="700">송신자는 아무 통보도 못 받는다.</tspan> 패킷이 사라졌다는 사실조차 모른다.</text>
+
+    <g font-size="11.5" class="mono" fill="#7f1d1d">
+      <text x="600" y="256">t0+200ms&nbsp;&nbsp;&nbsp;RTO 만료 → 똑같이 1500B로 재전송 → 또 같은 곳에서 사라짐</text>
+      <text x="600" y="274">t0+600ms&nbsp;&nbsp;&nbsp;RTO ×2 → 재전송 → 사라짐</text>
+      <text x="600" y="292">t0+1,400ms RTO ×2 → 재전송 → 사라짐 &nbsp;&nbsp;…</text>
+    </g>
+
+    <rect x="584" y="304" width="504" height="64" rx="10" fill="#fff" stroke="#dc2626"/>
+    <text x="600" y="326" font-size="12.5" fill="#b91c1c" font-weight="700">송신자는 "크기를 줄여야 한다"는 사실을 영원히 배우지 못한다.</text>
+    <text x="600" y="346" font-size="11.5" fill="#7f1d1d">큰 패킷만 통보 없이 빨려 들어가 사라지므로 <tspan font-weight="700">PMTUD 블랙홀</tspan>이라 부른다.</text>
+    <text x="600" y="362" font-size="11.5" fill="#7f1d1d">사용자에게는 <tspan font-weight="700">"가끔 멈춰요"</tspan>로만 보인다.</text>
+  </svg>
+  <figcaption><b>절차 전체가 ICMP 한 통에 의존한다.</b> 그런데 많은 조직이 "ICMP는 공격에 쓰이니까"라는 이유로 방화벽에서 ICMP를 <b>종류 구분 없이 통째로 차단</b>한다. <b>ICMP type 3 code 4</b> = "Destination Unreachable — Fragmentation Needed and DF set". IPv6에서는 라우터가 아예 쪼개지 않도록 설계돼 있어 대응 메시지가 <b>ICMPv6 type 2 "Packet Too Big"</b>이다.</figcaption>
+</figure>
+
+<div class="callout trap">
+  <span class="t">비유로 고정하기 — 높이 제한 표지판이 없는 지하차도</span>
+  낮은 지하차도가 하나 있는데 <b>진입 전에 알려주는 표지판이 없다.</b> 높은 트럭만 들어갔다가 안 나오고, 아무도 기사에게 알려주지 않으니 <b>기사는 같은 트럭으로 계속 다시 시도한다.</b> 승용차는 전부 멀쩡히 통과하므로 도로 관리자는 "아무 문제 없다"고 답한다. <b>ICMP 차단은 이 표지판을 뽑아 버리는 것과 같다.</b>
+</div>
+
+<h3>9-5. 증상의 지문 — "작은 건 되고 큰 것만 안 된다"</h3>
+
+<p>이 메커니즘에서 증상이 <b>그대로 유도된다.</b> 크기가 작은 것은 전부 성공하고, <b>full-size 세그먼트가 필요한 것만</b> 실패한다.</p>
+
+<div class="grid g2">
+  <div class="tile red"><div class="k" style="font-family:inherit">3-way handshake는 항상 성공한다</div><div class="d">SYN은 수십 바이트라 어떤 구간도 통과한다. 그래서 <b>"연결은 되는데 데이터에서 멈춘다"</b>가 된다. 이 조합 때문에 <b>방화벽 차단이나 서버 다운 같은 다른 원인이 먼저 배제</b>된다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">작은 GET·작은 JSON은 정상</div><div class="d"><b>헬스체크가 계속 초록불인데 사용자만 실패하는</b> 이유가 이것이다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">본문이 큰 POST만 실패</div><div class="d">파일 업로드, 큰 배열이 담긴 JSON, 이미지 전송. <b>"헤더는 가는데 본문에서 멈춘다"</b>는 표현이 여기서 나온다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">인증서 체인이 큰 서버만 TLS 실패</div><div class="d">서버가 보내는 <b>Certificate 메시지</b>는 중간 인증서까지 붙으면 수 KB가 되어 full-size 세그먼트 여러 개로 나간다. 그래서 <b>ClientHello·ServerHello까지는 오가는데 Certificate 구간에서 멈추는</b> 아주 특징적인 모습이 된다. 체인이 짧은 다른 서버는 멀쩡하니 <b>"특정 서버만 SSL 에러"</b>로 보인다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">방향도 갈린다</div><div class="d">MSS는 <b>방향별로 각자 알리는 값</b>이고 경로도 왕복이 다를 수 있어서, <b>큰 요청만</b> 실패할 수도 있고 <b>큰 응답만</b> 실패할 수도 있다. 캡처에서 <b>어느 방향의 큰 세그먼트가 재전송되고 있는지</b>를 봐야 한다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">그리고 경로 의존적이다</div><div class="d">이 모든 증상은 <b>그 좁은 구간을 지나는 경로의 사용자에게만</b> 나타난다. 다른 경로의 사용자는 아무 문제가 없다 — <b>"특정 사용자만 + 간헐적"이라는 원래 관찰과 정확히 맞아떨어진다.</b></div></div>
+</div>
+
+<h3>9-6. 확인 방법</h3>
+
+<div class="codehead plain"><span class="tag">bash</span> 경로 MTU 실측</div>
+<pre><code><span class="cm"># 경로가 실제로 통과시키는 최대 크기를 이분 탐색으로 찾는다.
+#   -M do : DF 비트를 켠다. 쪼개지 말라고 해야 "크다"는 판정이 나온다.
+#   -s N  : ICMP 페이로드 크기. 실제 IP 패킷 크기는 N + ICMP 헤더 8 + IP 헤더 20 = N + 28 이다.</span>
+ping -M do -s 1472 example.com   <span class="cm"># 1472 + 28 = 1500  통과하는가?</span>
+ping -M do -s 1422 example.com   <span class="cm"># 1422 + 28 = 1450</span>
+ping -M do -s 1372 example.com   <span class="cm"># 1372 + 28 = 1400</span>
+<span class="cm"># 응답이 오는 최대값 + 28 이 그 경로의 MTU다.
+# 리눅스에서 로컬 인터페이스보다 큰 값을 주면 커널이 즉시
+# "Frag needed and DF set (mtu = ...)"으로 알려주기도 한다.</span>
+
+<span class="cm"># 경로를 따라가며 MTU가 어디서 줄어드는지 본다.</span>
+tracepath example.com   <span class="cm"># 각 홉과 함께 "pmtu 1400" 같은 줄이 나온다</span>
+
+<span class="cm"># ICMP 통보가 실제로 도착하는지 직접 확인한다. 아무것도 안 잡히면 차단 의심.</span>
+tcpdump -i any -nn <span class="st">'icmp[icmptype] == icmp-unreach and icmp[icmpcode] == 4'</span>
+
+<span class="cm"># 내 인터페이스와 경로별 MTU 설정 확인</span>
+ip link show                  <span class="cm"># 인터페이스별 mtu 값</span>
+ip route get 203.0.113.7      <span class="cm"># 이 목적지로 갈 때 적용되는 경로와 mtu</span>
+</code></pre>
+
+<div class="callout warn">
+  <span class="t"><code>ping</code>의 함정</span>
+  <b>상대나 중간 장비가 ICMP echo 자체를 막아두면 크기와 무관하게 응답이 없어서</b> "전부 실패"로 보인다. 그럴 때는 <b>작은 크기(<code>-s 100</code>)로 먼저 쳐서 echo가 오는지부터</b> 확인하고, 안 오면 이 방법은 못 쓴다고 판단하고 캡처로 넘어간다.
+</div>
+
+<h3>9-7. 대응 — 네 가지, 우선순위 순으로</h3>
+
+<div class="memo green">
+  <h4>암기 순서 — <span style="color:#16a34a">허용 → 클램프 → 낮춤 → 탐지</span></h4>
+  <div class="chain" style="margin-bottom:0">
+    <span class="chip g">① ICMP 3/4 허용<br><span style="font-weight:400">근본 대응</span></span><span class="arrow">→</span>
+    <span class="chip b">② MSS clamping<br><span style="font-weight:400">통보에 의존 안 함</span></span><span class="arrow">→</span>
+    <span class="chip w">③ 인터페이스 MTU 낮춤<br><span style="font-weight:400">단순하지만 취약</span></span><span class="arrow">→</span>
+    <span class="chip r">④ 커널 자가 탐지<br><span style="font-weight:400">보조 수단</span></span>
+  </div>
+</div>
+
+<h4>(1) 근본 대응 — ICMP를 필요한 종류만이라도 통과시킨다</h4>
+
+<div class="memo red">
+  <h4>"ICMP 전면 차단"은 <span style="color:#dc2626">보안을 얻는 것이 아니라 원인 불명의 간헐 장애를 사는 것</span></h4>
+  <p style="margin-bottom:0">보안 정책으로 흔하지만, <b>type 3 code 4는 인터넷이 정상 동작하기 위한 필수 통보</b>다. echo(ping)를 계속 막고 싶다면 <b>그것만 따로</b> 막으면 된다.</p>
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 종류 구분 없이 전부 차단</div>
+<pre><code><span class="cm"># PMTUD 통보가 못 들어와 블랙홀이 만들어진다.</span>
+<span class="ln-bad">iptables -A INPUT -p icmp -j DROP</span>
+</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 경로 MTU 통보만은 허용</div>
+<pre><code><span class="cm"># fragmentation-needed 는 type 3 code 4 에 대한 iptables의 이름이다.</span>
+<span class="ln-good">iptables -A INPUT -p icmp --icmp-type fragmentation-needed -j ACCEPT</span>
+iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
+</code></pre>
+  </div>
+</div>
+
+<h4>(2) MSS clamping — 애초에 작게 합의시킨다</h4>
+
+<p><b>통보에 의존하지 않는 방법</b>이다. <b>터널의 입구에 있는 라우터나 방화벽이 지나가는 SYN 패킷의 MSS 옵션 값을 직접 낮춰 쓴다.</b> 그러면 양 끝단은 처음부터 작은 세그먼트로만 합의하고, <b>큰 패킷이 아예 생기지 않으므로 ICMP가 필요 없어진다.</b> "clamp(죔쇠)"라는 이름은 <b>값을 위에서 눌러 고정한다</b>는 뜻이다.</p>
+
+<div class="codehead plain"><span class="tag">bash</span> iptables TCPMSS</div>
+<pre><code><span class="cm"># 이 장비를 통과하는 모든 TCP 연결의 SYN에서 MSS를 경로 MTU에 맞게 낮춰 쓴다.
+#   --tcp-flags SYN,RST SYN : SYN 플래그만 켜진 패킷, 즉 연결 시작 패킷에만 적용한다.
+#                             MSS 옵션은 SYN에만 실리므로 여기 말고는 손댈 곳이 없다.
+#   --clamp-mss-to-pmtu     : 나가는 인터페이스의 MTU에서 계산해 자동으로 값을 정한다.</span>
+iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
+         -j TCPMSS --clamp-mss-to-pmtu
+
+<span class="cm"># 자동 계산이 곤란한 환경(경로 MTU를 장비가 모를 때)이라면 값을 직접 박는다.</span>
+iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
+         -j TCPMSS --set-mss 1360
+</code></pre>
+
+<h4>(3) 인터페이스 MTU를 낮춘다</h4>
+
+<p>터널 종단 장비나 서버의 MTU를 <b>실측한 경로 MTU에 맞춘다.</b> 단순하지만 그 인터페이스를 지나는 <b>모든 트래픽의 효율이 조금 떨어지고</b>, 무엇보다 <b>경로가 바뀌면 다시 틀린 값이 된다.</b></p>
+
+<pre><code>ip link set dev eth0 mtu 1400   <span class="cm"># 즉시 반영, 재부팅하면 사라진다</span>
+</code></pre>
+
+<h4>(4) 커널의 블랙홀 자가 탐지</h4>
+
+<p>리눅스에는 <b>"ICMP가 안 오는데 계속 재전송만 반복된다"는 상황을 스스로 감지해 MSS를 낮춰보는 기능</b>이 있다.</p>
+
+<pre><code><span class="cm"># 0 = 사용 안 함(기본), 1 = 블랙홀이 의심될 때만 탐색, 2 = 항상 탐색</span>
+sysctl -w net.ipv4.tcp_mtu_probing=1
+<span class="cm"># 탐색이 시작될 때 내려가는 하한값. 너무 낮게 잡으면 효율이 떨어지므로
+# 기본값을 확인하고 조정한다.</span>
+sysctl net.ipv4.tcp_base_mss
+</code></pre>
+
+<div class="callout trap">
+  <span class="t">(4)가 보조인 이유 — 방향이 하나뿐이다</span>
+  이것은 <b>우리 서버가 송신자일 때만</b> 도움이 된다. 문제가 <b>사용자의 단말에서 우리 쪽으로 오는 방향</b>이라면 우리 커널 설정으로는 못 고친다. 그래서 <b>(1)과 (2)가 우선이고 (4)는 보조</b>다.
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 범인 ③ 중간 장비의 유휴 커넥션 드랍 — 아무도 통보해주지 않는 죽음</h2>
+
+<h3>10-1. 전제 — 중간 장비는 왜 연결을 기억하는가</h3>
+
+<div class="card">
+  <p>NAT, 방화벽, 로드밸런서 같은 중간 장비는 <b>연결 하나하나를 자기 메모리의 표에 적어둔다.</b> 이 표를 <b>세션 테이블</b> 또는 <b>연결 추적(connection tracking) 테이블</b>이라고 부른다.</p>
+  <p><b>왜 필요한가.</b> NAT는 사설 IP를 공인 IP로 바꿔 내보내고 돌아온 응답을 원래 단말로 되돌려야 하는데, <b>어떤 응답이 어떤 단말의 것인지 알려면 "누가 어디로 나갔는지"를 기억하고 있어야</b> 한다. 상태 기반 방화벽도 마찬가지다 — "안에서 나간 연결에 대한 응답만 통과시킨다"는 규칙을 지키려면 나간 연결 목록을 들고 있어야 한다.</p>
+  <p style="margin-bottom:0"><b>그런데 이 표는 메모리에 있고 유한하다.</b> 그래서 모든 중간 장비는 <b>일정 시간 아무 패킷도 안 오간 항목을 지운다.</b> 안 지우면 표가 차서 새 연결을 못 받게 되기 때문이다.</p>
+</div>
+
+<div class="callout info">
+  <span class="t">비유로 고정하기 — 회원제 클럽 입구의 명단</span>
+  문지기는 <b>들어간 사람 명단</b>을 들고 있어야 나올 때 확인해 줄 수 있다. 명단이 무한정 길어질 수 없으니 <b>300초 동안 아무 움직임이 없으면 이름을 지운다.</b> 문제는 <b>지웠다는 사실을 당사자에게 알려주지 않는다</b>는 것이다. 다시 왔을 때 문지기는 <b>아무 말 없이 무시(DROP)한다</b> — "명단에 없다"고 말해줬다면(REJECT = RST) 바로 알아챘을 것이다.
+</div>
+
+<h3>10-2. 10번 문서의 half-close 경쟁과는 <span style="color:#dc2626">다른 현상</span>이다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 392" role="img" aria-label="위쪽 타임라인은 중간 장비 유휴 드랍으로, 0초에 연결 반납, 300초에 방화벽이 통보 없이 세션 표에서 삭제, 400초에 요청 전송이 성공하지만 방화벽이 조용히 버리고, 재전송을 반복하다 403초에 SocketTimeoutException이 난다. 아래쪽 타임라인은 half-close 경쟁으로, 60초에 서버가 FIN을 보내고 재사용 시 즉시 RST가 와서 밀리초 단위로 실패한다">
+    <text x="24" y="26" font-size="13.5" font-weight="700" fill="#dc2626">① 중간 장비 유휴 드랍 (이 절) — 아무도 통보하지 않는다 → <tspan text-decoration="underline">타임아웃을 꽉 채운</tspan> 실패</text>
+    <line x1="60" y1="100" x2="1060" y2="100" stroke="#94a3b8" stroke-width="2"/>
+    <g stroke="#dc2626" stroke-width="2">
+      <line x1="130" y1="92" x2="130" y2="108"/><line x1="330" y1="92" x2="330" y2="108"/><line x1="560" y1="92" x2="560" y2="108"/><line x1="780" y1="92" x2="780" y2="108"/><line x1="970" y1="92" x2="970" y2="108"/>
+    </g>
+    <g font-size="11.5" class="mono" fill="#b91c1c" text-anchor="middle" font-weight="700">
+      <text x="130" y="84">t = 0s</text><text x="330" y="84">t = 300s</text><text x="560" y="84">t = 400s</text><text x="780" y="84">t = 400.2s ~</text><text x="970" y="84">t = 403s</text>
+    </g>
+    <g font-size="10.8" fill="#374151" text-anchor="middle">
+      <text x="130" y="124">요청 처리 완료.</text><text x="130" y="138">연결 C를 풀에 반납,</text><text x="130" y="152">유휴 시작</text>
+      <text x="330" y="124">방화벽 유휴 타이머 만료.</text><text x="330" y="138" font-weight="700" fill="#b91c1c">세션 테이블에서 C 삭제</text><text x="330" y="152" font-weight="700" fill="#b91c1c">— 양 끝단에 통보 없음</text>
+      <text x="560" y="124">배치가 깨어나 요청.</text><text x="560" y="138">풀이 C를 빌려주고</text><text x="560" y="152"><tspan class="mono">write()</tspan>는 <tspan font-weight="700">성공한다</tspan></text>
+      <text x="780" y="124">방화벽: 표에 없는 흐름 →</text><text x="780" y="138" font-weight="700" fill="#b91c1c">조용히 버림(DROP)</text><text x="780" y="152">RTO 재전송 200/400/800…</text>
+      <text x="970" y="124" font-weight="700" fill="#b91c1c">read timeout 만료</text><text x="970" y="138">SocketTimeoutException</text><text x="970" y="152">서버 로그: 아무것도 없음</text>
+    </g>
+    <rect x="196" y="164" width="268" height="30" rx="7" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="330" y="184" font-size="11" fill="#b91c1c" text-anchor="middle">양 끝단 커널·풀: 여전히 <tspan font-weight="700" class="mono">ESTABLISHED</tspan> (믿음)</text>
+    <rect x="836" y="164" width="268" height="30" rx="7" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="970" y="184" font-size="11" fill="#b45309" text-anchor="middle">재시도하면 <tspan font-weight="700">새 연결</tspan>이라 성공한다</text>
+
+    <line x1="24" y1="212" x2="1096" y2="212" stroke="#e5e7eb" stroke-width="1.5"/>
+
+    <text x="24" y="240" font-size="13.5" font-weight="700" fill="#2563eb">② half-close 경쟁 (10번 3-3) — FIN·RST가 실제로 오간다 → <tspan text-decoration="underline">즉시</tspan> 실패</text>
+    <line x1="60" y1="300" x2="1060" y2="300" stroke="#94a3b8" stroke-width="2"/>
+    <g stroke="#2563eb" stroke-width="2">
+      <line x1="180" y1="292" x2="180" y2="308"/><line x1="450" y1="292" x2="450" y2="308"/><line x1="720" y1="292" x2="720" y2="308"/><line x1="960" y1="292" x2="960" y2="308"/>
+    </g>
+    <g font-size="11.5" class="mono" fill="#1d4ed8" text-anchor="middle" font-weight="700">
+      <text x="180" y="284">t = 0s</text><text x="450" y="284">t = 60s</text><text x="720" y="284">t = 100s</text><text x="960" y="284">+ 수 ms</text>
+    </g>
+    <g font-size="10.8" fill="#374151" text-anchor="middle">
+      <text x="180" y="324">연결을 풀에 반납,</text><text x="180" y="338">유휴 시작</text>
+      <text x="450" y="324">서버가 유휴 상한 도달 →</text><text x="450" y="338" font-weight="700" fill="#1d4ed8">정상 절차로 FIN 전송</text><text x="450" y="352">클라 풀은 그 사실을 모름</text>
+      <text x="720" y="324">풀이 그 연결을 재사용해</text><text x="720" y="338">요청을 보낸다</text>
+      <text x="960" y="324" font-weight="700" fill="#1d4ed8">즉시 RST</text><text x="960" y="338">Connection reset / 502</text>
+    </g>
+    <rect x="24" y="362" width="1072" height="26" rx="7" fill="#1e293b"/>
+    <text x="44" y="380" font-size="12.5" fill="#e2e8f0">증상이 <tspan fill="#fde68a" font-weight="700">"빠른 실패"</tspan>인가 <tspan fill="#fde68a" font-weight="700">"느린 타임아웃"</tspan>인가가 두 원인을 가르는 첫 갈림길이다 — 이걸 구분하면 조사 방향이 완전히 달라진다.</text>
+  </svg>
+  <figcaption>10번의 경우는 <b>서버가 FIN을 보낸다</b> — 신호가 실제로 오가므로 <b>실패가 즉시 드러난다.</b> 이 절의 경우는 <b>아무도 아무 신호도 보내지 않는다</b> — 양 끝단의 커널은 여전히 연결이 ESTABLISHED라고 믿고, 그 뒤에 보낸 패킷은 표에 없는 흐름이라 <b>그 장비에서 조용히 버려진다.</b></figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <thead><tr><th style="width:150px"></th><th>half-close 경쟁 (10번 3-3)</th><th>중간 장비 유휴 드랍 (이 절)</th></tr></thead>
+  <tbody>
+    <tr><th>누가 끊었나</th><td>상대 서버 (정상 절차)</td><td>중간 NAT·방화벽 (통보 없음)</td></tr>
+    <tr><th>신호가 오는가</th><td>FIN이 오고, 재사용 시 RST가 온다</td><td class="bad">아무것도 안 온다</td></tr>
+    <tr class="hl"><th>증상</th><td><b>즉시</b> 실패 — Connection reset, 502</td><td><b>타임아웃을 꽉 채운</b> 실패</td></tr>
+    <tr><th>캡처에서 보이는 것</th><td>FIN, 그리고 요청 직후의 RST</td><td>요청 세그먼트의 재전송만 반복, 응답 없음</td></tr>
+    <tr><th>근본 대응</th><td>클라이언트 유휴 상한 &lt; 서버 유휴 상한</td><td>유휴를 만들지 않거나(keepalive), 표 만료보다 먼저 우리가 닫는다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>신고 문구 하나로 이 가설이 1번으로 올라간다</h4>
+  <div class="rule red">"재시도하면 되는데 <b>첫 번째만</b> 실패한다"</div>
+  <p style="margin-bottom:0">재시도하면 <b>새 연결이 맺어지므로 성공한다.</b> 그래서 <b>"가끔 첫 요청만 실패하고 재시도하면 되는" 미스터리</b>가 완성되고, 재현 절차를 못 적어 내므로 오래 방치된다.</p>
+</div>
+
+<h3>10-3. 대응 1 — TCP keepalive로 세션 테이블을 살려둔다</h3>
+
+<p><b>TCP keepalive는 연결이 놀고 있을 때 커널이 주기적으로 빈 패킷을 보내 "나 아직 여기 있다"를 확인하는 기능</b>이다. 원래 목적은 죽은 상대를 탐지하는 것이지만, <b>부수 효과로 중간 장비의 세션 테이블 항목이 갱신된다.</b> 패킷이 오갔으니 유휴가 아니게 되는 것이다.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>HTTP keep-alive</h4>
+    <ul>
+      <li><b>애플리케이션 계층의 약속</b> — "응답 후에도 이 TCP 연결을 끊지 말고 다음 요청에 쓰자".</li>
+      <li>유휴 중에 <b>패킷을 만들지 않는다.</b></li>
+    </ul>
+  </div>
+  <div class="pane b">
+    <h4>TCP keepalive</h4>
+    <ul>
+      <li><b>커널이 보내는 전송 계층의 생존 확인 패킷.</b></li>
+      <li>소켓마다 <code>SO_KEEPALIVE</code>를 켠 소켓에서만 동작하고, 안 켜면 <b>sysctl 값이 무엇이든 아무 패킷도 안 나간다.</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout trap">
+  <span class="t">이름만 비슷할 뿐 완전히 다른 것이다</span>
+  <b>HTTP keep-alive를 켰다고 TCP keepalive가 켜지지는 않는다.</b> 이 혼동이 "keepalive 걸었는데 왜 계속 끊기죠?"의 절반이다.
+</div>
+
+<pre><code>sysctl net.ipv4.tcp_keepalive_time net.ipv4.tcp_keepalive_intvl net.ipv4.tcp_keepalive_probes
+<span class="cm"># 리눅스 기본값
+#   tcp_keepalive_time   = 7200   유휴가 이 초만큼 이어지면 첫 프로브를 보낸다 (2시간)
+#   tcp_keepalive_intvl  = 75     응답이 없으면 이 간격으로 다시 보낸다
+#   tcp_keepalive_probes = 9      이만큼 연속 실패하면 연결을 죽은 것으로 판정한다</span>
+</code></pre>
+
+<div class="memo red">
+  <h4>이 대응에서 <span style="color:#dc2626">가장 흔한 실수</span> — 기본값 2시간</h4>
+  <div class="rule red">tcp_keepalive_time <b>7200초</b>는 <b>5분(300초)</b>짜리 NAT 만료 앞에서 아무 소용이 없다</div>
+  <p style="margin-bottom:0"><b>첫 프로브가 나가기 전에 이미 표에서 지워져 있다.</b> <code>SO_KEEPALIVE</code>만 켜고 "keepalive 걸었으니 됐다"고 넘어가면 증상은 그대로다. <b>반드시 중간 장비의 유휴 만료보다 짧게 낮춰야 한다.</b></p>
+</div>
+
+<pre><code><span class="cm"># /etc/sysctl.d/99-keepalive.conf
+# 중간 장비의 유휴 만료(예: 300초)보다 넉넉히 짧게 잡는다.
+# 프로브 한 번이 유실될 수도 있으므로 여유를 둔다.</span>
+net.ipv4.tcp_keepalive_time = 120
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 5
+</code></pre>
+
+<div class="callout warn">
+  <span class="t">sysctl은 호스트 전체의 모든 소켓에 적용된다</span>
+  영향 범위를 확인하고 바꿔야 한다. 소켓별로 다르게 주고 싶다면 <b>JDK 11부터 확장 소켓 옵션</b>(<code>TCP_KEEPIDLE</code>, <code>TCP_KEEPINTERVAL</code>, <code>TCP_KEEPCOUNT</code>)으로 지정할 수 있지만, HTTP 클라이언트에 물리려면 <b>소켓 팩토리를 직접 구현</b>해야 해서 손이 많이 간다. <b>실무에서는 sysctl로 호스트 정책을 잡거나, 다음에 나올 풀의 유휴 상한으로 푸는 쪽이 더 자주 쓰인다.</b>
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 풀만 만들고 소켓 옵션은 손대지 않은 상태</div>
+<pre><code><span class="cm">// - SO_KEEPALIVE가 꺼져 있으므로 유휴 연결에서는
+//   패킷이 한 개도 안 나간다.
+// - 중간 장비 입장에서 이 연결은 완벽하게 "쉬고 있는"
+//   연결이라 표에서 지워진다.</span>
+<span class="kw">PoolingHttpClientConnectionManager</span> pool =
+    PoolingHttpClientConnectionManagerBuilder.<span class="fn">create</span>()
+<span class="ln-bad">        .<span class="fn">setMaxConnPerRoute</span>(<span class="st">50</span>)</span>
+        .<span class="fn">build</span>();
+</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> keepalive + 풀의 유휴 수명 제한</div>
+<pre><code><span class="kw">PoolingHttpClientConnectionManager</span> pool =
+    PoolingHttpClientConnectionManagerBuilder.<span class="fn">create</span>()
+        .<span class="fn">setMaxConnPerRoute</span>(<span class="st">50</span>)
+        .<span class="fn">setDefaultSocketConfig</span>(SocketConfig.<span class="fn">custom</span>()
+<span class="ln-good">            <span class="cm">// 커널 TCP keepalive를 켠다. 이 소켓에서만 프로브가 나간다.
+            // 실제 주기는 호스트의 tcp_keepalive_time을 따르므로,
+            // 그 값이 중간 장비 만료보다 짧은지 반드시 확인해야 의미가 있다.</span>
+            .<span class="fn">setSoKeepAlive</span>(<span class="kw">true</span>)</span>
+            .<span class="fn">build</span>())
+        .<span class="fn">setDefaultConnectionConfig</span>(ConnectionConfig.<span class="fn">custom</span>()
+<span class="ln-good">            <span class="cm">// 연결 하나의 최대 수명. keepalive와 무관하게 주기적으로 새로 맺는다.</span>
+            .<span class="fn">setTimeToLive</span>(TimeValue.<span class="fn">ofMinutes</span>(<span class="st">5</span>))</span>
+<span class="ln-good">            <span class="cm">// 이만큼 놀았던 연결은 재사용 직전에 살아있는지 확인한다.
+            // 창을 좁힐 뿐 없애지는 못하는 보조 방어다.</span>
+            .<span class="fn">setValidateAfterInactivity</span>(TimeValue.<span class="fn">ofSeconds</span>(<span class="st">5</span>))</span>
+            .<span class="fn">build</span>())
+        .<span class="fn">build</span>();
+
+<span class="kw">CloseableHttpClient</span> http = HttpClients.<span class="fn">custom</span>()
+        .<span class="fn">setConnectionManager</span>(pool)
+<span class="ln-good">        <span class="cm">// 백그라운드로 유휴 연결을 청소한다 — 아래 대응 2의 핵심.</span>
+        .<span class="fn">evictIdleConnections</span>(TimeValue.<span class="fn">ofSeconds</span>(<span class="st">60</span>))</span>
+        .<span class="fn">build</span>();
+</code></pre>
+  </div>
+</div>
+
+<h3>10-4. 대응 2 — 풀의 유휴 수명을 중간 장비의 만료보다 짧게</h3>
+
+<p>keepalive가 <b>"연결을 살려두는"</b> 방향이라면, 이쪽은 <b>"어차피 못 쓸 연결이면 우리가 먼저 버린다"</b>는 방향이다. 중간 장비가 300초에 지운다면 우리 풀은 60초에 버린다. 그러면 <b>표에서 지워진 연결을 쓰게 되는 일 자체가 생기지 않는다.</b></p>
+
+<div class="scroll">
+<table>
+  <caption>규칙의 <b>모양</b>은 10번 문서 3-3절과 같다. 다만 <b>비교 대상이 다르다.</b></caption>
+  <thead><tr><th style="width:150px"></th><th style="width:340px">비교 대상</th><th>목적</th></tr></thead>
+  <tbody>
+    <tr><th>10번 3-3</th><td>상대 서버의 keep-alive 유휴 상한</td><td>서버가 FIN을 보내기 전에 우리가 먼저 닫아 경쟁을 없앤다</td></tr>
+    <tr class="hl"><th>이 절</th><td><b>경로상 중간 장비의 세션 만료 시간</b></td><td>표에서 지워진 연결을 재사용하는 일을 없앤다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>그래서 실제로 지켜야 할 상한은 <span style="color:#16a34a">둘 중 더 짧은 쪽</span></h4>
+  <div class="rule ok">우리 풀의 유휴 상한 &lt; min( 상대 서버 유휴 상한 , 중간 장비 세션 만료 )</div>
+  <p style="margin-bottom:0">상대 서버는 60초에 닫고 중간 방화벽은 300초에 지운다면, <b>우리 풀의 유휴 상한은 60초보다도 짧아야 한다.</b></p>
+</div>
+
+<p><b>DB 커넥션 풀도 똑같은 문제를 겪는다.</b> <b>밤새 놀던 연결이 아침 첫 요청에서 죽는</b> 현상이 대표적이다.</p>
+
+<div class="codehead good"><span class="tag">HikariCP</span> 같은 규칙을 DB 쪽에서</div>
+<pre><code><span class="kw">HikariConfig</span> cfg = <span class="kw">new</span> <span class="fn">HikariConfig</span>();
+<span class="cm">// 연결 하나의 최대 수명. DB나 중간 방화벽이 끊는 시간보다 몇십 초 짧게 잡는다.</span>
+cfg.<span class="fn">setMaxLifetime</span>(<span class="st">600_000</span>);       <span class="cm">// 10분</span>
+<span class="cm">// 유휴 연결을 이 시간마다 한 번씩 건드려 살아있는지 확인한다.
+// keepalive와 같은 발상이지만 커널이 아니라 풀이 애플리케이션 레벨로 보내는 신호다.
+// 중간 장비의 세션 테이블도 이 트래픽으로 함께 갱신된다.</span>
+cfg.<span class="fn">setKeepaliveTime</span>(<span class="st">120_000</span>);     <span class="cm">// 2분</span>
+cfg.<span class="fn">setIdleTimeout</span>(<span class="st">300_000</span>);
+</code></pre>
+
+<div class="callout info">
+  <span class="t">커널 keepalive vs 애플리케이션 레벨 heartbeat</span>
+  <b>커널 keepalive(<code>SO_KEEPALIVE</code>)는 데이터가 없는 빈 프로브 패킷</b>이라 애플리케이션이 개입할 필요가 없고 <b>어떤 프로토콜에서도 동작한다.</b> <b>애플리케이션 레벨 heartbeat</b>는 HTTP/2의 PING 프레임, WebSocket의 ping, DB 풀의 검증 쿼리처럼 <b>실제 프로토콜 메시지를 주고받는 것</b>이다. 후자는 <b>상대 애플리케이션이 살아있는지까지</b> 확인해 주지만 그 프로토콜을 구현해야 하고, 전자는 어디서든 되지만 <b>상대 커널이 응답할 뿐이라 애플리케이션이 멈춰 있어도 살아있다고 나온다.</b> <b>세션 테이블 갱신이라는 목적만 놓고 보면 둘 다 유효하다.</b>
+</div>
+
+<h3>10-5. 중간 장비의 만료 시간을 어떻게 알아내는가</h3>
+
+<p>이 대응들은 전부 <b>"중간 장비의 만료 시간"</b>을 알아야 값을 정할 수 있다. 네 가지 경로가 있다.</p>
+
+<div class="step"><span class="n">1</span><div class="body"><b>문서로 확인한다.</b> 클라우드 로드밸런서는 유휴 상한을 문서화한다. 예를 들어 AWS의 <b>Network Load Balancer</b>는 TCP 흐름의 유휴 상한이 정해져 있고, <b>Application Load Balancer</b>는 조정 가능한 기본값을 갖는다. <b>제품과 버전에 따라 값과 조정 가능 여부가 달라지므로 반드시 해당 시점의 공식 문서를 확인한다.</b></div></div>
+<div class="step"><span class="n">2</span><div class="body"><b>사내 장비는 네트워크팀에 묻는다.</b> 방화벽·NAT의 TCP 유휴 만료는 <b>장비 설정값</b>이고, 물어보면 즉시 나오는 정보다.</div></div>
+<div class="step"><span class="n">3</span><div class="body"><b>리눅스 호스트 자신의 conntrack이라면 직접 본다.</b>
+<pre style="margin-top:8px"><code>sysctl net.netfilter.nf_conntrack_tcp_timeout_established
+<span class="cm"># 리눅스 기본값은 432000초(5일)로 아주 길다. 그래서 호스트 자신의 conntrack이
+# 범인인 경우는 드물고, 대개 경로에 있는 별도 장비가 훨씬 짧게 잡혀 있다.</span></code></pre></div></div>
+<div class="step ok"><span class="n">4</span><div class="body"><b>알아낼 수 없으면 실측한다.</b> 연결을 하나 맺어두고 <b>N초 쉰 뒤 요청을 보내는</b> 스크립트로 <b>이분 탐색</b>을 하면 경계가 나온다. <b>60초는 되고 300초는 안 된다면 그 사이에 만료 시점이 있다.</b></div></div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 세 범인 감별표 · 평소에 깔아둘 것</h2>
+
+<div class="memo">
+  <h4>3초 감별 규칙</h4>
+  <div class="rule"><b>크면</b> MTU &nbsp;·&nbsp; <b>쉬면</b> 유휴 드랍 &nbsp;·&nbsp; <b>특정 인스턴스면</b> 서버 로컬 &nbsp;·&nbsp; <b>아무 규칙 없으면</b> 경로 유실</div>
+</div>
+
+<table class="wide">
+  <caption><b>캡처를 열었을 때 이 표를 위에서 아래로 훑는 것이 실전 절차다.</b> 굵은 칸이 각 범인을 확정하는 결정적 축이다.</caption>
+  <thead><tr><th style="width:150px"></th><th>재전송 (8절)</th><th>PMTUD 블랙홀 (9절)</th><th>유휴 드랍 (10절)</th></tr></thead>
+  <tbody>
+    <tr><th>무엇이 원인인가</th><td>경로 구간 또는 서버의 패킷 유실</td><td>경로에 작은 MTU 구간 + ICMP 차단</td><td>중간 장비가 통보 없이 세션 삭제</td></tr>
+    <tr class="hl"><th>크기 의존성</th><td class="dash">없음 (크기와 무관)</td><td class="bad">있음 — 큰 것만 실패</td><td class="dash">없음</td></tr>
+    <tr class="hl"><th>시간 의존성</th><td class="dash">없음</td><td class="dash">없음</td><td class="bad">있음 — 유휴 후 첫 요청만</td></tr>
+    <tr><th>연결 수립은 되는가</th><td>대체로 됨</td><td><b>항상 됨</b> (SYN은 작다)</td><td>이미 맺힌 연결에서 발생</td></tr>
+    <tr><th>캡처의 지문</th><td>재전송·중복 ACK이 산발적으로</td><td>full-size 세그먼트만 응답 없이 재전송</td><td>재전송만 반복, RST도 FIN도 없음</td></tr>
+    <tr><th>첫 확인 명령</th><td><code>ss -ti</code>, <code>nstat</code></td><td><code>ping -M do -s</code>, <code>tracepath</code></td><td>중간 장비 유휴 만료 확인</td></tr>
+    <tr><th>대응</th><td class="good">유실 구간 특정 후 소유자에게 이관</td><td class="good">ICMP 허용 + MSS clamping</td><td class="good">keepalive 주기 단축 + 풀 유휴 상한</td></tr>
+  </tbody>
+</table>
+
+<h3>11-1. 사건이 터진 뒤에 켜는 캡처는 늦다 — 평소 준비 <span style="color:#16a34a">링 · 메 · 로 · 대</span></h3>
+
+<p>간헐적 문제는 <b>캡처를 켜둔 시간에 재현되지 않을 확률이 높다.</b> 그래서 준비의 방향은 <b>"이 문서의 절차를 사후 조사가 아니라 상시 관측으로 옮기는 것"</b>이다.</p>
+
+<div class="grid g2">
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">링 — 상시 패킷 캡처 링 버퍼</div>
+    <div class="d">문제 구간이 자주 터지는 서버라면 <code>-C</code>/<code>-W</code>로 <b>용량을 고정한 캡처를 상시</b> 돌려둔다. 총 용량이 고정돼 있으므로 디스크 위험 없이 "최근 몇 시간"이 늘 남아 있고, 신고를 받으면 <b>그 시각의 pcap이 이미 있는 상태</b>가 된다. <b>재현을 기다릴 필요가 없어지는 것</b>이 이 준비의 값이다. 개인정보를 고려해 <code>-s</code>로 헤더만 뜨고 보관 기간을 짧게 잡는다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">메 — 재전송률과 소켓 통계를 메트릭으로</div>
+    <div class="d"><code>nstat</code>의 <code>TcpRetransSegs</code>/<code>TcpOutSegs</code> 비율, NIC 드랍 카운터, conntrack 사용률, listen 백로그 넘침을 주기적으로 수집해 대시보드에 올린다. <b>핵심은 절대값이 아니라 기준선</b>이다 — 평소 값을 알고 있어야 <b>"지금 평소의 5배"</b>라는 판단이 되고, 그래야 알림을 걸 수 있다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">로 — LB 액세스 로그의 구간 분해</div>
+    <div class="d">4절의 <code>upstream_connect_time</code> / <code>upstream_header_time</code> / <code>upstream_response_time</code> / <code>upstream_addr</code>을 남겨두면, <b>"LB 앞이 문제인지 뒤가 문제인지"</b>와 <b>"어느 백엔드로 갔는지"</b>를 <b>패킷 캡처 없이 로그 조회만으로</b> 판정할 수 있다. 조사 시간의 대부분을 여기서 줄인다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">대 — 에러율을 축별로 쪼개 볼 대시보드</div>
+    <div class="d">timeout 에러율을 <b>사용자 그룹·지역·ISP·클라이언트 버전·백엔드 인스턴스</b> 차원으로 쪼개 볼 수 있게 만들어 둔다. 이것이 있으면 3절의 "패턴으로 좁히기"가 사람의 추측이 아니라 <b>화면 조작 몇 번</b>으로 끝난다. <b>"특정 사용자만"이라는 신고가 들어왔을 때 그 "특정"이 무엇을 공유하는지 즉시 보이는 것</b>이 핵심이다.</div>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">한 가지 더 얹으면 좋은 것 — 값을 미리 문서화해 둔다 <span class="badge bonus">가산점</span></span>
+  <b>경로 MTU와 중간 장비 유휴 만료 값</b>을 아키텍처 문서에 적어둔다. VPN 구간의 MTU, 방화벽의 TCP 유휴 만료, LB의 유휴 상한은 <b>평소에 물어보면 5분이면 나오는 정보인데, 장애 중에 알아내려면 하루가 걸린다.</b> 이 값들을 적어두는 것만으로 <b>9절과 10절 조사가 몇 시간 단축된다.</b>
+</div>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>12-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">왜 앱 로그로 못 잡나?</div><div class="d">timeout은 <b>부재의 기록</b>이라 "왜 없었는지"를 안 알려주고, <b>OS의 TCP 스택이 앱 몰래 재전송</b>하므로 재전송 사실 자체가 앱까지 안 올라온다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">가설을 좁히는 네 축?</div><div class="d"><b>크·시·대·경</b> — 크기(→MTU) · 시간(→유휴 드랍) · 대상(→서버 로컬) · 경로(→구간 유실). <b>두 축 동시 적중이면 확정.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">RTO 백오프 누적 수열?</div><div class="d"><b>200 → 600 → 1,400 → 3,000 → 6,200ms.</b> 연속 4회 유실 = 순수 대기 <b>3.0초</b> → read timeout 3초가 정확히 여기서 터진다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">MSS 공식과 그 조건?</div><div class="d"><b>MSS = MTU − IP − TCP = 1500−20−20 = 1460.</b> 단 이건 <b>IPv4 + 옵션 없는 TCP + 이더넷</b> 조건의 값이고 상수가 아니다(IPv6는 1440).</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">캡슐화 오버헤드 셋?</div><div class="d"><b>PPPoE 8 · GRE 24 · VXLAN 50</b>바이트. <b>IPsec ESP는 알고리즘·NAT-T에 따라 달라 실측</b>이 원칙.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">두 필터의 차이?</div><div class="d"><b>캡처 필터(BPF)만 부하를 줄인다</b> — 커널이 아예 복사를 안 하기 때문. <b>표시 필터(Wireshark)는 이미 저장된 것을 거르므로 부하와 무관.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">운영 tcpdump 3수칙?</div><div class="d"><b>디·씨·개</b> — 디스크(<code>-C -W</code> 링 버퍼 + 종료 조건) · CPU(캡처 필터로 좁히기) · 개인정보(<code>-s 96</code>, 보관·폐기 정책).</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">RST가 오느냐 안 오느냐?</div><div class="d"><b>온다 = 누군가 끊은 것(빠른 실패, half-close·REJECT).</b> <b>안 온다 = 누군가 버린 것(느린 타임아웃, DROP·유휴 드랍).</b> 첫 갈림길.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">MTU 대응 우선순위?</div><div class="d"><b>허용 → 클램프 → 낮춤 → 탐지.</b> ①ICMP 3/4 허용 ②MSS clamping ③인터페이스 MTU ④<code>tcp_mtu_probing</code>(우리가 송신자일 때만).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">keepalive 기본값 함정?</div><div class="d"><code>tcp_keepalive_time</code> <b>7200초(2시간)</b> — 300초 NAT 만료 앞에서 무용지물. 그리고 <b>HTTP keep-alive ≠ TCP keepalive.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">풀 유휴 상한 규칙?</div><div class="d">풀 유휴 상한 &lt; <b>min(상대 서버 유휴 상한, 중간 장비 세션 만료)</b>. 둘 중 <b>더 짧은 쪽</b>이 기준.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">조사 목표 한 문장?</div><div class="d">"패킷이 <b>어디까지 갔고 어디서부터 안 갔는가</b>"의 확정. 양단(또는 LB 앞뒤) 캡처의 <b>이분법</b>으로 구간을 반씩 자른다.</div></div>
+</div>
+
+<h3>12-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>tcpdump 캡처에서 재전송이 보이면 그 다음엔 뭘 하나요? <span class="badge core">필수</span><span class="hint">힌트: "네트워크 문제입니다"는 결론이 아니다. 두 갈래를 동시에 진행한다고 말한다</span></summary><div class="a">
+  <p><b>재전송은 "유실이 있었다"까지만 말해주는 증상이지 원인이 아니다.</b> 여기서 멈추고 "네트워크 문제입니다"라고 결론 내리면 <b>조사가 끝난 게 아니라 시작도 안 한 것</b>이다. 다음 질문은 <b>"어디서 유실됐는가"</b>이고, 절차는 두 갈래를 동시에 진행한다.</p>
+  <p><b>① 우리 서버 자체를 먼저 배제한다.</b> NIC 드랍 카운터(<code>ip -s link</code>, <code>ethtool -S</code>), 연결 추적 테이블 포화(<code>nf_conntrack: table full</code> 커널 로그), listen 백로그 넘침(<code>nstat</code>의 <code>ListenOverflows</code>), 소켓 버퍼를 확인한다. <b>여기서 걸리면 경로 조사가 필요 없고 서버 설정으로 끝난다.</b></p>
+  <p><b>② 동시에 구간을 특정한다.</b> 양단 또는 LB 앞뒤에서 동시 캡처를 떠서 <b>"보낸 기록은 있는데 받은 기록이 없는" 구간</b>을 찾는다. <b>지점을 하나 추가할 때마다 책임 범위가 절반으로 줄어드는 이분법</b>이다.</p>
+  <p>구간이 외부(ISP, 클라우드 네트워크, 사내 회선)로 특정되면 <b>캡처 파일과 정확한 시각, 그리고 "이쪽에서는 보냈는데 저쪽에서는 안 잡혔다"는 대조 결과를 붙여</b> 그 구간의 운영 주체에게 이관한다. <b>이 증거 묶음이 있느냐 없느냐가 티켓 처리 속도를 결정한다.</b></p>
+  <div class="rule">덧붙이면 좋은 한 줄 — <b>"재전송률의 기준선"</b></div>
+  <p style="margin-bottom:0">"재전송이 보인다"는 것만으로는 이상 판정이 안 된다 — <b>인터넷 경로에는 늘 약간의 유실이 있다.</b> 그래서 평소 재전송률을 메트릭으로 수집해 두고 <b>평소 대비 몇 배인지</b>로 판단해야 한다는 것까지 말하면 <b>상시 관측 감각</b>이 드러난다.</p>
+</div></details>
+
+<details class="q"><summary>MTU 문제는 왜 "특정 사용자만"으로 나타나나요? <span class="badge core">필수</span><span class="hint">힌트: 주어를 바꿔야 답이 나온다 — 서버의 속성인가, 경로의 속성인가</span></summary><div class="a">
+  <p><b>MTU 병목이 서버의 속성이 아니라 경로의 속성이기 때문이다.</b></p>
+  <p>같은 서버에 접속해도 사용자마다 거치는 경로가 다르다. 사무실 VPN을 지나는 사람, 특정 통신사 회선을 쓰는 사람, 해외에서 접속하는 사람은 각자 다른 구간을 지나고, <b>그중 캡슐화가 끼어 MTU가 줄어든 구간을 지나는 사람만</b> 걸린다. <b>서버 쪽에서는 아무것도 이상하지 않다</b> — 서버의 MTU도 1500이고 대부분의 사용자도 정상이니 서버를 아무리 뒤져도 안 나온다.</p>
+  <p>그리고 그 사용자에게조차 <b>간헐적으로 보인다.</b> <b>3-way handshake는 언제나 성공하고, 작은 조회 API도 성공하고, 큰 업로드나 큰 응답만 실패</b>하기 때문이다. 사용자 입장에서는 <b>"어떤 건 되고 어떤 건 안 돼요"</b>가 되고, 재현 절차를 못 적어 내므로 <b>"재현 안 되는 버그"로 분류돼 오래 방치된다.</b></p>
+  <p style="margin-bottom:0"><b>여기에 한 가지 더 얹으면 좋다 — 크기 축을 물어보는 것만으로 이 가설은 몇 분 안에 검증된다.</b> 문제 사용자에게 응답 크기가 다른 API 두 개를 순서대로 호출해 보게 하거나, 같은 API에 페이지 크기를 바꿔 요청하게 하면 <b>경계가 드러난다.</b> <b>"현상을 크기·시간·대상·경로 축으로 쪼개 물어보는 것"이 tcpdump보다 먼저 오는 이유</b>가 이 사례에 잘 나타난다.</p>
+</div></details>
+
+<details class="q"><summary>운영 서버에서 tcpdump를 켤 때 주의할 점은? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 세 가지를 <b>먼저</b> 말하는 것이 운영 경험의 증거다. 그리고 마지막에 한 단계 위의 답을 얹는다</span></summary><div class="a">
+  <p>도구를 아는 것과 <b>운영 중인 서버에서 그 도구를 쓸 수 있는 것</b>은 다른 능력이다. 세 가지를 <b>먼저</b> 말한다 — <b>디·씨·개.</b></p>
+  <p><b>(1) 디스크를 폭주시키지 않는다.</b> 필터 없이 켜두고 잊으면 몇 시간 만에 디스크가 차고, 디스크가 차면 로그 기록이 멈추면서 애플리케이션이 죽는다. <b>문제를 잡으러 갔다가 장애를 만드는 것이 이 작업의 가장 흔한 실패다.</b> 그래서 <code>-C 100 -W 5</code>처럼 <b>링 버퍼로 총 용량을 고정</b>하고, <code>-c</code>(패킷 수)나 <code>timeout</code> 명령으로 <b>종료 조건까지</b> 함께 건다. 별도 파티션이나 여유 있는 볼륨에 쓰는 것도 방법이다.</p>
+  <p><b>(2) CPU 부담을 캡처 필터로 줄인다.</b> 커널이 tcpdump에게 넘길 패킷을 고르는 것은 <b>캡처 필터</b>이므로, <code>host</code>와 <code>port</code>로 좁히는 것이 곧 성능 대책이다. 트래픽이 많은 서버에서 필터 없이 전부 뜨면 <b>패킷마다 복사와 사용자 공간 전달</b>이 일어나 체감되는 부하가 된다. <b>Wireshark의 표시 필터는 이미 저장된 것을 거르는 것이라 부하를 전혀 줄여주지 않는다</b> — 이 둘을 구분해 말하는 것이 변별 지점이다.</p>
+  <p><b>(3) 캡처 파일을 민감정보로 취급한다.</b> 평문 구간이라면 페이로드에 개인정보, 세션 토큰, 인증 헤더가 그대로 담긴다. 가능하면 <code>-s 96</code>으로 <b>헤더만</b> 뜨고(TCP 수준 진단에는 이걸로 충분하다), 파일의 <b>보관 위치·접근 권한·공유 방법·폐기 시점</b>을 정하고 시작한다. <b>외부 벤더에 증거로 넘길 때 무심코 전체 페이로드가 담긴 파일을 보내는 것</b>이 실제로 자주 일어나는 사고다.</p>
+  <div class="rule ok">여기에 한 줄 더 — <b>"애초에 캡처를 켜야만 알 수 있는 상태를 줄이는 것"</b>이 더 상위의 답이다</div>
+  <p style="margin-bottom:0">LB 액세스 로그에 <b>구간별 시간</b>을 남기고, <b>재전송·소켓 통계를 상시 메트릭</b>으로 올려두면 <b>tcpdump가 필요한 순간 자체가 줄어든다.</b></p>
+</div></details>
+
+<details class="q"><summary>트래픽이 TLS라서 내용이 안 보이는데, 뭘 분석할 수 있나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 우리가 답하려는 질문이 "무엇을 주고받았나"가 아니라는 데서 출발한다</span></summary><div class="a">
+  <p><b>timeout 추적에는 페이로드가 필요 없다.</b> 우리가 답하려는 질문은 <b>"무엇을 주고받았나"가 아니라 "패킷이 어디까지 갔나"</b>이고, 그 답은 전부 <b>암호화되지 않은 계층</b>에 있다.</p>
+  <p><b>① TCP 계층은 통째로 보인다.</b> 시퀀스 번호와 ACK, 재전송, 중복 ACK, RTT, 수신 윈도, RST, FIN — 이것들은 <b>TLS가 감싸는 대상이 아니라 TLS를 실어 나르는 그릇</b>이므로 암호화와 무관하게 전부 관찰된다. <b>세 시그니처는 하나도 빠짐없이 판정 가능하다.</b></p>
+  <p><b>② 패킷의 크기와 타이밍도 보인다.</b> 이것이 MTU 진단에서 결정적이다. <b>어느 방향의 어떤 크기 세그먼트가 재전송되고 있는지</b>가 그대로 보이므로, "full-size 세그먼트만 사라진다"는 판정에 <b>복호화가 전혀 필요 없다.</b></p>
+  <p><b>③ TLS handshake는 어느 단계에서 멈췄는지가 보인다.</b> handshake 초반은 아직 암호화 전이라 <b>ClientHello, ServerHello, Certificate</b> 같은 메시지 종류가 그대로 식별된다. 그래서 <b>"ServerHello까지는 왔는데 Certificate에서 멈췄다"</b> 같은 판정이 가능하고, 이것이 9절의 <b>인증서 체인 MTU 문제</b>를 잡는 결정적 단서가 된다.</p>
+  <p><b>④ SNI는 평문이다.</b> 클라이언트가 ClientHello에 "나는 이 도메인에 접속하려 한다"를 적어 보내는 값인데, <b>서버가 어느 인증서를 내밀지 고르기 위해 필요한 정보라 구조적으로 암호화될 수 없다</b>(<code>06-tls-handshake-symmetric-asymmetric-keys.md</code> 2-6절). 그래서 캡처만으로 <b>"이 연결이 어느 도메인을 향한 것인지"</b>를 구분할 수 있고, 한 IP에 여러 서비스가 얹혀 있어도 <b>문제의 그 서비스만 골라낼 수 있다.</b></p>
+  <div class="rule">암호화는 <b>"무엇을 말했는가"</b>를 가리지만 <b>"통신이 건강한가"</b>는 가리지 못한다 — timeout 조사가 알고 싶은 것은 정확히 후자다</div>
+</div></details>
+
+<details class="q"><summary>매번 tcpdump로 잡지 않으려면 평소에 뭘 준비해두나요?<span class="hint">힌트: 네 가지를 이름 붙여 말한다. 그리고 "장애 중에는 하루가 걸리는 정보"를 한 줄 얹는다</span></summary><div class="a">
+  <p><b>사건이 터진 뒤에 켜는 캡처는 늦다.</b> 간헐적 문제는 <b>캡처를 켜둔 시간에 재현되지 않을 확률이 높기</b> 때문이다. 그래서 준비의 방향은 <b>"조사 절차를 사후 조사가 아니라 상시 관측으로 옮기는 것"</b>이다 — <b>링·메·로·대.</b></p>
+  <p><b>(1) 상시 패킷 캡처 링 버퍼.</b> <code>-C</code>/<code>-W</code>로 총 용량을 고정한 캡처를 상시 돌려둔다. 디스크 위험 없이 "최근 몇 시간"이 늘 남아 있으므로, 신고를 받으면 <b>그 시각의 pcap이 이미 있는 상태</b>가 된다. <b>재현을 기다릴 필요가 없어지는 것</b>이 이 준비의 값이다.</p>
+  <p><b>(2) 재전송률과 소켓 통계를 메트릭으로.</b> <code>TcpRetransSegs</code>/<code>TcpOutSegs</code> 비율, NIC 드랍, conntrack 사용률, listen 백로그 넘침을 대시보드에 올린다. <b>핵심은 절대값이 아니라 기준선</b>이다 — 평소 값을 알아야 "지금 평소의 5배"라는 판단이 되고, 그래야 알림을 걸 수 있다.</p>
+  <p><b>(3) LB 액세스 로그의 구간 분해.</b> <code>upstream_connect_time</code> / <code>upstream_header_time</code> / <code>upstream_response_time</code> / <code>upstream_addr</code>을 남겨두면 <b>"LB 앞이 문제인지 뒤가 문제인지"</b>를 <b>패킷 캡처 없이 로그 조회만으로</b> 판정할 수 있다.</p>
+  <p><b>(4) 에러율을 축별로 쪼개 볼 대시보드.</b> timeout 에러율을 <b>사용자 그룹·지역·ISP·클라이언트 버전·백엔드 인스턴스</b> 차원으로 쪼개 두면, "패턴으로 좁히기"가 추측이 아니라 <b>화면 조작 몇 번</b>으로 끝난다.</p>
+  <p style="margin-bottom:0"><b>여기에 한 가지 더 — 경로 MTU와 중간 장비 유휴 만료 값을 미리 문서화해 두는 것.</b> VPN 구간의 MTU, 방화벽의 TCP 유휴 만료, LB의 유휴 상한은 <b>평소에 물어보면 5분이면 나오는데 장애 중에 알아내려면 하루가 걸린다.</b> 이 값들을 아키텍처 문서에 적어두는 것만으로 <b>MTU·유휴 드랍 조사가 몇 시간 단축된다.</b></p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>connect timeout이 났는지 read timeout이 났는지가 왜 그렇게 중요한가요? <span class="badge core">필수</span><span class="hint">힌트: 조사 방향 하나, 재시도 안전성 하나 — 두 가지가 갈린다</span></summary><div class="a">
+  <p><b>두 가지가 동시에 갈리기 때문이다.</b></p>
+  <p><b>① 조사 방향이 갈린다.</b> <b>connect가 터졌다</b>는 것은 <b>3-way handshake가 못 끝났다</b>는 뜻이고, 볼 곳은 <b>연결 수립 경로</b>다 — 방화벽이 SYN을 조용히 버리는가, listen 백로그가 넘치는가, 보안그룹·라우팅이 맞는가. 캡처에서는 <b>SYN만 반복되고 SYN-ACK이 없는</b> 모습으로 나타난다. <b>read가 터졌다</b>는 것은 <b>이미 맺힌 연결 위에서 벌어진 일</b>이고, 이 문서의 세 범인은 <b>전부 이쪽</b>이다.</p>
+  <p><b>② 재시도의 안전성이 갈린다 — 이쪽이 더 중요하다.</b> connect timeout이 났다면 <b>요청 바이트를 한 개도 못 보냈다.</b> 상대 서버는 우리가 뭘 하려 했는지조차 모르므로 <b>재시도가 안전하다.</b> 반면 read timeout은 <b>서버가 이미 처리를 끝냈는데 응답이 돌아오는 길에 사라졌을 수도 있다</b>는 뜻이다. 그래서 <b>멱등하지 않은 요청(결제, 주문 생성)을 read timeout 뒤에 재시도하면 이중 처리가 만들어진다.</b></p>
+  <div class="rule red">"타임아웃 났으니 재시도"는 <b>connect에서만 무조건 안전</b>하다</div>
+  <p style="margin-bottom:0">그래서 실무 처방은 <b>두 값을 반드시 분리해서 설정하고</b>(라이브러리 기본값에 맡기지 않는다), 로그와 메트릭에서도 <b>두 예외를 따로 세는 것</b>이다. 이 둘이 한 카운터에 뭉쳐 있으면 대시보드를 봐도 어느 쪽인지 알 수 없다.</p>
+</div></details>
+
+<details class="q"><summary>같은 timeout인데 어떤 건 몇 ms 만에 실패하고 어떤 건 3초를 꽉 채웁니다. 무엇이 다른 건가요? <span class="badge trap">함정</span><span class="hint">힌트: DROP과 REJECT의 차이가 그대로 증상의 차이다</span></summary><div class="a">
+  <p><b>중간에서 "버려졌는가" 아니면 "끊겼는가"의 차이</b>이고, 이것이 조사에서 가장 먼저 갈라야 할 갈림길이다.</p>
+  <div class="split" style="margin:12px 0">
+    <div class="pane r">
+      <h4>빠른 실패 — RST가 온다</h4>
+      <ul>
+        <li>방화벽이 <b>REJECT</b>로 응답했거나, 상대 소켓이 <b>이미 없어졌다.</b></li>
+        <li>대표 사례: <code>10-keepalive-connection-pool-time-wait.md</code> 3-3절의 <b>half-close 경쟁</b> — 서버가 FIN을 보냈는데 클라이언트 풀이 모른 채 재사용.</li>
+        <li>증상: <b>밀리초 단위</b>의 <code>Connection reset by peer</code>, 502.</li>
+      </ul>
+    </div>
+    <div class="pane b">
+      <h4>느린 타임아웃 — 아무것도 안 온다</h4>
+      <ul>
+        <li>방화벽이 <b>DROP</b>했거나, 중간 장비가 <b>세션 표에서 지웠거나</b>, 경로에서 <b>유실</b>됐다.</li>
+        <li>커널은 그저 재전송을 반복하고, <b>RTO 백오프의 누적 대기</b>가 앱 타임아웃을 먹는다.</li>
+        <li>증상: <b>타임아웃 값을 정확히 꽉 채운</b> 실패.</li>
+      </ul>
+    </div>
+  </div>
+  <p><b>판정은 캡처 한 줄로 끝난다</b> — <code>tcp.flags.reset == 1</code>이 잡히면 앞쪽, 안 잡히고 <code>tcp.analysis.retransmission</code>만 반복되면 뒤쪽이다.</p>
+  <p style="margin-bottom:0"><b>실무적 의미</b>: 빠른 실패는 <b>클라이언트 풀 설정</b>으로 대부분 해결되고(유휴 상한을 서버보다 짧게, 재사용 직전 검증), 느린 타임아웃은 <b>경로 조사</b>로 넘어가야 한다. <b>증상 시간만 보고도 조사 팀이 갈린다.</b></p>
+</div></details>
+
+<details class="q"><summary>MSS를 handshake에서 서로 알려주는데, 그런데도 왜 MTU 문제가 생기죠? <span class="badge core">필수</span><span class="hint">힌트: 끝단이 아는 것과 모르는 것의 경계를 말한다</span></summary><div class="a">
+  <p><b>각 끝단이 알리는 MSS는 "자기 쪽 첫 홉 링크의 MTU"에서 계산한 값</b>이기 때문이다. 클라이언트도 이더넷(1500)이고 서버도 이더넷(1500)이면 둘 다 1460을 알리고 <b>합의는 1460</b>이 된다. 그런데 <b>그 사이 경로에 MTU 1400인 구간이 있다는 사실을 양 끝단은 알 방법이 없다</b> — 끝단은 <b>자기 첫 홉만 볼 뿐 경로 전체를 보지 못한다.</b></p>
+  <p>그 <b>경로 전체에서 가장 좁은 구간의 MTU</b>를 <b>Path MTU</b>라 하고, 그것을 알아내는 절차가 <b>PMTUD</b>다. 그리고 <b>PMTUD는 ICMP type 3 code 4 한 통에 전적으로 의존</b>하므로, 방화벽이 ICMP를 통째로 막으면 <b>송신자는 "줄여야 한다"를 영원히 배우지 못한 채 같은 크기로 재전송만 반복</b>한다 — 이것이 <b>블랙홀</b>이다.</p>
+  <p><b>그래서 통보에 의존하지 않는 대응이 존재한다.</b> <b>MSS clamping</b>은 <b>터널 입구 장비가 지나가는 SYN의 MSS 옵션 값을 직접 낮춰 써서</b>, 애초에 큰 세그먼트가 만들어지지 않게 한다. <b>"경로를 아는 장비가 대신 알려준다"</b>는 발상이다 — 끝단이 모르는 정보를, 그 정보를 아는 위치에서 주입하는 것.</p>
+  <p style="margin-bottom:0"><b>한 칸 더</b>: MSS는 <b>방향별로 각자 알리는 값</b>이므로 <b>왕복 경로가 다르면 한 방향만 문제가 될 수 있다.</b> "업로드만 실패하고 다운로드는 정상"이 이렇게 만들어진다.</p>
+</div></details>
+
+<details class="q"><summary>TCP keepalive를 켰는데도 유휴 후 첫 요청이 계속 실패합니다. 왜죠? <span class="badge trap">함정</span><span class="hint">힌트: 세 가지 중 하나다 — 이름, 소켓, 주기</span></summary><div class="a">
+  <p><b>세 가지를 순서대로 확인한다.</b></p>
+  <p><b>① 이름을 혼동했다.</b> <b>HTTP keep-alive와 TCP keepalive는 완전히 다른 것</b>이다. 전자는 "응답 후에도 TCP 연결을 끊지 말자"는 <b>애플리케이션 계층의 약속</b>이라 <b>유휴 중에 패킷을 하나도 만들지 않는다.</b> <b>HTTP keep-alive를 켰다고 TCP keepalive가 켜지지는 않는다.</b></p>
+  <p><b>② 소켓에 옵션이 안 걸렸다.</b> TCP keepalive는 <b><code>SO_KEEPALIVE</code>를 켠 소켓에서만</b> 동작한다. 안 켜면 <b>sysctl 값이 무엇이든 아무 패킷도 안 나간다.</b> HTTP 클라이언트라면 소켓 설정(예: Apache HttpClient의 <code>SocketConfig.setSoKeepAlive(true)</code>)을 명시했는지 확인한다.</p>
+  <p><b>③ 주기가 너무 길다 — 가장 흔한 원인.</b> 리눅스 기본 <code>tcp_keepalive_time</code>은 <b>7200초(2시간)</b>다. 중간 장비가 <b>300초</b>에 표를 지운다면 <b>첫 프로브가 나가기도 전에 이미 지워져 있다.</b> <b><code>SO_KEEPALIVE</code>만 켜고 "keepalive 걸었으니 됐다"고 넘어가는 것이 이 대응에서 가장 흔한 실수다.</b></p>
+  <div class="rule red">keepalive 주기 <b>&lt;</b> 중간 장비 유휴 만료 &nbsp;— &nbsp;프로브 한 번이 유실될 수 있으므로 <b>여유 있게</b> 짧게</div>
+  <p style="margin-bottom:0"><b>그리고 sysctl은 호스트 전체에 적용된다</b>는 것을 잊지 않는다. 소켓별 제어가 필요하면 JDK 11+의 확장 소켓 옵션(<code>TCP_KEEPIDLE</code> 등)이 있지만 소켓 팩토리를 직접 구현해야 해서, <b>실무에서는 sysctl로 호스트 정책을 잡거나 풀의 유휴 상한으로 푸는 쪽이 더 자주 쓰인다.</b></p>
+</div></details>
+
+<details class="q"><summary>캡처를 떴는데 재전송이 0건입니다. timeout은 계속 나는데요. 다음 가설은? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "유실 가설을 접는다"까지는 쉽다. 그다음 후보를 네 개 대는 것이 변별</span></summary><div class="a">
+  <p><b>재전송 0은 "이 캡처 지점 기준으로 패킷은 정상적으로 오갔다"</b>는 뜻이므로, <b>유실 가설은 접고</b> 다음 후보로 넘어간다. 네 갈래를 순서대로 본다.</p>
+  <p><b>① 지연이 애플리케이션 안에 있다.</b> 요청과 응답 사이에 <b>재전송 없는 긴 공백</b>이 보인다면 그 시간은 네트워크가 아니라 <b>서버 처리</b>에 쓰인 것이다. LB 로그의 <code>upstream_header_time</code>이 이를 곧바로 확인해 준다 — 이 값이 크면 볼 곳은 애플리케이션과 DB다.</p>
+  <p><b>② Zero Window가 있는지 본다.</b> <code>tcp.analysis.zero_window</code>가 잡히면 <b>네트워크 문제가 아니다.</b> <b>수신 측 애플리케이션이 커널 버퍼에서 데이터를 안 꺼내가고 있어서</b> 수신 윈도가 0이 된 것이다. 볼 곳은 회선이 아니라 <b>그 프로세스의 스레드 상태</b>다.</p>
+  <p><b>③ 캡처 지점이 문제 구간의 바깥일 수 있다.</b> 유실이 <b>우리 캡처 지점보다 앞쪽</b>에서 일어났다면, 우리 지점에는 <b>애초에 그 패킷이 도착하지 않았으므로 "재전송"으로도 보이지 않는다.</b> 그래서 7절의 <b>이분법</b>으로 지점을 옮겨 다시 뜬다 — <b>"안 보인다"와 "없다"는 다르다.</b></p>
+  <p><b>④ 요청이 애초에 나가지 않았다.</b> 클라이언트 쪽 <b>커넥션 풀 고갈</b>이나 <b>스레드 대기</b>로 요청 자체가 늦게 출발했다면, 서버 캡처에는 아무 이상이 없다. 이때는 <b>클라이언트의 큐 대기 시간</b>을 따로 재야 보인다.</p>
+  <div class="rule">캡처가 조용하다는 것은 <b>"문제가 없다"가 아니라 "여기가 아니다"</b>라는 정보다</div>
+  <p style="margin-bottom:0">그리고 <code>tcp.analysis.retransmission</code>은 <b>Wireshark의 추정</b>이라는 점도 함께 짚는다 — 캡처 지점에 따라 오탐도 <b>미탐</b>도 생길 수 있으므로, <b>서버 카운터(<code>ss -ti</code>의 <code>retrans</code>, <code>nstat</code>의 <code>TcpRetransSegs</code>)와 교차 확인</b>하는 것이 안전하다.</p>
+</div></details>
+
+<details class="q"><summary>구간이 ISP로 특정됐는데 상대가 "우리 쪽은 문제없다"고 합니다. 어떻게 진행하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 증거의 형태를 구체적으로 말한다. 그리고 병행할 완화책을 함께 낸다</span></summary><div class="a">
+  <p><b>이관은 "넘긴다"가 아니라 "재현 가능한 증거를 붙여 넘긴다"이다.</b> 붙일 것을 구체적으로 말할 수 있어야 한다.</p>
+  <p><b>① 증거 묶음.</b> <b>양쪽 캡처 파일</b>(가능하면 <code>-s</code>로 헤더만), <b>정확한 시각과 타임존</b>, <b>5-튜플</b>(출발지·목적지 IP와 포트, 프로토콜), <b>문제 패킷의 TCP 시퀀스 번호</b>, 그리고 <b>"A 지점 캡처에는 이 시퀀스가 있고 B 지점 캡처에는 없다"는 대조 결과</b>. 여기에 <b>정상 대조군</b>(같은 시각 같은 경로의 성공 사례)을 붙이면 "우리 쪽 설정 문제 아니냐"는 반문이 미리 차단된다.</p>
+  <p><b>② 재현 절차.</b> 특정 크기 이상에서만 나는가, 특정 시각대인가, 유실률은 몇 %인가 — <b>상대가 자기 장비에서 똑같이 돌려볼 수 있는 명령</b>(<code>ping -M do -s 1472</code>, <code>tracepath</code>)을 함께 준다. <b>"우리도 똑같이 해봤다"가 되는 순간 대화가 빨라진다.</b></p>
+  <p><b>③ 그동안 우리 쪽에서 병행할 완화책.</b> 상대 응답을 기다리는 동안에도 사용자는 계속 실패한다. <b>MTU 계열이면</b> MSS clamping이나 인터페이스 MTU 조정으로 <b>우리 쪽에서 회피가 가능</b>하고, <b>유실 계열이면</b> 타임아웃·재시도 정책(멱등한 요청에 한해 백오프+지터)과 <b>경로 우회</b>(다른 리전·다른 회선·CDN 경유)를 검토한다. <b>"원인 규명"과 "사용자 영향 완화"는 동시에 굴리는 두 트랙</b>이다.</p>
+  <p style="margin-bottom:0"><b>④ 기준선 데이터.</b> 평소 재전송률 메트릭이 있으면 <b>"평소 0.02%인데 이 경로만 1.5%"</b>처럼 말할 수 있다. <b>비교 대상이 있는 숫자</b>는 "문제없다"는 답을 되돌리는 가장 강한 도구다.</p>
+</div></details>
+
+<details class="q"><summary>이 문제를 "예방"하려면 아키텍처 단계에서 뭘 정해둬야 하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 세 범인 각각에 대응하는 사전 결정이 있다</span></summary><div class="a">
+  <p>세 범인 각각에 <b>사전에 정해둘 값</b>이 하나씩 있다.</p>
+  <div class="grid g3" style="margin:10px 0">
+    <div class="tile"><div class="k" style="font-family:inherit">MTU 계열</div><div class="d"><b>터널 구간의 실측 MTU</b>를 아키텍처 문서에 적고, <b>터널 입구에 MSS clamping을 기본으로</b> 건다. 방화벽 정책에 <b>ICMP type 3 code 4 허용</b>을 명시한다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">유휴 드랍 계열</div><div class="d"><b>경로상 모든 중간 장비의 세션 만료 값</b>을 수집해 표로 만들고, 그중 <b>가장 짧은 값</b>을 기준으로 <b>모든 커넥션 풀의 유휴 상한 표준</b>을 정한다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">재전송 계열</div><div class="d"><b>타임아웃 예산</b>을 계층별로 배분하고(<code>07-traffic-performance/10</code>), <b>RTO 백오프 누적이 그 예산을 먹는다는 것</b>을 전제로 값을 잡는다. 재시도는 <b>멱등한 요청에만</b>.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">공통 ①</div><div class="d"><b>connect / read 타임아웃을 라이브러리 기본값에 맡기지 않는다.</b> 두 값을 명시하고 <b>메트릭도 따로</b> 센다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">공통 ②</div><div class="d"><b>LB 로그의 구간 분해</b>와 <b>재전송률 메트릭</b>을 서비스 개설 체크리스트에 넣는다 — 사후에 붙이면 이미 늦다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">공통 ③</div><div class="d"><b>큰 페이로드를 줄이는 설계</b>도 완화책이다 — 페이지네이션, 스트리밍 업로드, presigned URL(<code>15-large-file-upload-download-design.md</code>)은 MTU 계열 노출 자체를 줄인다.</div></div>
+  </div>
+  <p style="margin-bottom:0"><b>마무리 한 문장</b> — <b>"이 세 범인은 전부 '경로의 성질'에서 나오므로, 예방은 코드가 아니라 경로에 대한 사실을 문서화하고 그 사실에 맞춰 타임아웃·풀·MSS 값을 정하는 일입니다."</b></p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  <b>"특정 사용자만 간헐적 timeout"</b>은 <b>경로 의존적 네트워크 문제의 시그니처</b>이며, timeout이 앱 로그에 <b>"없었던 일"로만</b> 남는 이상 증거는 <b>패킷 계층에서 직접 채집</b>해야 한다 — 절차는 <b>크기·시간·대상·경로</b> 네 축으로 패턴을 쪼개 가설을 좁히고(<b>큰 것만 실패 = MTU</b>, <b>유휴 후 첫 요청 = 중간 장비 드랍</b>, <b>특정 인스턴스 = 서버 큐·conntrack</b>), <b>캡처 필터로 좁힌 tcpdump를 링 버퍼로 안전하게</b> 떠서 <b>양단 비교로 패킷이 사라진 구간을 이분법으로 특정</b>한 뒤, <b>재전송</b>(RTO 백오프가 p99 꼬리를 만든다 — <code>200 → 600 → 1,400 → 3,000ms</code>)·<b>PMTUD 블랙홀</b>(ICMP 차단으로 큰 패킷만 조용히 사라진다)·<b>유휴 커넥션 드랍</b>(FIN도 RST도 없어 타임아웃을 꽉 채운다) 각각의 시그니처와 대조하는 순서다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/08-network-http/18-intermittent-timeout-tcpdump-mtu-retransmission.md</code> · 이어서 볼 문서: URL 입력부터 화면까지(01) · TCP 3-way/4-way handshake(02) · TCP vs UDP(03) · TLS 핸드셰이크(06) · keep-alive와 커넥션 풀·TIME_WAIT(10) · 502 vs 504(11) · Nginx·Tomcat 타임아웃/버퍼 불일치(13) · 대용량 파일 업로드/다운로드(15) · 처리량·지연시간과 p99(07-traffic-performance/01) · 타임아웃 계층과 예산(07-traffic-performance/10) · 재시도 폭풍과 백오프·지터(07-traffic-performance/11)</p>
+</main>
+</body>
+</html>

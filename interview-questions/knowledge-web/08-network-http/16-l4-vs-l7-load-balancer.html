@@ -1,0 +1,1301 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L4 vs L7 로드밸런서 — "커넥션을 종단하는가" 한 가지가 나머지를 전부 결정한다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">08 네트워크 · HTTP &nbsp;|&nbsp; 심화⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>L4 vs L7 로드밸런서<br><span class="sub">"커넥션을 종단하는가" 한 가지가 기능·성능·장애 감지력을 전부 결정한다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"L4와 L7 로드밸런서의 차이와, 각각에서 가능한 라우팅/장애 감지 방식은?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>L4는 IP와 포트(TCP/UDP 헤더)까지만 보고 패킷을 전달</b>하므로 TCP 연결의 두 끝은 여전히 클라이언트와 백엔드다. 내용을 안 보니 빠르고 프로토콜을 가리지 않지만, <b>분배 단위가 "요청"이 아니라 "커넥션"</b>이라서 keep-alive·gRPC·웹소켓처럼 커넥션이 오래 사는 트래픽에서는 한 번 정해진 백엔드에 그 커넥션의 모든 요청이 눌러앉아 편중이 생긴다. <b>L7은 클라이언트의 커넥션을 자기가 종단하고 백엔드로 별도의 커넥션을 새로 맺는다</b> — 이 <b>"종단"이라는 한 가지 사실</b>에서 나머지가 전부 파생된다: 요청 단위 분배와 경로·헤더·쿠키 라우팅이 가능해지고, keep-alive·타임아웃·버퍼 설정이 <b>앞뒤로 두 벌</b> 존재하게 되며, 백엔드가 보는 소켓 주소가 LB가 되어 <code>X-Forwarded-*</code> 헤더 계약이 필요해진다. 장애 감지도 같은 구도다 — <b>L4의 TCP 헬스체크는 커널이 handshake를 대신 끝내주므로 앱이 데드락에 빠져 있어도 계속 통과</b>하는 반면 L7 헬스체크는 <code>/health</code>가 200을 주는지까지 본다. 단, 그 헬스체크가 <b>DB까지 검사하면 DB의 순간 장애가 전 인스턴스 동시 이탈로 증폭</b>되므로 liveness와 readiness를 나눠야 한다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>어디까지 열어 보느냐가 정의다</b> — L4는 <b>IP·포트 헤더까지만</b> 읽고 목적지를 갈아 끼워 패킷을 흘려보내는 <b>중계자</b>, L7은 <b>HTTP까지 파싱</b>하려고 <b>TCP 연결의 한쪽 끝이 되는 통신 주체</b>다. 봉투 겉면만 보는 분류 센터와, 봉투를 열어 읽고 부서를 나누는 비서의 차이다.</div></li>
+    <li><span class="n">2</span><div><b>그래서 분배 단위가 다르다</b> — L4는 <b>첫 SYN에서 딱 한 번</b> 백엔드를 고르므로 <b>커넥션 단위</b>, L7은 커넥션 ①에서 요청을 하나씩 꺼내 읽으므로 <b>요청 단위</b>다. gRPC·웹소켓처럼 커넥션이 오래 사는 트래픽에서 <b>L4는 "커넥션 수는 균등한데 RPC 수는 50배 차이"</b>가 나고, <b>롤링 배포가 겹치면 그 편중이 고착</b>된다.</div></li>
+    <li><span class="n">3</span><div><b>장애 감지의 깊이도 계층을 따라간다</b> — TCP 헬스체크는 <b>커널이 handshake를 대신 완료</b>하므로 <b>스레드가 전부 데드락이어도 통과</b>한다. <b>"포트는 열려 있는데 500만 뱉는 서버를 걸러낼 수 있느냐"</b>가 두 계층의 차이를 가장 선명하게 보여주는 지점이다. 다만 헬스체크를 <b>DB까지 깊게 파면</b> 공통 의존성 장애가 <b>전 인스턴스 동시 이탈</b>로 증폭되므로 <b>liveness/readiness 분리</b>까지 말해야 완성형이다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">계층 번호 = 어디까지 열어 보는가</a></li>
+    <li><a href="#s2">L4 — 주소만 갈아 끼우는 중계자</a></li>
+    <li><a href="#s3">L7 — "종단한다"는 말의 뜻</a></li>
+    <li><a href="#s4">종단이 낳는 네 가지 귀결 (요·두·주·버)</a></li>
+    <li><a href="#s5">라우팅 vs 분배 — 섞으면 안 되는 두 질문</a></li>
+    <li><a href="#s6">L4 × 장수 커넥션 = 저절로 안 풀리는 편중</a></li>
+    <li><a href="#s7">2단 구성 — 양자택일이 아니다</a></li>
+    <li><a href="#s8">장애 감지 — "살아있다"의 정의가 다르다</a></li>
+    <li><a href="#s9">깊은 헬스체크의 역습 — liveness/readiness</a></li>
+    <li><a href="#s10">선택 기준 — L4를 고르는 3가지 상황과 대가</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "L4와 L7 로드밸런서의 차이와, 각각에서 가능한 라우팅/장애 감지 방식은?"</p>
+  <p><b>출제 의도</b>: 어느 계층에서 라우팅하느냐가 <b>가능한 기능</b>(경로 기반 분기, 쿠키 스티키니스)과 <b>성능</b>을 결정한다. 인프라 팀과 트래픽 구성을 논의할 때 필요한 <b>공용어</b> — <b>"우리 LB가 L4냐 L7이냐"에 따라 백엔드가 기대할 수 있는 것</b>(클라이언트 IP, 세션 고정, 헬스체크의 의미)이 달라진다는 것을 아는지 본다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"L4는 빠르고 L7은 똑똑하다"로 끝나는 암기</b> → 2·3절에서 <b>"TCP 연결의 끝이 누구인가"</b> 하나로 정의를 다시 세우고, 4절에서 실무의 모든 차이를 그 한 문장에서 <b>파생</b>시킨다.<br>
+    ② <b>커넥션 단위 분배가 무슨 뜻인지 체감하지 못하는 것</b> → 6절에서 <b>gRPC 커넥션 4개의 RPC 수</b>와 <b>롤링 재시작 3단계</b>를 숫자로 따라가 <b>"균등하다는 대시보드"가 왜 거짓말인지</b> 보여준다.<br>
+    ③ <b>헬스체크를 "그냥 살아있는지 보는 것"으로 아는 것</b> → 8절에서 <b>SYN 큐/accept 큐</b>까지 내려가 <b>커널이 대신 통과시켜 준다</b>는 사실을 짚고, 9절에서 반대로 <b>깊게 판 헬스체크가 장애를 증폭</b>시키는 경로를 계산한다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 계층 번호가 뜻하는 것 — 어디까지 열어 보는가</h2>
+
+<p>이름의 숫자부터 정리하자. <b>L4·L7의 숫자는 OSI 7계층 모델의 계층 번호</b>다. L4는 <b>전송 계층</b>(TCP·UDP), L7은 <b>응용 계층</b>(HTTP·gRPC 등)이다. 로드밸런서 이름에 이 숫자가 붙는 이유는 <b>"트래픽을 어디까지 읽고 분배를 결정하는가"</b>를 나타내기 때문이다. 네트워크를 흐르는 데이터는 껍질이 겹겹이 쌓인 구조이고, <b>계층 번호는 곧 그 껍질을 몇 겹까지 벗기는가</b>를 가리킨다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="네트워크 패킷이 이더넷 프레임, IP 헤더, TCP 헤더, HTTP 요청 순으로 겹겹이 싸여 있고, L4 로드밸런서의 시야는 TCP 헤더까지, L7 로드밸런서의 시야는 HTTP 요청 내용까지 미친다는 것을 두 개의 괄호로 표시한 도식">
+    <text x="560" y="30" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 패킷을 두 로드밸런서가 서로 다른 깊이까지 읽는다</text>
+
+    <!-- packet bar -->
+    <rect x="30" y="60" width="120" height="58" rx="6" fill="#e2e8f0" stroke="#cbd5e1"/>
+    <text x="90" y="86" font-size="12" fill="#475569" text-anchor="middle" font-weight="700">이더넷 프레임</text>
+    <text x="90" y="104" font-size="10.5" fill="#64748b" text-anchor="middle">L2</text>
+
+    <rect x="150" y="60" width="180" height="58" rx="6" fill="#dbeafe" stroke="#93c5fd"/>
+    <text x="240" y="86" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">IP 헤더</text>
+    <text x="240" y="104" font-size="10.5" fill="#2563eb" text-anchor="middle">L3</text>
+
+    <rect x="330" y="60" width="190" height="58" rx="6" fill="#bfdbfe" stroke="#60a5fa"/>
+    <text x="425" y="86" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">TCP / UDP 헤더</text>
+    <text x="425" y="104" font-size="10.5" fill="#2563eb" text-anchor="middle">L4</text>
+
+    <rect x="520" y="60" width="560" height="58" rx="6" fill="#fef3c7" stroke="#fbbf24"/>
+    <text x="800" y="86" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">HTTP 요청 (응용 계층 데이터)</text>
+    <text x="800" y="104" font-size="10.5" fill="#b45309" text-anchor="middle">L7 — L4가 보기엔 그냥 <tspan font-weight="700">해석하지 않는 바이트 덩어리</tspan></text>
+
+    <!-- details -->
+    <g font-size="11.5" class="mono" fill="#475569">
+      <text x="160" y="146">출발지 IP  203.0.113.7</text>
+      <text x="160" y="164">목적지 IP  10.0.0.11</text>
+      <text x="340" y="146">출발지 포트  51234</text>
+      <text x="340" y="164">목적지 포트  443</text>
+      <text x="530" y="146" fill="#92400e">GET /api/orders?page=2 HTTP/1.1</text>
+      <text x="530" y="164" fill="#92400e">Host: api.example.com</text>
+      <text x="530" y="182" fill="#92400e">Cookie: SESSION=abc...   X-Canary: on</text>
+    </g>
+    <text x="160" y="186" font-size="11" fill="#94a3b8">↳ 프로토콜 번호까지 합쳐 <tspan font-weight="700" fill="#2563eb">5-튜플</tspan></text>
+
+    <!-- brackets -->
+    <path d="M30 214 L30 206 L520 206 L520 214" fill="none" stroke="#2563eb" stroke-width="2"/>
+    <rect x="150" y="216" width="252" height="26" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="276" y="234" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">L4 로드밸런서가 보는 범위</text>
+
+    <path d="M30 268 L30 260 L1080 260 L1080 268" fill="none" stroke="#d97706" stroke-width="2"/>
+    <rect x="420" y="270" width="272" height="26" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="556" y="288" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">L7 로드밸런서가 보는 범위</text>
+
+    <text x="560" y="322" font-size="12.5" fill="#374151" text-anchor="middle">L4는 안의 바이트가 <tspan font-weight="700">HTTP인지 PostgreSQL 프로토콜인지 게임 서버의 자체 규약인지 해석하지 않는다</tspan> — 그래서 무엇이든 분배할 수 있고, 그래서 아무것도 근거로 쓸 수 없다</text>
+  </svg>
+  <figcaption><b>계층 번호는 "시야의 깊이"다.</b> 이 그림의 왼쪽 절반만 볼 수 있는 것이 L4, 오른쪽 노란 영역까지 읽는 것이 L7이다. <b>2절부터 나오는 모든 차이는 이 시야의 차이에서 나오는 것이 아니라, "그 시야를 확보하기 위해 무엇을 해야 하는가"에서 나온다</b> — HTTP를 읽으려면 TCP 스트림을 재조립해야 하고, 그러려면 <b>연결의 한쪽 끝이 되어야 한다.</b></figcaption>
+</figure>
+
+<div class="memo">
+  <h4>비유 한 문장 — 분류 센터와 비서</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">L4 = 우편 분류 센터</div><div class="d"><b>봉투 겉면의 주소만 보고</b> 배달 트럭을 정한다. 하루 수십만 통을 처리하지만 <b>내용은 모른다.</b> 그래서 청구서든 이력서든 사진이든 똑같이 빠르게 흘려보낸다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">L7 = 봉투를 열어 읽는 비서</div><div class="d"><b>내용을 읽고</b> "청구서는 경리팀, 이력서는 인사팀"으로 나눈다. 정확하지만 <b>편지 한 통마다 읽는 시간</b>이 들고, <b>봉투를 뜯었으니 새 봉투에 다시 담아</b> 보내야 한다(= 뒤쪽 커넥션).</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">이 비유의 마지막 문장이 중요하다. <b>"봉투를 뜯었다"는 사실</b>이 3·4절의 모든 이야기를 만든다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. L4 — 패킷을 전달할 뿐, 연결의 끝이 아니다</h2>
+
+<p>L4 로드밸런서가 하는 일을 정확히 보자. 클라이언트가 TCP 연결을 맺으려고 <b>SYN 패킷</b>을 보내면, L4 LB는 그 패킷을 보고 <b>백엔드 하나를 고른 뒤 목적지 주소를 그 백엔드로 바꿔서 흘려보낸다.</b> 그리고 이 커넥션(출발지 IP·포트, 목적지 IP·포트, 프로토콜의 다섯 값 조합 = <b>5-튜플</b>)을 자기 <b>연결 추적 테이블</b>에 적어둔다. 이후 같은 5-튜플의 패킷은 매번 판단하지 않고 테이블을 보고 같은 백엔드로 보낸다.</p>
+
+<div class="callout info">
+  <span class="t">여기서 이 문서 전체의 첫 번째 결정적 사실이 나온다</span>
+  <b>TCP 연결의 양 끝은 여전히 클라이언트와 백엔드다.</b> 3-way handshake의 SYN-ACK를 만드는 것은 <b>백엔드</b>이고, 시퀀스 번호를 관리하는 것도 클라이언트와 백엔드다. L4 LB는 그 사이를 지나는 패킷의 주소를 갈아 끼우는 <b>중계자</b>일 뿐, <b>자기만의 TCP 상태 기계와 송수신 버퍼를 갖는 통신 주체가 아니다.</b>
+</div>
+
+<div class="grid g3">
+  <div class="tile"><div class="k">분배는 딱 한 번</div><div class="d">커넥션이 맺어지는 <b>첫 SYN에서 백엔드를 고르고 끝</b>이다. 그 커넥션 위로 요청이 100건이 오가든 전부 그 백엔드로 간다. <b>분배 단위가 "요청"이 아니라 "커넥션"</b> — 6절 사고의 뿌리.</div></div>
+  <div class="tile ok"><div class="k">프로토콜 무관</div><div class="d">안의 바이트를 해석하지 않으므로 HTTP든 PostgreSQL이든 Redis든 MQTT든 게임 서버의 자체 TCP 규약이든 <b>똑같이 분배한다.</b> TLS 암호문도 그대로 통과시킨다.</div></div>
+  <div class="tile ok"><div class="k">비용이 낮다</div><div class="d">패킷 헤더 몇 바이트를 고쳐 전달하는 수준이라 <b>같은 자원으로 훨씬 많은 트래픽</b>을 감당한다. 파싱도, 재조립도, 버퍼링도 하지 않는다.</div></div>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. L7 — "커넥션을 종단한다"는 말의 뜻 <span class="badge core">이 문서의 뿌리</span></h2>
+
+<p>L7 로드밸런서는 2절의 방식으로는 <b>동작할 수 없다.</b> HTTP 요청 줄과 헤더를 읽으려면 <b>TCP 스트림을 재조립해야</b> 하고, 그러려면 <b>자기가 TCP 연결의 한쪽 끝이 되어야</b> 하기 때문이다. 패킷 하나에 HTTP 헤더가 통째로 들어 있다는 보장이 없고, 순서가 뒤바뀌어 도착할 수도 있고, 재전송될 수도 있다. <b>그 모든 것을 정리해 "바이트 스트림"으로 복원하는 일이 곧 TCP 종단</b>이다.</p>
+
+<div class="rule">커넥션을 <b>종단(terminate)</b>한다 = <b>"내가 이 TCP 연결의 반대쪽 끝이 된다"</b></div>
+
+<p>클라이언트의 SYN에 <b>SYN-ACK로 답하는 것</b>도, 시퀀스 번호를 관리하고 재전송을 처리하고 수신 버퍼를 채우는 것도 <b>LB 자신</b>이다. 그리고 백엔드로 보낼 때는 <b>완전히 별개의 새 TCP 연결</b>을 맺는다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 434" role="img" aria-label="위쪽은 L4 로드밸런서에서 클라이언트부터 백엔드까지 하나의 TCP 연결이 관통하며 로드밸런서는 주소만 갈아 끼우는 구조, 아래쪽은 L7 로드밸런서가 클라이언트와의 연결 1을 종단하고 백엔드로 새 연결 2를 맺어 TCP 연결이 둘로 잘리는 구조를 대비한 도식">
+    <defs>
+      <marker id="mg" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="mb" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <!-- ===== L4 band ===== -->
+    <rect x="20" y="40" width="1080" height="158" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="44" y="66" font-size="14" font-weight="700" fill="#2563eb">L4 — 커넥션 하나가 관통한다</text>
+
+    <rect x="44" y="92" width="150" height="56" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="119" y="116" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">클라이언트</text>
+    <text x="119" y="134" font-size="10.5" fill="#16a34a" text-anchor="middle" font-weight="700">TCP 종단점 ①</text>
+
+    <rect x="460" y="86" width="200" height="68" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="560" y="108" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">L4 LB</text>
+    <text x="560" y="126" font-size="10.5" fill="#1e40af" text-anchor="middle">목적지 주소만 갈아 끼운다</text>
+    <text x="560" y="142" font-size="10.5" fill="#1e40af" text-anchor="middle" class="mono">연결 추적 테이블 = 5-튜플</text>
+
+    <rect x="926" y="92" width="150" height="56" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="1001" y="116" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">백엔드</text>
+    <text x="1001" y="134" font-size="10.5" fill="#16a34a" text-anchor="middle" font-weight="700">TCP 종단점 ②</text>
+
+    <line x1="194" y1="120" x2="458" y2="120" stroke="#16a34a" stroke-width="3"/>
+    <line x1="460" y1="120" x2="660" y2="120" stroke="#16a34a" stroke-width="3" stroke-dasharray="7 5"/>
+    <line x1="662" y1="120" x2="922" y2="120" stroke="#16a34a" stroke-width="3" marker-end="url(#mg)"/>
+    <text x="326" y="110" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">하나의 TCP 연결이 그대로 이어진다</text>
+    <text x="792" y="110" font-size="12" fill="#166534" text-anchor="middle">SYN-ACK를 만드는 것은 <tspan font-weight="700">백엔드</tspan></text>
+
+    <text x="44" y="180" font-size="11.5" fill="#475569">· TCP 상태 기계: <tspan font-weight="700" fill="#1f2937">2개</tspan> (클라이언트 / 백엔드) — LB는 자기 버퍼도 상태 기계도 갖지 않는다</text>
+    <text x="640" y="180" font-size="11.5" fill="#475569">· 백엔드가 보는 소켓의 상대 주소: <tspan font-weight="700" fill="#16a34a">클라이언트 IP</tspan> (SNAT를 쓰지 않는 구성)</text>
+
+    <!-- ===== L7 band ===== -->
+    <rect x="20" y="214" width="1080" height="200" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="44" y="240" font-size="14" font-weight="700" fill="#d97706">L7 — 커넥션이 둘로 잘린다</text>
+
+    <rect x="44" y="262" width="150" height="56" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="119" y="286" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">클라이언트</text>
+    <text x="119" y="304" font-size="10.5" fill="#16a34a" text-anchor="middle" font-weight="700">TCP 종단점 ①</text>
+
+    <rect x="420" y="248" width="280" height="118" rx="10" fill="#fffbeb" stroke="#d97706"/>
+    <text x="560" y="270" font-size="13" fill="#b45309" text-anchor="middle" font-weight="700">L7 LB &nbsp;— 종단점 ②와 ③을 동시에 갖는다</text>
+    <text x="436" y="292" font-size="10.8" fill="#92400e">① TCP 스트림을 재조립해 HTTP로 파싱</text>
+    <text x="436" y="310" font-size="10.8" fill="#92400e">② 경로 · 헤더 · 쿠키를 보고 목적지 결정</text>
+    <text x="436" y="328" font-size="10.8" fill="#92400e">③ 헤더를 고쳐(X-Forwarded-*) </text>
+    <text x="436" y="346" font-size="10.8" fill="#92400e">④ 연결 ②에 <tspan font-weight="700">새로 써서</tspan> 보낸다</text>
+
+    <rect x="926" y="262" width="150" height="56" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="1001" y="286" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">백엔드</text>
+    <text x="1001" y="304" font-size="10.5" fill="#16a34a" text-anchor="middle" font-weight="700">TCP 종단점 ④</text>
+
+    <line x1="194" y1="290" x2="416" y2="290" stroke="#2563eb" stroke-width="3" marker-end="url(#mb)"/>
+    <text x="305" y="280" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">연결 ① (클라이언트 ↔ LB)</text>
+    <text x="305" y="330" font-size="11" fill="#1e40af" text-anchor="middle" class="mono">keepalive_timeout (server)</text>
+    <text x="305" y="346" font-size="11" fill="#1e40af" text-anchor="middle" class="mono">client_body_timeout</text>
+
+    <line x1="700" y1="290" x2="922" y2="290" stroke="#16a34a" stroke-width="3" marker-end="url(#mg)"/>
+    <text x="811" y="280" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">연결 ② (LB ↔ 백엔드) — 완전히 새 TCP 연결</text>
+    <text x="811" y="330" font-size="11" fill="#166534" text-anchor="middle" class="mono">keepalive_timeout (upstream)</text>
+    <text x="811" y="346" font-size="11" fill="#166534" text-anchor="middle" class="mono">proxy_read_timeout</text>
+
+    <text x="560" y="388" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">★ 두 연결은 서로 완전히 독립적이다 — 그래서 타임아웃 · 버퍼 · keep-alive 설정이 앞뒤로 <tspan text-decoration="underline">두 벌</tspan> 존재한다</text>
+    <text x="44" y="406" font-size="11.5" fill="#475569">· TCP 상태 기계: <tspan font-weight="700" fill="#1f2937">4개</tspan> (클라이언트 / LB의 앞쪽 / LB의 뒤쪽 / 백엔드)</text>
+    <text x="640" y="406" font-size="11.5" fill="#475569">· 백엔드가 보는 소켓의 상대 주소: <tspan font-weight="700" fill="#dc2626">언제나 LB IP</tspan> → <tspan class="mono">X-Forwarded-For</tspan> 계약 필요</text>
+  </svg>
+  <figcaption><b>이 한 장이 이 문서의 전부다.</b> 위는 연결이 <b>관통</b>하고 아래는 연결이 <b>절단</b>된다. 4절의 네 가지 귀결, 5절의 라우팅 능력, 6절의 편중, 8절의 헬스체크 깊이가 <b>전부 이 그림의 위/아래 차이에서 파생</b>된다. 면접에서 이 그림을 손으로 그릴 수 있으면 나머지는 설명이 저절로 따라온다.</figcaption>
+</figure>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 종단이 낳는 네 가지 귀결 — <span class="sub" style="font-size:1rem">요 · 두 · 주 · 버</span></h2>
+
+<p>"커넥션이 둘로 잘린다"는 한 문장에서 실무에서 부딪히는 것들이 <b>전부 파생된다.</b> 네 가지를 <b>요(요청 단위 분배) · 두(설정 두 벌) · 주(주소가 LB) · 버(버퍼링 격리)</b>로 묶어 외운다.</p>
+
+<div class="memo">
+  <h4>암기 — L7 종단에서 파생되는 네 가지 <span class="sub" style="font-weight:400">"요·두·주·버"</span></h4>
+  <div class="grid g4">
+    <div class="tile"><div class="k">요 — 요청 단위 분배</div><div class="d">연결 ①에서 요청을 <b>하나씩 꺼내 읽으므로</b> 요청 1은 서버 A, 요청 2는 서버 B로 보낼 수 있다. <b>L4에서는 불가능.</b></div></div>
+    <div class="tile"><div class="k">두 — 설정이 두 벌</div><div class="d">앞뒤 연결이 독립이라 keep-alive·타임아웃·버퍼가 <b>각각 따로</b>. 어긋나면 <b>간헐적 502</b>.</div></div>
+    <div class="tile red"><div class="k">주 — 주소가 LB가 된다</div><div class="d"><code>getRemoteAddr()</code>이 <b>언제나 LB IP</b>. 로그·rate limit이 무너지므로 <code>X-Forwarded-*</code> 계약이 필요.</div></div>
+    <div class="tile ok"><div class="k">버 — 버퍼링 격리</div><div class="d">앞뒤 속도가 분리되어 <b>느린 클라이언트를 LB가 떠맡는다.</b> 백엔드는 빠른 로컬 통신만 하고 스레드를 반납.</div></div>
+  </div>
+</div>
+
+<h3>4-1. 요 — 분배 단위가 "요청"이 된다</h3>
+<p>LB는 연결 ①에서 HTTP 요청을 하나씩 꺼내 읽으므로 <b>요청마다 다른 백엔드를 고를 수 있다.</b> 같은 클라이언트 커넥션에서 온 요청 1은 서버 A로, 요청 2는 서버 B로 보낼 수 있다는 뜻이다. <b>L4에서는 원리적으로 불가능</b>하고, 이것이 6절의 편중 문제를 L7이 겪지 않는 이유다.</p>
+
+<h3>4-2. 두 — 앞뒤 커넥션의 설정이 두 벌 존재한다</h3>
+<p>연결 ①과 ②는 서로 독립적인 TCP 연결이므로, keep-alive 유휴 상한도 타임아웃도 버퍼도 <b>각각 따로</b> 있다. <b>"이 설정이 앞쪽 것인가 뒤쪽 것인가"를 구분하지 못하면 튜닝이 헛돈다.</b></p>
+
+<div class="scroll">
+<table>
+  <caption>Nginx를 예로 든 "두 벌"의 실체. 같은 이름의 지시자가 <b>컨텍스트에 따라 다른 연결</b>을 가리킨다.</caption>
+  <thead><tr><th style="width:200px">나사</th><th>앞쪽 (클라이언트 ↔ LB)</th><th>뒤쪽 (LB ↔ 백엔드)</th></tr></thead>
+  <tbody>
+    <tr class="hl"><th>keep-alive 유휴 상한</th><td><code>keepalive_timeout</code> (server 컨텍스트)</td><td><code>keepalive_timeout</code> (upstream 컨텍스트)</td></tr>
+    <tr><th>커넥션당 최대 요청 수</th><td><code>keepalive_requests</code> (server)</td><td><code>keepalive_requests</code> (upstream)</td></tr>
+    <tr><th>읽기 타임아웃</th><td><code>client_body_timeout</code></td><td><code>proxy_read_timeout</code></td></tr>
+    <tr><th>버퍼</th><td><code>client_body_buffer_size</code></td><td><code>proxy_buffers</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>두 벌이 어긋날 때 생기는 대표 유령 — 간헐적 502</h4>
+  <div class="chain">
+    <span class="chip g">백엔드가 유휴 커넥션을 닫는다</span><span class="arrow">+</span>
+    <span class="chip b">같은 순간 LB가 그 커넥션을 재사용한다</span><span class="arrow">→</span>
+    <span class="chip r">write()는 성공, 읽으려는 순간 RST</span><span class="arrow">→</span>
+    <span class="chip r">502</span>
+  </div>
+  <div class="rule ok">재사용하는 쪽(LB)의 유휴 상한을 <b>닫는 쪽(백엔드)보다 짧게</b> 둔다</div>
+  <p style="margin-bottom:0" class="sub">이 규칙 하나로 "재현이 안 되는 502"의 큰 덩어리가 사라진다. (상세: <code>10-keepalive-connection-pool-time-wait.md</code>, <code>13-nginx-tomcat-timeout-buffer-mismatch.md</code>)</p>
+</div>
+
+<h3>4-3. 주 — 백엔드가 보는 소켓 주소가 LB가 된다</h3>
+<p>백엔드와 TCP 연결을 맺은 상대는 연결 ②의 반대쪽, 즉 <b>LB</b>다. 그래서 서블릿의 <code>request.getRemoteAddr()</code>은 <b>언제나 LB의 IP</b>를 돌려준다. 접근 로그의 클라이언트 IP가 전부 같은 값으로 찍히고, <b>IP 기반 rate limit이 모든 트래픽을 하나의 키로 몰아 무의미해진다.</b></p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>L7 — 헤더 계약으로 복원한다</h4>
+    <ul>
+      <li>LB가 소켓에서 관측한 클라이언트 IP를 <code>X-Forwarded-For</code>에 적어 전달</li>
+      <li>원래 스킴이 https였는지는 <code>X-Forwarded-Proto</code>로 전달 — <b>빠뜨리면 "https로 리다이렉트" 로직이 무한 루프</b>에 빠진다</li>
+      <li><b>헤더는 클라이언트가 위조할 수 있다</b> → 신뢰 경계 설정 필수 (<code>17</code>·<code>22</code>번 문서)</li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>L4 — 애초에 계약이 필요 없다</h4>
+    <ul>
+      <li>커넥션을 종단하지 않으므로, <b>목적지 주소만 바꿔 넘기는 구성이라면 백엔드 소켓에 클라이언트 IP가 그대로 보인다</b></li>
+      <li>단, 응답도 반드시 LB를 거치게 하려고 <b>출발지 주소까지 LB 것으로 바꾸는 구성(SNAT)</b>이면 L4에서도 클라이언트 IP를 잃는다</li>
+      <li>이때는 HTTP 헤더를 붙일 수단이 없으므로 <b>PROXY protocol</b>을 쓴다 — 연결 직후 데이터 앞에 <b>"원래 출발지는 1.2.3.4:5678"</b> 한 줄을 먼저 흘려보낸다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout trap">
+  <span class="t">PROXY protocol의 전제 — 백엔드도 그 규약을 알아야 한다</span>
+  이 한 줄은 <b>HTTP가 아니다.</b> 백엔드가 PROXY protocol을 이해하도록 설정되어 있지 않으면 그 한 줄이 <b>HTTP 요청의 일부로 파싱되어 400</b>이 난다. <b>"LB 쪽만 켜면 되는 옵션"이 아니라 양쪽이 맞춰야 하는 계약</b>이라는 점이 실무에서 자주 사고를 낸다.
+</div>
+
+<h3>4-4. 버 — LB가 완충지대가 된다</h3>
+<p>앞뒤 커넥션의 <b>속도가 분리</b>되므로, 느린 클라이언트에게 응답을 흘려보내는 일을 <b>LB가 떠맡고</b> 백엔드는 빠른 로컬 통신만 하고 스레드를 반납할 수 있다. <b>L4에서는 클라이언트와 백엔드가 직접 연결되어 있으므로 느린 클라이언트의 속도가 백엔드 스레드에 그대로 전파된다.</b> 3G 회선의 사용자 1,000명이 백엔드 스레드 1,000개를 그대로 붙들고 있는 그림이 된다. (상세: <code>12-nginx-roles-and-event-driven-architecture.md</code>)</p>
+
+<div class="scroll">
+<table class="wide">
+  <caption><b>"종단하는가?" 한 축에서 파생되는 것들.</b> 오른쪽 칸이 이 표의 값 — 각 줄이 <b>독립된 암기 항목이 아니라 3절 그림의 결과</b>라는 것을 확인하며 읽는다.</caption>
+  <thead><tr><th style="width:150px">항목</th><th style="width:300px">L4 (종단하지 않는다)</th><th style="width:320px">L7 (종단한다)</th><th>왜 그렇게 되는가</th></tr></thead>
+  <tbody>
+    <tr><th>보는 정보</th><td>IP, 포트 (+ TLS ClientHello의 SNI)</td><td>HTTP 메서드·경로·호스트·헤더·쿠키</td><td>HTTP를 읽으려면 스트림 재조립 = 종단이 전제</td></tr>
+    <tr class="hl"><th>분배 단위</th><td><b>TCP/UDP 커넥션</b> (첫 SYN에서 한 번)</td><td><b>HTTP 요청</b> (요청마다)</td><td>요청 경계를 알려면 HTTP를 파싱해야 한다</td></tr>
+    <tr><th>TCP 연결</th><td>클라이언트↔백엔드 하나</td><td>LB에서 종단 후 <b>두 개로 분리</b></td><td>정의 그 자체</td></tr>
+    <tr><th>백엔드가 보는 IP</th><td class="good">클라이언트 IP (SNAT면 LB IP + PROXY protocol)</td><td class="bad">항상 LB IP (<code>X-Forwarded-For</code>로 복원)</td><td>연결 ②의 반대쪽이 LB이므로</td></tr>
+    <tr><th>프로토콜</th><td class="good">무엇이든 (DB, Redis, MQTT, TLS 그대로)</td><td>HTTP(S) · gRPC 계열</td><td>파싱하지 않으니 가릴 이유가 없다</td></tr>
+    <tr><th>버퍼링 격리</th><td class="bad">없음 (클라이언트 속도가 백엔드에 전파)</td><td class="good">가능</td><td>버퍼는 종단한 쪽만 가질 수 있다</td></tr>
+    <tr><th>비용</th><td class="good">낮음 (패킷 전달 수준)</td><td>파싱 · 종단 · 버퍼링 비용</td><td>상태 기계 4개 vs 2개</td></tr>
+    <tr><th>헬스체크 깊이</th><td class="bad">TCP 연결이 맺어지는가</td><td class="good">HTTP 응답이 정상인가</td><td>8절 — 커널이 handshake를 대신 끝낸다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout ok">
+  <span class="t">클라우드로 옮기면 이름이 그대로 말해 준다 <span class="badge bonus">가산점</span></span>
+  <b>AWS의 NLB(Network Load Balancer)가 L4, ALB(Application Load Balancer)가 L7</b>이다. 이름 자체가 <b>"네트워크 계층 수준"</b>과 <b>"애플리케이션 계층 수준"</b>을 가리킨다. 10절에 두 제품의 대응표를 정리해 뒀다.
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 라우팅과 분배 — 섞어 말하면 안 되는 두 질문</h2>
+
+<p>"로드밸런싱"이라는 한 단어 안에 사실 <b>성격이 다른 두 질문</b>이 들어 있다. 이걸 섞어 말하면 논의가 흐려지고, 면접에서도 "L4에서는 라운드로빈이 안 되나요?" 같은 어긋난 대화가 된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 262" role="img" aria-label="요청이 들어오면 첫 번째 질문인 라우팅에서 어느 서버 그룹으로 보낼지 정하고, 두 번째 질문인 분배 알고리즘에서 그 그룹 안의 어느 인스턴스로 보낼지 정하는 2단계 구조를 보여주는 도식">
+    <defs><marker id="m5" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker></defs>
+
+    <rect x="24" y="102" width="120" height="52" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="84" y="133" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">요청 1건</text>
+    <line x1="144" y1="128" x2="204" y2="128" stroke="#94a3b8" stroke-width="2" marker-end="url(#m5)"/>
+
+    <rect x="210" y="80" width="252" height="96" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="336" y="104" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">① 라우팅 — 어느 서버 그룹?</text>
+    <text x="226" y="126" font-size="11" fill="#1e40af">L7 근거: 호스트 · 경로 · 헤더 · 쿠키 · 메서드</text>
+    <text x="226" y="144" font-size="11" fill="#1e40af">L4 근거: 포트 · 5-튜플 · (TLS면) SNI</text>
+    <text x="336" y="166" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">← 계층이 결정적으로 가르는 것은 여기</text>
+
+    <line x1="462" y1="128" x2="504" y2="128" stroke="#94a3b8" stroke-width="2" marker-end="url(#m5)"/>
+    <rect x="510" y="34" width="180" height="46" rx="8" fill="#ffffff" stroke="#cbd5e1"/><text x="600" y="62" font-size="12" fill="#475569" text-anchor="middle">주문 서비스 서버군</text>
+    <rect x="510" y="105" width="180" height="46" rx="8" fill="#f0fdf4" stroke="#16a34a"/><text x="600" y="133" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">사용자 서비스 서버군</text>
+    <rect x="510" y="176" width="180" height="46" rx="8" fill="#ffffff" stroke="#cbd5e1"/><text x="600" y="204" font-size="12" fill="#475569" text-anchor="middle">정적 서버군</text>
+    <line x1="690" y1="128" x2="744" y2="128" stroke="#16a34a" stroke-width="2" marker-end="url(#m5)"/>
+
+    <rect x="750" y="80" width="240" height="96" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="870" y="104" font-size="13.5" fill="#166534" text-anchor="middle" font-weight="700">② 분배 — 그룹 안 어느 인스턴스?</text>
+    <text x="766" y="126" font-size="11" fill="#15803d">라운드로빈 · 최소 연결 · 가중치 · 해시</text>
+    <text x="870" y="150" font-size="11.5" fill="#1f2937" text-anchor="middle">알고리즘 자체는 <tspan font-weight="700">양쪽 다 가능</tspan></text>
+    <text x="870" y="167" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">다만 적용 단위가 다르다</text>
+
+    <line x1="990" y1="128" x2="1024" y2="128" stroke="#94a3b8" stroke-width="2" marker-end="url(#m5)"/>
+    <rect x="1030" y="86" width="66" height="26" rx="6" fill="#ffffff" stroke="#94a3b8"/><text x="1063" y="104" font-size="11" fill="#475569" text-anchor="middle" class="mono">#1</text>
+    <rect x="1030" y="116" width="66" height="26" rx="6" fill="#ffffff" stroke="#94a3b8"/><text x="1063" y="134" font-size="11" fill="#475569" text-anchor="middle" class="mono">#2</text>
+    <rect x="1030" y="146" width="66" height="26" rx="6" fill="#ffffff" stroke="#94a3b8"/><text x="1063" y="164" font-size="11" fill="#475569" text-anchor="middle" class="mono">#3</text>
+
+    <text x="560" y="248" font-size="12.5" fill="#374151" text-anchor="middle"><tspan font-weight="700">L4는 커넥션마다 ②를 적용하고, L7은 요청마다 ②를 적용한다</tspan> — 같은 "라운드로빈"이라는 이름이 전혀 다른 결과를 만드는 이유(6절)</text>
+  </svg>
+  <figcaption>①은 <b>계층에 따라 근거로 쓸 수 있는 정보가 달라서 능력 자체가 갈리고</b>, ②는 <b>능력은 같은데 적용 주기가 갈린다.</b> 이 두 가지를 분리해 말하는 것만으로 논의가 정확해진다. (분배 알고리즘 6종의 상세 비교와 손계산은 <code>07-traffic-performance/03-load-balancer-role-and-algorithms.md</code>에서 다룬다 — 여기서는 <b>계층과의 관계</b>에만 집중한다.)</figcaption>
+</figure>
+
+<h3>5-1. L7에서만 가능한 라우팅 — 요청 내용을 읽으므로</h3>
+
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">호스트 기반</div><div class="d"><code>Host</code> 헤더를 읽어 <code>api.example.com</code>은 API 서버군, <code>admin.example.com</code>은 어드민 서버군으로. <b>하나의 공인 IP·하나의 LB 뒤에 여러 서비스를 배치하는 구성의 전제.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">경로 기반</div><div class="d"><code>/api/orders</code>는 주문 서비스, <code>/api/users</code>는 사용자 서비스로. <b>마이크로서비스를 하나의 도메인 뒤에 숨기는 구성이 이것 없이는 성립하지 않는다</b> — 나중에 더 쪼개도 클라이언트를 안 고친다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">헤더 · 쿠키 기반</div><div class="d">특정 헤더가 붙은 요청만 신버전으로(내부 QA 카나리), 또는 LB가 발급한 쿠키를 읽어 같은 사용자를 같은 인스턴스로(쿠키 스티키니스).</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">요청 · 응답 재작성</div><div class="d">경로 앞부분을 떼고 보내거나(<code>/api/orders/1</code> → <code>/orders/1</code>), 응답에 보안 헤더를 붙이거나, gzip을 앞단에서 처리. <b>전부 HTTP를 이해해야 가능하다.</b></div></div>
+</div>
+
+<div class="memo">
+  <h4>가중치 기반 카나리가 <span style="color:#dc2626">L7에서만</span> 정확한 이유 — 면접에서 값이 나가는 한 줄</h4>
+  <div class="split" style="margin:8px 0 0">
+    <div class="pane r">
+      <h4>L4의 "5%"</h4>
+      <p style="margin:0;font-size:.94rem"><b>커넥션의 5%</b>다. keep-alive로 커넥션 하나가 요청 100건을 나르면 <b>요청 기준 비율은 5%에서 크게 벗어난다.</b> 어떤 커넥션이 무거운 클라이언트의 것이냐에 따라 실제로 신버전이 받는 요청은 1%일 수도 30%일 수도 있다.</p>
+    </div>
+    <div class="pane g">
+      <h4>L7의 "5%"</h4>
+      <p style="margin:0;font-size:.94rem"><b>요청의 5%</b>다. 요청 단위로 세므로 비율이 정확하고, <b>지표를 보고 비중을 올리는 판단</b>이 성립한다. 카나리·A/B 테스트가 L7의 대표 용례인 이유.</p>
+    </div>
+  </div>
+</div>
+
+<div class="codehead plain"><span class="tag">L7</span> L4로는 불가능하고 L7에서만 가능한 라우팅 (Nginx <code>http</code> 컨텍스트)</div>
+<pre><code><span class="cm"># ① 호스트 기반 — Host 헤더를 읽어야 가능</span>
+server {
+    server_name api.example.com;
+    location / { proxy_pass http://api_servers; }
+}
+server {
+    server_name admin.example.com;
+    location / { proxy_pass http://admin_servers; }
+}
+
+<span class="cm"># ② 경로 기반 — 요청 URL을 읽어야 가능</span>
+server {
+    server_name api.example.com;
+    location /api/orders/ { proxy_pass http://order_servers; }
+    location /api/users/  { proxy_pass http://user_servers; }
+    location /static/     { root /var/www; }        <span class="cm"># 아예 뒤로 안 보낸다</span>
+}
+
+<span class="cm"># ③ 헤더 기반 카나리 — 특정 헤더가 있는 요청만 신버전으로</span>
+map $http_x_canary $upstream_pool {
+    default  stable_servers;
+    <span class="st">"on"</span>     canary_servers;
+}
+server {
+    location / { proxy_pass http://$upstream_pool; }
+}
+
+<span class="cm"># ④ 가중치 기반 카나리 — 요청의 5%만 신버전으로</span>
+<span class="cm">#    split_clients는 주어진 문자열을 해시해 비율대로 나눈다.</span>
+<span class="cm">#    $request_id  → 요청마다 무작위 (진짜 5%)</span>
+<span class="cm">#    $cookie_uid  → 사용자별로 고정 (같은 사용자는 계속 같은 쪽)</span>
+split_clients <span class="st">"${request_id}"</span> $canary_pool {
+    5%      canary_servers;
+    *       stable_servers;
+}</code></pre>
+
+<h3>5-2. L4에서 가능한 라우팅 — 근거가 IP·포트뿐일 때</h3>
+
+<div class="grid g3">
+  <div class="tile"><div class="k">포트 기반 분기</div><div class="d">443은 웹 서버군, 5432는 PostgreSQL 읽기 복제본, 6379는 Redis. <b>L4가 HTTP가 아닌 트래픽까지 분배할 수 있다는 것이 여기서 값을 한다.</b></div></div>
+  <div class="tile"><div class="k">5-튜플 해시</div><div class="d">출발지 IP·포트, 목적지 IP·포트, 프로토콜을 해시해 백엔드를 고른다. 같은 커넥션의 패킷은 항상 같은 값 → <b>자연스럽게 같은 백엔드</b>로.</div></div>
+  <div class="tile red"><div class="k">출발지 IP 해시</div><div class="d">5-튜플에서 <b>출발지 포트를 뺀 것</b>. 같은 클라이언트의 <b>서로 다른 커넥션</b>까지 같은 백엔드로 → 원시적인 세션 고정. 함정은 아래.</div></div>
+</div>
+
+<div class="callout ok">
+  <span class="t">예외 한 가지 — TLS passthrough에서도 SNI 기반 라우팅은 된다 <span class="badge bonus">가산점</span></span>
+  이게 왜 되는지가 재미있다. TLS handshake의 첫 메시지인 <b><code>ClientHello</code>는 아직 암호화 전이라 평문</b>이고, 그 안에 <b>SNI(Server Name Indication)</b> 확장이 들어 있다 — 클라이언트가 <b>"나는 <code>api.example.com</code>에 접속하려 한다"</b>를 적어 보내는 필드다(원래 목적은 하나의 IP에 여러 도메인의 인증서가 걸려 있을 때 <b>서버가 어느 인증서를 내밀지</b> 정하기 위한 것). <b>LB가 암호를 풀지 않고도 이 필드를 읽을 수 있으므로 "도메인별로 다른 백엔드 그룹으로 보내기"까지는 passthrough에서도 된다.</b> 경로 기반 라우팅은 HTTP 안에 있어 암호화되므로 여전히 불가능하다. (<code>06-tls-handshake-symmetric-asymmetric-keys.md</code>)
+</div>
+
+<div class="codehead plain"><span class="tag">L4</span> Nginx <code>stream</code> 모듈 — TLS를 풀지 않고 ClientHello의 SNI만 훑는다</div>
+<pre><code>stream {
+    map $ssl_preread_server_name $backend_pool {
+        api.example.com    api_tls_backend;
+        admin.example.com  admin_tls_backend;
+        default            api_tls_backend;
+    }
+
+    upstream api_tls_backend   { server 10.0.1.10:8443; server 10.0.1.11:8443; }
+    upstream admin_tls_backend { server 10.0.2.10:8443; }
+
+    server {
+        listen 443;
+        <span class="cm"># ssl_preread: TLS를 종료하지 않고 ClientHello만 미리 훑어</span>
+        <span class="cm">#              $ssl_preread_server_name 같은 변수를 채운다.</span>
+        ssl_preread on;
+        proxy_pass $backend_pool;   <span class="cm"># 암호문은 그대로 통과시킨다</span>
+    }
+}</code></pre>
+
+<div class="memo red">
+  <h4>IP 해시(그리고 L4의 출발지 IP 해시)의 두 가지 함정 — 알고리즘 이야기가 나오면 반드시 함께</h4>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">① NAT 뒤의 수천 명이 한 IP로 보인다</div><div class="d">회사망이나 통신사 CGNAT 뒤의 사용자 수천 명이 하나의 공인 IP를 공유하면 <b>그 전원이 한 인스턴스로 몰린다</b> — 분배가 아니라 <b>집중</b>이 된다. (Nginx <code>ip_hash</code>는 IPv4의 <b>앞 세 옥텟만</b> 해시에 쓰므로 같은 /24 대역이면 같은 인스턴스로 간다 — 쏠림이 더 커진다.)</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② 모바일에서 IP가 바뀌면 고정이 깨진다</div><div class="d">와이파이에서 LTE로 넘어가는 순간 <b>다른 인스턴스로 배정되고, 그 인스턴스에는 세션이 없다.</b> 사용자 입장에서는 이유 없는 로그아웃이다.</div></div>
+  </div>
+  <div class="rule red">스티키 세션은 어느 계층에서 하든 <b>"서버에 상태가 있다"는 문제의 증상 완화</b>일 뿐 — 근본 해법은 세션을 Redis 같은 외부 저장소로 빼는 <b>무상태 설계</b></div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. L4의 커넥션 단위 분배 × 장수 커넥션 = 저절로 안 풀리는 편중 <span class="badge senior">시니어 변별</span></h2>
+
+<p><b>이것이 L4의 가장 실무적인 함정이고, gRPC나 웹소켓을 도입한 팀이 실제로 부딪히는 문제다.</b> 전제를 다시 확인하자 — <b>L4는 커넥션이 맺어질 때 단 한 번 백엔드를 고르고, 그 결정은 커넥션이 살아 있는 동안 바뀌지 않는다.</b> 그러면 <b>커넥션이 얼마나 오래 사느냐가 곧 분배의 품질</b>이 된다.</p>
+
+<div class="split">
+  <div class="pane g">
+    <h4>커넥션이 짧게 살면 — 문제 없음</h4>
+    <p style="margin:0;font-size:.94rem">HTTP/1.1 브라우저 트래픽은 커넥션이 수십 초 안에 정리되고 새 커넥션이 계속 생긴다. <b>커넥션 단위 분배도 통계적으로 고르게 퍼진다.</b> L4로 웹 트래픽을 받는 구성이 오래 잘 굴러온 이유다.</p>
+  </div>
+  <div class="pane r">
+    <h4>커넥션이 오래 살면 — 편중</h4>
+    <ul>
+      <li><b>gRPC</b>: HTTP/2가 커넥션 하나에 여러 스트림을 다중화 → <b>커넥션 하나로 초당 수백 건의 RPC</b>, 커넥션은 몇 시간씩 산다</li>
+      <li><b>웹소켓 · SSE</b>: 애초에 "끊지 않는 것"이 목적. 수명이 분~시간 단위 (<code>14</code>번 문서)</li>
+      <li><b>내부 서비스 간 HTTP 호출</b>: 커넥션 풀에 잡아둔 커넥션이 계속 재사용된다 (<code>10</code>번 문서)</li>
+    </ul>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="gRPC 클라이언트 4대가 각각 커넥션 1개씩을 L4 로드밸런서를 통해 백엔드 2대에 맺어 커넥션 수는 2대 2로 균등하지만, 클라이언트 1번만 초당 1000 RPC를 보내기 때문에 실제 RPC 부하는 백엔드 A가 1010, 백엔드 B가 20으로 50배 차이 난다는 것을 막대그래프로 보여주는 도식">
+    <defs><marker id="m6" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+      <marker id="m6r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker></defs>
+
+    <text x="300" y="28" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">gRPC 클라이언트 4대 · 커넥션 1개씩 · L4 LB 뒤에 백엔드 2대</text>
+    <text x="300" y="48" font-size="11.5" fill="#6b7280" text-anchor="middle">L4 LB는 각 커넥션의 첫 SYN에서 백엔드를 한 번 고르고 끝이다</text>
+
+    <rect x="30" y="62" width="160" height="42" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="110" y="80" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">클라이언트 #1</text>
+    <text x="110" y="96" font-size="11" fill="#b91c1c" text-anchor="middle" class="mono">1,000 RPC/s</text>
+    <rect x="30" y="118" width="160" height="42" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="110" y="136" font-size="12" fill="#374151" text-anchor="middle">클라이언트 #2</text>
+    <text x="110" y="152" font-size="11" fill="#6b7280" text-anchor="middle" class="mono">10 RPC/s</text>
+    <rect x="30" y="174" width="160" height="42" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="110" y="192" font-size="12" fill="#374151" text-anchor="middle">클라이언트 #3</text>
+    <text x="110" y="208" font-size="11" fill="#6b7280" text-anchor="middle" class="mono">10 RPC/s</text>
+    <rect x="30" y="230" width="160" height="42" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="110" y="248" font-size="12" fill="#374151" text-anchor="middle">클라이언트 #4</text>
+    <text x="110" y="264" font-size="11" fill="#6b7280" text-anchor="middle" class="mono">10 RPC/s</text>
+
+    <path d="M190 83 L 416 118" fill="none" stroke="#dc2626" stroke-width="4" marker-end="url(#m6r)"/>
+    <path d="M190 139 L 416 232" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#m6)"/>
+    <path d="M190 195 L 416 136" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#m6)"/>
+    <path d="M190 251 L 416 250" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#m6)"/>
+
+    <rect x="420" y="98" width="140" height="56" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="490" y="122" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">백엔드 A</text>
+    <text x="490" y="140" font-size="11" fill="#b91c1c" text-anchor="middle" class="mono">커넥션 2개</text>
+    <rect x="420" y="212" width="140" height="56" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="490" y="236" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">백엔드 B</text>
+    <text x="490" y="254" font-size="11" fill="#166534" text-anchor="middle" class="mono">커넥션 2개</text>
+
+    <line x1="600" y1="56" x2="600" y2="300" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- bars -->
+    <text x="640" y="80" font-size="13" font-weight="700" fill="#2563eb">LB가 세는 것 — 커넥션 수</text>
+    <text x="672" y="106" font-size="11.5" fill="#374151" text-anchor="end" class="mono">A</text>
+    <rect x="680" y="93" width="120" height="18" rx="3" fill="#93c5fd" stroke="#60a5fa"/><text x="812" y="107" font-size="11.5" fill="#1d4ed8" class="mono">2</text>
+    <text x="672" y="132" font-size="11.5" fill="#374151" text-anchor="end" class="mono">B</text>
+    <rect x="680" y="119" width="120" height="18" rx="3" fill="#93c5fd" stroke="#60a5fa"/><text x="812" y="133" font-size="11.5" fill="#1d4ed8" class="mono">2</text>
+    <text x="856" y="120" font-size="12.5" fill="#16a34a" font-weight="700">완벽하게 균등 ✓</text>
+
+    <text x="640" y="180" font-size="13" font-weight="700" fill="#dc2626">실제 부하 — 초당 RPC 수</text>
+    <text x="672" y="206" font-size="11.5" fill="#374151" text-anchor="end" class="mono">A</text>
+    <rect x="680" y="193" width="404" height="18" rx="3" fill="#fca5a5" stroke="#dc2626"/><text x="882" y="207" font-size="11.5" fill="#7f1d1d" class="mono" font-weight="700" text-anchor="middle">1,010 RPC/s</text>
+    <text x="672" y="232" font-size="11.5" fill="#374151" text-anchor="end" class="mono">B</text>
+    <rect x="680" y="219" width="8" height="18" rx="2" fill="#86efac" stroke="#16a34a"/><text x="698" y="233" font-size="11.5" fill="#166534" class="mono">20 RPC/s</text>
+    <text x="790" y="233" font-size="12.5" fill="#dc2626" font-weight="700">← 50배 차이</text>
+
+    <rect x="636" y="256" width="454" height="52" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="652" y="278" font-size="12.5" fill="#b91c1c" font-weight="700">LB가 세는 단위(커넥션)와 실제 부하의 단위(요청)가 다르다</text>
+    <text x="652" y="297" font-size="11.5" fill="#7f1d1d">→ 대시보드는 "균등하게 분배했다"고 보고하는데 한 대만 CPU가 탄다</text>
+  </svg>
+  <figcaption><b>이 문제의 본질은 한 문장이다 — LB가 세는 단위와 실제 부하의 단위가 다르다.</b> "특정 인스턴스만 CPU가 높다"는 증상에서 <b>LB 지표가 균등하다는 사실이 오히려 단서</b>가 된다.</figcaption>
+</figure>
+
+<h3>6-1. 여기에 롤링 배포가 겹치면 편중이 <span style="color:#dc2626">고착</span>된다</h3>
+
+<p>인스턴스 3대(A·B·C)에 장수 커넥션 24개가 <b>8개씩 균등하게</b> 붙어 있는 상태에서 롤링 재시작을 해 보자. 재시작된 인스턴스의 커넥션은 끊기고, 클라이언트는 <b>살아 있는 인스턴스들로 재연결</b>한다.</p>
+
+<div class="scroll">
+<table>
+  <caption>롤링 재시작 3단계를 손으로 따라가기 — 각 단계에서 끊긴 커넥션이 <b>남아 있는 인스턴스에 균등 분배</b>된다고 가정한다.</caption>
+  <thead><tr><th style="width:120px">단계</th><th>일어나는 일</th><th style="width:110px">A</th><th style="width:110px">B</th><th style="width:110px">C</th></tr></thead>
+  <tbody>
+    <tr><th>시작</th><td>균등</td><td>8</td><td>8</td><td>8</td></tr>
+    <tr><th>① A 재시작</th><td>A의 8개가 끊겨 B·C로 재연결 (4개씩)</td><td class="bad">0</td><td>12</td><td>12</td></tr>
+    <tr><th>② B 재시작</th><td>B의 12개가 끊겨 A·C로 재연결 (6개씩)</td><td>6</td><td class="bad">0</td><td>18</td></tr>
+    <tr><th>③ C 재시작</th><td>C의 18개가 끊겨 A·B로 재연결 (9개씩)</td><td>15</td><td>9</td><td class="bad">0</td></tr>
+    <tr class="hl"><th>배포 완료</th><td><b>가장 마지막에 재시작한 인스턴스가 커넥션 0개</b></td><td><b>15 (62.5%)</b></td><td><b>9 (37.5%)</b></td><td><b>0 (0%)</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 214" role="img" aria-label="롤링 배포 전에는 A B C 인스턴스가 각각 커넥션 8개로 균등했지만, 배포 후에는 A가 15개, B가 9개, C가 0개가 되어 회복되지 않는 불균형이 남는다는 것을 막대그래프로 보여주는 도식">
+    <text x="30" y="28" font-size="14.5" font-weight="700" fill="#1f2937">배포 전 vs 배포 후 — 커넥션은 스스로 옮겨가지 않는다</text>
+
+    <g font-size="11.5" fill="#6b7280" class="mono">
+      <text x="86" y="62" text-anchor="end">배포 전</text><text x="86" y="86" text-anchor="end" fill="#dc2626" font-weight="700">배포 후</text>
+      <text x="86" y="122" text-anchor="end">배포 전</text><text x="86" y="146" text-anchor="end" fill="#2563eb" font-weight="700">배포 후</text>
+      <text x="86" y="182" text-anchor="end">배포 전</text><text x="86" y="206" text-anchor="end" fill="#dc2626" font-weight="700">배포 후</text>
+    </g>
+    <g font-size="13" font-weight="700" fill="#1f2937">
+      <text x="30" y="74">A</text><text x="30" y="134">B</text><text x="30" y="194">C</text>
+    </g>
+
+    <rect x="96" y="48" width="256" height="18" rx="3" fill="#e2e8f0" stroke="#cbd5e1"/><text x="362" y="62" font-size="11.5" fill="#6b7280" class="mono">8</text>
+    <rect x="96" y="72" width="480" height="18" rx="3" fill="#fca5a5" stroke="#dc2626"/><text x="586" y="86" font-size="11.5" fill="#b91c1c" class="mono" font-weight="700">15 — 전체의 62.5%를 떠안는다</text>
+
+    <rect x="96" y="108" width="256" height="18" rx="3" fill="#e2e8f0" stroke="#cbd5e1"/><text x="362" y="122" font-size="11.5" fill="#6b7280" class="mono">8</text>
+    <rect x="96" y="132" width="288" height="18" rx="3" fill="#93c5fd" stroke="#60a5fa"/><text x="394" y="146" font-size="11.5" fill="#1d4ed8" class="mono" font-weight="700">9 (37.5%)</text>
+
+    <rect x="96" y="168" width="256" height="18" rx="3" fill="#e2e8f0" stroke="#cbd5e1"/><text x="362" y="182" font-size="11.5" fill="#6b7280" class="mono">8</text>
+    <rect x="96" y="192" width="4" height="18" rx="2" fill="#fecaca" stroke="#dc2626" stroke-dasharray="3 2"/><text x="110" y="206" font-size="11.5" fill="#b91c1c" class="mono" font-weight="700">0 — 새 클라이언트가 붙기 전까지 트래픽을 한 건도 안 받는다</text>
+
+    <rect x="660" y="44" width="440" height="70" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="676" y="66" font-size="12.5" fill="#b91c1c" font-weight="700">이 불균형은 저절로 회복되지 않는다</text>
+    <text x="676" y="86" font-size="11.5" fill="#7f1d1d">커넥션은 한 번 붙으면 스스로 다른 인스턴스로 옮겨가지 않는다.</text>
+    <text x="676" y="104" font-size="11.5" fill="#7f1d1d">오토스케일로 새 인스턴스를 띄워도 마찬가지 — 새 커넥션이 생길 때까지 논다.</text>
+  </svg>
+  <figcaption>같은 원리로 <b>오토스케일 아웃도 효과가 늦다</b> — 새로 뜬 인스턴스는 기존 장수 커넥션을 넘겨받지 못하므로, 부하가 급증한 순간에 <b>정작 새 인스턴스만 한가한</b> 상태가 된다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>대응 셋 — 확실한 것부터</h4>
+  <div class="step ok"><div class="n">1</div><div class="body"><b>L7 LB를 쓴다 — 가장 확실한 해법.</b> 요청 단위로 분배하므로 커넥션이 얼마나 오래 살든 상관없다. gRPC를 지원하는 L7 LB(<b>ALB의 gRPC 대상 그룹, Envoy, Nginx <code>grpc_pass</code></b>)를 쓰면 HTTP/2 스트림 단위로 나눠 보낸다.</div></div>
+  <div class="step"><div class="n">2</div><div class="body"><b>커넥션 수명에 상한을 둔다.</b> 주기적으로 끊어 <b>재분배 기회</b>를 만든다 — gRPC 서버의 커넥션 최대 수명 설정, Nginx의 <code>keepalive_requests</code>. <b>"커넥션이 짧게 살면 커넥션 단위 분배도 고르게 퍼진다"</b>는 원리를 이용하는 것. 다만 끊고 다시 맺는 비용(handshake, TLS, slow start)이 있으므로 <b>너무 짧으면 손해</b>다.</div></div>
+  <div class="step"><div class="n">3</div><div class="body"><b>클라이언트 측 로드밸런싱.</b> 클라이언트가 백엔드 목록을 직접 알고 <b>여러 인스턴스에 커넥션을 나눠 맺는다.</b> LB를 안 거치므로 편중이 없지만, <b>서비스 디스커버리가 필요</b>해진다.</div></div>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 2단 구성 — L4냐 L7이냐는 양자택일이 아니다</h2>
+
+<p>L4만 있는 환경에서 "경로별로 다른 서비스로 보내달라"는 요구가 오면 <b>구조적으로 불가능하다</b> — 근거로 쓸 정보가 애초에 없기 때문이다. 이때 흔한 답이 <b>L4 뒤에 L7을 한 단 더 두는 2단 구성</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 292" role="img" aria-label="인터넷에서 들어온 트래픽을 L4 로드밸런서가 커넥션 단위로 L7 프록시 두 대에 뿌리고, 각 L7 프록시가 HTTP 경로와 헤더를 읽어 주문 서비스, 사용자 서비스, 정적 서버로 요청 단위 분기하는 2단 구성 도식">
+    <defs><marker id="m7" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker></defs>
+
+    <text x="560" y="26" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">각 계층이 자기가 잘하는 일만 한다</text>
+
+    <rect x="24" y="112" width="120" height="52" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="84" y="143" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="700">인터넷</text>
+    <line x1="144" y1="138" x2="192" y2="138" stroke="#94a3b8" stroke-width="2" marker-end="url(#m7)"/>
+
+    <rect x="198" y="100" width="170" height="76" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="283" y="126" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">L4 LB</text>
+    <text x="283" y="146" font-size="11" fill="#1e40af" text-anchor="middle">값싼 패킷 전달로</text>
+    <text x="283" y="162" font-size="11" fill="#1e40af" text-anchor="middle">대량 트래픽을 감당</text>
+
+    <path d="M368 122 L 452 92" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#m7)"/>
+    <path d="M368 154 L 452 190" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#m7)"/>
+    <text x="410" y="146" font-size="10.5" fill="#6b7280" text-anchor="middle">커넥션 단위</text>
+
+    <rect x="458" y="58" width="180" height="66" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="548" y="82" font-size="13" fill="#b45309" text-anchor="middle" font-weight="700">L7 프록시 #1</text>
+    <text x="548" y="102" font-size="11" fill="#92400e" text-anchor="middle">HTTP를 읽고 요청 단위 분기</text>
+    <rect x="458" y="164" width="180" height="66" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="548" y="188" font-size="13" fill="#b45309" text-anchor="middle" font-weight="700">L7 프록시 #2</text>
+    <text x="548" y="208" font-size="11" fill="#92400e" text-anchor="middle">경로 · 헤더 · 쿠키 기반</text>
+
+    <path d="M638 78 L 776 66" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#m7)"/>
+    <path d="M638 96 L 776 136" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#m7)"/>
+    <path d="M638 110 L 776 206" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#m7)"/>
+    <path d="M638 184 L 776 76" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#m7)"/>
+    <path d="M638 200 L 776 146" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#m7)"/>
+    <path d="M638 216 L 776 216" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#m7)"/>
+
+    <rect x="782" y="44" width="200" height="48" rx="8" fill="#ffffff" stroke="#cbd5e1"/><text x="882" y="66" font-size="12" fill="#374151" text-anchor="middle">주문 서비스 인스턴스들</text><text x="882" y="82" font-size="10.5" fill="#6b7280" text-anchor="middle" class="mono">/api/orders/</text>
+    <rect x="782" y="116" width="200" height="48" rx="8" fill="#ffffff" stroke="#cbd5e1"/><text x="882" y="138" font-size="12" fill="#374151" text-anchor="middle">사용자 서비스 인스턴스들</text><text x="882" y="154" font-size="10.5" fill="#6b7280" text-anchor="middle" class="mono">/api/users/</text>
+    <rect x="782" y="188" width="200" height="48" rx="8" fill="#ffffff" stroke="#cbd5e1"/><text x="882" y="210" font-size="12" fill="#374151" text-anchor="middle">정적 서버들</text><text x="882" y="226" font-size="10.5" fill="#6b7280" text-anchor="middle" class="mono">/static/</text>
+
+    <rect x="24" y="248" width="1072" height="34" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="44" y="270" font-size="12.5" fill="#166534">앞단 L4에서 커넥션 편중이 생겨도 <tspan font-weight="700">L7 프록시들은 동질적이고 상태가 없으므로</tspan> 조금 불균형해도 큰 문제가 안 된다 — 편중이 아픈 것은 <tspan font-weight="700">실제 애플리케이션 인스턴스 쪽</tspan>이다</text>
+  </svg>
+  <figcaption><b>"요구사항에 따라 조합한다"고 답하면서 각 계층이 무엇을 맡는지 말할 수 있으면 설계 감각이 드러난다.</b> 같은 발상의 변형이 10절의 <b>"트래픽 분배는 L4로, 헬스체크만 L7로"</b>다 — <b>계층은 기능별로 따로 고를 수 있다.</b></figcaption>
+</figure>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 장애 감지 — "살아있다"의 정의가 계층마다 다르다</h2>
+
+<p>헬스체크는 로드밸런서가 <b>"이 서버에 트래픽을 보내도 되는가"</b>를 판단하는 근거다. 그리고 계층에 따라 확인할 수 있는 <b>생존의 깊이</b>가 다르다. <b>L4 헬스체크는 대상 포트로 TCP 연결을 시도해서, 연결이 맺어지면 정상으로 판정한다</b> — 여기서 정확히 무슨 일이 일어나는지가 이 절의 핵심이다.</p>
+
+<div class="callout info">
+  <span class="t">전제 — 서버가 <code>listen()</code>을 호출하면 커널은 큐를 <b>두 개</b> 만든다</span>
+  <b>SYN 큐</b>는 handshake가 진행 중인 연결들, <b>accept 큐</b>는 handshake가 끝나 "완성된" 연결들이 애플리케이션이 가져가기를 기다리는 곳이다(큐 크기 = <b>backlog</b>, 스프링 부트 내장 Tomcat 기본값 100). <b>그리고 3-way handshake를 완료하는 것은 애플리케이션이 아니라 커널이다.</b>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 366" role="img" aria-label="왼쪽은 클라이언트의 SYN이 커널의 SYN 큐와 accept 큐를 거쳐 애플리케이션으로 전달되는 구조로, 애플리케이션이 데드락에 빠져 있어도 커널이 handshake를 완료하므로 L4 헬스체크가 통과한다는 것을 보여주고, 오른쪽은 t=0에 데드락이 발생한 뒤 5초마다 헬스체크가 계속 통과하는 타임라인을 보여주는 도식">
+    <defs>
+      <marker id="m8" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="m8g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="300" y="26" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">커널이 handshake를 대신 완료한다</text>
+
+    <rect x="150" y="46" width="300" height="180" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-dasharray="7 5"/>
+    <text x="162" y="66" font-size="11" fill="#1d4ed8" font-weight="700">커널 영역</text>
+
+    <rect x="176" y="78" width="248" height="44" rx="8" fill="#ffffff" stroke="#60a5fa"/>
+    <text x="300" y="98" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">SYN 큐</text>
+    <text x="300" y="114" font-size="10.5" fill="#2563eb" text-anchor="middle">커널이 SYN-ACK를 보내고 ACK를 기다린다</text>
+
+    <line x1="300" y1="122" x2="300" y2="156" stroke="#475569" stroke-width="2" marker-end="url(#m8)"/>
+    <text x="312" y="144" font-size="10.5" fill="#475569">클라이언트 ACK 도착 → handshake 완료</text>
+
+    <rect x="176" y="162" width="248" height="48" rx="8" fill="#ffffff" stroke="#60a5fa"/>
+    <text x="300" y="182" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">accept 큐</text>
+    <text x="300" y="198" font-size="10.5" fill="#2563eb" text-anchor="middle" class="mono">backlog (내장 Tomcat 기본 100)</text>
+
+    <line x1="300" y1="226" x2="300" y2="256" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#m8)"/>
+    <text x="312" y="246" font-size="10.5" fill="#dc2626" font-weight="700">accept() 호출 — 영원히 오지 않는다</text>
+
+    <rect x="150" y="262" width="300" height="62" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="300" y="284" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">애플리케이션 (JVM)</text>
+    <text x="300" y="302" font-size="11" fill="#b91c1c" text-anchor="middle">워커 스레드 200개가 전부 락을 기다리며 잠들었다</text>
+    <text x="300" y="317" font-size="11" fill="#7f1d1d" text-anchor="middle" font-weight="700">= 데드락. 어떤 요청도 응답하지 못한다</text>
+
+    <line x1="30" y1="100" x2="172" y2="100" stroke="#16a34a" stroke-width="2.4" marker-end="url(#m8g)"/>
+    <text x="30" y="86" font-size="11.5" fill="#166534" font-weight="700">L4 헬스체크: TCP 연결 시도</text>
+    <text x="30" y="120" font-size="10.5" fill="#6b7280">(연결하고 바로 끊는 것이 전부)</text>
+
+    <rect x="460" y="160" width="126" height="52" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="523" y="180" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">✓ 정상 판정</text>
+    <text x="523" y="198" font-size="10.5" fill="#15803d" text-anchor="middle">여기까지만 확인된다</text>
+
+    <text x="560" y="348" font-size="12" fill="#374151" text-anchor="middle">확인되는 것은 <tspan font-weight="700">"커널의 리스닝 소켓이 존재하는가"</tspan>까지 — <tspan font-weight="700" fill="#dc2626">애플리케이션이 완전히 멈춰 있어도 TCP 연결은 성립한다</tspan></text>
+
+    <line x1="614" y1="40" x2="614" y2="340" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- timeline -->
+    <text x="866" y="26" font-size="14.5" font-weight="700" fill="#dc2626" text-anchor="middle">그래서 생기는 사고 — 좀비 서버</text>
+    <text x="866" y="45" font-size="11" fill="#6b7280" text-anchor="middle">JVM 4대 · L4 LB · TCP 헬스체크 5초 주기 · #2에 데드락</text>
+
+    <line x1="680" y1="60" x2="680" y2="252" stroke="#94a3b8" stroke-width="2"/>
+
+    <circle cx="680" cy="74" r="6" fill="#dc2626"/>
+    <text x="700" y="70" font-size="12" fill="#b91c1c" font-weight="700" class="mono">t=0</text>
+    <text x="700" y="88" font-size="11.5" fill="#7f1d1d">데드락 발생. 이후 어떤 요청도 응답하지 못한다</text>
+
+    <circle cx="680" cy="116" r="6" fill="#16a34a"/>
+    <text x="700" y="112" font-size="12" fill="#166534" font-weight="700" class="mono">t=5</text>
+    <text x="700" y="130" font-size="11.5" fill="#15803d">TCP 연결 시도 → 커널이 handshake 완료 → <tspan font-weight="700">✓ 정상</tspan></text>
+    <text x="700" y="147" font-size="11.5" fill="#dc2626" font-weight="700">★ JVM 스레드는 하나도 안 움직였는데 통과했다</text>
+
+    <circle cx="680" cy="172" r="6" fill="#16a34a"/>
+    <text x="700" y="176" font-size="11.5" fill="#15803d"><tspan class="mono" font-weight="700">t=10</tspan> 헬스체크 ✓ &nbsp;&nbsp; <tspan class="mono" font-weight="700">t=15</tspan> 헬스체크 ✓ &nbsp;&nbsp; …계속 통과</text>
+
+    <circle cx="680" cy="212" r="6" fill="#dc2626"/>
+    <text x="700" y="208" font-size="11.5" fill="#7f1d1d">그 사이 사용자 요청은 계속 #2로 배정된다</text>
+    <text x="700" y="226" font-size="11" fill="#7f1d1d">· keep-alive 커넥션 위의 요청 → 응답이 영영 안 온다 (TCP는 조용하다)</text>
+    <text x="700" y="243" font-size="11" fill="#7f1d1d">· 새 연결 → accept 큐가 찰 때까지 "연결은 됐다"고 보인다</text>
+
+    <rect x="660" y="266" width="430" height="60" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="676" y="288" font-size="12.5" fill="#b91c1c" font-weight="700">→ 사용자의 4분의 1이 타임아웃까지 기다렸다가 실패한다</text>
+    <text x="676" y="308" font-size="12" fill="#7f1d1d">→ 그런데 LB 대시보드에는 <tspan font-weight="700">"4대 전부 정상"</tspan>이라고 찍혀 있다</text>
+  </svg>
+  <figcaption>같은 일이 데드락뿐 아니라 <b>DB 커넥션 풀 고갈</b>, <b>긴 Full GC</b>, <b>스레드 풀 포화</b>에서도 벌어진다. 가장 고약한 것은 <b>keep-alive 커넥션 위의 요청</b>이다 — 새 연결이 필요 없으니 accept 큐와 무관하고, 요청을 보내도 <b>응답이 안 올 뿐 TCP 연결은 멀쩡하다.</b> 클라이언트는 자기 쪽 타임아웃이 터질 때까지 기다릴 수밖에 없다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>L4가 원리적으로 구분할 수 없는 상태</h4>
+  <div class="rule red">"프로세스는 살아 있는데 서비스는 죽어 있는" 상태</div>
+  <p style="margin-bottom:0"><b>L7 헬스체크는 <code>GET /health</code> 같은 실제 HTTP 요청을 보내고 상태 코드를 확인</b>하므로, 위 시나리오에서 t=5의 체크는 <b>응답이 아예 안 오므로 타임아웃 실패</b>가 된다. 연속 실패 임계치를 넘기면 #2가 분배 대상에서 빠지고 나머지 3대가 트래픽을 나눠 받는다. <b>포트는 열려 있는데 DB 커넥션 풀 고갈로 모든 요청에 500을 뱉는 좀비</b>도 마찬가지 — L4는 멀쩡히 통과시키고 L7은 즉시 제외한다.</p>
+</div>
+
+<div class="rule">면접에서 이 한 문장으로 정리한다 — <b>"포트는 열려 있는데 500만 뱉는 서버를 걸러낼 수 있느냐"</b>가 두 계층의 차이를 가장 선명하게 보여주는 지점</div>
+
+<h3>8-1. 그런데 L7 헬스체크에도 기본값 함정이 있다</h3>
+
+<p>오픈소스 Nginx는 <b>능동적 헬스체크가 없고 수동적(passive) 방식만 지원</b>한다 — 실제 사용자 요청을 보내봤다가 실패하면 그 서버를 일정 시간 제외하는 방식이다. 여기서 <b>"실패"의 정의가 기본값으로는 좁다.</b></p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 기본값 — 500만 뱉는 좀비를 못 거른다</div>
+<pre><code>upstream api_servers {
+    server 10.0.0.11:8080 max_fails=3 fail_timeout=10s;
+    server 10.0.0.12:8080 max_fails=3 fail_timeout=10s;
+}
+
+server {
+    location / {
+        proxy_pass http://api_servers;
+<span class="ln-bad">        <span class="cm"># proxy_next_upstream 기본값 = error timeout</span></span>
+<span class="ln-bad">        <span class="cm"># → 백엔드가 500을 주면 Nginx는 그것을</span></span>
+<span class="ln-bad">        <span class="cm">#   "정상 응답"으로 보고 그대로 전달한다.</span></span>
+<span class="ln-bad">        <span class="cm"># → 실패로 세지 않으므로 max_fails도 안 늘고</span></span>
+<span class="ln-bad">        <span class="cm">#   그 서버는 계속 트래픽을 받는다.</span></span>
+    }
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 500도 실패로 세고, 재시도에 상한을 둔다</div>
+<pre><code>upstream api_servers {
+    <span class="cm"># fail_timeout(10초) 안에 max_fails(3회)만큼 실패하면</span>
+    <span class="cm"># 그 서버를 fail_timeout 동안 분배 대상에서 뺀다.</span>
+    server 10.0.0.11:8080 max_fails=3 fail_timeout=10s;
+    server 10.0.0.12:8080 max_fails=3 fail_timeout=10s;
+}
+
+server {
+    location / {
+        proxy_pass http://api_servers;
+<span class="ln-good">        proxy_next_upstream error timeout</span>
+<span class="ln-good">                            http_502 http_503 http_504 http_500;</span>
+
+        <span class="cm"># ★ 재시도가 무한정 일어나면 느린 장애가 전 인스턴스로 번진다.</span>
+<span class="ln-good">        proxy_next_upstream_tries 2;</span>
+<span class="ln-good">        proxy_next_upstream_timeout 5s;</span>
+    }
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout trap">
+  <span class="t">외울 것 — <code>proxy_next_upstream</code>의 기본값에는 <code>http_500</code>이 없다</span>
+  기본 설정으로는 Nginx가 <b>"연결 실패"와 "타임아웃"만</b> 실패로 센다. 백엔드가 <b>꼬박꼬박 500을 돌려주는 상태</b>는 정상 동작으로 간주되어 <b>계속 트래픽을 받는다.</b> 반대로 재시도를 켤 때는 <b>횟수와 총 시간 예산에 반드시 상한</b>을 둔다 — 상한이 없으면 한 대의 느린 장애가 재시도를 타고 <b>전 인스턴스로 번진다.</b>
+</div>
+
+<h3>8-2. 능동적 vs 수동적 — 감지 지연을 계산해 본다 <span class="badge bonus">가산점</span></h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4>능동적 (active)</h4>
+    <ul>
+      <li>LB가 <b>주기적으로 체크 요청을 직접 보낸다</b></li>
+      <li>장점: 사용자 트래픽과 <b>무관하게</b> 상태를 안다</li>
+      <li>단점: <b>감지 지연</b> — 다음 주기 + 연속 실패 임계치를 채울 때까지 트래픽이 계속 간다</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>수동적 (passive)</h4>
+    <ul>
+      <li><b>실제 사용자 요청의 실패</b>(연결 거부, 5xx)를 관찰해 일정 비율을 넘으면 제외</li>
+      <li>장점: 별도 체크 트래픽이 없고 <b>실사용 기준</b></li>
+      <li>단점: <b>사용자가 먼저 실패를 겪은 뒤에야</b> 반응한다. 오픈소스 Nginx가 이 방식(<code>max_fails</code>)</li>
+    </ul>
+  </div>
+</div>
+
+<div class="scroll">
+<table>
+  <caption>능동적 헬스체크의 최악 감지 지연 — <b>체크 주기 5초, 응답 타임아웃 2초, 연속 실패 임계치 3회</b>일 때</caption>
+  <thead><tr><th style="width:120px">시각</th><th>일어나는 일</th></tr></thead>
+  <tbody>
+    <tr><td class="mono">t = 0.0s</td><td>직전 체크가 성공한 <b>직후</b> 인스턴스가 죽는다 (최악의 타이밍)</td></tr>
+    <tr><td class="mono">t = 5.0s</td><td>1차 체크 시작 → 응답 없음</td></tr>
+    <tr><td class="mono">t = 7.0s</td><td>타임아웃(2초) → <b>실패 1회</b> 기록</td></tr>
+    <tr><td class="mono">t = 10.0s</td><td>2차 체크 시작 → 응답 없음</td></tr>
+    <tr><td class="mono">t = 12.0s</td><td>타임아웃 → <b>실패 2회</b></td></tr>
+    <tr><td class="mono">t = 15.0s</td><td>3차 체크 시작 → 응답 없음</td></tr>
+    <tr class="hl"><td class="mono">t = 17.0s</td><td>타임아웃 → <b>실패 3회 = 임계치 도달 → 분배 대상에서 제외</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo">
+  <h4>이 표에서 외울 숫자 하나</h4>
+  <div class="grid g2">
+    <div class="tile big red"><div class="k">약 17초</div><div class="s">죽은 인스턴스가 계속 트래픽을 받는 최악 구간</div></div>
+    <div class="tile big red"><div class="k">약 4,250건</div><div class="s">전체 1,000 TPS · 인스턴스 4대라면 250건/초 × 17초</div></div>
+  </div>
+  <p style="margin-bottom:0"><b>주기와 임계치를 줄이면 감지가 빨라지지만 오탐이 늘어난다.</b> 일시적인 GC 정지나 순간적인 네트워크 지연으로 멀쩡한 인스턴스가 빠지고 → 남은 인스턴스들에 부하가 몰려 그것들도 느려지고 → 그래서 또 빠지는 <b>연쇄</b>가 생긴다. <b>감지 속도와 안정성의 트레이드오프</b>이고, 실무에서는 <b>능동으로 주기 점검 + 수동으로 "체크는 통과하는데 실제 요청은 실패하는" 경우를 포착</b>하는 식으로 <b>둘을 같이 쓴다.</b></p>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 깊은 헬스체크의 역습 — liveness와 readiness <span class="badge senior">시니어 변별</span></h2>
+
+<p>8절만 읽으면 "헬스체크는 깊을수록 좋다"는 결론이 난다. <b>틀렸다.</b> 이것이 이 주제에서 가장 변별력이 있는 부분이다.</p>
+
+<p><code>/health</code>에서 DB 연결을 확인하는 것은 얼핏 합리적으로 보인다 — <b>"DB에 못 붙으면 어차피 요청을 처리 못 하니 트래픽을 받으면 안 된다"</b>는 논리다. 그런데 이 논리에는 <b>"각 인스턴스가 독립적으로 판단한다"는 암묵적 전제</b>가 깔려 있고, <b>그 전제가 틀렸다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 314" role="img" aria-label="왼쪽은 인스턴스 4대가 모두 같은 DB를 검사하는 헬스체크 때문에 DB가 흔들리는 순간 전원이 동시에 비정상 판정을 받아 정상 인스턴스가 0대가 되는 구조, 오른쪽은 DB의 2초짜리 순단이 서비스의 수십 초에서 수 분짜리 전면 장애로 증폭되는 타임라인">
+    <defs><marker id="m9" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker></defs>
+
+    <text x="290" y="26" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">공통 의존성을 헬스체크에 넣으면 — 동시 실패</text>
+
+    <rect x="40" y="50" width="170" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="125" y="75" font-size="12" fill="#374151" text-anchor="middle">인스턴스 #1</text>
+    <rect x="40" y="98" width="170" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="125" y="123" font-size="12" fill="#374151" text-anchor="middle">인스턴스 #2</text>
+    <rect x="40" y="146" width="170" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="125" y="171" font-size="12" fill="#374151" text-anchor="middle">인스턴스 #3</text>
+    <rect x="40" y="194" width="170" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="125" y="219" font-size="12" fill="#374151" text-anchor="middle">인스턴스 #4</text>
+
+    <g font-size="15" fill="#dc2626" font-weight="700" text-anchor="middle">
+      <text x="232" y="76">✗</text><text x="232" y="124">✗</text><text x="232" y="172">✗</text><text x="232" y="220">✗</text>
+    </g>
+
+    <path d="M248 70 L 336 128" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#m9)"/>
+    <path d="M248 118 L 336 138" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#m9)"/>
+    <path d="M248 166 L 336 150" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#m9)"/>
+    <path d="M248 214 L 336 160" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#m9)"/>
+    <text x="292" y="98" font-size="10.5" fill="#b91c1c" text-anchor="middle">/health가 DB를 검사</text>
+
+    <rect x="340" y="108" width="150" height="72" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="415" y="134" font-size="14" fill="#b91c1c" text-anchor="middle" font-weight="700">DB</text>
+    <text x="415" y="152" font-size="11" fill="#b91c1c" text-anchor="middle">2초간 흔들림</text>
+    <text x="415" y="168" font-size="11" fill="#b91c1c" text-anchor="middle">(failover · 커넥션 리셋)</text>
+
+    <text x="290" y="258" font-size="12.5" fill="#dc2626" text-anchor="middle" font-weight="700">★ 인스턴스별 독립 판정처럼 보이지만, 전원이 같은 신호를 보고 같은 판정을 내린다</text>
+    <rect x="60" y="270" width="460" height="32" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="290" y="291" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">→ LB: 정상 인스턴스 0대 → 모든 트래픽이 503</text>
+
+    <line x1="560" y1="40" x2="560" y2="300" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <text x="840" y="26" font-size="14.5" font-weight="700" fill="#dc2626" text-anchor="middle">DB의 2초 순단이 수 분짜리 전면 장애로 증폭된다</text>
+    <line x1="620" y1="46" x2="620" y2="256" stroke="#94a3b8" stroke-width="2"/>
+
+    <circle cx="620" cy="60" r="6" fill="#dc2626"/>
+    <text x="640" y="56" font-size="12" fill="#b91c1c" font-weight="700" class="mono">t=0.0</text>
+    <text x="640" y="74" font-size="11.5" fill="#7f1d1d">DB에서 순간적인 failover 또는 커넥션 리셋</text>
+
+    <circle cx="620" cy="104" r="6" fill="#dc2626"/>
+    <text x="640" y="100" font-size="12" fill="#b91c1c" font-weight="700" class="mono">t=0~2</text>
+    <text x="640" y="118" font-size="11.5" fill="#7f1d1d">인스턴스 #1·#2·#3·#4 헬스체크 <tspan font-weight="700">전부 실패</tspan></text>
+
+    <circle cx="620" cy="148" r="6" fill="#dc2626"/>
+    <text x="640" y="144" font-size="12" fill="#b91c1c" font-weight="700" class="mono">t=2</text>
+    <text x="640" y="162" font-size="11.5" fill="#7f1d1d">LB: 정상 0대 → 전부 503. 쿠버네티스라면 <tspan font-weight="700">전 파드가 엔드포인트에서 이탈</tspan></text>
+
+    <circle cx="620" cy="192" r="6" fill="#d97706"/>
+    <text x="640" y="188" font-size="12" fill="#b45309" font-weight="700" class="mono">t=2</text>
+    <text x="640" y="206" font-size="11.5" fill="#92400e"><tspan font-weight="700">DB 복구. 그런데 서비스는 아직 안 돌아온다</tspan> — 연속 성공 임계치를 채워야 재편입</text>
+
+    <circle cx="620" cy="236" r="6" fill="#dc2626"/>
+    <text x="640" y="232" font-size="11.5" fill="#7f1d1d">liveness 프로브까지 DB를 검사했다면 <tspan font-weight="700">컨테이너가 재시작</tspan>되어</text>
+    <text x="640" y="250" font-size="11.5" fill="#7f1d1d">JVM 웜업부터 다시 — 복구가 수십 초~수 분으로 늘어난다</text>
+
+    <rect x="600" y="266" width="490" height="36" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="845" y="289" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">DB 없이도 응답할 수 있는 요청(정적 응답, 캐시 조회)까지 전부 죽는다</text>
+  </svg>
+  <figcaption><b>핵심은 한 문장이다 — "공통 의존성을 헬스체크에 넣으면 그 의존성의 장애가 전 인스턴스에 동시에 전파된다."</b> 참고로 이런 사고가 워낙 흔해서 <b>일부 관리형 LB는 "전 대상이 비정상이면 오히려 전부에게 보낸다"는 fail-open 동작</b>을 넣어 뒀다(AWS ALB가 그렇게 동작한다). <b>안전장치이긴 하지만 이걸 믿고 설계하면 안 된다.</b></figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>해법은 <b>검사의 목적을 두 가지로 나누는 것</b>이다. 쿠버네티스가 이 구분을 프로브 이름으로 못 박아 뒀다.</caption>
+  <thead><tr><th style="width:130px"></th><th>liveness (살아 있는가)</th><th>readiness (트래픽을 받을 준비가 됐는가)</th></tr></thead>
+  <tbody>
+    <tr><th>묻는 것</th><td>프로세스가 <b>스스로 복구 불가능한 상태</b>인가</td><td>지금 이 인스턴스가 <b>요청을 처리할 수 있는가</b></td></tr>
+    <tr class="hl"><th>실패 시 조치</th><td><b>컨테이너 재시작</b></td><td><b>서비스 엔드포인트에서 일시 제외</b> (재시작 안 함)</td></tr>
+    <tr><th>검사 범위</th><td>자기 자신만. <b>외부 의존성을 넣으면 안 된다</b></td><td>자기 자신 + 재시작으로 해결될 수 있는 상태</td></tr>
+    <tr><th>DB를 넣으면?</th><td class="bad">DB 순단에 전 파드가 재시작 = 최악</td><td class="bad">전 파드 동시 이탈 = 여전히 나쁨</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>원칙 두 줄</h4>
+  <div class="rule ok">liveness는 <b>"재시작하면 나아지는가"</b>를 묻는 것 — <b>재시작해도 안 나아지는 것(DB 장애)을 넣으면 안 된다</b></div>
+  <div class="rule">readiness는 트래픽 수용 여부이므로 조금 더 넣을 수 있지만, <b>모든 인스턴스가 공유하는 의존성</b>은 역시 신중하게</div>
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 기본 <code>/actuator/health</code> 하나를 LB와 프로브가 함께 쓴다</div>
+<pre><code>management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+<span class="cm"># 이 엔드포인트는 등록된 모든 HealthIndicator를</span>
+<span class="cm"># (db, redis, diskSpace, ...) 집계한다.</span>
+<span class="ln-bad"><span class="cm"># → DB가 흔들리면 전 인스턴스가 동시에 DOWN</span></span>
+<span class="ln-bad"><span class="cm"># → liveness까지 이걸 보고 있으면 전 파드 재시작</span></span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 목적별로 그룹을 나눠 검사 범위를 다르게 한다</div>
+<pre><code>management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+<span class="ln-good">      probes:
+        enabled: true</span>       <span class="cm"># /health/liveness · /health/readiness</span>
+      group:
+        liveness:
+<span class="ln-good">          include: livenessState</span>   <span class="cm"># 외부 의존성 없음</span>
+        readiness:
+<span class="ln-good">          include: readinessState</span>  <span class="cm"># 자기 준비 상태만</span>
+      show-details: never   <span class="cm"># 내부 구조 노출 금지</span></code></pre>
+  </div>
+</div>
+
+<div class="codehead plain"><span class="tag">k8s</span> 두 그룹을 각각 다른 프로브에 연결한다 — <b>임계치의 비대칭</b>이 핵심</div>
+<pre><code>livenessProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: 8080
+  <span class="cm"># ★ 임계치를 넉넉히. 여기서 실패하면 컨테이너가 재시작되므로,</span>
+  <span class="cm">#   일시적인 GC 정지로 재시작이 걸리는 것이 훨씬 나쁘다.</span>
+  periodSeconds: 10
+  failureThreshold: 6
+
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8080
+  <span class="cm"># 이쪽은 짧게. 실패해도 트래픽에서만 빠지고 재시작은 안 되므로 되돌리기 쉽다.</span>
+  periodSeconds: 5
+  failureThreshold: 2</code></pre>
+
+<div class="callout ok">
+  <span class="t">마지막 한 문장이 이 절의 착지점</span>
+  <b>"의존성 상태를 아예 안 본다"는 것이 아니다.</b> DB·Redis의 상태는 <b>모니터링과 알림</b>으로 본다. 헬스체크는 <b>"트래픽 배분 판단"이라는 자동 조치의 방아쇠</b>이므로 얕게 두고, <b>관측은 사람이 보는 별도 채널로 분리</b>하는 것이다. <b>자동 조치의 방아쇠와 관측 지표를 같은 것으로 쓰면, 관측하려던 장애가 자동 조치를 통해 증폭된다.</b>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 선택 기준 — L7이 기능이 더 많은데 L4는 언제 쓰나</h2>
+
+<p>이 질문이 이 주제의 <b>최종 관문</b>이다. <b>기능과 비용의 트레이드오프</b>이고, L4를 고르는 상황은 셋뿐이다. 그리고 <b>반드시 대가를 함께 말해야</b> 답이 완성된다.</p>
+
+<div class="memo">
+  <h4>암기 — L4를 고르는 세 가지 상황 <span class="sub" style="font-weight:400">"프 · 성 · 티"</span></h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">프 — 프로토콜이 HTTP가 아니다</div><div class="d">PostgreSQL, Redis, MQTT, 게임 서버의 자체 TCP 규약은 <b>L7이 파싱할 수 없다.</b> <b>"L7이 이해할 수 있는 프로토콜인가"가 첫 번째 관문</b>이고, 여기서 걸리면 <b>선택의 여지가 없다.</b></div></div>
+    <div class="tile"><div class="k">성 — 극단적 처리량 · 저지연</div><div class="d">L4는 헤더를 고쳐 전달하는 수준, L7은 종단·파싱·버퍼링까지 한다. 다만 <b>"성능 때문에 L4"는 신중해야 한다</b> — 대부분의 서비스는 L7 오버헤드가 병목이 되기 <b>한참 전에 다른 곳에서 먼저 막힌다.</b> <b>실측 없이 성능을 근거로 대면 오히려 감점.</b></div></div>
+    <div class="tile"><div class="k">티 — TLS를 LB에서 풀면 안 된다</div><div class="d">규제나 제로 트러스트 정책으로 <b>종단간 암호화</b>가 필요하면 LB가 내용을 볼 수 없으므로 <b>L4 passthrough</b>가 된다. 이때도 <b>SNI 기반 라우팅까지는 된다</b>는 것을 함께 말하면 정확도가 올라간다.</div></div>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>그리고 반드시 덧붙여야 할 L4의 대가 <span class="sub" style="font-weight:400">"편 · 좀 · 전"</span></h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">편 — 편중</div><div class="d">커넥션 단위 분배라서 <b>장수 커넥션(gRPC, 웹소켓, 커넥션 풀)에서 편중이 생기고 저절로 회복되지 않는다</b> (6절)</div></div>
+    <div class="tile red"><div class="k">좀 — 좀비 서버</div><div class="d">헬스체크가 TCP 연결 확인으로 후퇴해 <b>포트만 열려 있는 좀비를 못 거른다</b> (8절)</div></div>
+    <div class="tile red"><div class="k">전 — (느린 속도의) 전파</div><div class="d">버퍼링 격리가 없어 <b>느린 클라이언트의 속도가 백엔드 스레드에 그대로 전파</b>된다 (4-4절)</div></div>
+  </div>
+  <p style="margin-bottom:0">실무에서는 양자택일보다 <b>L4(대량 분배) 뒤에 L7(내용 기반 분기)을 두는 2단 구성</b>이 흔하다(7절).</p>
+</div>
+
+<h3>10-1. 계층은 기능별로 따로 고를 수 있다 — "분배는 L4, 헬스체크는 L7" <span class="badge bonus">가산점</span></h3>
+
+<div class="callout info">
+  <span class="t">"L4 LB니까 TCP 헬스체크만 된다"는 흔한 오해다</span>
+  <b>AWS NLB는 대상 그룹의 헬스체크 프로토콜을 TCP 대신 HTTP/HTTPS로 지정할 수 있다.</b> 그러면 <b>트래픽은 L4로 커넥션 단위 분배하면서, 헬스체크는 <code>/health</code>가 200을 주는지까지 확인</b>하는 조합이 된다. L4를 쓸 수밖에 없는 상황에서 <b>좀비 서버 문제를 완화하는 실용적인 방법</b>이다.
+  <div class="chain" style="margin-bottom:0">
+    <span class="chip r">남는 문제 ①</span><span>커넥션 편중은 헬스체크와 무관하게 <b>그대로 남는다</b></span>
+    <span class="chip r">②</span><span>버퍼링 격리도 <b>여전히 없다</b></span>
+    <span class="chip r">③</span><span>TLS passthrough면 <b>헬스체크도 HTTPS</b>로 해야 하고, 체크 주체가 인증서를 검증할 수 있어야 한다</span>
+  </div>
+</div>
+
+<div class="scroll">
+<table class="wide">
+  <caption>클라우드 관리형 LB 대응표 — 인프라 팀과의 대화에서 바로 쓰는 어휘</caption>
+  <thead><tr><th style="width:150px">개념</th><th style="width:400px">NLB (L4)</th><th>ALB (L7)</th></tr></thead>
+  <tbody>
+    <tr><th>처리 프로토콜</th><td>TCP, UDP, TLS</td><td>HTTP, HTTPS, gRPC</td></tr>
+    <tr class="hl"><th>분배 단위</th><td><b>커넥션(플로우)</b></td><td><b>HTTP 요청</b></td></tr>
+    <tr><th>라우팅 근거</th><td>포트, (TLS 리스너면) SNI</td><td>호스트 · 경로 · 헤더 · 메서드 · 쿼리 · 소스 IP</td></tr>
+    <tr><th>백엔드가 보는 IP</th><td>클라이언트 IP 보존 가능, 또는 PROXY protocol v2</td><td>ALB IP (<code>X-Forwarded-For</code>로 전달)</td></tr>
+    <tr><th>헬스체크</th><td>TCP, HTTP, HTTPS <b>선택 가능</b></td><td>HTTP, HTTPS만</td></tr>
+    <tr><th>스티키 세션</th><td>5-튜플 / 출발지 IP 기반</td><td>LB가 발급한 <b>쿠키</b> 기반</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout warn">
+  <span class="t">인스턴스를 <b>뺄 때</b>도 시간이 필요하다 — 연결 드레이닝</span>
+  배포로 인스턴스를 내릴 때 LB가 즉시 트래픽을 끊으면 <b>처리 중이던 요청이 끊긴다.</b> 그래서 <b>연결 드레이닝(등록 해제 지연)</b>을 둔다 — <b>"새 요청은 안 보내되 처리 중인 것은 마칠 때까지 기다린다"</b>는 유예 시간이다. <b>이 값이 애플리케이션의 최대 응답 시간보다 짧으면 배포 때마다 일정 비율의 요청이 502로 실패한다.</b> 애플리케이션 쪽의 graceful shutdown(<code>server.shutdown: graceful</code>)과 <b>짝으로</b> 설정해야 한다.
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>11-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">두 계층의 차이를 한 문장으로?</div><div class="d"><b>커넥션을 종단하는가.</b> L4는 주소만 갈아 끼우는 <b>중계자</b>(TCP 종단점 2개), L7은 연결의 한쪽 끝이 되는 <b>통신 주체</b>(종단점 4개). 나머지는 전부 여기서 파생.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">종단에서 파생되는 네 가지?</div><div class="d"><b>요·두·주·버</b> — <b>요</b>청 단위 분배 / 설정이 <b>두</b> 벌 / <b>주</b>소가 LB가 됨(<code>X-Forwarded-*</code>) / <b>버</b>퍼링 격리.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">L4 편중이 생기는 조건과 숫자?</div><div class="d"><b>커넥션 단위 분배 × 장수 커넥션</b>. 커넥션 2:2 균등인데 RPC는 <b>1,010 : 20</b>. 롤링 재시작 3단계 뒤 <b>15 / 9 / 0</b> — 저절로 회복 안 됨.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">TCP 헬스체크가 좀비를 통과시키는 이유?</div><div class="d"><b>3-way handshake를 완료하는 것이 커널</b>이라서. 앱이 <code>accept()</code>를 안 해도 연결은 <b>accept 큐</b>에 쌓인다. 확인되는 것은 <b>"리스닝 소켓이 존재하는가"</b>까지.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">두 계층을 가르는 결정적 한 문장?</div><div class="d"><b>"포트는 열려 있는데 500만 뱉는 서버를 걸러낼 수 있느냐."</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">L4를 고르는 3상황 / 그 대가 3?</div><div class="d"><b>프·성·티</b> (프로토콜이 HTTP 아님 / 극단적 성능 / TLS 못 풂) ↔ <b>편·좀·전</b> (편중 / 좀비 / 느린 클라이언트 전파).</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">TLS passthrough에서도 되는 라우팅?</div><div class="d"><b>SNI 기반</b> — <code>ClientHello</code>가 <b>암호화 전 평문</b>이라 도메인을 읽을 수 있다. 경로 기반은 여전히 불가.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">클라이언트 IP 복원 수단 두 가지?</div><div class="d">L7은 <code>X-Forwarded-For</code>/<code>-Proto</code>(+ <b>신뢰 경계 설정</b>), L4 SNAT 구성은 <b>PROXY protocol</b>(백엔드도 규약을 알아야 함).</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">헬스체크 깊이의 원칙?</div><div class="d"><b>liveness에 외부 의존성 금지</b>("재시작하면 나아지는가"). <b>자동 조치의 방아쇠와 관측 지표를 분리</b>한다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">Nginx 기본값 함정 하나?</div><div class="d"><code>proxy_next_upstream</code> 기본값은 <code>error timeout</code>뿐 — <b><code>http_500</code>이 없어서 500만 뱉는 좀비를 못 거른다.</b> 켤 때는 <b>재시도 횟수·시간 상한</b>과 함께.</div></div>
+</div>
+
+<h3>11-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>L7이 기능이 더 많은데, L4는 언제 선택하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 고르는 이유 셋과 그 대가 셋을 짝으로 말한다. "성능 때문"은 조심해서</span></summary><div class="a">
+  <p><b>기능과 비용의 트레이드오프</b>이고, L4를 고르는 상황이 셋이다 — <b>프·성·티</b>.</p>
+  <p><b>(1) HTTP가 아닌 트래픽.</b> PostgreSQL, Redis, MQTT, 게임 서버의 자체 TCP 프로토콜은 L7이 파싱할 수 없다. <b>"L7이 이해할 수 있는 프로토콜인가"가 첫 번째 관문</b>이고, 여기서 걸리면 선택의 여지가 없다.</p>
+  <p><b>(2) 극단적 처리량과 저지연.</b> L4는 패킷 헤더를 고쳐 전달하는 수준이고 L7은 TCP를 종단해 HTTP를 파싱하고 버퍼링까지 한다. 다만 <b>"성능 때문에 L4"는 신중해야 한다</b> — 대부분의 서비스는 L7의 오버헤드가 병목이 되기 <b>한참 전에 다른 곳에서 먼저 막힌다.</b> <b>실측 없이 성능을 근거로 대면 오히려 감점이다.</b></p>
+  <p><b>(3) TLS를 LB에서 풀면 안 되는 요구.</b> 규제나 제로 트러스트 정책으로 종단간 암호화가 필요하면 L4 passthrough가 된다. <b>이때도 SNI 기반 라우팅까지는 된다</b>는 것을 함께 말하면 정확도가 올라간다.</p>
+  <div class="rule red">대가를 함께 말해야 답이 완성된다 — <b>편(편중) · 좀(좀비 서버) · 전(느린 클라이언트 속도 전파)</b></div>
+  <p style="margin-bottom:0">그리고 마무리는 <b>양자택일이 아니라는 것</b>이다. 실무에서는 <b>L4(대량 분배) 뒤에 L7(내용 기반 분기)을 두는 2단 구성</b>이 흔하고, <b>"분배는 L4로 하면서 헬스체크만 L7로"</b> 같은 조합도 가능하다. <b>각 계층이 무엇을 맡는지 말할 수 있으면 설계 감각이 드러난다.</b></p>
+</div></details>
+
+<details class="q"><summary>L4 LB 뒤에서 gRPC를 쓰는데 특정 인스턴스만 CPU가 높습니다. 원인이 뭘까요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "LB 지표는 균등하다"는 사실이 오히려 결정적 단서다</span></summary><div class="a">
+  <p><b>L4의 분배 단위가 커넥션이고, gRPC의 커넥션은 오래 살기 때문이다.</b></p>
+  <p>gRPC는 HTTP/2 위에서 동작하고 HTTP/2는 커넥션 하나에 여러 스트림을 다중화한다. 그래서 클라이언트는 <b>커넥션 하나를 맺어두고 그 위로 초당 수백~수천 건의 RPC를 흘려보낸다.</b> L4는 그 커넥션이 <b>처음 맺어질 때 백엔드를 한 번 고르고 끝</b>이므로, <b>LB가 세는 커넥션 수는 균등한데 실제 RPC 수는 크게 어긋난다</b>(6절: 커넥션 2:2, RPC 1,010:20).</p>
+  <p><b>여기에 롤링 배포가 겹치면 편중이 고착된다.</b> 인스턴스가 재시작될 때마다 그 커넥션들이 살아 있는 인스턴스로 흩어지고, <b>커넥션은 스스로 옮겨가지 않으므로</b> 배포가 끝나면 <b>마지막에 재시작한 인스턴스는 커넥션 0개, 처음 재시작한 인스턴스는 과반(62.5%)</b>을 떠안는다.</p>
+  <p><b>대응은 셋이다.</b> ① <b>요청 단위로 분배하는 L7 LB</b>로 바꾼다(ALB의 gRPC 대상 그룹, Envoy, Nginx <code>grpc_pass</code>) — 가장 확실. ② <b>커넥션 수명에 상한</b>을 둬서 주기적으로 재분배 기회를 만든다. ③ <b>클라이언트 측 로드밸런싱</b> — 클라이언트가 백엔드 목록을 알고 커넥션을 나눠 맺는다(서비스 디스커버리 필요).</p>
+  <p style="margin-bottom:0"><b>일반화하면 원리를 아는 것으로 보인다</b> — 같은 문제가 <b>웹소켓·SSE</b>(<code>14</code>번 문서)와 <b>커넥션 풀을 쓰는 내부 서비스 간 호출</b>(<code>10</code>번 문서)에서도 똑같이 생긴다.</p>
+</div></details>
+
+<details class="q"><summary>스티키 세션은 각 계층에서 어떻게 구현하고, 각각의 함정은?<span class="hint">힌트: 마지막에 "그래서 스티키는 임시방편"으로 착지해야 한다</span></summary><div class="a">
+  <p><b>L4는 출발지 IP 해시뿐이다.</b> 근거로 쓸 수 있는 정보가 IP밖에 없기 때문이다. 함정이 둘인데, 하나는 <b>같은 NAT 뒤의 사용자들</b>(회사망, 통신사 CGNAT)이 전부 같은 IP로 보여 <b>수천 명이 한 인스턴스로 몰린다</b>는 것이고, 다른 하나는 <b>모바일에서 IP가 바뀌면 고정이 깨진다</b>는 것이다 — 와이파이에서 LTE로 넘어가는 순간 세션이 없는 인스턴스로 배정된다.</p>
+  <p><b>L7은 LB가 쿠키를 발급해 사용자 단위로 정확히 고정할 수 있다.</b> IP와 무관하므로 NAT 문제도 IP 변경 문제도 없다.</p>
+  <p style="margin-bottom:0"><b>다만 어느 쪽이든 스티키는 "서버에 상태가 있다"는 문제의 증상 완화일 뿐</b>이라고 착지시켜야 한다. 스티키에 의존하면 <b>인스턴스 하나가 죽는 순간 거기 붙어 있던 사용자 전원이 세션을 잃고</b>, 오토스케일로 인스턴스를 늘려도 <b>기존 사용자는 옮겨가지 않아 부하가 안 퍼진다.</b> <b>근본 해법은 세션을 Redis 같은 외부 저장소로 빼는 무상태 설계</b>이고, 스티키는 그리로 가기 전의 임시방편이다.</p>
+</div></details>
+
+<details class="q"><summary>헬스체크 엔드포인트가 DB까지 검사하면 어떤 일이 생기나요? <span class="badge trap">함정</span><span class="hint">힌트: "전 인스턴스가 같은 신호를 본다"가 메커니즘의 핵심이다</span></summary><div class="a">
+  <p><b>DB의 순간 장애가 서비스 전면 장애로 증폭된다.</b></p>
+  <p>메커니즘이 핵심이다. <b>모든 인스턴스가 같은 DB를 보고 있으므로, DB가 흔들리는 순간 전 인스턴스의 헬스체크가 동시에 실패한다.</b> 인스턴스별 독립 판정처럼 보이지만 실제로는 전원이 같은 신호를 보고 같은 판정을 내린다. LB는 <b>정상 인스턴스가 0대</b>가 되고, <b>DB 없이도 응답할 수 있는 요청(정적 응답, 캐시 조회)까지 전부 죽는다.</b></p>
+  <p><b>복구도 더 느리다.</b> DB가 2초 만에 돌아와도 헬스체크가 <b>연속 성공 임계치</b>를 채워야 다시 편입되고, <b>liveness 프로브까지 DB를 검사하고 있었다면 컨테이너가 재시작</b>되어 JVM 웜업부터 다시 한다. <b>DB의 2초짜리 순단이 서비스의 수십 초~수 분짜리 장애가 되는 것이다.</b></p>
+  <p><b>원칙은 목적별로 나누는 것이다.</b> liveness는 <b>"재시작하면 나아지는가"</b>를 묻는 것이므로 <b>재시작해도 안 나아지는 외부 의존성을 넣으면 안 된다.</b> readiness는 트래픽 수용 여부이므로 조금 더 넣을 수 있지만, 모든 인스턴스가 공유하는 의존성은 역시 신중해야 한다. 스프링 부트라면 <code>management.endpoint.health.group.liveness/readiness</code>로 검사 범위를 나누고 쿠버네티스 프로브를 각각 연결한다.</p>
+  <div class="rule">착지 문장 — <b>"의존성 상태를 안 본다는 것이 아니라, 자동 조치의 방아쇠와 관측 지표를 분리한다는 것"</b></div>
+</div></details>
+
+<details class="q"><summary>L7 LB가 커넥션을 종단하면 백엔드는 클라이언트 IP를 어떻게 아나요? <span class="badge bonus">가산점</span><span class="hint">힌트: "모른다"로 시작하고, 위조 가능성 경고까지 붙인다</span></summary><div class="a">
+  <p><b>모른다 — 헤더로 전달받아야 한다.</b></p>
+  <p>L7 LB는 클라이언트의 커넥션을 종단하고 백엔드로 <b>별도의 새 TCP 연결</b>을 맺으므로, 백엔드가 보는 소켓의 상대 주소는 <b>언제나 LB의 IP</b>다. 서블릿의 <code>request.getRemoteAddr()</code>이 전부 같은 값으로 나온다. 그래서 L7 LB는 자기가 소켓에서 관측한 클라이언트 IP를 <code>X-Forwarded-For</code>에 실어 전달하고, 원래 스킴을 알려주는 <code>X-Forwarded-Proto</code>도 함께 붙인다(이걸 빠뜨리면 "https로 리다이렉트" 로직이 무한 루프에 빠진다).</p>
+  <p><b>반드시 따라붙는 경고가 있다.</b> <code>X-Forwarded-For</code>는 <b>클라이언트가 처음부터 위조해 보낼 수 있는 평범한 HTTP 헤더</b>다. 그대로 믿으면 rate limit·IP 차단·관리자 allowlist가 <b>헤더 한 줄로 우회</b>된다. <b>신뢰할 프록시 목록을 정의하고 체인의 오른쪽부터 걷어내는 해석</b>이 필요하고, <b>최전선 프록시에서 클라이언트가 보낸 값을 반드시 덮어써야</b> 한다.</p>
+  <p style="margin-bottom:0"><b>L4는 반대다.</b> 커넥션을 종단하지 않으므로 <b>목적지 주소만 바꿔 넘기는 구성이라면 백엔드 소켓에 클라이언트 IP가 그대로 보인다</b> — 헤더 계약이 애초에 필요 없다. 다만 응답 경로를 LB로 되돌리려고 출발지 주소까지 바꾸는 <b>SNAT 구성</b>이면 L4에서도 클라이언트 IP를 잃고, 이때는 HTTP 헤더를 쓸 수단이 없으므로 <b>PROXY protocol</b>을 쓴다.</p>
+</div></details>
+
+<details class="q"><summary>L4 LB를 쓰는데 좀비 서버를 걸러내고 싶습니다. 방법이 있나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 트래픽 분배 계층과 헬스체크 계층은 별개로 정할 수 있다</span></summary><div class="a">
+  <p><b>"L4 LB니까 TCP 헬스체크만 된다"는 것이 흔한 오해다.</b> AWS NLB는 대상 그룹의 헬스체크 프로토콜을 TCP 대신 <b>HTTP/HTTPS로 지정할 수 있다.</b> 그러면 <b>트래픽은 L4로 커넥션 단위 분배하면서, 헬스체크는 <code>/health</code>가 200을 주는지까지 확인</b>하는 조합이 된다. 백엔드에 <b>별도의 헬스체크용 HTTP 포트</b>를 열어두는 방식으로도 같은 효과를 낼 수 있다.</p>
+  <p><b>왜 이게 필요한지를 함께 말하면 좋다.</b> TCP 헬스체크는 <b>커널이 handshake를 대신 완료해 주기 때문에</b>, 애플리케이션 스레드가 전부 데드락에 빠져 있어도 통과한다. 확인되는 것은 <b>"커널의 리스닝 소켓이 존재하는가"</b>까지다.</p>
+  <p style="margin-bottom:0"><b>다만 남는 문제까지 말해야 정확하다.</b> <b>커넥션 편중</b>은 헬스체크와 무관하게 그대로 남고, <b>버퍼링에 의한 격리</b>도 여전히 없다. 그리고 <b>TLS passthrough 구성이면 헬스체크도 HTTPS로 해야 하며, 그러려면 헬스체크 주체가 인증서를 검증할 수 있어야 한다.</b></p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>L7 LB를 넣었더니 하루에 몇 건씩 502가 납니다. 재현이 안 되는데 어디부터 보나요? <span class="badge trap">함정</span><span class="hint">힌트: 종단하면 설정이 몇 벌이 되는지부터 떠올린다</span></summary><div class="a">
+  <p><b>가장 먼저 의심할 것은 뒤쪽 커넥션의 keep-alive 경쟁이다.</b> L7이 커넥션을 종단하면 앞뒤로 <b>두 벌의 keep-alive 설정</b>이 생긴다(4-2절). <b>백엔드가 유휴 커넥션을 닫는 순간과 LB가 그 커넥션을 재사용하려는 순간이 겹치면</b>, LB의 <code>write()</code>는 성공했는데 응답을 읽으려는 찰나에 RST를 만나고 <b>502</b>가 된다.</p>
+  <div class="rule ok">규칙 — <b>재사용하는 쪽(LB)의 유휴 상한을 닫는 쪽(백엔드)보다 짧게</b></div>
+  <p><b>증상의 특징으로 구분할 수 있다.</b> 이 유형은 ① <b>부하와 무관하게 상시 소량</b> 발생하고 ② <b>트래픽이 뜸한 시간대에 오히려 비율이 높다</b>(유휴 커넥션이 상한에 도달할 확률이 커지므로) ③ <b>백엔드 접근 로그에는 그 요청이 아예 안 남는다</b>(요청이 도착하기 전에 연결이 끊겼으므로). ③번이 결정적 단서다.</p>
+  <p style="margin-bottom:0">그다음 후보는 <b>버퍼 불일치</b>(응답 헤더가 <code>proxy_buffer_size</code>를 넘겨 502)와 <b>앞뒤 타임아웃 역전</b>이다. <b>"두 벌이 존재한다"는 사실 자체가 진단의 출발점</b>이라는 것이 이 질문의 핵심이다. (<code>11-502-vs-504-troubleshooting.md</code>, <code>13-nginx-tomcat-timeout-buffer-mismatch.md</code>)</p>
+</div></details>
+
+<details class="q"><summary>웹소켓을 L7 LB 뒤에 두면 요청 단위 분배의 이점을 그대로 누리나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: Upgrade가 끝난 뒤에 그 커넥션은 무엇이 되는가</span></summary><div class="a">
+  <p><b>아니다. Upgrade가 성립하는 순간 그 커넥션은 사실상 터널이 되어, L7이어도 L4와 같은 "커넥션 고정" 성질을 갖는다.</b></p>
+  <p>웹소켓은 <b>HTTP 요청으로 시작해 <code>101 Switching Protocols</code>로 프로토콜을 바꾸는</b> 방식이다. 그 전까지는 L7 LB가 경로·헤더를 보고 백엔드를 고를 수 있지만, <b>Upgrade 이후에는 더 이상 "요청 경계"가 없다</b> — 양방향으로 흐르는 프레임을 LB가 그대로 중계할 뿐이다. 그래서 <b>한 번 정해진 백엔드에 그 연결이 사는 동안 묶인다.</b></p>
+  <p><b>따라서 6절의 편중 이야기가 L7에서도 그대로 재현된다.</b> 롤링 배포 때 재연결이 살아 있는 인스턴스로 쏠리고, 새로 뜬 인스턴스는 한가하다. 대응도 같다 — <b>연결 수명 상한 + 재연결 시 지터</b>(동시 재연결 폭주를 막는다), <b>세션·구독 상태를 외부 저장소로</b> 빼서 어느 인스턴스에 붙어도 되게 만들기.</p>
+  <p style="margin-bottom:0"><b>설정에서도 한 가지가 더 붙는다.</b> L7 프록시는 기본적으로 <b>유휴 연결을 읽기 타임아웃으로 끊으므로</b>, 웹소켓처럼 오래 조용한 연결은 <b>프록시의 읽기 타임아웃을 늘리거나 하트비트(ping)를 주기적으로 보내</b> 살려 둬야 한다. (<code>14-websocket-sse-polling-selection.md</code>)</p>
+</div></details>
+
+<details class="q"><summary>L4의 5-튜플 해시도 결국 세션 고정 아닌가요?<span class="hint">힌트: 무엇이 고정되는지 — 커넥션인가 클라이언트인가</span></summary><div class="a">
+  <p><b>고정되는 대상이 다르다. 5-튜플 해시는 "커넥션 고정"이지 "클라이언트 고정"이 아니다.</b></p>
+  <p>5-튜플에는 <b>출발지 포트</b>가 들어 있고, 클라이언트는 <b>새 연결을 맺을 때마다 새 출발지 포트</b>를 쓴다. 그래서 같은 사용자라도 <b>커넥션이 바뀌면 해시값이 바뀌어 다른 백엔드로 갈 수 있다.</b> 5-튜플 해시가 보장하는 것은 <b>"한 커넥션의 패킷들이 흩어지지 않고 같은 백엔드로 간다"</b>는 것뿐이고, 이건 세션 고정이라기보다 <b>TCP가 성립하기 위한 최소 조건</b>에 가깝다.</p>
+  <p style="margin-bottom:0">클라이언트 단위로 고정하려면 <b>출발지 포트를 뺀 출발지 IP 해시</b>를 써야 하고, 그 순간 <b>NAT 집중</b>과 <b>모바일 IP 변경</b>이라는 두 함정이 따라온다(5-2절). <b>"5-튜플이면 세션 고정이 된다"고 답하면 이 구분을 못 하는 것으로 보인다.</b></p>
+</div></details>
+
+<details class="q"><summary>TLS를 LB에서 종료하면 L7이고, 안 하면 L4인가요? <span class="badge bonus">가산점</span><span class="hint">힌트: 두 개의 다른 축이지만 한쪽이 다른 쪽의 전제가 된다</span></summary><div class="a">
+  <p><b>엄밀히는 다른 축이다.</b> "몇 계층까지 읽는가"와 "TLS를 어디서 푸는가"는 별개의 결정이다. 다만 <b>한쪽이 다른 쪽의 전제</b>가 되기 때문에 실무에서 붙어 다닌다.</p>
+  <p><b>HTTPS 트래픽에서 경로·헤더·쿠키 기반 라우팅을 하려면 평문을 봐야 하고, 그러려면 LB가 TLS를 종료해야 한다.</b> 즉 <b>L7 라우팅은 사실상 TLS termination을 전제</b>한다. 반대로 <b>passthrough</b>(암호문 그대로 통과)를 택하면 LB는 내용을 볼 수 없으므로 <b>L4로 동작</b>하고, 라우팅 근거는 <b><code>ClientHello</code>의 SNI(평문)</b>까지로 제한된다.</p>
+  <p style="margin-bottom:0">그래서 정확한 답은 <b>"TLS를 어디서 푸느냐가 LB가 볼 수 있는 정보의 상한을 정하고, 그 상한이 라우팅 능력을 정한다"</b>이다. 중간 선택지도 있다 — <b>LB에서 종료한 뒤 백엔드로 다시 암호화해 보내는 재암호화(re-encrypt)</b> 구성이면 L7 라우팅과 구간 암호화를 둘 다 가져가되, <b>암복호 비용을 두 번</b> 낸다. (<code>06-tls-handshake-symmetric-asymmetric-keys.md</code>)</p>
+</div></details>
+
+<details class="q"><summary>PROXY protocol을 켰더니 백엔드가 모든 요청에 400을 냅니다. <span class="badge trap">함정</span><span class="hint">힌트: 그 한 줄은 HTTP가 아니다</span></summary><div class="a">
+  <p><b>백엔드가 PROXY protocol을 이해하도록 설정되어 있지 않아서다.</b> LB가 연결 직후 흘려보낸 <code>PROXY TCP4 1.2.3.4 10.0.0.11 5678 8080</code> 같은 <b>한 줄</b>이 <b>HTTP 요청 줄로 파싱</b>되어 문법 오류가 되고, 그래서 400이 난다.</p>
+  <p><b>이 규약의 성질을 아는지가 포인트다.</b> PROXY protocol은 <b>양쪽이 맞춰야 하는 계약</b>이지 LB 쪽만 켜면 되는 옵션이 아니다. 백엔드(Nginx의 <code>proxy_protocol</code> 리스너 옵션, Tomcat의 커넥터 설정 등)에서 <b>"이 포트로 들어오는 연결은 앞에 한 줄이 붙어 온다"</b>고 알려 줘야 한다.</p>
+  <p style="margin-bottom:0"><b>보안 주의도 함께 말하면 좋다.</b> PROXY protocol을 켠 포트는 <b>누가 보내든 그 한 줄을 출발지로 믿는다.</b> 그래서 <b>그 포트는 LB만 접근할 수 있도록 네트워크 수준에서 막아야 한다</b> — 열어 두면 <code>X-Forwarded-For</code> 위조와 똑같은 문제가 TCP 계층에서 생긴다.</p>
+</div></details>
+
+<details class="q"><summary>그럼 L7 LB는 왜 오토스케일 아웃 뒤에도 새 인스턴스에 트래픽이 잘 가나요?<span class="hint">힌트: 6절 편중의 원인을 뒤집어 보면 된다</span></summary><div class="a">
+  <p><b>분배 결정을 요청마다 다시 하기 때문이다.</b> L4는 "이미 맺어진 커넥션"이 결정을 붙들고 있어서 새 인스턴스가 <b>새 커넥션이 생길 때까지</b> 기다려야 하지만, L7은 <b>다음 요청부터 바로</b> 새 인스턴스를 후보에 넣는다.</p>
+  <p><b>다만 L7도 완전히 자유롭지는 않다.</b> LB와 백엔드 사이의 <b>업스트림 커넥션 풀</b>은 재사용되므로, 새 인스턴스로 가는 커넥션은 <b>새로 맺어야</b> 한다 — 그 순간 <b>TCP handshake + TLS + JVM 웜업</b> 비용이 겹쳐 <b>새 인스턴스의 초기 응답이 느리다.</b> 이 구간에 트래픽을 한꺼번에 몰면 오히려 그 인스턴스가 무너진다.</p>
+  <p style="margin-bottom:0">그래서 관리형 L7 LB들은 <b>새로 편입된 대상에 트래픽을 점진적으로 올리는 slow start 성격의 옵션</b>을 제공한다. <b>"요청 단위 분배 = 즉시 균등"이 아니라 "즉시 후보가 되지만 웜업은 따로 챙겨야 한다"</b>가 정확한 서술이다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  L4는 IP·포트만 보고 패킷을 전달하므로 TCP 연결의 두 끝이 <b>여전히 클라이언트와 백엔드</b>이고, 그래서 프로토콜을 안 가리고 빠르며 클라이언트 IP도 그대로 보이지만 <b>분배 단위가 커넥션</b>이라 keep-alive·gRPC·웹소켓처럼 커넥션이 오래 사는 트래픽에서 <b>저절로 회복되지 않는 편중</b>이 생기고 헬스체크도 <b>"커널이 handshake를 완료하는가"</b>까지밖에 못 본다. L7은 <b>커넥션을 종단</b>해 클라이언트↔LB와 LB↔백엔드 두 개의 독립적인 연결을 만들며, 이 한 가지 사실에서 <b>요청 단위 분배</b>와 경로·헤더·쿠키 라우팅, 앞뒤로 <b>두 벌</b>인 keep-alive·타임아웃·버퍼 설정, 백엔드가 보는 소켓 주소가 LB가 되어 필요해지는 <code>X-Forwarded-*</code> 계약, 그리고 느린 클라이언트로부터의 <b>버퍼링 격리</b>가 전부 파생된다 — <b>"포트는 열려 있는데 500만 뱉는 좀비 서버를 걸러낼 수 있느냐"</b>가 두 계층의 차이를 가장 선명하게 보여주지만, 그 헬스체크를 DB까지 깊게 파면 이번에는 <b>DB 순단이 전 인스턴스 동시 이탈로 증폭</b>되므로 liveness와 readiness를 나눠 <b>"자동 조치의 방아쇠"와 "관측 지표"를 분리</b>하는 것까지가 완성형이다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/08-network-http/16-l4-vs-l7-load-balancer.md</code> · 이어서 볼 문서: TLS 핸드셰이크(06) · HTTP/1.1·2·3와 HOL 블로킹(09) · keep-alive와 커넥션 풀(10) · 502 vs 504 트러블슈팅(11) · Nginx의 역할과 이벤트 기반 구조(12) · Nginx·Tomcat 타임아웃/버퍼 불일치(13) · 웹소켓·SSE 선택(14) · TLS termination(17) · 프록시 헤더 신뢰 경계(22) · LB의 역할과 분배 알고리즘(07-traffic-performance/03) · 무상태 서버 설계와 세션(07-traffic-performance/04)</p>
+</main>
+</body>
+</html>

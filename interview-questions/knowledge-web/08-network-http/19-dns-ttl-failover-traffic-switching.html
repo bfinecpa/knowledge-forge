@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNS TTL과 배포·failover — "DNS 바꿨는데 왜 아직 옛 서버로 오지?"의 원리</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">08 네트워크 · HTTP · 웹 &nbsp;|&nbsp; 고난이도 ⭐⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>DNS TTL과 배포·failover<br><span class="sub">"DNS 바꿨는데 왜 아직 옛 서버로 오지?"의 원리</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"DNS TTL과 배포/failover의 관계 — DNS 기반 트래픽 전환의 함정은?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>DNS 전환은 스위치가 아니라 물결이다.</b> TTL은 "이 응답을 최대 얼마나 캐시해도 되는가"의 <b>상한일 뿐</b>이고, 전 세계에 흩어진 캐시(브라우저, OS, 공유기, ISP 리졸버, JVM, 그리고 DNS를 아예 다시 안 보는 keep-alive 커넥션)는 <b>각자 자기가 조회한 시점부터</b> 만료를 센다. 심지어 <b>TTL을 무시하고 더 오래 캐시하는 리졸버</b>도 있어, 전환 후에도 옛 주소로 가는 <b>긴 꼬리 트래픽</b>이 남는다. 그래서 DNS 전환 작업은 <b>"사전 TTL 인하 → 전환 → 옛 서버 유예 운영"</b>의 절차로 설계해야 하고, <b>초 단위 전환이 필요한 failover는 DNS가 아니라 IP가 바뀌지 않는 지점(LB, VIP, anycast) 뒤에서</b> 해야 한다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>TTL은 동기화 신호가 아니라 유효기간의 상한이다</b> — 각 캐시가 <b>자기가 조회한 시점부터</b> 따로 카운트다운하므로, "TTL 300초"의 정확한 뜻은 <b>"300초 뒤에 일제히 바뀐다"가 아니라 "최대 300초에 걸쳐 사용자들이 제각각 넘어온다"</b>이다. 전환은 점이 아니라 <b>구간</b>이다.</div></li>
+    <li><span class="n">2</span><div><b>그리고 TTL로 설명되지 않는 층이 더 있다</b> — <b>최소 TTL을 강제하는 리졸버</b>, <b>JVM DNS 캐시</b>, 그리고 무엇보다 <b>TTL과 무관하게 옛 IP에 물려 있는 커넥션 풀</b>이다. 커넥션 풀은 <b>새 연결을 맺을 때만 DNS를 보므로 재조회 계기가 구조적으로 없다</b> — TTL을 아무리 줄여도 이 트래픽은 안 넘어온다.</div></li>
+    <li><span class="n">3</span><div><b>그래서 DNS는 "빠른 전환 수단"이 아니라 "느리지만 큰 단위의 전환 수단"이다</b> — 감지·갱신·TTL·클라이언트 재조회를 더하면 <b>분 단위</b>가 나오므로, 초 단위 failover는 <b>클라이언트가 보는 IP가 바뀌지 않는 지점</b>(LB 대상 그룹, VIP 이관, anycast)에서 해야 한다. DNS 전환을 할 때는 <b>사전 TTL 인하 → 양쪽 공존 → 유입 0 관측 후 종료 → TTL 원복</b>의 시간축 절차로 간다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">무엇에 TTL이 붙는가 — 레코드 4종과 apex 함정</a></li>
+    <li><a href="#s2">TTL의 실제 동작 — 유통기한이지 알람이 아니다</a></li>
+    <li><a href="#s3">어느 층을 바꾸느냐가 전환 속도를 정한다</a></li>
+    <li><a href="#s4">이상적 모델이 깨지는 다섯 지점</a></li>
+    <li><a href="#s5">커넥션 풀 — 가장 실무적인 함정</a></li>
+    <li><a href="#s6">TTL 인하 자체에 리드타임이 필요하다</a></li>
+    <li><a href="#s7">옛 서버를 바로 끄면 안 된다 — 긴 꼬리 4종</a></li>
+    <li><a href="#s8">DNS failover의 시간 분해 — RTO 산수</a></li>
+    <li><a href="#s9">TTL을 아주 짧게 두면? — 대가 넷</a></li>
+    <li><a href="#s10">초 단위가 필요하면 DNS 밖에서 바꾼다</a></li>
+    <li><a href="#s11">무중단 이전 체크리스트 — 시간축 절차</a></li>
+    <li><a href="#s12">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "DNS TTL과 배포/failover의 관계 — DNS 기반 트래픽 전환의 함정은?"</p>
+  <p><b>출제 의도</b>: <b>"DNS 바꿨는데 왜 아직 옛 서버로 오지?"</b>라는, 전환 작업 때마다 등장하는 현상. <b>캐싱 계층이 곳곳에 있는 인터넷의 실제 동작</b>을 아는지 — 그리고 그 이해가 <b>재해 복구 계획의 현실성</b>(DNS failover로 RTO를 맞출 수 있다는 계획이 진짜 성립하는지)을 검증할 수 있는 수준인지 본다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"TTL 지나면 바뀐다"는 스위치 모델</b> → 2절에서 리졸버 4개의 만료 시점을 <b>타임라인으로 겹쳐 그려</b> 전환이 왜 <b>구간</b>인지 보여준다.<br>
+    ② <b>DNS 계층만 보고 끝내는 것</b> → 5절에서 <b>TTL과 아무 상관이 없는</b> 커넥션 풀 함정을, 코드와 타임라인으로 분리해 다룬다.<br>
+    ③ <b>"failover 설정했으니 RTO 30초"라고 적힌 문서</b> → 8절에서 감지·갱신·TTL·재조회를 <b>더해서</b> 그 계획이 산술적으로 성립하지 않음을 보인다.
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">이 문서의 자리 — 01번과 겹치지 않게 읽는 법</span>
+  <code>01-url-to-page-dns-tcp-tls-http.md</code>가 다루는 것은 <b>"이름이 주소로 바뀌는 과정"</b>(캐시 3계층, 루트 → TLD → 권한 서버의 계층 위임, JVM 캐시 설정 코드)이다. 이 문서는 그 위에서 <b>"그 주소를 바꿀 때 무슨 일이 벌어지는가"</b>만 다룬다 — <b>TTL 설계, 전환의 시간축, 그리고 DNS로는 살 수 없는 것</b>.
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 무엇에 TTL이 붙는가 — 레코드 4종과 apex 함정</h2>
+
+<p>TTL 이야기를 하기 전에 <b>무엇에 TTL이 붙는지</b>부터 정해야 한다. DNS는 "이름 하나에 값 하나"가 아니라 <b>이름 아래에 종류별 레코드가 붙는 구조</b>이고, <b>TTL은 그 레코드마다 따로 붙는다.</b> 이 사실이 3절에서 "전환 속도를 무엇이 지배하는가"로 그대로 이어진다.</p>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k">A — Address</div>
+    <div class="s">이름 → IPv4 주소</div>
+    <div class="d"><code>api.example.com → 203.0.113.10</code>. 가장 기본이고, <b>클라이언트가 최종적으로 원하는 답</b>이 이것이다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k">AAAA — Address ×4</div>
+    <div class="s">이름 → IPv6 주소</div>
+    <div class="d">A가 네 개인 이유는 <b>IPv6 주소가 IPv4의 네 배 길이</b>(32비트 대 128비트)라서다. 요즘 클라이언트는 A와 AAAA를 <b>둘 다</b> 조회하므로, <b>한쪽만 바꾸고 다른 쪽을 잊는 사고</b>가 실제로 자주 난다.</div>
+  </div>
+  <div class="tile">
+    <div class="k">CNAME — Canonical Name</div>
+    <div class="s">이름 → 다른 이름</div>
+    <div class="d">"이 이름의 <b>진짜 이름</b>은 저것이다". <code>www.example.com → lb-123.elb.amazonaws.com</code>. 리졸버는 CNAME을 받으면 <b>그 대상 이름을 다시 조회</b>해 최종 A/AAAA까지 따라간다.</div>
+  </div>
+  <div class="tile">
+    <div class="k">NS — Name Server</div>
+    <div class="s">도메인 → 권한 네임서버</div>
+    <div class="d">이 도메인을 <b>어느 권한 네임서버가 관리하는지</b>를 가리킨다. 계층 위임의 실체(<code>01-url-to-page-dns-tcp-tls-http.md</code> 2-2절).</div>
+  </div>
+</div>
+
+<h3>1-1. CNAME은 apex 도메인에 붙일 수 없다</h3>
+
+<p><b>apex 도메인</b>이란 <code>www</code>나 <code>api</code> 같은 접두어 없는 도메인 그 자체, 즉 <code>example.com</code>을 말한다. <b>영역(zone)의 꼭대기</b>라서 apex(정점)라고 부른다. 여기에 CNAME을 못 붙이는 이유는 규칙 두 줄이 충돌하기 때문이다.</p>
+
+<figure>
+  <svg viewBox="0 0 960 272" role="img" aria-label="왼쪽은 example.com 이라는 apex 이름에 SOA와 NS 레코드가 반드시 존재하는데 같은 이름에 CNAME을 추가하면 CNAME 배타 규칙과 충돌해 사용할 수 없음을 보여주고, 오른쪽은 ALIAS 레코드가 권한 네임서버 내부에서 대상 이름을 대신 조회한 뒤 클라이언트에게는 평범한 A 레코드로 응답해 apex 제약을 우회하는 구조를 보여주는 도식">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <line x1="470" y1="14" x2="470" y2="248" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- left -->
+    <text x="235" y="28" font-size="14" font-weight="700" fill="#dc2626" text-anchor="middle">apex 에 CNAME 은 못 붙인다</text>
+    <rect x="20" y="42" width="430" height="112" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="36" y="64" font-size="11.5" fill="#7f1d1d">apex 에는 반드시 있어야 하는 레코드가 있다</text>
+    <rect x="36" y="72" width="398" height="24" rx="5" fill="#fff" stroke="#e5e7eb"/>
+    <text x="46" y="88" font-size="12" class="mono" fill="#1f2937">example.com.   SOA   ...      <tspan fill="#6b7280">이 영역의 관리 정보</tspan></text>
+    <rect x="36" y="100" width="398" height="24" rx="5" fill="#fff" stroke="#e5e7eb"/>
+    <text x="46" y="116" font-size="12" class="mono" fill="#1f2937">example.com.   NS    ...      <tspan fill="#6b7280">이 영역의 네임서버</tspan></text>
+    <rect x="36" y="128" width="398" height="24" rx="5" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="46" y="144" font-size="12" class="mono" fill="#b91c1c">example.com.   CNAME lb-123.elb...  ✗</text>
+    <rect x="20" y="164" width="430" height="66" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="36" y="184" font-size="12" fill="#b91c1c" font-weight="700">DNS 표준: CNAME이 있는 이름에는 다른 레코드가 있을 수 없다</text>
+    <text x="36" y="203" font-size="11.5" fill="#7f1d1d">"진짜 이름은 저것"이라 해놓고 자기 데이터를 갖는 것은 모순이라서</text>
+    <text x="36" y="221" font-size="11.5" fill="#7f1d1d">→ apex 에 반드시 있는 SOA/NS 와 공존할 수 없다</text>
+    <text x="235" y="252" font-size="12" fill="#6b7280" text-anchor="middle">그런데 관리형 LB는 IP가 아니라 <tspan font-weight="700" fill="#1f2937">이름</tspan>으로 제공된다 — 붙일 방법이 필요하다</text>
+
+    <!-- right -->
+    <text x="715" y="28" font-size="14" font-weight="700" fill="#16a34a" text-anchor="middle">ALIAS / ANAME / CNAME flattening</text>
+    <rect x="492" y="42" width="446" height="174" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <rect x="508" y="56" width="150" height="34" rx="7" fill="#fff" stroke="#16a34a"/>
+    <text x="583" y="77" font-size="11.5" class="mono" fill="#166534" text-anchor="middle">클라이언트</text>
+    <line x1="658" y1="73" x2="700" y2="73" stroke="#16a34a" stroke-width="1.6" marker-end="url(#a2)"/>
+    <text x="679" y="66" font-size="10" fill="#166534" text-anchor="middle">질의</text>
+    <rect x="706" y="50" width="216" height="62" rx="7" fill="#fff" stroke="#16a34a"/>
+    <text x="814" y="68" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">권한 네임서버</text>
+    <text x="814" y="85" font-size="10.5" fill="#166534" text-anchor="middle">질의를 받는 시점에 대상 이름을</text>
+    <text x="814" y="101" font-size="10.5" fill="#166534" text-anchor="middle">자기가 대신 조회한다</text>
+    <path d="M814 114 L814 132" stroke="#16a34a" stroke-width="1.6" marker-end="url(#a2)"/>
+    <rect x="706" y="136" width="216" height="26" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="814" y="153" font-size="11" class="mono" fill="#166534" text-anchor="middle">lb-123.elb... → 203.0.113.10</text>
+    <path d="M700 149 L 664 149" stroke="#16a34a" stroke-width="1.6" marker-end="url(#a2)"/>
+    <rect x="500" y="128" width="164" height="42" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="582" y="145" font-size="10.5" fill="#166534" text-anchor="middle">클라이언트가 받는 것은</text>
+    <text x="582" y="162" font-size="11.5" class="mono" fill="#166534" text-anchor="middle" font-weight="700">example.com. A ...</text>
+    <text x="508" y="192" font-size="11.5" fill="#166534" font-weight="700">동작은 CNAME인데 응답은 A로 나간다 → apex 제약에 안 걸린다</text>
+    <text x="508" y="209" font-size="11" fill="#b45309">단, DNS 표준이 아니라 <tspan font-weight="700">제공자별 기능</tspan> — 세부는 제공자 문서 확인</text>
+    <text x="715" y="252" font-size="12" fill="#6b7280" text-anchor="middle">클라이언트 입장에서는 <tspan font-weight="700" fill="#1f2937">평범한 A 레코드를 받은 것</tspan>이다</text>
+  </svg>
+  <figcaption><b>왼쪽이 제약, 오른쪽이 우회다.</b> 관리형 로드밸런서(ELB, GCP LB 등)는 뒤에서 IP가 늘거나 바뀔 수 있어 <b>IP가 아니라 이름으로 제공</b>된다. 그래서 apex를 LB에 붙이려면 CNAME이 필요한데, apex라서 못 쓴다 — 그 간극을 메우는 것이 ALIAS류다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>apex 도메인을 관리형 LB에 붙이는 방법은 둘뿐이다</h4>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k">① 제공자의 ALIAS류</div><div class="d">ALIAS / ANAME / CNAME flattening. <b>사실상 유일한 정답</b>이다.</div></div>
+    <div class="tile red"><div class="k">② LB의 IP를 A에 직접 박기</div><div class="d">제공자가 IP를 바꾸는 순간 <b>조용히 죽는다.</b> 하면 안 된다.</div></div>
+  </div>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. TTL의 실제 동작 — 유통기한이지 알람이 아니다</h2>
+
+<p>DNS 조회는 한 곳에서 일어나지 않는다. 사용자와 <b>권한 네임서버</b>(그 도메인의 원본 레코드를 가진, 최종 답을 낼 권한이 있는 서버) 사이에 <b>캐시가 사슬로 늘어서 있고, 각 마디가 자기 시계로 만료를 센다.</b></p>
+
+<div class="chain">
+  <span class="chip b">브라우저 캐시</span><span class="arrow">→</span>
+  <span class="chip b">OS 캐시 / hosts</span><span class="arrow">→</span>
+  <span class="chip b">공유기</span><span class="arrow">→</span>
+  <span class="chip b">ISP · 공용 재귀 리졸버</span><span class="arrow">→</span>
+  <span class="chip g">권한 네임서버 <span style="font-weight:400">(원본)</span></span>
+</div>
+<div class="chain">
+  <span class="sub" style="margin-right:6px">그리고 이 사슬 <b>밖에</b> 둘이 더 있다 —</span>
+  <span class="chip r">JVM DNS 캐시</span><span class="sub">OS 캐시보다 앞 (4-2절)</span>
+  <span class="chip r">커넥션 풀 · keep-alive</span><span class="sub">DNS를 아예 다시 안 본다 (5절)</span>
+</div>
+
+<div class="callout info">
+  <span class="t">TTL(Time To Live, 생존 시간)의 정의</span>
+  권한 네임서버가 <b>응답에 함께 실어 보내는 초 단위 숫자</b>로, <b>"이 답을 최대 이만큼은 다시 묻지 말고 써도 된다"</b>는 유효기간이다. 두 가지가 여기서 이미 결정된다 — <b>① 응답에 실려 나가므로, 값을 바꿔도 새로 조회한 캐시만 알게 된다</b>(6절의 리드타임 문제), <b>② 상한일 뿐이므로 더 일찍 지울 수는 있어도 캐시에게 "지금 지워라"라고 명령할 방법은 없다.</b>
+</div>
+
+<h3>2-1. 흔한 착각 — "TTL 300초면 300초 뒤에 전부 새 주소를 쓰겠지"</h3>
+
+<p>틀렸다. 각 캐시는 <b>자기가 조회한 시점부터</b> 따로 카운트다운한다. 전 세계 리졸버가 같은 순간에 조회한 것이 아니므로 <b>만료 시점도 제각각 흩어져 있다.</b> 리졸버 넷을 겹쳐 그리면 한눈에 보인다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 404" role="img" aria-label="가로축이 시간 0초부터 400초인 타임라인. t등100에 권한 서버 레코드를 바꿨고 TTL은 300초다. 리졸버 X는 t등0에 조회해 t등300까지 옛 답을 주고, 리졸버 Y는 t등99에 조회해 t등399까지 옛 답을 주며, 리졸버 Z는 t등101에 조회해 즉시 새 답을 받고, 리졸버 W는 t등250에 처음 조회해 새 답을 받는다. 전환은 t등100의 한 점이 아니라 t등100부터 400까지의 구간에 걸쳐 번진다">
+    <defs>
+      <marker id="w1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 레코드, 같은 TTL 300 — 그런데 넘어오는 시점은 리졸버마다 다르다</text>
+    <text x="384" y="52" font-size="12.5" font-weight="700" fill="#dc2626">t=100 — 권한 서버의 레코드를 바꿨다</text>
+    <line x1="377.5" y1="58" x2="377.5" y2="308" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+
+    <g font-size="12" fill="#374151" text-anchor="end" font-weight="700">
+      <text x="160" y="109">리졸버 X</text><text x="160" y="155">리졸버 Y</text><text x="160" y="201">리졸버 Z</text><text x="160" y="247">리졸버 W</text>
+    </g>
+
+    <!-- X -->
+    <rect x="170" y="92" width="622.5" height="26" rx="4" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="481" y="109" font-size="11.5" fill="#b91c1c" text-anchor="middle">옛 답 — t=0 에 조회, 내 만료는 t=300</text>
+    <rect x="792.5" y="92" width="207.5" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="896" y="109" font-size="11.5" fill="#166534" text-anchor="middle">새 답</text>
+    <!-- Y -->
+    <rect x="170" y="138" width="205.4" height="26" rx="4" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="272" y="155" font-size="10.5" fill="#94a3b8" text-anchor="middle">(직전 캐시)</text>
+    <rect x="375.4" y="138" width="622.5" height="26" rx="4" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="686" y="155" font-size="11.5" fill="#b91c1c" text-anchor="middle">옛 답 — t=99 에 조회. 변경 1초 전이라 TTL 전체를 옛 답으로 버틴다 (만료 t=399)</text>
+    <!-- Z -->
+    <rect x="170" y="184" width="209.6" height="26" rx="4" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="274" y="201" font-size="10.5" fill="#94a3b8" text-anchor="middle">(직전 캐시)</text>
+    <rect x="379.6" y="184" width="620.4" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="690" y="201" font-size="11.5" fill="#166534" text-anchor="middle">새 답 — t=101 에 조회. 즉시 넘어간다</text>
+    <!-- W -->
+    <rect x="170" y="230" width="518.75" height="26" rx="4" fill="#f8fafc" stroke="#e2e8f0" stroke-dasharray="5 4"/>
+    <text x="429" y="247" font-size="10.5" fill="#94a3b8" text-anchor="middle">(이 이름을 아직 한 번도 조회한 적 없음)</text>
+    <rect x="688.75" y="230" width="311.25" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="844" y="247" font-size="11.5" fill="#166534" text-anchor="middle">새 답 — t=250 에 처음 조회</text>
+
+    <!-- axis -->
+    <line x1="170" y1="286" x2="1030" y2="286" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#w1)"/>
+    <g font-size="11" fill="#6b7280" class="mono" text-anchor="middle">
+      <text x="170" y="304">0</text><text x="377.5" y="304">100</text><text x="585" y="304">200</text><text x="792.5" y="304">300</text><text x="1000" y="304">400</text>
+    </g>
+    <g stroke="#cbd5e1"><line x1="170" y1="282" x2="170" y2="290"/><line x1="585" y1="282" x2="585" y2="290"/><line x1="792.5" y1="282" x2="792.5" y2="290"/><line x1="1000" y1="282" x2="1000" y2="290"/></g>
+    <text x="1046" y="290" font-size="11" fill="#6b7280">t (초)</text>
+
+    <!-- bracket -->
+    <path d="M377.5 344 L377.5 332 L1000 332 L1000 344" fill="none" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="689" y="366" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">전환이 번지는 구간 — 이 300초 동안 사용자마다 제각각의 시점에 넘어온다</text>
+    <text x="689" y="388" font-size="12" fill="#6b7280" text-anchor="middle">★ 전환은 t=100 의 <tspan font-weight="700" fill="#1f2937">한 점</tspan>에서 일어나지 않는다. TTL은 그 구간의 <tspan font-weight="700" fill="#1f2937">길이의 상한</tspan>을 정할 뿐이다</text>
+  </svg>
+  <figcaption>리졸버 <b>Y</b>가 이 그림의 핵심이다 — <b>변경 1초 전에 조회했다는 이유만으로 TTL 전체(299초)를 옛 답으로 버틴다.</b> 반대로 <b>Z</b>는 1초 차이로 즉시 넘어간다. 두 사용자의 체감이 <b>300초 가까이 벌어지는데, 원인은 "누가 언제 조회했는가"라는 우연뿐</b>이다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>"TTL 300초"의 정확한 번역</h4>
+  <div class="split" style="margin-top:6px">
+    <div class="pane r"><h4>✗ 틀린 번역</h4><p style="margin:0">"레코드를 바꾸면 <b>300초 뒤에 전부</b> 새 주소를 쓴다"</p></div>
+    <div class="pane g"><h4>✓ 맞는 번역</h4><p style="margin:0">"전환 후 <b>최대 300초에 걸쳐</b> 사용자들이 <b>제각각의 시점에</b> 새 주소로 넘어온다"</p></div>
+  </div>
+  <p style="margin-bottom:0"><b>TTL은 유통기한이지 알람이 아니다.</b> 우유에 유통기한이 적혀 있다고 해서 전국의 냉장고에 있는 우유가 같은 날 동시에 버려지지는 않는다 — <b>각 집이 산 날이 다르니까.</b></p>
+</div>
+
+<div class="rule">전환은 일제히 일어나는 <b>스위치</b>가 아니라 서서히 번지는 <b>물결</b>이다 — 이 문서 전체가 이 한 문장에서 나온다</div>
+
+<h3>2-2. 눈으로 확인하는 법 — 전환 중인지 아닌지를 가르는 한 줄</h3>
+
+<div class="codehead plain"><span class="tag">진단</span> TTL이 실제로 흘러가는 것을 확인하는 명령들</div>
+<pre><code><span class="cm"># 지금 이 리졸버가 들고 있는 답과 남은 TTL. 두 번째 열의 숫자가 TTL이다.</span>
+dig +noall +answer api.example.com
+
+<span class="cm"># 같은 명령을 몇 초 간격으로 다시 치면 TTL이 줄어드는 것이 보인다.
+# 0이 되면 리졸버가 다시 물어보고 TTL이 원래 값으로 되돌아간다.
+# "캐시가 카운트다운한다"를 눈으로 확인하는 가장 빠른 방법이다.</span>
+
+<span class="cm"># 특정 공용 리졸버가 지금 무엇을 주는지 — 캐시별로 답이 다를 수 있음을 확인한다.</span>
+dig @8.8.8.8 api.example.com
+dig @1.1.1.1 api.example.com
+
+<span class="cm"># 캐시를 완전히 배제하고 원본을 본다. 권한 서버에 직접 묻는다.
+# "레코드는 제대로 바뀌었는데 캐시 때문에 안 보이는 것"인지를 이걸로 가른다.</span>
+dig @ns1.example.com api.example.com
+
+<span class="cm"># 루트부터 계층을 따라 내려가며 어디서 어떤 답이 나오는지 전부 본다.</span>
+dig +trace api.example.com</code></pre>
+
+<div class="callout ok" style="margin-bottom:0">
+  <span class="t">전환 작업 중 가장 먼저 해야 할 대조</span>
+  <b><code>dig @권한서버</code>와 <code>dig @8.8.8.8</code>의 답이 다르면, 그것이 곧 "지금 전파 중"이라는 증거다.</b> 두 값이 같아졌다면 "레코드가 안 바뀐 것"이 아니라 <b>다른 층(JVM 캐시·커넥션 풀·하드코딩)의 문제</b>로 수사 범위가 옮겨간다. 이 한 줄의 대조가 <b>DNS 문제와 DNS 아닌 문제를 가른다.</b>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 어느 층을 바꾸느냐가 전환 속도를 정한다</h2>
+
+<p>CNAME을 쓰면 캐시가 하나가 아니라 <b>사슬의 각 마디마다 따로</b> 잡힌다. 리졸버는 <code>www → blue</code>(CNAME)와 <code>blue → IP</code>(A)를 <b>각자의 TTL로 별개로</b> 캐시한다. 그래서 <b>"blue에서 green으로 바꾼다"는 같은 목표에 두 가지 방법이 있고, 걸리는 시간이 60배 차이 난다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="왼쪽은 www 이름의 CNAME 대상을 blue에서 green으로 바꾸는 방법으로 CNAME의 TTL 3600초가 전환 지연을 지배하고 아래쪽 A 레코드의 짧은 TTL 60초는 도움이 되지 않는다. 오른쪽은 CNAME을 그대로 두고 blue의 A 레코드 IP만 바꾸는 방법으로 전환 지연이 60초로 끝난다">
+    <defs>
+      <marker id="c1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="c2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+      <marker id="c3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <line x1="560" y1="14" x2="560" y2="322" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="6 5"/>
+
+    <!-- A -->
+    <text x="280" y="28" font-size="14.5" font-weight="700" fill="#dc2626" text-anchor="middle">(A) CNAME 의 대상을 바꾼다</text>
+    <rect x="40" y="46" width="220" height="40" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="150" y="71" font-size="12.5" class="mono" fill="#1f2937" text-anchor="middle">www.example.com</text>
+    <line x1="150" y1="86" x2="150" y2="118" stroke="#dc2626" stroke-width="2.2" marker-end="url(#c1)"/>
+    <text x="276" y="82" font-size="12" class="mono" fill="#b91c1c" font-weight="700">CNAME  TTL 3600</text>
+    <text x="276" y="100" font-size="11.5" fill="#b91c1c">★ 내가 바꾼 레코드가 여기다</text>
+    <text x="276" y="117" font-size="11.5" fill="#7f1d1d">→ 리졸버는 3600초 동안 옛 대상을 본다</text>
+    <rect x="40" y="122" width="220" height="40" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="150" y="147" font-size="12.5" class="mono" fill="#b91c1c" text-anchor="middle">green.example.com</text>
+    <text x="276" y="140" font-size="11" fill="#6b7280" class="mono">blue → green 으로 교체</text>
+    <line x1="150" y1="162" x2="150" y2="192" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#c2)"/>
+    <text x="276" y="176" font-size="12" class="mono" fill="#94a3b8">A  TTL 60</text>
+    <text x="276" y="193" font-size="11.5" fill="#94a3b8">짧지만 아무 도움이 안 된다</text>
+    <rect x="40" y="196" width="220" height="38" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="150" y="220" font-size="12.5" class="mono" fill="#64748b" text-anchor="middle">203.0.113.20</text>
+    <rect x="40" y="250" width="480" height="54" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="60" y="274" font-size="14" font-weight="700" fill="#b91c1c">전환 지연 = 3600초</text>
+    <text x="60" y="294" font-size="11.5" fill="#7f1d1d">아래쪽 A 레코드 TTL 60은 이 시나리오에서 한 푼도 기여하지 않는다</text>
+
+    <!-- B -->
+    <text x="840" y="28" font-size="14.5" font-weight="700" fill="#16a34a" text-anchor="middle">(B) blue 의 A 레코드만 바꾼다</text>
+    <rect x="600" y="46" width="220" height="40" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="710" y="71" font-size="12.5" class="mono" fill="#1f2937" text-anchor="middle">www.example.com</text>
+    <line x1="710" y1="86" x2="710" y2="118" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#c2)"/>
+    <text x="836" y="82" font-size="12" class="mono" fill="#94a3b8">CNAME  TTL 3600</text>
+    <text x="836" y="100" font-size="11.5" fill="#94a3b8">손대지 않았다 → 캐시가 유효해도 무방</text>
+    <rect x="600" y="122" width="220" height="40" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="710" y="147" font-size="12.5" class="mono" fill="#1f2937" text-anchor="middle">blue.example.com</text>
+    <line x1="710" y1="162" x2="710" y2="192" stroke="#16a34a" stroke-width="2.2" marker-end="url(#c3)"/>
+    <text x="836" y="176" font-size="12" class="mono" fill="#166534" font-weight="700">A  TTL 60</text>
+    <text x="836" y="193" font-size="11.5" fill="#166534">★ 여기를 바꿨다 → 60초 뒤 만료</text>
+    <rect x="600" y="196" width="220" height="38" rx="8" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="710" y="220" font-size="12.5" class="mono" fill="#166534" text-anchor="middle">203.0.113.20  (green 의 IP)</text>
+    <rect x="600" y="250" width="480" height="54" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="620" y="274" font-size="14" font-weight="700" fill="#166534">전환 지연 = 60초</text>
+    <text x="620" y="294" font-size="11.5" fill="#166534">같은 목표, 같은 존, 같은 TTL 설정 — 바꾼 레코드만 다르다</text>
+  </svg>
+  <figcaption>두 방법 모두 최종적으로 트래픽을 <code>203.0.113.20</code>으로 보낸다. 다른 것은 <b>"사슬의 어느 마디를 손댔는가"</b>뿐인데 전환 지연은 <b>3600초 대 60초</b>다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>여기서 나오는 실무 규칙 두 개</h4>
+  <div class="rule ok">① 전환 지연을 지배하는 것은 <b>내가 실제로 바꾼 그 레코드의 TTL</b>이다</div>
+  <p>사슬 <b>아래쪽</b> 레코드의 TTL이 아무리 짧아도, <b>위쪽</b>을 바꾸면 위쪽 TTL만큼 기다린다. 전환 계획을 세울 때 "우리 TTL 60초예요"가 아니라 <b>"내가 바꿀 레코드의 TTL이 몇 초인가"</b>를 확인해야 하는 이유다.</p>
+  <div class="rule ok">② 자주 바뀌는 것은 사슬 <b>아래쪽</b>에, 안 바뀌는 이름은 <b>위쪽</b>에 둔다</div>
+  <p style="margin-bottom:0">이 구조가 관리형 LB에서 값을 한다. <code>www.example.com</code>을 LB의 <b>이름</b>에 CNAME으로 걸어두면, 실제 IP 변경은 <b>LB 제공자가 자기 A 레코드(대개 짧은 TTL)에서 처리</b>한다. 우리 CNAME은 손댈 일이 없고, <b>LB 뒤에서 IP가 바뀌어도 우리는 아무것도 안 해도 된다.</b> 10절의 "IP가 안 바뀌는 지점 뒤에서 바꿔라"가 이미 여기서 시작된다.</p>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 이상적 모델이 깨지는 다섯 지점</h2>
+
+<p>2절의 물결 그림은 <b>"모든 캐시가 TTL을 정확히 지키고, 클라이언트는 필요할 때마다 DNS를 다시 본다"</b>를 전제한다. 실제로는 <b>다섯 군데에서 이 전제가 깨진다.</b> 다섯 개를 한 번에 외우는 방법은 <b>"무엇을 안 하는가"로 묶는 것</b>이다.</p>
+
+<div class="memo">
+  <h4>깨지는 다섯 지점 — <span style="color:#2563eb">안 지킨다 · 따로 챙긴다 · 안 묻는다 · 늦게 안다 · 안 끝난다</span></h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">① 안 지킨다</div><div class="s">최소 TTL 강제 리졸버</div><div class="d">내가 30초로 내려도 <b>300초로 동작</b>한다 (4-1절)</div></div>
+    <div class="tile red"><div class="k">② 따로 챙긴다</div><div class="s">JVM DNS 캐시</div><div class="d">응답의 TTL이 아니라 <b>JVM 자기 정책</b>을 따른다 (4-2절)</div></div>
+    <div class="tile red"><div class="k">③ 안 묻는다</div><div class="s">커넥션 풀 · keep-alive</div><div class="d"><b>TTL과 아무 상관이 없다.</b> 가장 자주 잊힌다 (5절)</div></div>
+    <div class="tile red"><div class="k">④ 늦게 안다</div><div class="s">TTL 인하의 리드타임</div><div class="d">"TTL이 낮아졌다"는 사실도 <b>옛 TTL만큼 걸려</b> 퍼진다 (6절)</div></div>
+    <div class="tile red"><div class="k">⑤ 안 끝난다</div><div class="s">긴 꼬리 트래픽</div><div class="d">0에 수렴하지만 <b>완전한 0이 되지 않는다</b> (7절)</div></div>
+    <div class="tile"><div class="k">묶는 문장</div><div class="d">전환은 <b>DNS 계층 하나의 일이 아니다</b> — 위(리졸버)·아래(앱)·시간(절차) 셋이 전부 걸린다</div></div>
+  </div>
+</div>
+
+<h3>4-1. ① TTL을 지키지 않는 캐시가 있다</h3>
+
+<p>일부 ISP 리졸버는 자기 부하와 상류 질의량을 줄이려고 <b>짧은 TTL을 그대로 따르지 않는다.</b> 대표적인 리졸버 구현에는 <b>캐시 TTL의 하한을 강제하는 설정</b>이 있다 — Unbound의 <code>cache-min-ttl</code>, BIND의 <code>min-cache-ttl</code> 같은 것이다. 운영자가 이 값을 예컨대 300초로 켜두면, <b>내가 TTL 30초로 내려도 그 리졸버를 쓰는 사용자에게는 300초로 동작한다.</b></p>
+
+<div class="callout trap">
+  <span class="t">내 쪽에서는 감지할 방법도, 통제할 방법도 없다</span>
+  그래서 정확한 표현은 이렇다 — <b>TTL은 "내가 통제하는 상한"이 아니라 "권한 서버가 권고하는 값"에 가깝다.</b> 전환 후 트래픽이 0에 수렴하다가 <b>완전한 0이 되지 않고 남는 긴 꼬리</b>의 주요 원인이 이것이다.
+</div>
+
+<h4>짝으로 알아둘 것 — 부정 응답도 캐시된다</h4>
+
+<p><b>"그런 이름은 없다"(NXDOMAIN)는 답 역시 캐시된다.</b> 그 시간은 해당 영역의 <b>SOA 레코드에 적힌 값</b>이 정한다. 그래서 <b>아직 만들지 않은 이름을 실수로 한 번 조회해버리면, 레코드를 만든 뒤에도 한동안 "없음"으로 나온다.</b> 새 도메인을 붙이는 날 <b>"레코드 만들었는데 왜 안 보이죠"</b>의 흔한 정체가 이것이다.</p>
+
+<div class="codehead plain"><span class="tag">진단</span> 부정 캐시 시간 확인 — SOA의 마지막 숫자</div>
+<pre><code>dig example.com SOA +noall +answer</code></pre>
+
+<div class="callout warn" style="margin-bottom:0">
+  <span class="t">여기서 나오는 작업 습관</span>
+  <b>레코드를 만들기 <span style="color:#dc2626">전에</span> 그 이름을 조회해보지 않는다.</b> 확인하고 싶으면 <b>권한 서버에 직접</b>(<code>dig @ns1.example.com</code>) 물어서 공용 리졸버에 부정 응답을 심지 않는다.
+</div>
+
+<h3>4-2. ② 애플리케이션 자체 캐시 — JVM의 DNS 캐시</h3>
+
+<p>OS <b>밖에도</b> 캐시가 있다. 자바의 <code>InetAddress</code>는 조회 결과를 <b>JVM 자체 캐시</b>에 담아두고, <b>DNS 응답의 TTL이 아니라 JVM 자신의 정책</b>을 따른다. 즉 권한 서버가 TTL 30초를 줘도 <b>JVM은 그것과 무관하게 자기 정책대로 붙들 수 있다.</b></p>
+
+<div class="callout info">
+  <span class="t">설정 방법은 01번 문서에 있다 — 여기서 알아야 할 것은 "결과"다</span>
+  이 캐시의 동작과 설정 코드는 <code>01-url-to-page-dns-tcp-tls-http.md</code> 2-2절에서 다뤘다. 이 문서에서 필요한 것은 그 <b>귀결</b>이다 — <b>"TTL을 30초로 줄여뒀으니 30초면 넘어온다"는 계산이 자바 서버에서는 성립하지 않을 수 있고, 심하면 재기동 전까지 옛 IP를 계속 찌른다.</b> 상대 팀이 DNS를 전환했는데 <b>우리 서버만</b> 계속 옛 인스턴스로 붙는 사고의 절반이 여기서 나온다.
+</div>
+
+<div class="memo red">
+  <h4>자물쇠가 두 개라서, 하나만 풀면 증상이 그대로 남는다</h4>
+  <p style="margin-bottom:0">커넥션 풀이 연결을 <b>새로 맺으려는 그 순간</b>에도 JVM 캐시가 옛 IP를 돌려주면 <b>재연결을 해도 다시 옛 서버에 붙는다.</b> 즉 <b>풀 수명 설정(5절)</b>과 <b>JVM DNS 캐시 TTL</b>은 <b>둘 중 긴 쪽이 실제 전환 지연을 지배</b>하므로 반드시 함께 잡아야 한다.</p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. ③ 커넥션 풀 — 가장 실무적인 함정</h2>
+
+<p><b>이 문서에서 가장 실무적인 함정이고, 가장 자주 잊힌다.</b> 앞의 함정들은 "DNS가 느리다"는 이야기지만, 이것은 <b>DNS 계층의 문제가 아예 아니라서</b> TTL 기준으로 세운 일정에 <b>잡히지도 않는다.</b></p>
+
+<h3>5-1. 전제 — DNS는 "새 연결을 맺을 때"만 조회된다</h3>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k">조회 시점은 딱 하나</div>
+    <div class="d"><b>새 TCP 연결을 맺으려 할 때.</b> 이름으로는 패킷을 보낼 수 없으니 연결 직전에 IP로 바꿔야 하고, 그때 <b>한 번</b> 조회한다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k">연결은 4-튜플로 고정된다</div>
+    <div class="d">출발지 IP · 출발지 포트 · <b>목적지 IP</b> · 목적지 포트. <b>목적지 IP가 그 연결의 정체성의 일부</b>라서, <b>연결이 살아 있는 동안 목적지가 바뀔 수 있는 방법은 없다.</b></div>
+  </div>
+</div>
+
+<p>여기서 결론이 자동으로 나온다. <b>이미 맺어진 keep-alive 커넥션과 풀 안의 커넥션은 DNS를 다시 볼 계기가 없다.</b> 커넥션 풀의 존재 이유가 <b>"연결을 다시 맺지 않는 것"</b>이니까 — <b>재조회 계기가 없는 것이 버그가 아니라 설계 그대로다.</b> (<code>10-keepalive-connection-pool-time-wait.md</code> 2-2절)</p>
+
+<div class="callout info">
+  <span class="t">비유 — 이사와 우편물</span>
+  DNS 레코드 변경은 <b>"이사했으니 새 주소를 알립니다"</b>라는 공지다. 지인들의 주소록(캐시)은 각자 갱신 시점이 달라 <b>물결처럼</b> 반영된다(2절). 그런데 커넥션 풀은 <b>이미 옛 집으로 깔아둔 전용 배달 라인</b>이다 — 공지를 몇 번 하든, 그 라인은 <b>주소록을 다시 볼 이유가 없어서</b> 계속 옛 집으로 간다. <b>라인 자체를 끊어야만</b> 새 주소를 찾는다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 348" role="img" aria-label="시간축 위에 세 개의 행을 그린 도식. 첫 행은 권한 DNS 레코드가 t등100초에 옛 IP 10.0.0.10에서 새 IP 10.0.0.20으로 바뀐다. 둘째 행은 새로 연결하는 클라이언트가 TTL 60초 만료 후인 t등160초부터 새 IP로 정상 전환된다. 셋째 행은 우리 서비스의 커넥션 풀 50개가 처음부터 끝까지 옛 IP에 물려 있어 트래픽 100퍼센트가 계속 구서버로 가고, 구서버를 종료하는 순간 우리 서비스만 전면 장애가 난다">
+    <defs>
+      <marker id="p1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">DNS는 정상적으로 전환됐는데, 우리 트래픽만 100% 구서버로 간다</text>
+
+    <line x1="540" y1="44" x2="540" y2="272" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="6 4"/>
+    <text x="546" y="56" font-size="11.5" fill="#b91c1c" font-weight="700">t=100s 레코드 변경 (TTL 60)</text>
+    <line x1="756" y1="44" x2="756" y2="272" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="6 4"/>
+    <text x="762" y="74" font-size="11.5" fill="#1d4ed8" font-weight="700">t=160s TTL 만료</text>
+
+    <g font-size="12" fill="#374151" text-anchor="end" font-weight="700">
+      <text x="172" y="106">권한 DNS 레코드</text>
+      <text x="172" y="160">새로 연결하는<tspan x="172" dy="15">클라이언트</tspan></text>
+      <text x="172" y="228">우리 서비스<tspan x="172" dy="15">커넥션 풀 (50)</tspan></text>
+    </g>
+
+    <rect x="180" y="88" width="360" height="26" rx="4" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="360" y="105" font-size="11.5" class="mono" fill="#b91c1c" text-anchor="middle">10.0.0.10 (구서버)</text>
+    <rect x="540" y="88" width="460" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="770" y="105" font-size="11.5" class="mono" fill="#166534" text-anchor="middle">10.0.0.20 (신서버)</text>
+
+    <rect x="180" y="150" width="576" height="26" rx="4" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="468" y="167" font-size="11.5" class="mono" fill="#b91c1c" text-anchor="middle">10.0.0.10 — 아직 캐시가 살아 있다</text>
+    <rect x="756" y="150" width="244" height="26" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="878" y="167" font-size="11.5" class="mono" fill="#166534" text-anchor="middle">10.0.0.20 — 정상 전환</text>
+
+    <rect x="180" y="206" width="820" height="42" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+    <text x="590" y="223" font-size="12.5" class="mono" fill="#b91c1c" text-anchor="middle" font-weight="700">10.0.0.10 — 끝까지 구서버. 트래픽 100%</text>
+    <text x="590" y="240" font-size="11" fill="#7f1d1d" text-anchor="middle">이미 연결돼 있으므로 <tspan font-weight="700">DNS를 다시 조회할 계기가 없다</tspan> — 4-튜플로 목적지가 고정돼 있다</text>
+
+    <line x1="180" y1="272" x2="1030" y2="272" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#p1)"/>
+    <g font-size="11" fill="#6b7280" class="mono" text-anchor="middle">
+      <text x="180" y="290">0</text><text x="360" y="290">50s</text><text x="540" y="290">100s</text><text x="756" y="290">160s</text><text x="1000" y="290">…</text>
+    </g>
+
+    <rect x="20" y="304" width="1080" height="34" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="326" font-size="12.5" fill="#b91c1c" font-weight="700">구서버를 종료하는 순간 → 우리 서비스만 전면 장애. 상대 팀은 "우리는 어제 전환 끝냈는데요"라고 답한다. TTL을 아무리 줄여도 이 트래픽은 안 넘어온다.</text>
+  </svg>
+  <figcaption>두 번째 행과 세 번째 행의 차이가 전부다. <b>새로 연결하는 클라이언트에게는 TTL이 작동하지만, 이미 연결돼 있는 쪽에게는 TTL이라는 개념 자체가 적용되지 않는다.</b> 그래서 이 함정은 <b>"TTL 60초니까 2분이면 끝"이라는 일정표에 아예 나타나지 않는다.</b></figcaption>
+</figure>
+
+<h3>5-2. 대응 — 자물쇠 네 개를 전부 푼다</h3>
+
+<div class="memo green">
+  <h4>암기: <span style="color:#16a34a">수 · 캐 · 드 · 롤</span> — 연결 <b>수</b>명 · JVM <b>캐</b>시 · 서버 <b>드</b>레인 · <b>롤</b>링 재시작</h4>
+  <div class="grid g4">
+    <div class="tile"><div class="k">① 수명</div><div class="d">풀 커넥션에 <b>최대 수명</b>을 준다 → 재조회 계기를 <b>주기적으로 만든다</b></div></div>
+    <div class="tile"><div class="k">② 캐시</div><div class="d">JVM DNS 캐시 TTL을 <b>명시</b> → 재연결 순간 <b>새 IP가 나오게</b></div></div>
+    <div class="tile"><div class="k">③ 드레인</div><div class="d">구서버가 <b>연결을 우아하게 놓아준다</b> → 통제 밖 클라이언트용</div></div>
+    <div class="tile ok"><div class="k">④ 롤링</div><div class="d">전환 절차에 <b>롤링 재시작</b> 한 줄 → 가장 확실하다</div></div>
+  </div>
+  <p style="margin-bottom:0">①②는 <b>우리가 클라이언트일 때</b>의 조치, ③은 <b>우리가 서버일 때</b>의 조치, ④는 <b>절차</b>다. ①과 ②는 <b>둘 중 긴 쪽이 실제 전환 지연을 지배</b>하므로 함께 잡는다.</p>
+</div>
+
+<h4>① 연결에 최대 수명을 준다 — 이 값이 곧 "전환 반영의 상한"</h4>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 풀에 수명 제한이 없다</div>
+<pre><code><span class="cm">// 연결이 정상인 한 영원히 재사용된다.
+// - 상대가 DNS를 바꾸든 스케일 아웃으로 인스턴스를 늘리든
+//   우리는 계속 옛 IP만 본다.
+// - 새로 뜬 인스턴스로 트래픽이 한 건도 안 가는
+//   부하 편중도 같은 원인이다.</span>
+PoolingHttpClientConnectionManager pool =
+    PoolingHttpClientConnectionManagerBuilder.create()
+<span class="ln-bad">        .setMaxConnPerRoute(<span class="st">50</span>)   <span class="note">수명 제한 없음</span></span>        .build();
+
+CloseableHttpClient http = HttpClients.custom()
+        .setConnectionManager(pool)
+<span class="ln-bad">        .build();                <span class="note">유휴 정리도 없음</span></span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 재조회 계기를 강제로 만든다</div>
+<pre><code>PoolingHttpClientConnectionManager pool =
+    PoolingHttpClientConnectionManagerBuilder.create()
+        .setMaxConnPerRoute(<span class="st">50</span>)
+        .setDefaultConnectionConfig(ConnectionConfig.custom()
+<span class="ln-good">            <span class="cm">// 연결 하나의 최대 수명. 5분이 지나면
+            // 멀쩡해도 버리고 새로 맺는다.</span>
+            .setTimeToLive(TimeValue.ofMinutes(<span class="st">5</span>))</span>            .build())
+        .build();
+
+CloseableHttpClient http = HttpClients.custom()
+        .setConnectionManager(pool)
+<span class="ln-good">        <span class="cm">// 놀고 있는 연결일수록 옛 IP에 오래 물려 있다.</span>
+        .evictIdleConnections(TimeValue.ofSeconds(<span class="st">60</span>))</span>        .build();</code></pre>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">같은 나사의 다른 이름 — 어디에나 있다</span>
+  Reactor Netty(WebClient)는 <code>maxLifeTime</code>, HikariCP는 <code>maxLifetime</code>이 <b>정확히 같은 나사</b>다(<code>10-keepalive-connection-pool-time-wait.md</code> 1-4절의 네 나사 표). <b>DB 엔드포인트가 failover로 IP가 바뀌는 구성에서 <code>maxLifetime</code>이 없으면 재기동 전까지 옛 인스턴스에 계속 붙어 있는다.</b> 값을 정할 때의 기준은 하나다 — <b>"상대가 DNS를 바꾼 뒤 우리가 따라가는 데 걸리는 최대 시간"을 내가 몇 분으로 약속할 것인가.</b> 전환이 잦은 의존성일수록 짧게 잡는다.
+</div>
+
+<h4>③ 전환 시점에 옛 서버가 연결을 놓아준다 (drain)</h4>
+
+<p>①②는 <b>클라이언트 쪽 조치</b>라서, <b>우리가 통제하지 못하는 외부 클라이언트</b>에는 적용할 수 없다. 그래서 <b>서버 쪽에서 연결을 우아하게 끊어 클라이언트가 재연결하도록 유도</b>하는 방법이 함께 필요하다.</p>
+
+<div class="codehead good"><span class="tag">nginx</span> 구서버에서 전환 시작과 함께 keep-alive를 끈다</div>
+<pre><code><span class="cm"># keepalive_timeout 0 은 응답마다 "Connection: close" 헤더를 붙인다.
+# 클라이언트는 그 응답을 받은 뒤 이 연결을 재사용하지 않고 닫으므로,
+# 다음 요청은 반드시 새 연결 = 새 DNS 조회가 된다.
+#
+# 강제 종료(연결을 끊어버리는 것)와 달리 진행 중인 요청은 정상으로 끝나므로
+# 사용자에게 오류가 보이지 않는다. 이것이 "우아하게"의 뜻이다.</span>
+keepalive_timeout <span class="st">0</span>;</code></pre>
+
+<div class="memo">
+  <h4>④ 그리고 가장 확실한 것 — 전환 절차에 롤링 재시작 한 줄</h4>
+  <p style="margin-bottom:0">프로세스가 새로 뜨면 <b>풀도 JVM 캐시도 전부 비어 있으므로 무조건 새 IP로 붙는다.</b> 인스턴스를 한 대씩 순차 교체하면 서비스 중단도 없다.</p>
+  <div class="rule">"설정을 정교하게 맞추는 것"보다 <b>"전환 절차에 롤링 재시작을 한 줄 넣는 것"</b>이 실패 확률이 낮다</div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. ④ TTL 인하 자체에 리드타임이 필요하다</h2>
+
+<p><b>"전환 당일에 TTL을 낮추고 바로 전환하자"는 계획은 이미 늦었다.</b> 이유를 한 단계씩 따라가 보자. TTL은 <b>응답에 함께 실려 나가는 값</b>이다. 그러니 "TTL을 60초로 낮췄다"는 사실을 어떤 리졸버가 알려면 <b>그 리졸버가 새로 조회해서 새 응답을 받아야</b> 한다. 그런데 그 리졸버는 지금 <b>옛 응답을 옛 TTL(예: 86400초)로 캐시하고 있으므로, 그 옛 TTL이 만료돼야 새로 조회한다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 960 296" role="img" aria-label="기존 TTL이 86400초인 상태에서 t등0에 TTL을 60으로 낮추면, 이미 옛 응답을 캐시한 리졸버는 최대 86400초 동안 TTL이 바뀐 사실 자체를 모른다. 그 구간에는 TTL 60짜리와 TTL 86400짜리가 세상에 섞여 있고, 옛 TTL이 모두 만료된 뒤부터 비로소 전환하면 60초 안에 대부분 넘어온다는 계산이 성립한다">
+    <text x="480" y="26" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">TTL 인하는 그 자체가 "기존 TTL만큼의 전파 시간"을 요구한다</text>
+
+    <line x1="150" y1="52" x2="150" y2="216" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="6 4"/>
+    <text x="156" y="48" font-size="11.5" fill="#1d4ed8" font-weight="700">t=0 : TTL 86400 → 60 으로 인하</text>
+    <line x1="720" y1="52" x2="720" y2="216" stroke="#16a34a" stroke-width="2"/>
+    <text x="714" y="48" font-size="11.5" fill="#166534" font-weight="700" text-anchor="end">t=86400 : 옛 TTL이 모두 만료된 뒤</text>
+
+    <g font-size="11.5" fill="#374151" text-anchor="end" font-weight="700">
+      <text x="140" y="80">권한 서버</text><text x="140" y="122">리졸버 A<tspan x="140" dy="14" font-weight="400" font-size="10.5">(직전에 조회함)</tspan></text><text x="140" y="182">리졸버 B<tspan x="140" dy="14" font-weight="400" font-size="10.5">(t=0 직후 조회)</tspan></text>
+    </g>
+
+    <rect x="150" y="64" width="790" height="24" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="545" y="81" font-size="11" class="mono" fill="#166534" text-anchor="middle">응답에 TTL 60 을 실어 보낸다 (t=0 이후 계속)</text>
+
+    <rect x="150" y="108" width="570" height="24" rx="4" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="435" y="125" font-size="11" fill="#b91c1c" text-anchor="middle">옛 응답을 TTL 86400 으로 캐시 중 — TTL이 바뀐 사실을 최대 24시간 동안 모른다</text>
+    <rect x="720" y="108" width="220" height="24" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="830" y="125" font-size="11" fill="#166534" text-anchor="middle">이제 TTL 60 을 받아간다</text>
+
+    <rect x="150" y="168" width="790" height="24" rx="4" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="545" y="185" font-size="11" fill="#166534" text-anchor="middle">TTL 60 — 이 리졸버는 처음부터 빠르게 따라온다</text>
+
+    <rect x="150" y="212" width="570" height="30" rx="6" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="435" y="232" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">혼재 구간 — TTL 60 을 든 캐시와 TTL 86400 을 든 캐시가 세상에 섞여 있다</text>
+    <rect x="720" y="212" width="220" height="30" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="830" y="232" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">★ 여기서부터 전환</text>
+
+    <text x="480" y="266" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">"전환하면 60초 안에 대부분 넘어온다"는 계산은 초록 선 오른쪽에서만 성립한다</text>
+    <text x="480" y="286" font-size="11.5" fill="#6b7280" text-anchor="middle">당일에 TTL을 낮추고 전환하면, 옛 TTL로 캐시된 리졸버들은 <tspan font-weight="700" fill="#1f2937">24시간 동안 옛 서버를 바라본다</tspan></text>
+  </svg>
+  <figcaption>리졸버 A와 B의 차이는 <b>"인하 직전에 조회했는가, 직후에 조회했는가"</b>뿐이다. 그 우연 하나로 <b>따라오는 속도가 24시간 차이 난다.</b></figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>그래서 전환 계획의 첫 줄은 언제나 이것이다</h4>
+  <div class="rule red">D-데이보다 <b>기존 TTL 이상 앞서서</b> TTL 인하</div>
+  <p style="margin-bottom:0">기존 TTL이 24시간이면 <b>최소 하루, 안전하게는 며칠 앞</b>이다. 이게 계획서 한 줄이 아니라 <b>실제 사고의 원인</b>이 되는 경로는 이렇다 — 담당자는 <b>"TTL 60초로 낮췄으니 1분이면 끝"</b>이라고 생각하고 옛 서버를 몇 분 뒤에 내려버린다. 그 결과가 다음 절이다.</p>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. ⑤ 옛 서버를 바로 끄면 안 된다 — 긴 꼬리 4종</h2>
+
+<p>앞의 네 함정을 전부 합치면 결론이 하나 나온다. <b>전환 후에도 옛 서버로 트래픽이 한동안, 그리고 예상보다 오래 온다.</b> 남는 트래픽의 출처는 넷이고, <b>넷의 성격이 각각 다르다.</b></p>
+
+<div class="memo red">
+  <h4>암기: <span style="color:#dc2626">잔 · 무 · 풀 · 박</span> — <b>잔</b>여 TTL · TTL <b>무</b>시 캐시 · 커넥션 <b>풀</b> · 하드코딩돼 <b>박</b>힌 IP</h4>
+  <div class="grid g4">
+    <div class="tile red"><div class="k">잔여 TTL</div><div class="s">2절</div><div class="d">전환 직전에 조회해간 리졸버들이 <b>각자의 남은 TTL만큼</b> 옛 답을 계속 나눠준다. <b>기다리면 끝난다.</b></div></div>
+    <div class="tile red"><div class="k">TTL 무시 캐시</div><div class="s">4-1절</div><div class="d">최소 TTL 강제 설정 때문에 <b>내가 정한 시간보다 오래</b> 붙들고 있다. <b>기다리면 끝나지만 얼마나일지 모른다.</b></div></div>
+    <div class="tile red"><div class="k">커넥션 풀 · keep-alive</div><div class="s">5절</div><div class="d">DNS가 어떻게 바뀌든 <b>이미 맺어진 연결은 옛 IP로 간다.</b> <b>TTL과 아무 상관이 없어서 TTL 기준 일정에 잡히지 않는다.</b></div></div>
+    <div class="tile red"><div class="k">박혀 있는 IP</div><div class="s">관측으로만 발견</div><div class="d">배치 스크립트, 모니터링 설정, 파트너사 방화벽 허용 목록, 누군가의 <code>/etc/hosts</code>. <b>이건 만료되지 않는다.</b></div></div>
+  </div>
+  <p style="margin-bottom:0"><b>넷을 "기다리면 사라지는가"로 갈라보면 대응이 정해진다</b> — 잔여 TTL과 TTL 무시 캐시는 <b>시간이 해결</b>하고, 커넥션 풀은 <b>drain·롤링 재시작으로 밀어내야</b> 하고, 박혀 있는 IP는 <b>찾아서 고치기 전에는 영원히 남는다.</b></p>
+</div>
+
+<div class="callout trap">
+  <span class="t">옛 서버를 즉시 끄면 이 트래픽이 전부 "연결 실패"가 된다 — 그리고 장애의 성질이 고약하다</span>
+  <b>전체 사용자의 몇 퍼센트만 겪고</b>, <b>담당자 본인은 재현이 안 되며</b>(본인 캐시는 이미 갱신됐으니까), <b>신고가 며칠에 걸쳐 산발적으로</b> 들어온다. <b>"재현 안 되는 접속 장애 신고가 며칠간 쌓이는" 상황의 정체가 대개 이것이다.</b> 게다가 그때는 이미 <b>구서버가 없어서 되돌릴 수도 없다.</b>
+</div>
+
+<div class="memo green">
+  <h4>규칙</h4>
+  <p>옛 서버는 <b>유예 기간 동안 정상 서비스를 유지</b>하거나, 최소한 <b>새 서버로 프록시하는 상태</b>로 남긴다. 그리고 <b>유입 트래픽이 0에 수렴하는 것을 관측으로 확인한 뒤에</b> 내린다.</p>
+  <div class="rule ok" style="margin-bottom:0">구서버 종료 시점은 <b>날짜가 정하는 것이 아니라 관측 결과가 정한다</b></div>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. DNS failover의 시간 분해 — RTO 산수</h2>
+
+<p><b>DNS failover</b>는 헬스체크가 실패하면 레코드를 대기 서버 IP로 자동 교체하는 방식이다. 설정이 간단하고 인프라를 추가로 살 필요가 없어서 <b>가장 손쉬운 재해 대비처럼 보인다.</b> 그런데 <b>"장애 발생부터 트래픽이 실제로 넘어가기까지"를 단계로 분해하면</b> 그림이 달라진다 — <b>지연이 한 곳이 아니라 네 곳에서 각각 발생하고, 그 값이 전부 더해진다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="장애 발생부터 트래픽 전환까지의 시간을 네 구간으로 분해한 누적 막대. 첫째 헬스체크 감지 90초, 둘째 권한 서버 갱신 반영 20초, 셋째 캐시 TTL 만료 60초로 누적 170초이며, 넷째 클라이언트가 실제로 다시 조회하는 시점은 값을 정할 수 없다. RTO 목표 30초 선은 첫 구간 안에 있어 감지 단계도 끝나기 전이다">
+    <defs>
+      <pattern id="hz" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="#f1f5f9"/><line x1="0" y1="0" x2="0" y2="8" stroke="#cbd5e1" stroke-width="3"/></pattern>
+    </defs>
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"장애 발생 → 트래픽 전환" 은 네 구간의 <tspan fill="#dc2626">합</tspan>이다 (공격적으로 TTL 60초를 걸어도)</text>
+
+    <line x1="236" y1="84" x2="236" y2="186" stroke="#16a34a" stroke-width="2" stroke-dasharray="5 4"/>
+    <text x="244" y="80" font-size="12" fill="#166534" font-weight="700">★ RTO 목표 30초 — 여기가 목표선이다. 아직 감지도 끝나지 않았다</text>
+
+    <rect x="140" y="118" width="288" height="46" rx="4" fill="#fde68a" stroke="#d97706"/>
+    <text x="284" y="147" font-size="12.5" fill="#92400e" text-anchor="middle" font-weight="700">① 헬스체크 감지  90s</text>
+    <rect x="428" y="118" width="64" height="46" rx="4" fill="#bfdbfe" stroke="#2563eb"/>
+    <text x="460" y="141" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">②</text>
+    <text x="460" y="156" font-size="10.5" fill="#1d4ed8" text-anchor="middle">20s</text>
+    <rect x="492" y="118" width="192" height="46" rx="4" fill="#fecaca" stroke="#dc2626"/>
+    <text x="588" y="147" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">③ TTL 만료  60s</text>
+    <rect x="684" y="118" width="356" height="46" rx="4" fill="url(#hz)" stroke="#94a3b8" stroke-dasharray="6 4"/>
+    <text x="862" y="141" font-size="12.5" fill="#475569" text-anchor="middle" font-weight="700">④ 클라이언트가 실제로 다시 조회하는 시점 = ???</text>
+    <text x="862" y="157" font-size="11" fill="#64748b" text-anchor="middle">커넥션 풀이 옛 IP에 물려 있으면 이 구간이 <tspan font-weight="700">영영 안 온다</tspan> (5절)</text>
+
+    <line x1="140" y1="176" x2="1060" y2="176" stroke="#94a3b8" stroke-width="1.4"/>
+    <g font-size="11" fill="#374151" class="mono" text-anchor="middle" font-weight="700">
+      <text x="140" y="194">t=0</text><text x="428" y="194">t=90s</text><text x="492" y="194">t=110s</text><text x="684" y="194">t=170s</text><text x="900" y="194">t=???</text>
+    </g>
+    <g stroke="#94a3b8"><line x1="140" y1="172" x2="140" y2="180"/><line x1="428" y1="172" x2="428" y2="180"/><line x1="492" y1="172" x2="492" y2="180"/><line x1="684" y1="172" x2="684" y2="180"/></g>
+    <text x="80" y="147" font-size="11.5" fill="#374151" text-anchor="end" font-weight="700">장애 발생</text>
+
+    <!-- legend -->
+    <g>
+      <rect x="140" y="216" width="12" height="12" rx="2" fill="#fde68a" stroke="#d97706"/>
+      <text x="160" y="226" font-size="12" fill="#1f2937" font-weight="700">① 헬스체크 감지 — 간격 × 실패 임계 횟수</text>
+      <text x="160" y="242" font-size="11" fill="#6b7280">예: 30초 × 3회 = 최대 90초. 한 번 실패로 전환하면</text>
+      <text x="160" y="257" font-size="11" fill="#6b7280">순간 흔들림에도 전환되므로 <tspan font-weight="700" fill="#374151">안정성의 대가</tspan>다.</text>
+
+      <rect x="140" y="276" width="12" height="12" rx="2" fill="#bfdbfe" stroke="#2563eb"/>
+      <text x="160" y="286" font-size="12" fill="#1f2937" font-weight="700">② 권한 서버들에 갱신이 반영되는 시간 — 수초~수십초</text>
+      <text x="160" y="302" font-size="11" fill="#6b7280">관리형 DNS는 권한 서버를 여러 지역에 둔다</text>
+
+      <rect x="620" y="216" width="12" height="12" rx="2" fill="#fecaca" stroke="#dc2626"/>
+      <text x="640" y="226" font-size="12" fill="#1f2937" font-weight="700">③ 캐시 TTL 만료 — 예: TTL 60초 → 사실상 60초 + 꼬리</text>
+      <text x="640" y="242" font-size="11" fill="#6b7280">리졸버가 t=0 직전에 조회했다면 TTL을 꽉 채워 기다린다. 만료가 흩어지고,</text>
+      <text x="640" y="257" font-size="11" fill="#6b7280">TTL을 늘려 잡는 리졸버는 더 오래 걸린다 (4-1절).</text>
+
+      <rect x="620" y="276" width="12" height="12" rx="2" fill="url(#hz)" stroke="#94a3b8"/>
+      <text x="640" y="286" font-size="12" fill="#1f2937" font-weight="700">④ 클라이언트의 재조회 — <tspan fill="#b91c1c">값을 정할 수조차 없다</tspan></text>
+      <text x="640" y="302" font-size="11" fill="#6b7280">DNS는 새 연결을 맺을 때만 조회된다 — 클라이언트 구현에 달렸다</text>
+    </g>
+  </svg>
+  <figcaption>숫자를 더해 보면 <b>감지 + 갱신 + TTL만으로 170초 — 공격적으로 TTL 60초를 걸어도 3분 가까이</b> 나온다. 그리고 ④는 <b>값을 정할 수조차 없다.</b></figcaption>
+</figure>
+
+<div class="memo">
+  <h4>암기: <span style="color:#2563eb">감 · 전 · 만 · 재</span> — <b>감</b>지 → 권한 서버 <b>전</b>파 → TTL <b>만</b>료 → 클라이언트 <b>재</b>조회</h4>
+  <div class="rule red">"우리 RTO는 30초인데 failover는 DNS로 한다"는 계획은 <b>산수상 성립하지 않는다</b></div>
+  <p style="margin-bottom:0">RTO(Recovery Time Objective)는 <b>장애 발생부터 서비스 복구까지 허용하는 목표 시간</b>이다. <b>이 산수를 해봤는지가 재해 복구 계획이 "문서"인지 "운영"인지를 가른다.</b> 각 단계 값은 제품마다 다르므로 <b>자기 환경의 숫자를 넣어 직접 계산해야 한다</b> — ①은 관리형 DNS의 헬스체크 간격·임계 횟수(제품 문서), ②는 제공자 SLA나 실측, ③은 내가 정한 TTL, ④는 우리 클라이언트 설정이다.</p>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. "그럼 TTL을 아주 짧게 유지하면 되지 않나" — 대가 넷</h2>
+
+<p>"평소에 TTL을 5초로 두면 8절의 ③이 사라지지 않나?"는 <b>자연스러운 반문이고, 실제로 첫 꼬리질문으로 나와야 하는 내용</b>이다. 답은 <b>"비용이 따르고, 그래도 문제가 다 안 풀린다"</b>이다.</p>
+
+<div class="memo">
+  <h4>암기: <span style="color:#2563eb">질 · 지 · 가 · 안</span> — <b>질</b>의량(비용) · 사용자 <b>지</b>연 · <b>가</b>용성 · 그래도 다 <b>안</b> 풀림</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">① 질의량 = 비용</div><div class="d">캐시 적중률이 TTL에 비례하므로 <b>TTL을 1/10로 줄이면 권한 서버 질의가 그만큼 는다.</b> 관리형 DNS는 대체로 <b>질의 건수로 과금</b>하므로 요금이 그대로 따라 오르고, 자체 운영이면 <b>권한 서버를 증설</b>해야 한다.</div></div>
+    <div class="tile"><div class="k">② 사용자 지연</div><div class="d">캐시가 비면 클라이언트는 조회를 기다린다. 미적중 조회는 계층을 타느라 <b>여러 왕복</b>이 들 수 있다. 개별로는 수십 ms지만 <b>모든 사용자의 모든 새 연결에 곱해진다.</b></div></div>
+    <div class="tile red"><div class="k">③ 가용성 — 가장 중요</div><div class="d"><b>캐시는 DNS 장애 때의 방패다.</b> TTL이 길면 권한 서버가 잠깐 죽어도 세상은 캐시로 굴러간다. <b>TTL이 5초면 권한 서버 장애가 곧바로 전면 서비스 장애</b>가 된다 — 이름을 못 풀면 아무 데도 접속할 수 없다.</div></div>
+    <div class="tile red"><div class="k">④ 그래도 다 안 풀린다</div><div class="d">최소 TTL 강제 리졸버는 내 값을 안 따르고(4-1), 커넥션 풀은 <b>TTL과 무관하게</b> 옛 IP를 붙들고 있으며(5절), 8절의 ①②④는 <b>TTL을 0으로 만들어도 그대로 남는다.</b></div></div>
+  </div>
+  <div class="rule">TTL 단축은 <b>전환 속도를 사는 대신 DNS 인프라의 가용성 요구를 그만큼 올리는 거래</b>다</div>
+</div>
+
+<div class="callout ok" style="margin-bottom:0">
+  <span class="t">그래서 실무의 표준 운영</span>
+  <b>"평상시에는 적당한 TTL(수 분 단위)을 쓰고, 계획된 전환 전에만 미리 낮췄다가 끝나면 되돌린다."</b> 낮춘 채로 방치하면 ①②③의 값을 계속 지불하게 되므로, <b>원복이 절차의 마지막 줄에 반드시 들어가야 한다</b> — <b>낮춘 채 방치하는 사고가 실제로 흔하다.</b>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 초 단위가 필요하면 DNS 밖에서 바꾼다</h2>
+
+<p>8절과 9절을 합치면 원칙이 하나 나온다. <b>빠른 전환이 필요하면 클라이언트가 보는 IP를 바꾸지 말고, 그 IP 뒤에서 바꾼다.</b> DNS가 느린 근본 이유는 <b>"바뀐 사실을 전 세계의 캐시에 알려야 한다"</b>는 데 있다 — 그러니 <b>알릴 필요가 없게 만들면 된다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 356" role="img" aria-label="왼쪽에는 클라이언트와 이름 api.example.com 그리고 그 위의 권한 DNS와 전 세계 캐시가 있고, 오른쪽에는 고정 IP를 가진 로드밸런서와 그 뒤의 blue 서버군, green 서버군이 있다. 가운데 세로 점선이 전파 경계이며, 경계 왼쪽에서 레코드를 바꾸면 전 세계 캐시에 전파해야 해서 분 단위가 걸리고, 경계 오른쪽에서 대상 그룹을 바꾸면 알릴 대상이 없어 즉시 반영된다">
+    <defs>
+      <marker id="s1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="s2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="470" y="44" font-size="12.5" font-weight="700" fill="#475569" text-anchor="middle">전파 경계</text>
+    <line x1="470" y1="52" x2="470" y2="292" stroke="#475569" stroke-width="2.5" stroke-dasharray="8 6"/>
+    <text x="240" y="26" font-size="13.5" font-weight="700" fill="#dc2626" text-anchor="middle">이 왼쪽을 바꾸면 → 전 세계에 알려야 한다</text>
+    <text x="800" y="26" font-size="13.5" font-weight="700" fill="#16a34a" text-anchor="middle">이 오른쪽을 바꾸면 → 알릴 대상이 없다</text>
+
+    <rect x="210" y="62" width="200" height="56" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="310" y="84" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">권한 DNS + 전 세계 캐시</text>
+    <text x="310" y="102" font-size="10.5" fill="#7f1d1d" text-anchor="middle">브라우저 · OS · 공유기 · ISP 리졸버</text>
+    <line x1="310" y1="118" x2="310" y2="136" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#s1)"/>
+
+    <rect x="40" y="140" width="130" height="64" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="105" y="177" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="700">클라이언트</text>
+    <line x1="170" y1="172" x2="206" y2="172" stroke="#475569" stroke-width="1.8" marker-end="url(#s1)"/>
+
+    <rect x="210" y="140" width="200" height="64" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="310" y="166" font-size="11" fill="#6b7280" text-anchor="middle">이름</text>
+    <text x="310" y="187" font-size="12.5" class="mono" fill="#1f2937" text-anchor="middle" font-weight="700">api.example.com</text>
+    <line x1="410" y1="172" x2="516" y2="172" stroke="#475569" stroke-width="1.8" marker-end="url(#s1)"/>
+
+    <rect x="520" y="128" width="210" height="88" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.5"/>
+    <text x="625" y="152" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">LB / VIP</text>
+    <text x="625" y="174" font-size="13" class="mono" fill="#166534" text-anchor="middle" font-weight="700">203.0.113.10</text>
+    <text x="625" y="196" font-size="10.5" fill="#166534" text-anchor="middle">클라이언트가 보는 IP — 안 바뀐다</text>
+
+    <line x1="730" y1="164" x2="826" y2="118" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s2)"/>
+    <line x1="730" y1="184" x2="826" y2="192" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#s1)"/>
+    <rect x="830" y="84" width="210" height="52" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="935" y="115" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">blue 서버군 (현재 대상)</text>
+    <rect x="830" y="166" width="210" height="52" rx="9" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="935" y="197" font-size="12.5" fill="#64748b" text-anchor="middle" font-weight="700">green 서버군 (대기)</text>
+
+    <rect x="40" y="232" width="370" height="58" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="58" y="254" font-size="12.5" fill="#b91c1c" font-weight="700">① DNS 레코드 교체</text>
+    <text x="58" y="273" font-size="11.5" fill="#7f1d1d">전 세계 캐시에 전파해야 한다 → <tspan font-weight="700">분 단위 + 긴 꼬리</tspan></text>
+
+    <rect x="520" y="232" width="520" height="58" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="538" y="254" font-size="12.5" fill="#166534" font-weight="700">② LB 대상 그룹 교체 (blue ↔ green)</text>
+    <text x="538" y="273" font-size="11.5" fill="#166534">LB가 자기 설정을 바꾸는 것뿐 → <tspan font-weight="700">즉시 반영, 즉시 롤백.</tspan> 클라이언트가 보는 IP는 그대로라 캐시도 TTL도 무관</text>
+
+    <rect x="20" y="300" width="1080" height="46" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="40" y="320" font-size="11.5" fill="#1d4ed8"><tspan font-weight="700">VIP 이관</tspan> — 대기 장비가 <tspan font-weight="700">그 IP를 자기 것으로 선언</tspan>한다(keepalived 등). IP 자체가 안 바뀌므로 전파 불필요, 초 단위 이하.</text>
+    <text x="40" y="338" font-size="11.5" fill="#1d4ed8"><tspan font-weight="700">anycast</tspan> — 같은 IP를 <tspan font-weight="700">여러 위치에서 동시에 광고</tspan>하고 라우팅이 가까운 곳으로 보낸다. 한 위치가 죽으면 광고가 사라지고 다른 위치로 흐른다 — 클라이언트도 DNS도 아무것도 안 한다.</text>
+  </svg>
+  <figcaption>이 그림 한 장이 이 절의 전부다. <b>경계 왼쪽의 변경은 "알려야 하는 변경"이고, 오른쪽의 변경은 "알릴 필요가 없는 변경"</b>이다. 3절의 <b>"자주 바뀌는 것은 사슬 아래쪽에"</b>가 인프라 층위로 확장된 형태다.</figcaption>
+</figure>
+
+<div class="callout info">
+  <span class="t">인프라를 바꾸지 않고도 초 단위에 가까워지는 길 — 클라이언트 재시도</span>
+  <b>레코드에 IP를 여러 개 넣어두고, 클라이언트가 한 IP에 연결 실패하면 다음 IP로 즉시 넘어가게</b> 하는 방법이다. DNS를 다시 조회할 필요도, 레코드를 바꿀 필요도 없다 — <b>이미 받아둔 목록 안에서 해결되므로 전환 시간이 "연결 타임아웃 한 번"</b>으로 끝나고, <b>8절의 네 구간이 통째로 사라진다.</b> 다만 <b>클라이언트가 그렇게 만들어져 있어야</b> 한다(12절 꼬리질문).
+</div>
+
+<table class="wide">
+  <caption>전환 수단의 역할 배치. 판단 기준은 <b>"클라이언트가 보는 IP가 바뀌는가"</b> 한 줄이다 — 바뀌면 전파가 필요하고, 안 바뀌면 필요 없다.</caption>
+  <thead><tr><th style="width:210px">전환 수단</th><th style="width:150px">클라이언트가 보는 IP</th><th style="width:120px">전파 필요?</th><th style="width:170px">반영 속도</th><th>적합한 단위</th></tr></thead>
+  <tbody>
+    <tr><th>LB 대상 그룹 교체</th><td class="good">그대로</td><td class="good">불필요</td><td class="good">즉시 (롤백도 즉시)</td><td>배포, 인스턴스 교체, <b>블루-그린</b> — 평상시 배포와 장애 대응의 기본 수단</td></tr>
+    <tr><th>VIP 이관</th><td class="good">그대로</td><td class="good">불필요</td><td class="good">초 단위</td><td>장비 이중화, 액티브-스탠바이</td></tr>
+    <tr><th>anycast <span class="badge bonus">가산점</span></th><td class="good">그대로</td><td>라우팅만</td><td>라우팅 수렴 시간</td><td>지역·거점 단위 장애. CDN과 공용 DNS 서비스가 쓰는 방식</td></tr>
+    <tr><th>클라이언트 재시도 (다중 IP)</th><td>목록에서 선택</td><td class="good">불필요</td><td>연결 타임아웃 1회</td><td>엔드포인트 몇 개짜리 이중화. <b>클라이언트를 통제할 수 있을 때만</b></td></tr>
+    <tr class="hl"><th>DNS 레코드 교체</th><td class="bad">바뀐다</td><td class="bad">전 세계 캐시</td><td class="bad">분 단위 + 긴 꼬리</td><td><b>리전 전체 전환, 서버 이전, 도메인 이관</b> — 어차피 분 단위 이상 걸리는 전환</td></tr>
+  </tbody>
+</table>
+
+<div class="memo green">
+  <h4>답의 형태는 "DNS는 좋다/나쁘다"가 아니라 <span style="color:#16a34a">계층별 역할 배치</span>다</h4>
+  <div class="rule ok">빠른 전환은 <b>IP가 안 바뀌는 지점</b>(LB · VIP · anycast)에서, <b>큰 단위의 전환만</b> DNS에서</div>
+  <p style="margin-bottom:0"><b>DNS는 "빠른 전환 수단"이 아니라 "느리지만 확실한, 큰 단위의 전환 수단"이다.</b> 리전 전체 장애의 재해 복구나 데이터센터 이전처럼 <b>어차피 데이터 복제 확인·대기 환경 기동에 분 단위가 걸리는</b> 전환에서는 <b>DNS 전파 시간이 병목이 아니므로</b> DNS가 맞는 도구다. 그 경우에도 <b>4~7절의 함정들은 그대로 계획에 반영</b>해야 한다.</p>
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 무중단 이전 체크리스트 — 시간축 절차</h2>
+
+<p>서버 이전이나 DNS 기반 전환을 실제로 한다면 절차는 이렇게 짜인다. <b>각 단계가 왜 그 순서인지가 앞 절들의 결론과 1:1로 대응한다</b> — 절차를 외우는 것이 아니라 <b>근거에서 다시 유도할 수 있어야</b> 한다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 392" role="img" aria-label="DNS 전환 절차를 D 마이너스 7일부터 D 플러스 N일까지 시간축으로 그린 도식. D 마이너스 7일에 TTL을 86400에서 60으로 인하하고, D 마이너스 1일에 인하 전파를 dig로 확인하고 신서버를 검증하며, D 데이에 레코드를 전환하면서 양쪽 서버를 모두 유지하고 롤링 재시작과 구서버 드레인을 수행하고, 이후 유예 기간 동안 구서버 유입량이 0에 수렴하는지 관측한 뒤, D 플러스 N일에 구서버를 종료하고 TTL을 원복한다">
+    <defs>
+      <marker id="t1" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="560" y="28" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">전환 절차는 "레코드를 바꾸는 작업"이 아니라 <tspan fill="#2563eb">며칠에 걸친 시간축 작업</tspan>이다</text>
+
+    <line x1="30" y1="96" x2="1100" y2="96" stroke="#2563eb" stroke-width="2.5" marker-end="url(#t1)"/>
+    <g fill="#2563eb"><circle cx="130" cy="96" r="9"/><circle cx="350" cy="96" r="9"/><circle cx="595" cy="96" r="9"/><circle cx="840" cy="96" r="9"/><circle cx="1032" cy="96" r="9"/></g>
+    <g text-anchor="middle" font-weight="700" fill="#1d4ed8">
+      <text x="130" y="60" font-size="13">D-7</text><text x="130" y="78" font-size="10.5" font-weight="400" fill="#6b7280">기존 TTL 이상 앞서서</text>
+      <text x="350" y="60" font-size="13">D-1</text><text x="350" y="78" font-size="10.5" font-weight="400" fill="#6b7280">전환 전날</text>
+      <text x="595" y="60" font-size="13">D-day</text><text x="595" y="78" font-size="10.5" font-weight="400" fill="#6b7280">전환 당일</text>
+      <text x="840" y="60" font-size="13">D-day ~ D+N</text><text x="840" y="78" font-size="10.5" font-weight="400" fill="#6b7280">유예 관찰 기간</text>
+      <text x="1032" y="60" font-size="13">D+N</text><text x="1032" y="78" font-size="10.5" font-weight="400" fill="#6b7280">관측이 허락한 날</text>
+    </g>
+
+    <!-- card 1 -->
+    <rect x="30" y="126" width="200" height="130" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="42" y="148" font-size="11.5" font-weight="700" fill="#1d4ed8">[1] TTL 인하</text>
+    <text x="42" y="166" font-size="12" class="mono" fill="#1f2937">86400 → 60</text>
+    <text x="42" y="186" font-size="10.5" fill="#374151">근거: 6절 — 인하 자체가</text>
+    <text x="42" y="200" font-size="10.5" fill="#374151">기존 TTL만큼 전파를</text>
+    <text x="42" y="214" font-size="10.5" fill="#374151">기다려야 한다</text>
+    <text x="42" y="234" font-size="10.5" fill="#b45309">이후 며칠은 옛 TTL과</text>
+    <text x="42" y="248" font-size="10.5" fill="#b45309">새 TTL이 섞인 구간</text>
+
+    <!-- card 2 -->
+    <rect x="245" y="126" width="210" height="156" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="258" y="148" font-size="11.5" font-weight="700" fill="#1d4ed8">[2] 인하가 퍼졌는지 확인</text>
+    <text x="258" y="165" font-size="10.5" class="mono" fill="#1f2937">dig @8.8.8.8 / @1.1.1.1</text>
+    <text x="258" y="180" font-size="10.5" fill="#374151">TTL 값이 60으로 내려왔나</text>
+    <text x="258" y="194" font-size="10.5" fill="#b91c1c">큰 값이 보이면 전환을 미룬다</text>
+    <text x="258" y="208" font-size="10.5" fill="#6b7280">— 미루는 게 사후 수습보다 싸다</text>
+    <text x="258" y="230" font-size="11.5" font-weight="700" fill="#1d4ed8">[3] 신서버 최종 검증</text>
+    <text x="258" y="246" font-size="10.5" fill="#374151">전환 순간부터 둘이 동시에</text>
+    <text x="258" y="260" font-size="10.5" fill="#374151">트래픽을 받으므로, 미리</text>
+    <text x="258" y="274" font-size="10.5" fill="#374151">100%를 감당할 수 있어야 한다</text>
+
+    <!-- card 3 -->
+    <rect x="470" y="126" width="250" height="180" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="484" y="148" font-size="11.5" font-weight="700" fill="#166534">[4] 레코드 전환</text>
+    <text x="484" y="165" font-size="10.5" fill="#b91c1c">★ 양쪽 서버 모두 정상 서비스</text>
+    <text x="484" y="179" font-size="10.5" fill="#b91c1c">유지 — 물결 구간엔 둘 다</text>
+    <text x="484" y="193" font-size="10.5" fill="#b91c1c">트래픽을 받는다 (2절)</text>
+    <text x="484" y="209" font-size="10.5" fill="#374151">상태가 있으면 두 서버가 같은</text>
+    <text x="484" y="223" font-size="10.5" fill="#374151">데이터를 봐야 한다 (공유·복제)</text>
+    <text x="484" y="245" font-size="11.5" font-weight="700" fill="#166534">[5] 롤링 재시작</text>
+    <text x="484" y="261" font-size="10.5" fill="#374151">풀·JVM 캐시를 비운다 (5절)</text>
+    <text x="484" y="281" font-size="11.5" font-weight="700" fill="#166534">[6] 구서버 keep-alive off</text>
+    <text x="484" y="297" font-size="10.5" fill="#374151">외부 클라이언트 연결을 놓아준다</text>
+
+    <!-- card 4 -->
+    <rect x="735" y="126" width="210" height="150" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="748" y="148" font-size="11.5" font-weight="700" fill="#b45309">[7] 구서버 유입 모니터링</text>
+    <text x="748" y="165" font-size="10.5" fill="#374151">0에 수렴하는가?</text>
+    <text x="748" y="183" font-size="10.5" fill="#374151">남는 것의 정체를 밝힌다</text>
+    <text x="748" y="197" font-size="10" fill="#6b7280">· TTL 늘려잡는 리졸버 → 대기</text>
+    <text x="748" y="211" font-size="10" fill="#6b7280">· 유지 중인 커넥션 → drain 확인</text>
+    <text x="748" y="225" font-size="10" fill="#6b7280">· 하드코딩 IP → 찾아 고친다</text>
+    <text x="748" y="246" font-size="10.5" fill="#b91c1c" font-weight="700">★ 종료 시점은 날짜가 아니라</text>
+    <text x="748" y="260" font-size="10.5" fill="#b91c1c" font-weight="700">이 관측 결과가 정한다 (7절)</text>
+
+    <!-- card 5 -->
+    <rect x="960" y="126" width="145" height="124" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="972" y="148" font-size="11.5" font-weight="700" fill="#1d4ed8">[8] 구서버 종료</text>
+    <text x="972" y="174" font-size="11.5" font-weight="700" fill="#1d4ed8">[9] TTL 원복</text>
+    <text x="972" y="190" font-size="11" class="mono" fill="#1f2937">60 → 86400</text>
+    <text x="972" y="208" font-size="10" fill="#6b7280">낮은 TTL 방치 =</text>
+    <text x="972" y="222" font-size="10" fill="#6b7280">질의 부하 · 비용 ·</text>
+    <text x="972" y="236" font-size="10" fill="#6b7280">DNS 장애 취약 (9절)</text>
+
+    <rect x="20" y="330" width="1080" height="48" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="352" font-size="12.5" fill="#b91c1c" font-weight="700">★ [7]을 건너뛰고 [4] → [8]을 하루에 끝내면 — 며칠에 걸쳐, 일부 사용자만, 재현도 안 되는 접속 장애 신고가 쌓인다.</text>
+    <text x="40" y="370" font-size="12" fill="#7f1d1d">그리고 그때는 이미 구서버가 없어서 되돌릴 수도 없다. 이 절차의 값어치는 [1]의 리드타임과 [7]의 관측, 두 칸에 거의 다 들어 있다.</text>
+  </svg>
+  <figcaption>절차의 <b>앞뒤 두 칸이 가장 자주 잘린다</b> — 앞의 <b>[1] 리드타임</b>(6절)과 뒤의 <b>[7] 관측</b>(7절). 가운데 <b>[4]~[6]</b>은 "전환 당일에 하는 일"이라 잊히지 않지만, 잘린 두 칸이 사고를 만든다.</figcaption>
+</figure>
+
+<div class="callout warn" style="margin-bottom:0">
+  <span class="t">[4]에 숨어 있는 데이터 문제 — 자주 놓친다</span>
+  전환이 <b>물결</b>이라는 말은 <b>그 구간 동안 두 서버가 동시에 실트래픽을 받는다</b>는 뜻이다. <b>상태를 가진 서비스</b>라면 이 구간에 두 서버가 <b>같은 데이터를 봐야 한다</b> — DB를 공유하든 복제하든. <b>여기 설계가 없으면 전환 중에 데이터가 갈린다.</b> 세션·캐시도 마찬가지다.
+</div>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>12-1. 3초 인출 카드 — 답을 먼저 떠올린 뒤 오른쪽을 본다</h3>
+
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">"TTL 300초"를 정확히 번역하면?</div><div class="d">"300초 뒤 전부 바뀐다"가 아니라 <b>"최대 300초에 걸쳐 사용자들이 제각각 넘어온다"</b>. 유통기한이지 알람이 아니다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">전환 지연을 지배하는 것은?</div><div class="d"><b>내가 실제로 바꾼 그 레코드의 TTL.</b> 사슬 아래쪽이 아무리 짧아도 위쪽을 바꾸면 위쪽 TTL만큼 기다린다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">이상적 모델이 깨지는 다섯 지점은?</div><div class="d"><b>안 지킨다</b>(최소 TTL 강제) · <b>따로 챙긴다</b>(JVM 캐시) · <b>안 묻는다</b>(커넥션 풀) · <b>늦게 안다</b>(TTL 인하 리드타임) · <b>안 끝난다</b>(긴 꼬리)</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">커넥션 풀 함정의 자물쇠 넷은?</div><div class="d"><b>수 · 캐 · 드 · 롤</b> — 연결 <b>수</b>명(maxLifetime) · JVM <b>캐</b>시 TTL · 서버 <b>드</b>레인(keepalive_timeout 0) · <b>롤</b>링 재시작</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">전환 후에도 옛 서버로 오는 트래픽 4종은?</div><div class="d"><b>잔 · 무 · 풀 · 박</b> — <b>잔</b>여 TTL · TTL <b>무</b>시 캐시 · 커넥션 <b>풀</b> · 하드코딩돼 <b>박</b>힌 IP (앞의 둘은 기다리면 끝, 뒤의 둘은 안 끝난다)</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">DNS failover의 시간 4구간은?</div><div class="d"><b>감 · 전 · 만 · 재</b> — <b>감</b>지(체크 간격×임계) → 권한 서버 <b>전</b>파 → TTL <b>만</b>료 → 클라이언트 <b>재</b>조회. 앞 셋만 더해도 <b>170초</b>, 넷째는 값을 정할 수 없다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">TTL을 짧게 유지하는 대가 넷은?</div><div class="d"><b>질 · 지 · 가 · 안</b> — <b>질</b>의량(=비용) · 사용자 <b>지</b>연 · <b>가</b>용성(캐시는 DNS 장애의 방패) · 그래도 다 <b>안</b> 풀림</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">초 단위 전환은 어디서 하나?</div><div class="d"><b>클라이언트가 보는 IP가 안 바뀌는 지점</b> — LB 대상 그룹 교체(즉시), VIP 이관(초 단위), anycast. DNS는 <b>큰 단위 전환 전용</b>.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">전환 절차의 첫 줄과 마지막 줄은?</div><div class="d">첫 줄 = <b>기존 TTL 이상 앞서서 TTL 인하</b>, 마지막 줄 = <b>TTL 원복</b>. 그리고 구서버 종료는 <b>날짜가 아니라 관측</b>이 정한다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">apex 도메인에 CNAME을 못 쓰는 이유는?</div><div class="d">CNAME이 있는 이름에는 <b>다른 레코드가 있을 수 없는데</b>, apex에는 <b>SOA·NS가 반드시 있어야</b> 하기 때문. 우회는 제공자의 <b>ALIAS/ANAME</b>.</div></div>
+</div>
+
+<h3>12-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>그럼 TTL을 평소에 아주 짧게(몇 초) 유지하면 되지 않나요? <span class="badge core">필수</span><span class="hint">힌트: "비용이 든다"에서 멈추지 말고 <b>가용성</b>까지 가야 한다. 그리고 "그래도 다 안 풀린다"로 닫는다</span></summary><div class="a">
+  <p><b>비용이 따르고, 그렇게 해도 문제가 다 풀리지 않는다.</b> 네 가지로 나눠 답한다 — <b>질 · 지 · 가 · 안</b>.</p>
+  <p><b>질의량과 비용.</b> 캐시 적중률이 떨어져 권한 서버 질의가 그만큼 늘고, 관리형 DNS는 대개 <b>질의 건수로 과금</b>하므로 요금이 바로 오른다. 자체 운영이면 권한 서버 증설이다.</p>
+  <p><b>사용자 지연.</b> 캐시 미적중이 잦아져 새 연결마다 DNS 조회 시간을 더 자주 낸다. 개별로는 작지만 <b>모든 사용자의 모든 새 연결에 곱해진다.</b></p>
+  <p><b>가용성 — 이게 가장 중요한 포인트다.</b> 캐시는 <b>권한 DNS 장애 때의 방패</b> 역할을 한다. TTL이 길면 권한 서버가 잠깐 죽어도 세상은 캐시로 돌아가지만, <b>TTL이 몇 초면 DNS 장애가 곧바로 전면 서비스 장애</b>가 된다 — 이름을 못 풀면 접속 자체가 안 되기 때문이다.</p>
+  <div class="rule">TTL 단축은 <b>전환 속도를 사는 대신 DNS 인프라 가용성 요구를 올리는 거래</b>다</div>
+  <p><b>그리고 문제가 다 안 풀린다.</b> 최소 TTL을 강제하는 리졸버는 내 값을 무시하고, 커넥션 풀은 TTL과 무관하게 옛 IP를 붙들고 있으며, <b>헬스체크 감지 지연과 레코드 전파 시간은 TTL을 0으로 해도 남는다.</b></p>
+  <p style="margin-bottom:0">결론은 <b>"평상시엔 적당한 TTL, 계획된 전환 전에만 낮췄다가 끝나면 원복"</b>이라는 운영이다. <b>원복이 절차에 명시돼 있어야 한다</b>는 점까지 말하면 좋다 — 낮춘 채 방치하는 사고가 실제로 흔하다.</p>
+</div></details>
+
+<details class="q"><summary>커넥션 풀을 쓰는 서버 간 호출에서 DNS 전환이 반영 안 되는 이유와 대응은? <span class="badge trap">함정</span><span class="hint">힌트: 이유가 <b>두 겹</b>, 대응이 <b>두 겹 + 서버 조치 + 절차</b>다</span></summary><div class="a">
+  <p><b>이유는 두 겹이다.</b></p>
+  <p><b>첫째, DNS는 새 연결을 맺을 때만 조회된다.</b> 그런데 커넥션 풀의 존재 이유가 <b>"연결을 다시 맺지 않는 것"</b>이라 <b>재조회 계기가 구조적으로 없다.</b> 게다가 한 번 맺어진 TCP 연결은 <b>4-튜플로 고정</b>돼 목적지 IP가 그 연결의 정체성의 일부이므로, <b>살아 있는 연결의 목적지를 바꿀 방법 자체가 없다.</b></p>
+  <p><b>둘째, 재연결을 하더라도 JVM DNS 캐시가 옛 IP를 돌려주면 다시 옛 서버에 붙는다.</b> <b>자물쇠가 두 개라서 하나만 풀면 증상이 그대로 남는다.</b></p>
+  <p><b>대응은 수 · 캐 · 드 · 롤이다.</b> 풀 커넥션에 <b>최대 수명</b>(<code>setTimeToLive</code> / <code>maxLifeTime</code> / <code>maxLifetime</code>)을 걸어 주기적 재연결을 강제하고 유휴 상한도 함께 줄인다 — <b>이 값이 곧 "전환이 반영되기까지의 상한"</b>이라는 점을 말하면 좋다. <b>JVM DNS 캐시 TTL을 명시</b>해 재연결 시점에 새 IP가 나오게 한다. 전환 시 <b>옛 서버가 연결을 우아하게 놓아준다</b> — nginx라면 <code>keepalive_timeout 0</code>으로 응답에 <code>Connection: close</code>를 붙여 클라이언트가 재연결하게 만든다. <b>우리가 통제하지 못하는 외부 클라이언트에 대해서는 이것이 유일한 수단</b>이다.</p>
+  <p style="margin-bottom:0"><b>그리고 가장 확실한 것은 전환 절차에 롤링 재시작을 넣는 것</b>이다. 프로세스가 새로 뜨면 풀도 캐시도 비어 있으므로 무조건 새 IP로 붙는다. <b>"설정을 정교하게 맞추는 것"보다 실패 확률이 낮다</b>는 판단까지 말하면 운영 감각이 드러난다.</p>
+</div></details>
+
+<details class="q"><summary>DNS 기반 failover는 그럼 어디에 적합한가요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "좋다/나쁘다"가 아니라 <b>계층별 역할 배치</b>로 답한다. 그리고 두 가지를 더 얹는다</span></summary><div class="a">
+  <p><b>전환 단위가 크고 RTO가 분 단위 이상 허용되는 자리</b>다. <b>리전 전체 장애의 재해 복구, 데이터센터 이전, 지리 기반 분배(GSLB)의 상위 라우팅</b> 같은 것들이다. 이런 전환은 어차피 <b>데이터 복제 상태 확인이나 대기 환경 기동에 분 단위가 걸리므로 DNS 전파 시간이 병목이 아니다.</b></p>
+  <p>반대로 <b>서버 몇 대의 장애 대응처럼 초 단위가 필요한 곳은 LB 헬스체크나 VIP 이관이 맡아야 한다.</b> 이 둘은 <b>클라이언트가 보는 IP를 바꾸지 않으므로 전파할 것이 없고</b>, 그래서 즉시 반영된다.</p>
+  <div class="rule ok">빠른 전환은 <b>IP가 안 바뀌는 지점</b>(LB · VIP · anycast)에서, <b>큰 단위의 전환만</b> DNS에서</div>
+  <p><b>여기에 두 가지를 더 얹으면 시니어로 보인다.</b></p>
+  <p><b>첫째, DNS failover를 쓴다면 그 전파 지연을 RTO 계산에 명시적으로 넣어야 한다.</b> 8절처럼 <b>감지 + 갱신 + TTL + 클라이언트 재조회</b>로 분해해서 더한 값이 실제 RTO다. 이 계산 없이 <b>"failover 설정했으니 RTO 30초"</b>라고 적힌 문서는 실제 장애 때 그대로 깨진다.</p>
+  <p style="margin-bottom:0"><b>둘째, 계산만으로 끝내지 말고 실제로 전환 훈련을 해서 측정해야 한다.</b> 계산에는 안 잡히는 것들 — <b>커넥션 풀, 하드코딩된 IP, TTL을 늘려 잡는 리졸버</b> — 이 훈련에서 드러난다. <b>재해 복구를 문서가 아니라 운영으로 다뤄본 사람인지가 여기서 갈린다.</b></p>
+</div></details>
+
+<details class="q"><summary>블루-그린 배포를 DNS 전환으로 구현하면 어떤 문제가 있나요?<span class="hint">힌트: 블루-그린의 <b>가치 두 가지</b>를 먼저 말하고, DNS가 그 둘을 어떻게 깨는지로 답한다</span></summary><div class="a">
+  <p><b>블루-그린의 핵심 가치가 즉시 전환과 즉시 롤백인데, DNS 전환은 그 둘을 정확히 못 해준다.</b> <b>가치의 전제를 깨는 구현</b>이라 문제가 된다.</p>
+  <p><b>전환이 물결이라 두 버전이 오래 공존한다.</b> TTL과 캐시 꼬리 때문에 사용자마다 구버전과 신버전에 제각각 도달하는 기간이 길어진다. 그동안 두 버전이 같은 DB를 쓴다면 <b>스키마와 데이터가 양쪽 버전 모두에서 안전해야</b> 하고, 세션이나 캐시를 공유한다면 그것도 양쪽 호환이어야 한다. 즉 <b>양버전 호환성을 유지해야 하는 기간이 계획보다 훨씬 길어진다.</b></p>
+  <p><b>롤백도 같은 지연을 다시 겪는다.</b> 문제를 발견하고 레코드를 되돌려도 <b>다시 TTL만큼 물결이 번진다.</b> <b>문제를 발견한 순간부터 피해가 멈추기까지 몇 분이 걸린다</b>는 뜻이고, 이건 <b>블루-그린을 도입한 이유 자체를 무효로</b> 만든다.</p>
+  <p><b>커넥션 풀 문제까지 겹치면 롤백이 아예 안 먹을 수도 있다.</b> 신버전에 물린 연결은 레코드를 되돌려도 그대로 신버전으로 간다(5절).</p>
+  <p style="margin-bottom:0">그래서 <b>정석은 전환점을 LB에 두는 것</b>이다. 대상 그룹 교체는 <b>즉시 반영되고 즉시 되돌릴 수 있으며</b>, 클라이언트가 보는 IP는 그대로다. <b>DNS는 그 LB를 가리키는 "안 바뀌는 이름"으로만 쓴다</b> — 3절의 <b>"자주 바뀌는 것은 사슬 아래쪽에, 안 바뀌는 이름은 위쪽에"</b>가 여기서 그대로 적용된다.</p>
+</div></details>
+
+<details class="q"><summary>레코드에 IP를 여러 개 넣어두면 클라이언트가 알아서 failover하지 않나요? <span class="badge bonus">가산점</span><span class="hint">힌트: "됩니다"도 "안 됩니다"도 틀렸다. <b>전제</b>가 핵심이다</span></summary><div class="a">
+  <p><b>될 수도 있고 안 될 수도 있다. 그리고 그게 이 방법의 핵심 리스크다.</b></p>
+  <p>먼저 <b>원리는 맞다.</b> 한 이름에 A 레코드를 여러 개 두면 리졸버가 그 목록을 전부 돌려주고, <b>잘 만들어진 클라이언트는 첫 IP에 연결이 실패하면 다음 IP로 즉시 넘어간다.</b> 이 경우 전환 시간은 DNS와 아무 상관이 없다 — <b>이미 손에 들고 있는 목록 안에서 해결되므로 연결 타임아웃 한 번이면 끝난다.</b> 8절의 네 구간이 통째로 사라지는 셈이다.</p>
+  <p><b>문제는 "잘 만들어진"이라는 전제다.</b> 클라이언트마다 동작이 다르다. <b>목록을 다 받아놓고도 첫 번째만 시도하고 포기하는 라이브러리가 흔하고</b>, 재시도를 하더라도 그 시점이 언제인지, 실패한 IP를 얼마나 기억하는지가 제각각이다. <b>그래서 이 방식은 "클라이언트를 우리가 통제할 수 있는 구간"에서만 설계 수단으로 쓸 수 있다.</b> 브라우저나 파트너사의 클라이언트처럼 통제 밖이면 기대할 수 없다.</p>
+  <p><b>두 가지를 덧붙이면 좋다.</b></p>
+  <p><b>첫째, 연결 실패는 넘어가지만 "느린 서버"는 못 넘어간다.</b> 다음 IP로 넘어가는 조건은 대개 <b>연결 실패</b>다. 서버가 살아 있는데 <b>응답만 극도로 느린 상태</b>라면 클라이언트는 그 IP에 계속 붙어 있다. <b>헬스체크로 판정해 목록에서 빼주는 주체가 따로 있어야</b> 하고, <b>그게 LB가 하는 일</b>이다.</p>
+  <p style="margin-bottom:0"><b>둘째, 여러 IP를 돌려주는 것 자체는 부하 분산 수단으로는 약하다.</b> 리졸버가 순서를 바꿔 돌려주는 정도라 분배가 균등하지 않고, <b>캐시 때문에 특정 리졸버를 쓰는 사용자 전체가 같은 IP에 몰릴 수 있다.</b> <b>분배는 LB에게 맡기고, 다중 IP는 "LB 자체가 죽었을 때의 마지막 안전망"으로 쓰는 것</b>이 역할 배치로 맞다.</p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>전환했는데 일부 사용자만 계속 옛 서버로 옵니다. 어디부터 좁히나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "기다려 봅니다"가 아니라 <b>DNS 문제인지 아닌지를 먼저 가르는 한 줄</b>이 있다</span></summary><div class="a">
+  <p><b>수사는 세 단계로 좁힌다. 순서가 중요하다.</b></p>
+  <p><b>① 레코드 자체가 맞는지 — 권한 서버에 직접 묻는다.</b> <code>dig @ns1.example.com api.example.com</code>. 여기서 옛 값이 나오면 그냥 <b>레코드를 잘못 바꾼 것</b>이다(A만 바꾸고 AAAA를 잊는 경우가 대표적). 캐시 이야기로 넘어가기 전에 이걸 먼저 배제한다.</p>
+  <p><b>② 전파 중인지 — 공용 리졸버와 대조한다.</b> <code>dig @8.8.8.8</code> / <code>dig @1.1.1.1</code>의 답이 권한 서버와 다르면 <b>"지금 전파 중"이라는 증거</b>이고, 남은 TTL을 보면 언제쯤 끝날지도 나온다. 둘이 <b>같아졌는데도 옛 서버로 유입이 있으면</b> — 이제 <b>DNS 문제가 아니다.</b> 수사 범위가 애플리케이션 층으로 옮겨간다.</p>
+  <p><b>③ DNS 밖의 정체를 밝힌다 — 구서버의 액세스 로그가 답을 갖고 있다.</b> 남은 유입의 <b>출발지 IP, User-Agent, 요청 경로</b>를 보면 대개 정체가 드러난다. <b>같은 소수의 출발지 IP에서 꾸준히</b> 들어오면 커넥션 풀을 든 내부 서비스이거나 하드코딩이고, <b>배치 시각에만 몰리면</b> 스크립트·모니터링 설정이며, <b>불특정 다수가 조금씩</b>이면 TTL을 늘려 잡는 리졸버 뒤의 사용자다.</p>
+  <div class="rule"><code>dig @권한서버</code>와 <code>dig @공용리졸버</code>가 <b>같아진 순간부터, 남은 유입은 전부 DNS 밖의 문제</b>다</div>
+  <p style="margin-bottom:0">그리고 <b>이 판단이 곧 대응을 정한다</b> — DNS 문제면 <b>기다리는 것</b>이 대응이고, DNS 밖의 문제면 <b>기다려도 안 끝나므로 drain·롤링 재시작·설정 수정</b>이 대응이다. <b>"며칠 더 기다려 봅시다"가 정답인 경우와 오답인 경우를 이 한 줄이 가른다.</b></p>
+</div></details>
+
+<details class="q"><summary>레코드를 새로 만들었는데 계속 "그런 도메인 없음"으로 나옵니다. 왜죠?<span class="hint">힌트: 캐시되는 것은 "있다"는 답만이 아니다</span></summary><div class="a">
+  <p><b>부정 응답(NXDOMAIN)도 캐시되기 때문이다.</b> 레코드를 만들기 <b>전에</b> 그 이름을 한 번이라도 조회했다면, 그 <b>"없다"는 답이 리졸버에 캐시</b>돼 있다. 그 유지 시간은 <b>해당 영역의 SOA 레코드에 적힌 값</b>이 정한다.</p>
+  <p><b>확인은 이렇게 한다.</b> <code>dig example.com SOA +noall +answer</code>로 부정 캐시 시간을 보고, <code>dig @ns1.example.com</code>으로 <b>권한 서버에는 레코드가 제대로 있는지</b>를 확인한다. 권한 서버에는 있는데 공용 리졸버가 없다고 하면 <b>부정 캐시가 확정</b>이고, 남은 것은 기다리는 일뿐이다.</p>
+  <p style="margin-bottom:0"><b>예방이 대응보다 싸다.</b> <b>레코드를 만들기 전에 그 이름을 공용 리졸버로 조회하지 않는다.</b> 미리 확인하고 싶으면 <b>권한 서버에 직접</b> 물어서 <b>공용 리졸버에 부정 응답을 심지 않는다.</b> 새 도메인을 붙이는 날 <b>"레코드 만들었는데 왜 안 보이죠"</b>의 흔한 정체가 이것이다.</p>
+</div></details>
+
+<details class="q"><summary>A 레코드만 바꾸고 AAAA를 잊으면 무슨 일이 벌어지나요? <span class="badge trap">함정</span><span class="hint">힌트: 증상이 "안 된다"가 아니라 "일부만, 재현이 안 되게"로 나타난다</span></summary><div class="a">
+  <p><b>IPv6로 접속하는 클라이언트만 옛 서버로 간다.</b> 요즘 클라이언트는 A와 AAAA를 <b>둘 다 조회</b>하므로, 한쪽만 바꾸면 <b>어느 주소 계열로 붙느냐에 따라 사용자가 갈린다.</b></p>
+  <p><b>이 사고가 고약한 이유는 증상의 모양</b>이다. 전체가 아니라 <b>일부 사용자만</b> 겪고, 담당자 환경이 IPv4면 <b>재현이 안 되며</b>, 옛 서버가 아직 살아 있으면 <b>오류조차 안 나고 그냥 "옛 버전이 보인다"</b>로 나타난다. 7절의 <b>"재현 안 되는 신고가 며칠간 쌓이는"</b> 패턴과 정확히 같은 모양이다.</p>
+  <p style="margin-bottom:0"><b>대응은 절차로 막는 것</b>이다 — 전환 체크리스트에 <b>"A와 AAAA를 함께 확인"</b>을 넣고, 검증은 <code>dig api.example.com A</code>와 <code>dig api.example.com AAAA</code>를 <b>쌍으로</b> 돌린다. 애초에 <b>ALIAS류나 CNAME으로 이름을 가리키게 해두면 A/AAAA를 따로 관리할 일이 줄어든다</b>는 점도 설계 관점의 답이 된다.</p>
+</div></details>
+
+<details class="q"><summary>전환이 끝났는데 TTL 원복을 잊으면 어떻게 되나요?<span class="hint">힌트: 아무 일도 안 일어나는 것처럼 보인다 — 그게 문제다</span></summary><div class="a">
+  <p><b>당장은 아무 일도 안 일어난다. 그래서 잊힌다.</b> 그런데 <b>세 가지 값을 계속 지불하게 된다.</b></p>
+  <p><b>① 질의량과 요금이 계속 높은 상태로 유지된다.</b> 관리형 DNS는 대체로 질의 건수로 과금하므로, <b>TTL 60초를 방치하면 인프라 요금 항목 하나가 조용히 몇 배로 남는다.</b></p>
+  <p><b>② 사용자 지연이 미세하게 계속 늘어난다.</b> 새 연결마다 캐시 미적중 확률이 높아진 상태다.</p>
+  <p><b>③ 그리고 가장 위험한 것 — DNS 장애에 취약한 상태로 방치된다.</b> 캐시는 권한 DNS 장애 때의 방패인데, <b>그 방패를 얇게 만들어 둔 채 잊는 것</b>이다. 정작 권한 서버에 문제가 생기는 날 <b>전면 장애로 번지고, 그때는 아무도 "몇 달 전 전환 때 TTL을 안 되돌렸다"를 떠올리지 못한다.</b></p>
+  <p style="margin-bottom:0"><b>그래서 원복은 "하면 좋은 것"이 아니라 절차의 마지막 줄이어야 한다.</b> 11절 절차의 <b>[9]번이 존재하는 이유</b>이고, 실무에서는 <b>전환 티켓을 원복까지 끝나야 닫히도록</b> 만드는 것이 확실하다.</p>
+</div></details>
+
+<details class="q"><summary><code>example.com</code>(apex)을 관리형 로드밸런서에 붙이려면 어떻게 하나요?<span class="hint">힌트: 방법이 둘인데 하나는 하면 안 되는 방법이다</span></summary><div class="a">
+  <p><b>제공자가 제공하는 ALIAS류를 쓰거나, LB의 IP를 A 레코드에 직접 박는 것 — 둘뿐이고 후자는 하면 안 된다.</b></p>
+  <p><b>왜 CNAME이 안 되는지부터 말한다.</b> DNS 표준상 <b>어떤 이름에 CNAME이 있으면 그 이름에는 다른 레코드가 있을 수 없다.</b> 그런데 <b>apex에는 SOA와 NS가 반드시 있어야</b> 하므로 공존이 불가능하다. 한편 <b>관리형 LB는 뒤에서 IP가 늘거나 바뀔 수 있어 IP가 아니라 이름으로 제공</b>된다 — 그래서 <b>CNAME이 필요한데 apex라서 못 쓰는 간극</b>이 생긴다.</p>
+  <p><b>ALIAS(ANAME, CNAME flattening)</b>는 그 간극을 메우는 특수 레코드다. <b>동작은 CNAME인데 응답은 A로 나간다</b> — 권한 네임서버가 질의를 받는 시점에 대상 이름을 <b>자기가 대신 조회</b>해서 최종 IP를 A로 돌려주므로, 클라이언트 입장에서는 <b>평범한 A 레코드를 받은 것</b>이고 apex 제약에 걸리지 않는다. 다만 <b>DNS 표준 레코드가 아니라 제공자별 기능</b>이라 이름과 동작 세부는 제공자 문서를 확인해야 한다.</p>
+  <p style="margin-bottom:0"><b>IP를 직접 박는 방법은 왜 안 되는가</b>를 말하면 마무리가 된다 — <b>제공자가 IP를 바꾸는 순간 조용히 죽는다.</b> 그것도 <b>우리가 아무것도 안 했는데</b> 죽으므로 원인을 찾는 데 오래 걸린다. 실무 관례는 <b>apex는 ALIAS로 LB에 붙이고, 서비스 트래픽은 <code>www</code>나 <code>api</code> 같은 서브도메인으로 유도(apex는 리다이렉트)</b>하는 것이다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  TTL은 <b>캐시 유효기간의 상한일 뿐 동기화 신호가 아니어서</b>, 각 캐시가 <b>자기 조회 시점부터 따로 만료를 세는</b> DNS 전환은 언제나 <b>물결처럼 번지고 긴 꼬리를 남긴다</b> — <b>TTL을 늘려 잡는 리졸버, JVM 캐시, 그리고 TTL과 무관하게 옛 IP에 물려 있는 커넥션 풀</b>까지 감안해 <b>"기존 TTL 이상 앞선 TTL 인하 → 양쪽 공존 전환 + 롤링 재시작 + 구서버 drain → 유입 0을 관측으로 확인한 뒤 종료 → TTL 원복"</b>의 시간축 절차로 설계해야 하고, <b>감지·전파·TTL·클라이언트 재조회</b>를 더하면 분 단위가 나오므로 <b>초 단위 failover가 필요한 곳은 DNS가 아니라 IP가 바뀌지 않는 지점(LB 대상 그룹, VIP, anycast)</b>에서 전환해야 한다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/08-network-http/19-dns-ttl-failover-traffic-switching.md</code> · 이어서 볼 문서: URL 입력부터 화면까지(01, DNS 계층 위임·캐시 3계층·JVM 캐시 설정) · keep-alive와 커넥션 풀(10) · L4 vs L7 로드밸런서(16)</p>
+</main>
+</body>
+</html>
