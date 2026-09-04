@@ -1,0 +1,1707 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>메시지 순서 보장 단위와 키 설계 — 순서의 경계는 토픽이 아니라 파티션이다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo.warn{border-color:var(--warn)}.memo.warn::before{background:var(--warn);content:"진단"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+.formula{font-family:var(--mono);font-size:1.12rem;font-weight:700;text-align:center;padding:16px 12px;border-radius:12px;background:#1e293b;color:#e2e8f0;margin:12px 0;line-height:1.9}
+.formula .hi{color:#fcd34d}
+.formula .hi2{color:#86efac}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+tr.bad td{background:var(--danger-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.mono{font-family:var(--mono)}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.split.g3{grid-template-columns:1fr 1fr 1fr}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane.w{background:var(--warn-soft);border-color:var(--warn-line)}
+.pane.w h4{color:var(--warn)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+pre.wide{width:1120px;margin-left:calc(50% - 560px)}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.ln-warn{display:block;background:rgba(217,119,6,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--warn)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.nm{color:#fca5a5}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+<style>
+.cmp.g3{grid-template-columns:1fr 1fr 1fr}
+.formula.small{font-size:.95rem;line-height:1.85;text-align:left}
+.chk{list-style:none;padding:0;margin:8px 0}
+.chk li{padding-left:26px;position:relative;margin:6px 0;font-size:.95rem}
+.chk li::before{content:"\2713";position:absolute;left:4px;color:var(--ok);font-weight:800}
+.chk.x li::before{content:"\2715";color:var(--danger)}
+.layer{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card);margin:12px 0}
+.layer .lt{font-weight:800;font-size:1.02rem;margin-bottom:6px}
+</style>
+</head>
+<body>
+<main>
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">06 메시징 · 이벤트 &nbsp;|&nbsp; 메시지 순서 보장 단위와 키 설계 ⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>메시지 순서 보장 단위와 키 설계 — 순서의 경계는 토픽이 아니라 파티션이다<br><span class="sub">"사용자별 순서 보장"이라는 업무 요구를 <b>파티션 키</b>라는 인프라 메커니즘으로 번역하는 문제</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"메시지 순서 보장은 <span style="color:#2563eb">어떤 단위</span>로 되나요? 특정 사용자의 이벤트 순서를 보장하려면?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>Kafka의 순서 보장은 토픽 전체가 아니라 파티션 하나 안에서만 성립한다.</b> 같은 파티션에 들어간 메시지는 오프셋 순서 그대로 소비되지만, <b>파티션이 다르면 순서 관계 자체가 없다.</b> 그래서 "특정 사용자의 이벤트 순서 보장"은 <b><code>userId</code>를 메시지 키로 지정해 같은 사용자의 이벤트를 항상 같은 파티션으로 보내는 방식</b>으로 푼다 — 키를 해시한 값을 파티션 수로 나눈 나머지가 파티션 번호이므로 <b>같은 키는 언제나 같은 곳으로 간다.</b> 단 <b>키만으로는 부족하다.</b> 프로듀서 재시도, 컨슈머 내부 병렬 처리, 실패 재시도/DLQ, 파티션 증설이 각각 <b>다른 지점에서</b> 순서를 깬다(<b>파티션 수가 나눗셈의 분모라는 사실</b>이 곧 증설 함정의 근거다). 그리고 이 설계의 대가는 <b>키 편중</b> — 특정 키에 트래픽이 몰리면 그 파티션 하나만 병목이 되고, <b>파티션을 늘려도 해결되지 않는다.</b> 마지막으로, <b>순서를 지키는 것과 순서에 의존하지 않게 만드는 것은 다른 층위의 해법</b>이며 시니어는 두 카드를 모두 갖는다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>단위를 먼저 못박습니다.</b> <b>순서는 파티션 안에서만 보장됩니다.</b> 파티션은 append-only 로그라 "쓴 순서 = 읽는 순서"가 구조적으로 성립하지만, <b>파티션끼리는 서로 독립이라 순서가 안 지켜지는 게 아니라 순서라는 개념 자체가 없습니다.</b> 그래서 <b>토픽 = 하나의 큰 줄</b>이라는 그림부터 버려야 합니다.</div></li>
+    <li><span class="n">2</span><div><b>업무 요구를 키로 번역합니다.</b> 파티션 번호는 <b><code>hash(키) mod 파티션 수</code></b>로 정해지고 해시는 결정적이므로, <b><code>userId</code>를 키로 주면 그 사용자의 이벤트는 언제나 같은 파티션</b>에 순서대로 쌓입니다. 여기에 <b>컨슈머 그룹 안에서 파티션 하나는 컨슈머 하나에만 할당된다</b>는 규칙이 붙어 <b>저장 순서와 소비 순서가 둘 다</b> 지켜집니다. 요구를 <b>"전역 순서"에서 "키 단위 순서"로 좁히는 것</b>이 설계의 핵심입니다.</div></li>
+    <li><span class="n">3</span><div><b>함정과 대가로 닫습니다.</b> 키는 <b>"어느 파티션에 갈지"만</b> 정할 뿐이라 <b>프로듀서 재시도(멱등 프로듀서로 해결) · 컨슈머 내부 워커 풀 · DLQ로 건너뛰기 · 파티션 증설</b>이 각각 순서를 깹니다. 대가는 <b>키 편중</b>이고 <b>파티션을 늘려도 그 키의 상한은 컨슈머 한 대</b>입니다. 그래서 저는 <b>이벤트에 버전을 실어 "최신일 때만 반영"하게 만드는, 순서 의존 자체를 없애는 카드</b>를 함께 검토합니다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 이 문서가 겨냥하는 약점</a></li>
+    <li><a href="#s1">순서 보장의 단위 — 왜 파티션인가</a></li>
+    <li><a href="#s2">키로 파티션을 고정한다 — 해시와 나머지</a></li>
+    <li><a href="#s3">함정 ① 프로듀서 재시도에 의한 역전</a></li>
+    <li><a href="#s4">함정 ②③④ 워커 풀 · DLQ · 파티션 증설</a></li>
+    <li><a href="#s5">대가 — 키 편중(hot partition)과 전역 순서</a></li>
+    <li><a href="#s6">층위 2 — 순서에 의존하지 않게 만든다</a></li>
+    <li><a href="#s7">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+    <li><a href="#summary">한 줄 요약</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도 · 이 문서가 겨냥하는 약점</h2>
+
+<div class="card">
+  <p style="margin-top:0"><b>질문</b> — "메시지 순서 보장은 어떤 단위로 되나요? 특정 사용자의 이벤트 순서를 보장하려면?"</p>
+  <p><b>출제 의도</b> — "사용자별 이벤트 순서"라는 <b>흔한 비즈니스 요구</b>를 <b>파티션 키라는 인프라 메커니즘</b>으로 번역할 수 있는지, 그리고 <b>그 대가(키 편중 시 특정 파티션 병목)까지 함께 말하는지</b>를 본다. <b>요구사항을 기술로 매핑하는 능력</b>과 <b>트레이드오프 인식</b>을 동시에 확인하는 질문이다.</p>
+</div>
+
+<div class="split">
+  <div class="pane r"><h4>이렇게 답하면 반쪽이다</h4>
+    <ul>
+      <li>"토픽 안에서 순서가 보장됩니다" — <b>단위를 틀렸다.</b> 이 한마디로 Kafka 저장 구조를 모른다는 게 드러난다.</li>
+      <li>"userId를 키로 주면 됩니다"에서 <b>끝낸다</b> — 맞는 말이지만, 키가 보장하는 것은 <b>목적지뿐</b>이라는 사실을 모른 채 한 말일 수 있다.</li>
+      <li>키 편중을 물었을 때 <b>"파티션을 늘리면 됩니다"</b> — 이 문서에서 가장 결정적인 오답이다. 같은 키는 여전히 한 파티션으로 간다.</li>
+      <li>순서를 <b>지키는 방법만</b> 나열 — 순서 의존을 없애는 층위가 있다는 걸 모르면 시니어로 보이지 않는다.</li>
+    </ul>
+  </div>
+  <div class="pane g"><h4>이 문서가 채워 주는 것</h4>
+    <ul>
+      <li><b>왜</b> 파티션이 단위인가 — 저장 구조(append-only)와 소비 구조(파티션당 컨슈머 1)가 <b>둘 다</b> 근거다.</li>
+      <li><b>키 → 파티션</b> 계산을 손으로 따라가기. 그 안의 <b>분모(파티션 수)</b>가 나중에 증설 함정의 열쇠가 된다.</li>
+      <li>순서를 깨는 <b>4개의 지점</b>을 발생 순서대로: 발행 → 소비 → 실패 처리 → 운영 변경.</li>
+      <li><b>층위 1(순서를 지킨다) vs 층위 2(순서를 무의미하게 만든다)</b>라는 두 장의 카드.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>이 문서를 관통하는 한 문장</h4>
+  <div class="rule">키는 <u>어디로 갈지</u>만 정한다 — <u>몇 번째로 기록될지</u>도, <u>순서대로 처리될지</u>도 정하지 않는다</div>
+  <p style="margin:8px 0 0;font-size:.95rem">3절·4절의 함정 4종은 전부 이 문장에서 파생된다. 함정을 외우는 대신 <b>"키가 관여하지 않는 구간이 어디인가"</b>를 떠올리면 그 자리에서 재구성할 수 있다.</p>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 순서 보장의 단위 — 왜 파티션인가</h2>
+
+<h3>1-1. 토픽은 하나의 큐가 아니다</h3>
+
+<p>이 질문에서 가장 먼저 무너뜨려야 할 오해가 <b>"토픽 = 하나의 큰 줄"</b>이라는 그림이다.</p>
+
+<p>토픽은 하나의 큰 큐가 아니라 <b>여러 개의 독립된 로그(파티션)의 묶음</b>이다. 각 파티션은 <b>append-only 로그</b>(끝에 덧붙이기만 하고 중간을 고치지 않는 파일)라서 <b>"쓴 순서 = 읽는 순서"</b>가 구조적으로 보장된다. 파일 끝에 이어 붙였으니 읽을 때도 그 순서로 나온다.</p>
+
+<p>그런데 <b>파티션끼리는 서로 완전히 독립적이다.</b> 다른 파일이고, 다른 브로커에 있을 수도 있고, 서로의 진행 상황을 참조하지도 않는다. 그래서 파티션이 다른 두 메시지 사이에는 <b>"순서가 안 지켜진다"가 아니라 "순서라는 개념 자체가 없다."</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="위쪽은 토픽을 하나의 큰 FIFO 큐로 오해한 그림이고, 아래쪽은 실제로 토픽이 파티션 세 개의 묶음이며 각 파티션 안에서만 순서가 보장되고 파티션 사이에는 순서 관계가 정의되지 않음을 보여주는 도식.">
+    <defs>
+      <marker id="f1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">토픽 <tspan class="mono">user-events</tspan> — 머릿속의 그림과 실제 구조</text>
+
+    <!-- row A : misconception -->
+    <rect x="24" y="42" width="1072" height="96" rx="11" fill="#fef2f2" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="44" y="68" font-size="12.5" font-weight="700" fill="#b91c1c">오해 — "토픽 = 하나의 큰 줄(FIFO 큐)" · 그래서 토픽 전체가 순서대로일 것이다</text>
+    <text x="60" y="112" font-size="12" font-weight="700" fill="#7f1d1d" class="mono">토픽</text>
+    <rect x="150" y="84" width="770" height="42" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <rect x="162" y="92" width="82" height="26" rx="6" fill="#fff1f2" stroke="#fecaca"/><text x="203" y="110" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">e1</text>
+    <rect x="254" y="92" width="82" height="26" rx="6" fill="#fff1f2" stroke="#fecaca"/><text x="295" y="110" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">e2</text>
+    <rect x="346" y="92" width="82" height="26" rx="6" fill="#fff1f2" stroke="#fecaca"/><text x="387" y="110" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">e3</text>
+    <rect x="438" y="92" width="82" height="26" rx="6" fill="#fff1f2" stroke="#fecaca"/><text x="479" y="110" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">e4</text>
+    <rect x="530" y="92" width="82" height="26" rx="6" fill="#fff1f2" stroke="#fecaca"/><text x="571" y="110" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">e5</text>
+    <rect x="622" y="92" width="82" height="26" rx="6" fill="#fff1f2" stroke="#fecaca"/><text x="663" y="110" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">e6</text>
+    <rect x="714" y="92" width="82" height="26" rx="6" fill="#fff1f2" stroke="#fecaca"/><text x="755" y="110" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">e7</text>
+    <rect x="806" y="92" width="82" height="26" rx="6" fill="#fff1f2" stroke="#fecaca"/><text x="847" y="110" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">e8</text>
+    <text x="944" y="106" font-size="13" font-weight="800" fill="#dc2626">&#10005; 이런 큐는</text>
+    <text x="944" y="124" font-size="13" font-weight="800" fill="#dc2626">존재하지 않는다</text>
+
+    <!-- row B : reality -->
+    <rect x="24" y="154" width="1072" height="230" rx="11" fill="#f8fafc" stroke="#e5e7eb" stroke-width="1.4"/>
+    <text x="44" y="180" font-size="12.5" font-weight="700" fill="#1f2937">실제 — 토픽은 <tspan fill="#2563eb">독립된 append-only 로그(파티션)</tspan> 여러 개의 묶음이다</text>
+
+    <rect x="42" y="192" width="70" height="176" rx="9" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.4"/>
+    <text transform="rotate(-90 77 280)" x="77" y="280" font-size="12" font-weight="700" fill="#2563eb" text-anchor="middle">토픽 user-events</text>
+
+    <!-- lane 0 -->
+    <rect x="126" y="196" width="562" height="50" rx="9" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="142" y="226" font-size="11.5" font-weight="700" fill="#334155" class="mono">파티션 0</text>
+    <rect x="224" y="206" width="74" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="261" y="226" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e1</text>
+    <rect x="307" y="206" width="74" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="344" y="226" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e4</text>
+    <rect x="390" y="206" width="74" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="427" y="226" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e7</text>
+    <path d="M476,221 L536,221" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f1a)"/>
+    <text x="546" y="225" font-size="10.5" font-weight="700" fill="#15803d">오프셋 증가 = 순서 보장</text>
+
+    <!-- lane 1 -->
+    <rect x="126" y="254" width="562" height="50" rx="9" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="142" y="284" font-size="11.5" font-weight="700" fill="#334155" class="mono">파티션 1</text>
+    <rect x="224" y="264" width="74" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="261" y="284" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e2</text>
+    <rect x="307" y="264" width="74" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="344" y="284" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e5</text>
+    <path d="M476,279 L536,279" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f1a)"/>
+    <text x="546" y="283" font-size="10.5" font-weight="700" fill="#15803d">오프셋 증가 = 순서 보장</text>
+
+    <!-- lane 2 -->
+    <rect x="126" y="312" width="562" height="50" rx="9" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="142" y="342" font-size="11.5" font-weight="700" fill="#334155" class="mono">파티션 2</text>
+    <rect x="224" y="322" width="74" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="261" y="342" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e3</text>
+    <rect x="307" y="322" width="74" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="344" y="342" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e6</text>
+    <rect x="390" y="322" width="74" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="427" y="342" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e8</text>
+    <path d="M476,337 L536,337" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f1a)"/>
+    <text x="546" y="341" font-size="10.5" font-weight="700" fill="#15803d">오프셋 증가 = 순서 보장</text>
+
+    <!-- cross-partition annotation -->
+    <path d="M700,221 L716,221 L716,279 L700,279" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <rect x="726" y="196" width="354" height="166" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="746" y="222" font-size="12.5" font-weight="800" fill="#b91c1c"><tspan class="mono">e4</tspan> 와 <tspan class="mono">e5</tspan> 중 무엇이 먼저 처리되는가?</text>
+    <text x="746" y="248" font-size="13" font-weight="800" fill="#dc2626">&#8594; 정의되지 않는다</text>
+    <text x="746" y="278" font-size="11.5" fill="#7f1d1d">서로 다른 파일에 있고,</text>
+    <text x="746" y="298" font-size="11.5" fill="#7f1d1d">서로 다른 브로커에 있을 수도 있고,</text>
+    <text x="746" y="318" font-size="11.5" fill="#7f1d1d">대개 서로 다른 컨슈머가 읽는다.</text>
+    <text x="746" y="346" font-size="11.5" font-weight="700" fill="#b91c1c">"순서가 깨진다"가 아니라 "순서가 없다"</text>
+  </svg>
+  <figcaption>같은 파티션 안(가로 방향)에서는 오프셋 순서가 곧 소비 순서다. 하지만 파티션 사이(세로 방향)에는 비교할 수 있는 시간축 자체가 없다 — 여기서 "언젠가 순서가 깨질 수 있다"가 아니라 <b>"순서라는 개념이 정의되지 않는다"</b>고 말하는 것이 정확한 표현이다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>비유로 붙잡기 — 고속도로와 차선</h4>
+  <p style="margin:0 0 6px"><b>토픽은 고속도로, 파티션은 차선이다.</b> 같은 차선 안에서는 추월이 없지만, 옆 차선의 차가 나보다 먼저 도착할지는 아무도 모른다.</p>
+</div>
+
+<figure>
+  <svg viewBox="0 0 960 250" role="img" aria-label="3차선 고속도로 비유 도식. 1차선 안의 두 차는 추월 없이 순서를 유지하지만, 2차선의 다른 차는 훨씬 앞서 달려 도착 순서를 예측할 수 없음을 보여준다.">
+    <defs>
+      <marker id="f2a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#334155"/></marker>
+    </defs>
+    <text x="20" y="24" font-size="13.5" font-weight="700" fill="#1f2937">비유 — 토픽은 고속도로, 파티션은 차선</text>
+
+    <rect x="40" y="44" width="820" height="150" rx="6" fill="#475569"/>
+    <rect x="40" y="44" width="820" height="4" fill="#e2e8f0"/>
+    <rect x="40" y="190" width="820" height="4" fill="#e2e8f0"/>
+    <g stroke="#e2e8f0" stroke-width="3" stroke-dasharray="22 18">
+      <line x1="40" y1="93" x2="860" y2="93"/>
+      <line x1="40" y1="142" x2="860" y2="142"/>
+    </g>
+    <text x="52" y="70" font-size="11" font-weight="700" fill="#cbd5e1" class="mono">파티션 0</text>
+    <text x="52" y="119" font-size="11" font-weight="700" fill="#cbd5e1" class="mono">파티션 1</text>
+    <text x="52" y="168" font-size="11" font-weight="700" fill="#cbd5e1" class="mono">파티션 2</text>
+
+    <!-- lane0 : two cars, no overtaking -->
+    <rect x="300" y="56" width="70" height="28" rx="8" fill="#93c5fd" stroke="#1d4ed8"/><text x="335" y="75" font-size="11" font-weight="700" fill="#1e3a8a" text-anchor="middle" class="mono">e4</text>
+    <rect x="200" y="56" width="70" height="28" rx="8" fill="#bfdbfe" stroke="#1d4ed8"/><text x="235" y="75" font-size="11" font-weight="700" fill="#1e3a8a" text-anchor="middle" class="mono">e7</text>
+    <path d="M392,70 L470,70" stroke="#e2e8f0" stroke-width="1.6" marker-end="url(#f2a)"/>
+    <text x="480" y="74" font-size="11.5" font-weight="700" fill="#bbf7d0">같은 차선 &#8594; 추월 없음 · e4가 반드시 먼저 도착</text>
+
+    <!-- lane1 : one car far ahead -->
+    <rect x="640" y="105" width="70" height="28" rx="8" fill="#fca5a5" stroke="#b91c1c"/><text x="675" y="124" font-size="11" font-weight="700" fill="#7f1d1d" text-anchor="middle" class="mono">e5</text>
+    <text x="200" y="124" font-size="11.5" font-weight="700" fill="#fecaca">e4보다 늦게 출발했는데 훨씬 앞서 있다 &#8594;</text>
+
+    <!-- lane2 -->
+    <rect x="420" y="154" width="70" height="28" rx="8" fill="#cbd5e1" stroke="#64748b"/><text x="455" y="173" font-size="11" font-weight="700" fill="#334155" text-anchor="middle" class="mono">e6</text>
+
+    <text x="880" y="115" font-size="12" font-weight="700" fill="#dc2626" text-anchor="middle">?</text>
+    <text x="40" y="220" font-size="12" fill="#1f2937"><tspan font-weight="700" fill="#15803d">차선 안</tspan> = 파티션 내부: 추월 금지 규칙이 물리적으로 걸려 있다(append-only 로그 + 파티션당 컨슈머 1).</text>
+    <text x="40" y="240" font-size="12" fill="#1f2937"><tspan font-weight="700" fill="#dc2626">차선 사이</tspan> = 파티션 간: 애초에 같은 줄에 선 적이 없으므로 "먼저"라는 말이 성립하지 않는다.</text>
+  </svg>
+  <figcaption>비유의 쓸모는 결론이 아니라 <b>경계</b>에 있다. 면접에서 "순서 보장 단위"를 물으면 이 비유의 <b>차선 하나</b>를 가리키면 된다.</figcaption>
+</figure>
+
+<h3>1-2. 소비 쪽 구조도 같은 결론을 가리킨다</h3>
+
+<p>순서가 파티션 단위인 데는 저장 구조뿐 아니라 <b>소비 쪽 구조도 맞물려 있다.</b></p>
+
+<p>컨슈머 그룹 안에서 <b>하나의 파티션은 최대 한 컨슈머에게만 할당된다.</b> 같은 파티션을 두 컨슈머가 동시에 읽는 일은 그룹 안에서 일어나지 않는다. 그래서 파티션 안의 메시지는 <b>항상 단일 컨슈머가 처음부터 끝까지 순서대로 읽는다.</b></p>
+
+<p>만약 이 규칙이 없다면, 저장 순서가 아무리 완벽해도 두 컨슈머가 같은 파티션을 나눠 읽는 순간 처리 순서가 뒤섞였을 것이다. <b>저장 순서와 소비 순서가 둘 다 지켜져야 "순서 보장"이 성립한다</b>는 점을 짚으면 좋다. <span class="badge bonus">가산점</span></p>
+
+<div class="callout info"><span class="t">두 개의 기둥 — 하나라도 빠지면 순서는 없다</span>
+  <div class="grid g2" style="margin-top:8px">
+    <div class="tile"><div class="k">① 저장 순서</div><div class="d">파티션은 <b>append-only 로그</b> — 끝에만 덧붙이므로 기록 순서가 곧 읽기 순서다.</div></div>
+    <div class="tile"><div class="k">② 소비 순서</div><div class="d">컨슈머 그룹 안에서 <b>파티션 1개 = 컨슈머 1개</b> — 한 파티션을 둘이 나눠 읽는 일이 없다.</div></div>
+  </div>
+  <p style="margin:10px 0 0;font-size:.95rem">파티션과 컨슈머 수의 관계 자체는 <code>22-partition-vs-consumer-count.md</code>가 다룬다. 여기서 필요한 것은 <b>"소비 쪽에서도 파티션이 경계"</b>라는 사실 하나다.</p>
+</div>
+
+<p>반대로 말하면 파티션은 <b>"순서 보장 단위"이자 "병렬 처리 단위"</b>라는 <b>이중성</b>을 갖는다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 356" role="img" aria-label="파티션 수가 늘어날수록 순서 보장 범위는 좁아지고 병렬 처리 상한은 커지는 교차 그래프. 왼쪽은 파티션 1개일 때 토픽 전체 순서와 컨슈머 1대, 오른쪽은 파티션 10개일 때 순서가 10개 그룹으로 쪼개지고 컨슈머 10대가 동시에 일하는 상태를 보여준다.">
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">파티션의 이중성 — <tspan fill="#2563eb">순서 보장 단위</tspan>이자 <tspan fill="#16a34a">병렬 처리 단위</tspan>, 같은 숫자 하나가 둘을 동시에 결정한다</text>
+
+    <rect x="30" y="42" width="470" height="78" rx="11" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.4"/>
+    <text x="50" y="68" font-size="13" font-weight="800" fill="#1d4ed8">파티션 1개</text>
+    <text x="50" y="90" font-size="11.5" fill="#1e3a8a">순서: 토픽 전체가 <tspan font-weight="700">한 줄로 정렬</tspan>된다 (전역 순서)</text>
+    <text x="50" y="110" font-size="11.5" fill="#1e3a8a">병렬: 컨슈머는 <tspan font-weight="700" fill="#b91c1c">1대만</tspan> 일한다 — 나머지는 논다</text>
+
+    <rect x="620" y="42" width="470" height="78" rx="11" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.4"/>
+    <text x="640" y="68" font-size="13" font-weight="800" fill="#15803d">파티션 10개</text>
+    <text x="640" y="90" font-size="11.5" fill="#14532d">순서: <tspan font-weight="700" fill="#b91c1c">10개 그룹으로 쪼개진다</tspan> — 그룹 간 순서 없음</text>
+    <text x="640" y="110" font-size="11.5" fill="#14532d">병렬: 컨슈머 <tspan font-weight="700">10대가 동시에</tspan> 일한다</text>
+
+    <path d="M520,80 L600,80" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="560" y="72" font-size="11" fill="#64748b" text-anchor="middle">증설</text>
+
+    <!-- chart -->
+    <rect x="30" y="136" width="1060" height="196" rx="11" fill="#f8fafc" stroke="#e5e7eb"/>
+    <line x1="120" y1="300" x2="1010" y2="300" stroke="#cbd5e1" stroke-width="1.6"/>
+    <g font-size="11" fill="#64748b" text-anchor="middle">
+      <text x="150" y="320">파티션 1개</text>
+      <text x="430" y="320">3개</text>
+      <text x="720" y="320">6개</text>
+      <text x="990" y="320">10개</text>
+    </g>
+    <g stroke="#e2e8f0" stroke-width="1" stroke-dasharray="3 4">
+      <line x1="150" y1="164" x2="150" y2="300"/><line x1="430" y1="164" x2="430" y2="300"/>
+      <line x1="720" y1="164" x2="720" y2="300"/><line x1="990" y1="164" x2="990" y2="300"/>
+    </g>
+    <path d="M150,172 L990,280" stroke="#2563eb" stroke-width="2.6" fill="none"/>
+    <path d="M150,280 L990,172" stroke="#16a34a" stroke-width="2.6" fill="none"/>
+    <circle cx="570" cy="226" r="6" fill="#ffffff" stroke="#dc2626" stroke-width="2.4"/>
+    <text x="570" y="256" font-size="11.5" font-weight="800" fill="#dc2626" text-anchor="middle">여기가 트레이드오프의 실체</text>
+    <text x="152" y="164" font-size="12" font-weight="800" fill="#2563eb">순서 보장 범위 (넓음)</text>
+    <text x="988" y="164" font-size="12" font-weight="800" fill="#16a34a" text-anchor="end">병렬 처리 상한 (높음)</text>
+    <text x="152" y="296" font-size="11.5" font-weight="700" fill="#16a34a">병렬 1</text>
+    <text x="988" y="296" font-size="11.5" font-weight="700" fill="#2563eb" text-anchor="end">순서 보장 범위 (좁음)</text>
+  </svg>
+  <figcaption>두 선은 <b>같은 축(파티션 수)</b> 위에서 반대로 움직인다. 그래서 "순서를 넓게 보장하면서 병렬성도 높이자"는 요구는 <b>이 그림 안에서는 불가능</b>하고, 유일한 탈출구가 <b>키로 순서 경계를 잘게 나누는 것</b>(2절)과 <b>순서 의존을 없애는 것</b>(6절)이다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>암기 — 파티션 수 하나가 결정하는 두 가지</h4>
+  <div class="formula">파티션 수 = <span class="hi">순서 보장의 조각 수</span> = <span class="hi2">병렬 처리의 상한</span></div>
+  <div class="grid g2">
+    <div class="tile"><div class="k">순서를 넓게 보장할수록</div><div class="d">(파티션을 적게 쓸수록) <b>병렬성을 잃는다.</b></div></div>
+    <div class="tile ok"><div class="k">병렬성을 넓게 가져갈수록</div><div class="d">(파티션을 많이 쓸수록) <b>순서 보장 범위가 좁아진다.</b></div></div>
+  </div>
+  <p style="margin:10px 0 0;font-size:.95rem"><b>같은 숫자 하나가 두 성질을 동시에 결정한다</b> — 이것이 Kafka 설계에서 순서와 처리량이 정면으로 맞부딪히는 이유다. 이 이중성을 짚으면 Kafka 이해도의 척도가 된다. <span class="badge bonus">가산점</span></p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 특정 사용자의 순서 보장 — 메시지 키로 파티션을 고정한다</h2>
+
+<h3>2-1. 키가 파티션으로 바뀌는 계산 과정</h3>
+
+<p>프로듀서가 메시지에 <b>키(key)</b>를 지정하면, 기본 파티셔너는 두 단계를 밟는다.</p>
+
+<div class="step"><span class="n">1</span><div class="body">키의 <b>바이트열을 해시 함수</b>에 넣어 <b>정수 하나</b>로 바꾼다.</div></div>
+<div class="step"><span class="n">2</span><div class="body">그 정수를 <b>파티션 개수로 나눈 나머지</b>를 파티션 번호로 쓴다.</div></div>
+
+<div class="memo">
+  <h4>암기 — 이 한 줄이 이 문서의 절반이다</h4>
+  <div class="formula">파티션 번호 = hash(<span class="hi2">키의 바이트</span>) mod <span class="hi">파티션 수</span></div>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k">분자 <span class="s">hash(키)</span></div><div class="d">키가 안 바뀌는 한 <b>영원히 그대로</b>다. 해시 함수의 유일한 필요 성질은 <b>결정성</b>(같은 입력 → 같은 출력)이다.</div></div>
+    <div class="tile red"><div class="k">분모 <span class="s">파티션 수</span></div><div class="d"><b>운영자가 바꿀 수 있다.</b> 분모가 바뀌면 나머지가 바뀌고, 나머지가 바뀌면 <b>목적지가 바뀐다</b> → 4절 ④ 증설 함정.</div></div>
+  </div>
+</div>
+
+<p>해시 함수가 구체적으로 무엇인지는 여기서 중요하지 않다(클라이언트 구현 세부이고 버전에 따라 다룰 수 있다). <b>필요한 성질은 딱 하나 — 같은 입력에 언제나 같은 출력이라는 결정성이다.</b> 그래서 같은 키는 언제나 같은 정수가 되고, 같은 정수를 같은 수로 나누면 나머지도 같으므로, <b>같은 키는 언제나 같은 파티션으로 간다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 404" role="img" aria-label="키가 해시 함수를 거쳐 정수가 되고 파티션 수로 나눈 나머지가 파티션 번호가 되는 4단계 파이프라인 도식과, user 42와 user 99 키로 실제 계산을 따라간 예시 표.">
+    <defs>
+      <marker id="f4a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">키 &#8594; 파티션 번호 계산 파이프라인 &nbsp;·&nbsp; 결정적이므로 <tspan fill="#2563eb">같은 키는 언제나 같은 파티션</tspan></text>
+
+    <rect x="40" y="50" width="210" height="66" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="145" y="76" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">① 메시지 키</text>
+    <text x="145" y="98" font-size="11.5" fill="#475569" text-anchor="middle" class="mono">"user:42" (바이트열)</text>
+
+    <path d="M256,83 L284,83" stroke="#2563eb" stroke-width="2" marker-end="url(#f4a)"/>
+
+    <rect x="290" y="50" width="210" height="66" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="395" y="76" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">② 해시 함수</text>
+    <text x="395" y="98" font-size="11.5" fill="#1e3a8a" text-anchor="middle">결정적 &#8594; 정수 하나</text>
+
+    <path d="M506,83 L534,83" stroke="#2563eb" stroke-width="2" marker-end="url(#f4a)"/>
+
+    <rect x="540" y="50" width="210" height="66" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="645" y="76" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">③ mod <tspan text-decoration="underline">파티션 수</tspan></text>
+    <text x="645" y="98" font-size="11.5" fill="#7f1d1d" text-anchor="middle">나머지를 구한다</text>
+
+    <path d="M756,83 L784,83" stroke="#2563eb" stroke-width="2" marker-end="url(#f4a)"/>
+
+    <rect x="790" y="50" width="250" height="66" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="915" y="76" font-size="12" font-weight="700" fill="#15803d" text-anchor="middle">④ 파티션 번호</text>
+    <text x="915" y="98" font-size="11.5" fill="#14532d" text-anchor="middle">이 사용자의 고정 목적지</text>
+
+    <path d="M645,120 L645,140" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="645" y="156" font-size="11.5" font-weight="800" fill="#dc2626" text-anchor="middle">여기가 <tspan text-decoration="underline">분모</tspan> — 유일하게 운영자가 바꿀 수 있는 자리 (증설 함정의 근원)</text>
+
+    <!-- worked example -->
+    <rect x="40" y="172" width="1040" height="196" rx="11" fill="#f8fafc" stroke="#e5e7eb" stroke-width="1.4"/>
+    <text x="64" y="198" font-size="12.5" font-weight="700" fill="#1f2937">파티션이 3개일 때 실제 계산을 따라가면</text>
+    <line x1="64" y1="210" x2="1056" y2="210" stroke="#e5e7eb"/>
+    <g font-size="11" fill="#64748b" font-weight="700">
+      <text x="80" y="232">키</text><text x="380" y="232">해시</text><text x="620" y="232">나머지 계산</text><text x="900" y="232">목적지</text>
+    </g>
+
+    <g class="mono" font-size="12.5">
+      <text x="80" y="262" fill="#1f2937">"user:42"</text>
+      <text x="300" y="262" fill="#64748b">&#8594;</text>
+      <text x="380" y="262" fill="#1d4ed8">8471</text>
+      <text x="560" y="262" fill="#64748b">&#8594;</text>
+      <text x="620" y="262" fill="#1f2937">8471 mod 3 = 2</text>
+      <text x="860" y="262" fill="#64748b">&#8594;</text>
+      <text x="900" y="262" font-weight="700" fill="#15803d">파티션 2</text>
+    </g>
+    <g class="mono" font-size="12.5">
+      <text x="80" y="294" fill="#1f2937">"user:99"</text>
+      <text x="300" y="294" fill="#64748b">&#8594;</text>
+      <text x="380" y="294" fill="#1d4ed8">91027</text>
+      <text x="560" y="294" fill="#64748b">&#8594;</text>
+      <text x="620" y="294" fill="#1f2937">91027 mod 3 = 1</text>
+      <text x="860" y="294" fill="#64748b">&#8594;</text>
+      <text x="900" y="294" font-weight="700" fill="#15803d">파티션 1</text>
+    </g>
+    <rect x="64" y="308" width="992" height="38" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <g class="mono" font-size="12.5">
+      <text x="80" y="332" fill="#14532d">"user:42"</text>
+      <text x="300" y="332" fill="#64748b">&#8594;</text>
+      <text x="380" y="332" fill="#1d4ed8">8471</text>
+      <text x="560" y="332" fill="#64748b">&#8594;</text>
+      <text x="620" y="332" fill="#14532d">8471 mod 3 = 2</text>
+      <text x="860" y="332" fill="#64748b">&#8594;</text>
+      <text x="900" y="332" font-weight="700" fill="#15803d">파티션 2</text>
+    </g>
+    <text x="1044" y="332" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="end">&#8593; 결정성</text>
+
+    <text x="40" y="390" font-size="11" fill="#64748b">※ 위 해시값은 설명용 가상의 수치다. 중요한 것은 구체적 숫자가 아니라 <tspan font-weight="700" fill="#1f2937">같은 키가 언제나 같은 수로 바뀐다</tspan>는 사실이다.</text>
+  </svg>
+  <figcaption>계산 자체는 초등 산수지만, 이 그림에서 반드시 가져가야 할 것은 <b>분자와 분모의 성격 차이</b>다. 분자는 애플리케이션이 정하고 안 바뀌지만, <b>분모는 운영자가 바꿀 수 있고 바뀌는 순간 모든 키의 목적지가 재배치된다.</b></figcaption>
+</figure>
+
+<div class="callout warn"><span class="t">여기서 붙잡아 둘 것</span>
+  <b>파티션 수가 나눗셈의 분모 자리에 있다.</b> 분자(키의 해시)는 키가 안 바뀌는 한 영원히 그대로인데, 분모는 운영자가 바꿀 수 있다. <b>분모가 바뀌면 나머지가 바뀌고, 나머지가 바뀌면 목적지가 바뀐다.</b> 4절 ④ 파티션 증설 함정이 정확히 여기서 나온다.
+</div>
+
+<h3>2-2. 코드로 보는 before/after</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 키 없이 발행 — 메시지가 여러 파티션에 분산됨</div>
+<pre><code><span class="cm">// 키를 주지 않으면 파티셔너가 알아서 흩뿌린다</span>
+<span class="ln-bad">kafkaTemplate.<span class="fn">send</span>(<span class="st">"user-events"</span>, event);</span>
+
+<span class="cm">// 문제: "회원가입 → 프로필수정 → 탈퇴"가 서로 다른 파티션에 실리면</span>
+<span class="cm">//       컨슈머가 "탈퇴"를 "가입"보다 먼저 처리할 수 있다.</span>
+<span class="cm">// 그리고 이것은 버그가 아니라 <span class="nm">사양대로의 정상 동작</span>이다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> userId를 키로 발행 — 같은 사용자는 항상 같은 파티션</div>
+<pre><code><span class="cm">// 두 번째 인자가 메시지 키다</span>
+<span class="ln-good">kafkaTemplate.<span class="fn">send</span>(<span class="st">"user-events"</span>, event.<span class="fn">getUserId</span>(), event);</span>
+
+<span class="cm">// 효과: 사용자 42번의 모든 이벤트가 한 파티션에 순서대로 쌓이고,</span>
+<span class="cm">//       그 파티션을 읽는 컨슈머도 하나이므로 순서대로 처리된다.</span>
+<span class="cm">// "탈퇴가 가입보다 먼저" 조합이 <span class="fn">구조적으로 불가능</span>해진다.</span></code></pre>
+  </div>
+</div>
+
+<p>두 줄 차이지만 <b>보장의 성격이 완전히 달라진다.</b> Before에서는 "탈퇴 이벤트가 가입 이벤트보다 먼저 처리돼 없는 사용자를 지우려는" 버그가 <b>언제든 재현될 수 있는 정상 동작</b>이고, After에서는 그 조합이 <b>구조적으로 불가능</b>해진다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 424" role="img" aria-label="왼쪽은 키 없이 발행해 가입 프로필수정 탈퇴 이벤트가 세 파티션에 흩어지고 세 컨슈머가 병렬 처리해 탈퇴가 먼저 처리되는 상황, 오른쪽은 userId를 키로 지정해 세 이벤트가 모두 파티션 2에 순서대로 쌓이고 컨슈머 하나가 순서대로 처리하는 상황을 대비한 도식.">
+    <defs>
+      <marker id="f5r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="f5g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <!-- BEFORE -->
+    <rect x="24" y="20" width="532" height="386" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+    <text x="44" y="46" font-size="13" font-weight="800" fill="#b91c1c">Before — 키 없음 · 사용자 42의 이벤트 3건</text>
+
+    <rect x="44" y="58" width="126" height="36" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="107" y="81" font-size="11.5" font-weight="700" fill="#7f1d1d" text-anchor="middle">① 가입</text>
+    <rect x="180" y="58" width="146" height="36" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="253" y="81" font-size="11.5" font-weight="700" fill="#7f1d1d" text-anchor="middle">② 프로필수정</text>
+    <rect x="336" y="58" width="126" height="36" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="399" y="81" font-size="11.5" font-weight="700" fill="#7f1d1d" text-anchor="middle">③ 탈퇴</text>
+    <text x="478" y="81" font-size="11" fill="#7f1d1d">발행 순서</text>
+
+    <path d="M107,98 L253,148" stroke="#dc2626" stroke-width="1.5" marker-end="url(#f5r)"/>
+    <path d="M253,98 L107,148" stroke="#dc2626" stroke-width="1.5" marker-end="url(#f5r)"/>
+    <path d="M399,98 L399,148" stroke="#dc2626" stroke-width="1.5" marker-end="url(#f5r)"/>
+
+    <rect x="44" y="154" width="126" height="44" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="107" y="172" font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle" class="mono">파티션 0</text><text x="107" y="190" font-size="11" fill="#1f2937" text-anchor="middle">[ 프로필수정 ]</text>
+    <rect x="190" y="154" width="126" height="44" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="253" y="172" font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle" class="mono">파티션 1</text><text x="253" y="190" font-size="11" fill="#1f2937" text-anchor="middle">[ 가입 ]</text>
+    <rect x="336" y="154" width="126" height="44" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="399" y="172" font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle" class="mono">파티션 2</text><text x="399" y="190" font-size="11" fill="#1f2937" text-anchor="middle">[ 탈퇴 ]</text>
+
+    <path d="M107,202 L107,232" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#f5r)"/>
+    <path d="M253,202 L253,232" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#f5r)"/>
+    <path d="M399,202 L399,232" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#f5r)"/>
+
+    <rect x="44" y="238" width="126" height="34" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="107" y="260" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">컨슈머 1</text>
+    <rect x="190" y="238" width="126" height="34" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="253" y="260" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">컨슈머 2</text>
+    <rect x="336" y="238" width="126" height="34" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="399" y="260" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">컨슈머 3</text>
+    <text x="478" y="260" font-size="11" fill="#7f1d1d">동시 실행</text>
+
+    <rect x="44" y="288" width="488" height="100" rx="10" fill="#ffffff" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="64" y="314" font-size="12" font-weight="800" fill="#b91c1c">처리 완료 순서: 탈퇴 &#8594; 가입 &#8594; 프로필수정 (그때그때 다름)</text>
+    <text x="64" y="338" font-size="11.5" fill="#7f1d1d">"없는 사용자를 탈퇴 처리" &#8594; "탈퇴한 사용자가 되살아남"</text>
+    <text x="64" y="360" font-size="11.5" fill="#7f1d1d">재현이 안 되니 버그로 잡히지도 않는다.</text>
+    <text x="64" y="380" font-size="11.5" font-weight="700" fill="#dc2626">&#10005; 이것은 장애가 아니라 사양대로의 동작이다</text>
+
+    <!-- AFTER -->
+    <rect x="564" y="20" width="532" height="386" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
+    <text x="584" y="46" font-size="13" font-weight="800" fill="#15803d">After — key = <tspan class="mono">"user:42"</tspan> · 같은 이벤트 3건</text>
+
+    <rect x="584" y="58" width="126" height="36" rx="8" fill="#ffffff" stroke="#86efac"/><text x="647" y="81" font-size="11.5" font-weight="700" fill="#14532d" text-anchor="middle">① 가입</text>
+    <rect x="720" y="58" width="146" height="36" rx="8" fill="#ffffff" stroke="#86efac"/><text x="793" y="81" font-size="11.5" font-weight="700" fill="#14532d" text-anchor="middle">② 프로필수정</text>
+    <rect x="876" y="58" width="126" height="36" rx="8" fill="#ffffff" stroke="#86efac"/><text x="939" y="81" font-size="11.5" font-weight="700" fill="#14532d" text-anchor="middle">③ 탈퇴</text>
+    <text x="1018" y="81" font-size="11" fill="#14532d">발행 순서</text>
+
+    <path d="M647,98 L770,142" stroke="#16a34a" stroke-width="1.5" marker-end="url(#f5g)"/>
+    <path d="M793,98 L793,142" stroke="#16a34a" stroke-width="1.5" marker-end="url(#f5g)"/>
+    <path d="M939,98 L816,142" stroke="#16a34a" stroke-width="1.5" marker-end="url(#f5g)"/>
+    <text x="1006" y="126" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="end">hash("user:42") mod 3 = 2</text>
+
+    <rect x="584" y="150" width="418" height="52" rx="9" fill="#ffffff" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="600" y="180" font-size="10.5" font-weight="700" fill="#15803d" class="mono">파티션 2</text>
+    <rect x="676" y="160" width="94" height="32" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="723" y="181" font-size="10.5" fill="#14532d" text-anchor="middle">가입</text>
+    <rect x="776" y="160" width="110" height="32" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="831" y="181" font-size="10.5" fill="#14532d" text-anchor="middle">프로필수정</text>
+    <rect x="892" y="160" width="94" height="32" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="939" y="181" font-size="10.5" fill="#14532d" text-anchor="middle">탈퇴</text>
+
+    <path d="M793,206 L793,232" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#f5g)"/>
+    <rect x="720" y="238" width="146" height="34" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="793" y="260" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">컨슈머 3 (P2 전담)</text>
+    <text x="900" y="260" font-size="11" fill="#14532d">단독 · 순차</text>
+
+    <rect x="584" y="288" width="488" height="100" rx="10" fill="#ffffff" stroke="#bbf7d0" stroke-width="1.4"/>
+    <text x="604" y="314" font-size="12" font-weight="800" fill="#15803d">처리 완료 순서: 가입 &#8594; 프로필수정 &#8594; 탈퇴 (언제나 동일)</text>
+    <text x="604" y="338" font-size="11.5" fill="#14532d">저장 순서(append-only)와 소비 순서(파티션당 컨슈머 1)가</text>
+    <text x="604" y="358" font-size="11.5" fill="#14532d">둘 다 지켜지므로 역전 조합이 만들어질 수 없다.</text>
+    <text x="604" y="380" font-size="11.5" font-weight="700" fill="#16a34a">&#10003; 사용자 A와 B 사이의 순서는 여전히 없다 — 그리고 필요도 없다</text>
+  </svg>
+  <figcaption>오른쪽에서도 <b>사용자 A와 B 사이의 순서는 여전히 없다.</b> 그것을 포기했기 때문에 파티션 3개를 그대로 쓰면서 필요한 보장만 얻은 것이다 — 이 "포기"가 다음 절의 주제다.</figcaption>
+</figure>
+
+<h3>2-3. 요구를 "전역 순서"에서 "키 단위 순서"로 좁힌다</h3>
+
+<p>핵심은 <b>"전역 순서"가 아니라 "키 단위 순서"로 요구를 좁히는 것</b>이다.</p>
+
+<p>사용자 A와 사용자 B의 이벤트 사이 순서는 대부분 업무적으로 의미가 없다. A가 가입한 뒤 B가 가입했든 그 반대든, 두 사람의 프로필 처리 결과는 달라지지 않는다. <b>정말 필요한 것은 "같은 사용자 안에서의 순서"이고, 그 최소 단위가 곧 키가 된다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 236" role="img" aria-label="전역 순서 요구를 키 단위 순서로 좁히면 병렬성을 잃지 않고도 필요한 보장을 얻는다는 것을 두 개의 원 크기로 대비한 도식.">
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">요구 좁히기 — 보장 범위를 줄인 만큼 병렬성을 되찾는다</text>
+
+    <rect x="30" y="44" width="330" height="170" rx="11" fill="#fef2f2" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="195" y="70" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">요구: "토픽 전체 순서"</text>
+    <circle cx="195" cy="132" r="46" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+    <text x="195" y="130" font-size="11" font-weight="700" fill="#7f1d1d" text-anchor="middle">보장 범위</text>
+    <text x="195" y="146" font-size="11" font-weight="700" fill="#7f1d1d" text-anchor="middle">= 토픽 전체</text>
+    <text x="195" y="200" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">파티션 1개 · 컨슈머 1대가 천장</text>
+
+    <path d="M372,132 L412,132" stroke="#64748b" stroke-width="2"/>
+    <text x="392" y="122" font-size="11" font-weight="700" fill="#334155" text-anchor="middle">좁히기</text>
+
+    <rect x="424" y="44" width="330" height="170" rx="11" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.4"/>
+    <text x="589" y="70" font-size="12.5" font-weight="800" fill="#15803d" text-anchor="middle">요구: "사용자별 순서"</text>
+    <circle cx="509" cy="132" r="22" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/><text x="509" y="136" font-size="10" font-weight="700" fill="#14532d" text-anchor="middle">u:42</text>
+    <circle cx="565" cy="132" r="22" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/><text x="565" y="136" font-size="10" font-weight="700" fill="#14532d" text-anchor="middle">u:99</text>
+    <circle cx="621" cy="132" r="22" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/><text x="621" y="136" font-size="10" font-weight="700" fill="#14532d" text-anchor="middle">u:7</text>
+    <circle cx="677" cy="132" r="22" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/><text x="677" y="136" font-size="10" font-weight="700" fill="#14532d" text-anchor="middle">u:15</text>
+    <text x="589" y="200" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">파티션 N개 · 컨슈머 N대를 그대로 쓴다</text>
+
+    <rect x="782" y="44" width="308" height="170" rx="11" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.4"/>
+    <text x="806" y="72" font-size="12.5" font-weight="800" fill="#1d4ed8">키 설계 = 도메인 판단</text>
+    <text x="806" y="100" font-size="11.5" fill="#1e3a8a">"순서 보장의 경계를</text>
+    <text x="806" y="120" font-size="11.5" fill="#1e3a8a">어디에 그을 것인가"를 정하는 일.</text>
+    <text x="806" y="150" font-size="11.5" font-weight="700" fill="#1d4ed8">인프라 설정이 아니라</text>
+    <text x="806" y="170" font-size="11.5" font-weight="700" fill="#1d4ed8">업무 규칙의 번역이다.</text>
+    <text x="806" y="196" font-size="11" fill="#475569">&#8594; 5절의 키 편중 대응도 결국</text>
+    <text x="806" y="212" font-size="11" fill="#475569">&nbsp;&nbsp; 이 경계를 다시 긋는 문제다.</text>
+  </svg>
+  <figcaption>왼쪽의 큰 원 하나를 오른쪽의 작은 원 여러 개로 쪼갠 것이 전부다. <b>쪼갠 개수만큼 병렬성이 생기고, 쪼갠 경계를 넘는 순서는 사라진다.</b></figcaption>
+</figure>
+
+<p>이 좁히기가 왜 중요한가. 1-2에서 본 <b>이중성</b> 때문이다. <b>순서 보장 범위를 넓게 잡으면 병렬성을 그만큼 잃는다.</b> "토픽 전체 순서"를 요구하면 파티션 1개, 컨슈머 1대다. "사용자별 순서"로 좁히면 파티션을 원하는 만큼 쓰면서도 필요한 보장을 얻는다.</p>
+
+<div class="memo green">
+  <h4>규칙 — 키 설계는 인프라 설정이 아니다</h4>
+  <div class="rule ok">키 설계 = "순서 보장의 경계를 어디에 그을 것인가"를 정하는 <u>도메인 판단</u></div>
+  <p style="margin:8px 0 0;font-size:.95rem">그래서 키를 정하기 전에 던져야 할 질문은 <b>"어떤 필드가 고르게 분산되는가"</b>가 아니라 <b>"어떤 두 이벤트 사이의 순서가 뒤바뀌면 업무가 틀어지는가"</b>다. 그 두 이벤트가 공유하는 최소 식별자가 곧 키다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 키만으로는 부족하다 — 함정 ① 프로듀서 재시도</h2>
+
+<p>"키를 지정했으니 끝"이 아니다. 키가 보장하는 것은 <b>"어느 파티션에 갈지"</b>뿐이다. <b>"그 파티션 안에서 몇 번째로 기록될지"</b>도, <b>"기록된 순서대로 처리될지"</b>도 키는 보장하지 않는다. 그 앞뒤 단계에서 순서가 깨질 수 있다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 316" role="img" aria-label="메시지가 프로듀서에서 파티션을 거쳐 컨슈머와 실패 처리로 흐르는 파이프라인 위에 순서가 깨지는 네 지점을 표시한 지도. 1번은 프로듀서 재시도, 2번은 컨슈머 내부 병렬 처리, 3번은 실패 재시도와 DLQ, 4번은 운영 중 파티션 증설이다.">
+    <defs>
+      <marker id="f7a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+      <marker id="f7r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">순서가 깨지는 <tspan fill="#dc2626">네 지점</tspan> — 키가 관여하지 않는 구간이 곧 함정이다</text>
+
+    <!-- ops change (4) above -->
+    <rect x="380" y="42" width="330" height="34" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="545" y="64" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">④ 운영 변경 — 파티션 증설 (분모가 바뀐다)</text>
+    <path d="M545,78 L545,116" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#f7r)"/>
+
+    <!-- pipeline -->
+    <rect x="40" y="122" width="180" height="62" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="130" y="148" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">프로듀서</text>
+    <text x="130" y="168" font-size="10.5" fill="#64748b" text-anchor="middle">키 지정 · 배치 전송</text>
+
+    <path d="M226,153 L296,153" stroke="#64748b" stroke-width="1.8" marker-end="url(#f7a)"/>
+    <circle cx="261" cy="122" r="15" fill="#dc2626"/><text x="261" y="127" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">1</text>
+
+    <rect x="302" y="122" width="200" height="62" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="402" y="148" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">브로커 · 파티션 로그</text>
+    <text x="402" y="168" font-size="10.5" fill="#1e3a8a" text-anchor="middle">append-only · 오프셋 부여</text>
+
+    <path d="M508,153 L578,153" stroke="#64748b" stroke-width="1.8" marker-end="url(#f7a)"/>
+
+    <rect x="584" y="122" width="200" height="62" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="684" y="148" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">컨슈머 (내부 워커 풀)</text>
+    <text x="684" y="168" font-size="10.5" fill="#64748b" text-anchor="middle">poll &#8594; 스레드에 분배</text>
+    <circle cx="684" cy="112" r="15" fill="#dc2626"/><text x="684" y="117" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">2</text>
+
+    <path d="M790,153 L860,153" stroke="#64748b" stroke-width="1.8" marker-end="url(#f7a)"/>
+    <circle cx="825" cy="122" r="15" fill="#dc2626"/><text x="825" y="127" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">3</text>
+
+    <rect x="866" y="122" width="214" height="62" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="973" y="148" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">실패 재시도 · DLQ</text>
+    <text x="973" y="168" font-size="10.5" fill="#64748b" text-anchor="middle">건너뛰고 나중에 재처리</text>
+
+    <!-- legend -->
+    <rect x="40" y="204" width="256" height="94" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="58" y="228" font-size="11.5" font-weight="800" fill="#b91c1c">① 프로듀서 재시도</text>
+    <text x="58" y="250" font-size="11" fill="#7f1d1d">앞 요청 실패 &#8594; 재시도하는 사이</text>
+    <text x="58" y="268" font-size="11" fill="#7f1d1d">뒤 요청이 먼저 기록된다.</text>
+    <text x="58" y="288" font-size="11" font-weight="700" fill="#16a34a">해결: 멱등 프로듀서</text>
+
+    <rect x="308" y="204" width="256" height="94" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="326" y="228" font-size="11.5" font-weight="800" fill="#b91c1c">② 컨슈머 내부 병렬</text>
+    <text x="326" y="250" font-size="11" fill="#7f1d1d">순서대로 꺼내 놓고 워커 풀에</text>
+    <text x="326" y="268" font-size="11" fill="#7f1d1d">무작위로 뿌리면 완료가 뒤섞인다.</text>
+    <text x="326" y="288" font-size="11" font-weight="700" fill="#16a34a">해결: 같은 키 &#8594; 같은 워커</text>
+
+    <rect x="576" y="204" width="256" height="94" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="594" y="228" font-size="11.5" font-weight="800" fill="#b91c1c">③ 실패 재시도 / DLQ</text>
+    <text x="594" y="250" font-size="11" fill="#7f1d1d">실패 건만 건너뛰면 그 키의</text>
+    <text x="594" y="268" font-size="11" fill="#7f1d1d">후속이 먼저 처리된다.</text>
+    <text x="594" y="288" font-size="11" font-weight="700" fill="#d97706">해결 없음 &#8594; 의식적 선택</text>
+
+    <rect x="844" y="204" width="236" height="94" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="862" y="228" font-size="11.5" font-weight="800" fill="#b91c1c">④ 파티션 증설</text>
+    <text x="862" y="250" font-size="11" fill="#7f1d1d">분모가 바뀌어 같은 키가</text>
+    <text x="862" y="268" font-size="11" fill="#7f1d1d">두 파티션에 걸친다.</text>
+    <text x="862" y="288" font-size="11" font-weight="700" fill="#d97706">해결: 되돌릴 수 없음 · 예방</text>
+  </svg>
+  <figcaption>네 함정은 <b>메시지가 흐르는 순서대로</b> 배치돼 있다 — 발행(①) → 소비(②) → 실패 처리(③), 그리고 이 흐름 전체를 위에서 흔드는 운영 변경(④). 외우지 말고 <b>흐름을 따라가며 "여기서 키가 뭘 보장하지?"를 물으면</b> 그 자리에서 재구성된다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>함정 4종 — 발행 · 소비 · 실패 · 운영</h4>
+  <div class="grid g4">
+    <div class="tile red"><div class="k">① 발행</div><div class="s">프로듀서 재시도</div><div class="d">보낸 순서 &#8800; 기록 순서</div></div>
+    <div class="tile red"><div class="k">② 소비</div><div class="s">워커 풀 병렬 처리</div><div class="d">꺼낸 순서 &#8800; 완료 순서</div></div>
+    <div class="tile red"><div class="k">③ 실패</div><div class="s">재시도 토픽 / DLQ</div><div class="d">건너뛰면 후속이 앞선다</div></div>
+    <div class="tile red"><div class="k">④ 운영</div><div class="s">파티션 증설</div><div class="d">한 키가 두 파티션에 걸친다</div></div>
+  </div>
+</div>
+
+<h3>3-1. 프로듀서는 응답을 기다리지 않는다 (전제)</h3>
+
+<p>이 문서에서 가장 이해하기 어려운 지점이라 전제부터 깐다.</p>
+
+<p><b>프로듀서는 브로커의 응답을 기다렸다가 다음 요청을 보내지 않는다.</b> 응답이 오기 전에도 다음 요청을 계속 내보낼 수 있고, <b>"응답을 못 받은 채 브로커 쪽에 떠 있는 요청(in-flight request, 미확인 요청)을 연결 하나당 몇 개까지 허용할지"</b>가 설정으로 정해져 있다. 이 값이 1보다 크면 <b>여러 요청이 동시에 날아가 있는 상태</b>가 된다.</p>
+
+<div class="callout info"><span class="t">왜 기다리지 않는가 — 처리량 때문이다</span>
+매번 왕복을 기다리면 그 시간 동안 <b>파이프라인이 비어 있게 된다.</b> 그래서 응답을 기다리는 동안에도 다음 배치를 계속 밀어 넣는다. <b>이 성능 최적화가 그대로 순서 함정의 원인이 된다</b> — 성능을 위해 만든 구조가 정합성을 흔드는 전형적인 사례다.
+</div>
+
+<p>문제는 <b>앞선 요청이 실패해 재시도되는 사이에 뒤 요청이 먼저 성공할 수 있다</b>는 것이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 412" role="img" aria-label="프로듀서가 응답을 기다리지 않고 요청1과 요청2를 연달아 보낸 뒤 요청1만 실패해 재시도하는 시퀀스 다이어그램. 결과적으로 파티션 로그에는 B가 먼저 기록되고 A가 나중에 기록되어 발행 순서가 역전된다.">
+    <defs>
+      <marker id="f8b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="f8r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="f8g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">함정 ① 재시도 역전 &nbsp;·&nbsp; <tspan fill="#dc2626">같은 키를 썼는데도</tspan> 파티션 안에서 순서가 뒤집힌다</text>
+
+    <rect x="120" y="44" width="200" height="36" rx="9" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="220" y="68" font-size="12" font-weight="700" fill="#1f2937" text-anchor="middle">프로듀서</text>
+    <rect x="620" y="44" width="240" height="36" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="740" y="68" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">브로커의 파티션 P</text>
+    <line x1="220" y1="80" x2="220" y2="356" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="4 4"/>
+    <line x1="740" y1="80" x2="740" y2="356" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="4 4"/>
+
+    <rect x="880" y="44" width="210" height="36" rx="9" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="985" y="68" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">파티션 로그 상태</text>
+
+    <g font-size="11.5" font-weight="700" fill="#64748b" class="mono">
+      <text x="40" y="112">t0</text><text x="40" y="152">t1</text><text x="40" y="204">t2</text>
+      <text x="40" y="248">t3</text><text x="40" y="300">t4</text><text x="40" y="344">t5</text>
+    </g>
+
+    <path d="M222,106 L732,106" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f8b)"/>
+    <text x="476" y="98" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">요청1 (메시지 A · key=user:42)</text>
+    <path d="M222,146 L732,146" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f8b)"/>
+    <text x="476" y="138" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">요청2 (메시지 B · key=user:42)</text>
+    <text x="476" y="164" font-size="10.5" fill="#64748b" text-anchor="middle">응답을 안 기다리고 연달아 보냄 (in-flight 2건)</text>
+
+    <path d="M738,198 L228,198" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#f8r)"/>
+    <text x="476" y="190" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">요청1 실패 (일시적 오류) — A는 기록되지 않음</text>
+
+    <path d="M738,242 L228,242" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f8g)"/>
+    <text x="476" y="234" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">요청2 성공 — B 기록됨</text>
+
+    <path d="M222,294 L732,294" stroke="#d97706" stroke-width="1.8" marker-end="url(#f8b)"/>
+    <text x="476" y="286" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">요청1 재시도 (메시지 A)</text>
+
+    <path d="M738,338 L228,338" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f8g)"/>
+    <text x="476" y="330" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">성공 — A 기록됨</text>
+
+    <!-- log states -->
+    <rect x="880" y="88" width="210" height="30" rx="7" fill="#ffffff" stroke="#e5e7eb"/><text x="985" y="108" font-size="11" fill="#94a3b8" text-anchor="middle" class="mono">[ &nbsp; 비어 있음 &nbsp; ]</text>
+    <rect x="880" y="228" width="210" height="30" rx="7" fill="#ffffff" stroke="#94a3b8"/><text x="985" y="248" font-size="11.5" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">[ B ]</text>
+    <rect x="880" y="324" width="210" height="30" rx="7" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/><text x="985" y="344" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle" class="mono">[ B ][ A ]</text>
+
+    <rect x="120" y="366" width="970" height="34" rx="8" fill="#fef2f2" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="140" y="388" font-size="12" font-weight="800" fill="#b91c1c">보낸 순서: A &#8594; B &nbsp;&nbsp;|&nbsp;&nbsp; 기록된 순서: B &#8594; A &nbsp;&nbsp;&#8594;&nbsp; 컨슈머는 B를 먼저 읽는다. 키는 <tspan text-decoration="underline">목적지만</tspan> 정했을 뿐이다.</text>
+  </svg>
+  <figcaption><b>같은 키를 썼는데도 역전된다는 점이 핵심이다.</b> A와 B가 같은 키라면 둘 다 파티션 P로 가지만, 파티션 안의 순서는 <b>브로커에 도착해 기록된 순서</b>이고 재시도는 그 순서를 바꾼다.</figcaption>
+</figure>
+
+<h3>3-2. 대응은 두 가지이고, 성격이 다르다</h3>
+
+<div class="split">
+  <div class="pane w"><h4>대응 1 — 미확인 요청 수를 1로 낮춘다</h4>
+    <p style="margin:0;font-size:.95rem">앞 요청의 응답을 받기 전에는 다음 요청을 보내지 않으므로 <b>재시도가 뒤를 앞지를 수 없다.</b> 확실하지만 대가가 크다 — <b>매 요청마다 왕복 지연만큼 파이프라인이 비고, 처리량이 눈에 띄게 떨어진다.</b> 배치도 효과가 줄어든다.</p>
+  </div>
+  <div class="pane g"><h4>대응 2 — 멱등 프로듀서를 켠다 <span class="badge bonus">실무의 답</span></h4>
+    <p style="margin:0;font-size:.95rem">브로커가 <b>시퀀스 번호로 순서를 검증</b>하고 어긋나면 되돌려 보내므로, <b>미확인 요청을 여러 개 띄운 채로도</b> 파티션 안의 기록 순서가 지켜진다. <b>중복 제거까지 덤으로</b> 따라온다.</p>
+  </div>
+</div>
+
+<div class="codehead good"><span class="tag">해법</span> 멱등 프로듀서 활성화</div>
+<pre><code><span class="cm"># 재시도가 있어도 파티션 내 기록 순서를 유지한다</span>
+<span class="ln-good">enable.idempotence=<span class="st">true</span></span>
+<span class="cm"># 효과 ①: 브로커가 시퀀스 번호로 중복을 걸러낸다</span>
+<span class="cm"># 효과 ②: 재시도가 끼어들어도 파티션 안의 기록 순서가 유지된다</span></code></pre>
+
+<p>동작 원리는 이렇다. 프로듀서에 <b>고유 ID</b>가 부여되고, 각 파티션으로 보내는 배치마다 <b>1씩 증가하는 시퀀스 번호</b>가 붙는다. 브로커는 파티션별로 <b>"이 프로듀서에게서 마지막으로 받은 시퀀스 번호"</b>를 기억해 두고 판정한다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="브로커가 마지막 시퀀스 번호 7을 기억하고 있을 때 도착한 배치의 시퀀스가 8이면 정상 기록, 7이면 중복이므로 버리고 성공 응답, 9이면 중간이 비었으므로 거절해 8부터 다시 보내게 하는 세 갈래 판정 도식.">
+    <defs>
+      <marker id="f9a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">멱등 프로듀서 — 브로커가 <tspan fill="#2563eb">시퀀스 번호</tspan>로 순서를 검증하고, 어긋나면 프로듀서에게 되돌린다</text>
+
+    <rect x="30" y="46" width="300" height="252" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="180" y="76" font-size="12.5" font-weight="800" fill="#1d4ed8" text-anchor="middle">브로커가 기억 중인 상태</text>
+    <rect x="54" y="94" width="252" height="86" rx="9" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="180" y="120" font-size="11.5" fill="#1e3a8a" text-anchor="middle">프로듀서 ID <tspan class="mono" font-weight="700">P-7f3a</tspan></text>
+    <text x="180" y="142" font-size="11.5" fill="#1e3a8a" text-anchor="middle">파티션 <tspan class="mono" font-weight="700">P</tspan> 의</text>
+    <text x="180" y="166" font-size="14" font-weight="800" fill="#1d4ed8" text-anchor="middle" class="mono">마지막 시퀀스 = 7</text>
+    <text x="180" y="208" font-size="11" fill="#1e3a8a" text-anchor="middle">각 배치에 1씩 증가하는</text>
+    <text x="180" y="226" font-size="11" fill="#1e3a8a" text-anchor="middle">시퀀스 번호가 붙어 도착한다.</text>
+    <text x="180" y="256" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">기억하는 이력은 유한하므로</text>
+    <text x="180" y="274" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">in-flight를 무한정 늘릴 수는 없다</text>
+
+    <path d="M338,96 L392,96" stroke="#64748b" stroke-width="1.6" marker-end="url(#f9a)"/>
+    <path d="M338,176 L392,176" stroke="#64748b" stroke-width="1.6" marker-end="url(#f9a)"/>
+    <path d="M338,256 L392,256" stroke="#64748b" stroke-width="1.6" marker-end="url(#f9a)"/>
+
+    <rect x="398" y="66" width="692" height="62" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="422" y="92" font-size="12.5" font-weight="800" fill="#15803d" class="mono">도착한 배치의 시퀀스 = 8</text>
+    <text x="700" y="92" font-size="12" font-weight="700" fill="#14532d">기대한 다음 번호 &#8594; 정상 기록</text>
+    <text x="422" y="114" font-size="11" fill="#14532d">가장 흔한 정상 경로. 로그 끝에 그대로 append 된다.</text>
+
+    <rect x="398" y="146" width="692" height="62" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="422" y="172" font-size="12.5" font-weight="800" fill="#1d4ed8" class="mono">도착한 배치의 시퀀스 = 7</text>
+    <text x="700" y="172" font-size="12" font-weight="700" fill="#1e3a8a">이미 기록한 것 &#8594; 버리고 성공 응답</text>
+    <text x="422" y="194" font-size="11" fill="#1e3a8a">응답이 유실돼 프로듀서가 재전송한 경우다. <tspan font-weight="700">중복 제거</tspan>가 여기서 일어난다.</text>
+
+    <rect x="398" y="226" width="692" height="72" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+    <text x="422" y="252" font-size="12.5" font-weight="800" fill="#b45309" class="mono">도착한 배치의 시퀀스 = 9</text>
+    <text x="700" y="252" font-size="12" font-weight="700" fill="#78350f">8이 아직 안 왔다 &#8594; 거절</text>
+    <text x="422" y="274" font-size="11" fill="#78350f">중간이 비므로 기록하지 않고, 프로듀서가 <tspan font-weight="700">8부터 순서대로 다시 보내게</tspan> 한다.</text>
+    <text x="422" y="292" font-size="11" font-weight="700" fill="#b45309">&#8594; 바로 이 판정이 <tspan text-decoration="underline">순서 보장</tspan>의 실체다. 재시도가 뒤를 앞질러도 브로커가 되돌린다.</text>
+  </svg>
+  <figcaption><b>브로커가 순서를 검증하고, 어긋나면 프로듀서가 순서대로 다시 보내도록 되돌린다.</b> 그래서 미확인 요청을 여러 개 띄운 채로도 파티션 안의 기록 순서가 지켜진다 — 처리량을 포기하지 않고 순서를 얻는 구조다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>두 대응을 나란히 놓으면 선택이 분명해진다</caption>
+  <thead><tr><th style="width:22%"></th><th>미확인 요청 수를 1로 제한</th><th>멱등 프로듀서 켜기</th></tr></thead>
+  <tbody>
+    <tr><th>순서 보장</th><td class="good">됨 (뒤를 앞지를 기회 자체를 없앰)</td><td class="good">됨 (브로커가 시퀀스로 검증)</td></tr>
+    <tr><th>중복 제거</th><td class="bad">안 됨 — 재시도로 두 번 기록될 수 있음</td><td class="good">됨 (같은 시퀀스는 버림)</td></tr>
+    <tr><th>처리량</th><td class="bad">크게 떨어짐 — 매 요청마다 왕복 대기</td><td class="good">거의 유지</td></tr>
+    <tr class="hl"><th>결론</th><td>순서만 얻고 나머지를 잃는다</td><td><b>처리량을 지키면서 순서도 지킨다 — 실무의 기본값</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><b>처리량을 지키면서 순서도 지킬 수 있다는 점에서 멱등 프로듀서가 우위다.</b> 재시도 상황에서 <b>순서와 중복 제거가 함께</b> 보장된다는 점을 언급하면 좋다. <span class="badge bonus">가산점</span></p>
+
+<div class="callout warn"><span class="t">조건과 범위 — 여기까지 말하면 한 겹 더 깊다</span>
+  <ul style="margin:6px 0 0;padding-left:18px">
+    <li>브로커가 프로듀서별로 기억하는 <b>시퀀스 이력은 유한</b>하므로 미확인 요청 수를 무한정 늘려도 되는 것은 아니고, <b>일정 개수 이하일 때만 재정렬 보장이 성립</b>한다.</li>
+    <li>멱등 프로듀서를 켜면 <b>모든 복제본 확인을 요구하는 <code>acks</code> 설정과 재시도가 함께 전제</b>된다 — 브로커가 확실히 기록했음을 알아야 시퀀스 판정이 의미를 갖기 때문이다. (<code>acks</code> 자체는 <code>27-producer-acks-durability.md</code>)</li>
+  </ul>
+</div>
+
+<div class="memo red">
+  <h4>보장의 범위 — 여기를 착각하면 운영에서 당한다</h4>
+  <div class="rule red">멱등 프로듀서가 지켜주는 것 = <u>하나의 프로듀서 인스턴스</u>가 <u>하나의 파티션</u>에 보낸 것들 사이의 순서</div>
+  <p style="margin:8px 0 0;font-size:.95rem">애플리케이션 인스턴스가 <b>두 대</b>이고 둘 다 같은 키를 발행한다면, <b>둘 사이의 순서는 이 장치가 다루는 범위 밖</b>이다. 시퀀스 번호는 프로듀서 ID별로 따로 관리되기 때문이다 — "멱등을 켰는데도 순서가 이상하다"의 첫 번째 용의자가 바로 이것이다.</p>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 함정 ② 워커 풀 · ③ DLQ · ④ 파티션 증설</h2>
+
+<h3>② 컨슈머 내부 병렬 처리 — 꺼낸 순서와 끝난 순서는 다르다</h3>
+
+<p>파티션에서 순서대로 읽어놓고 <b>워커 스레드 풀에 무작위로 분배</b>하면 처리 완료 순서는 뒤섞인다.</p>
+
+<p>파티션에서 꺼내는 것까지는 완벽하게 순서대로다. 그런데 꺼낸 것을 워커에게 나눠 주는 순간, <b>각 워커의 처리 시간이 제각각</b>이므로 <b>완료 순서는 꺼낸 순서와 무관해진다.</b> 앞의 메시지가 느린 DB 조회에 걸려 있는 동안 뒤 메시지가 먼저 끝나는 일이 흔하다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 402" role="img" aria-label="왼쪽은 파티션에서 순서대로 꺼낸 메시지를 워커 풀에 무작위로 분배해 처리 시간 차이 때문에 같은 키의 완료 순서가 역전되는 상황, 오른쪽은 키의 해시로 워커를 고정해 같은 키가 한 워커의 큐에 순서대로 쌓이는 상황을 대비한 도식.">
+    <defs>
+      <marker id="fAr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="fAg" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <!-- BEFORE -->
+    <rect x="24" y="20" width="532" height="364" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+    <text x="44" y="46" font-size="13" font-weight="800" fill="#b91c1c">Before — 워커 풀에 무작위 분배</text>
+
+    <rect x="44" y="58" width="488" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="60" y="83" font-size="10.5" font-weight="700" fill="#334155" class="mono">파티션</text>
+    <rect x="132" y="66" width="120" height="24" rx="5" fill="#eff6ff" stroke="#93c5fd"/><text x="192" y="83" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e1 (키 A)</text>
+    <rect x="262" y="66" width="120" height="24" rx="5" fill="#eff6ff" stroke="#93c5fd"/><text x="322" y="83" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e2 (키 A)</text>
+    <rect x="392" y="66" width="120" height="24" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="452" y="83" font-size="10.5" font-weight="700" fill="#475569" text-anchor="middle" class="mono">e3 (키 B)</text>
+    <text x="44" y="114" font-size="10.5" fill="#7f1d1d">꺼내는 것까지는 완벽하게 순서대로다 &#8595;</text>
+
+    <path d="M192,120 L112,146" stroke="#dc2626" stroke-width="1.4" marker-end="url(#fAr)"/>
+    <path d="M322,120 L282,146" stroke="#dc2626" stroke-width="1.4" marker-end="url(#fAr)"/>
+    <path d="M452,120 L452,146" stroke="#dc2626" stroke-width="1.4" marker-end="url(#fAr)"/>
+
+    <rect x="44" y="152" width="150" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="119" y="177" font-size="11" font-weight="700" fill="#1f2937" text-anchor="middle">워커1 &#8592; e1</text>
+    <rect x="210" y="152" width="150" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="285" y="177" font-size="11" font-weight="700" fill="#1f2937" text-anchor="middle">워커2 &#8592; e2</text>
+    <rect x="376" y="152" width="150" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/><text x="451" y="177" font-size="11" font-weight="700" fill="#1f2937" text-anchor="middle">워커3 &#8592; e3</text>
+
+    <text x="44" y="220" font-size="10.5" font-weight="700" fill="#7f1d1d">처리 시간 (막대가 길수록 오래 걸림)</text>
+    <rect x="44" y="230" width="60" height="18" rx="4" fill="#e2e8f0"/><text x="118" y="244" font-size="10.5" fill="#334155">e1 &nbsp;</text>
+    <rect x="150" y="230" width="300" height="18" rx="4" fill="#fca5a5" stroke="#dc2626"/><text x="300" y="244" font-size="10.5" font-weight="700" fill="#7f1d1d" text-anchor="middle">DB가 느려 120ms</text>
+    <rect x="44" y="254" width="60" height="18" rx="4" fill="#e2e8f0"/><text x="118" y="268" font-size="10.5" fill="#334155">e2 &nbsp;</text>
+    <rect x="150" y="254" width="26" height="18" rx="4" fill="#86efac" stroke="#16a34a"/><text x="186" y="268" font-size="10.5" font-weight="700" fill="#14532d">10ms &#8592; e1보다 먼저 끝난다</text>
+    <rect x="44" y="278" width="60" height="18" rx="4" fill="#e2e8f0"/><text x="118" y="292" font-size="10.5" fill="#334155">e3 &nbsp;</text>
+    <rect x="150" y="278" width="38" height="18" rx="4" fill="#86efac" stroke="#16a34a"/><text x="198" y="292" font-size="10.5" fill="#14532d">15ms</text>
+
+    <rect x="44" y="308" width="488" height="60" rx="9" fill="#ffffff" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="64" y="332" font-size="12" font-weight="800" fill="#b91c1c" class="mono">완료 순서: e2 &#8594; e3 &#8594; e1</text>
+    <text x="64" y="356" font-size="11.5" font-weight="700" fill="#dc2626">&#10005; 같은 키 A의 e1과 e2가 역전됐다 — 파티션은 죄가 없다</text>
+
+    <!-- AFTER -->
+    <rect x="564" y="20" width="532" height="364" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
+    <text x="584" y="46" font-size="13" font-weight="800" fill="#15803d">After — 키 해시로 워커를 고정</text>
+
+    <rect x="584" y="58" width="488" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="600" y="83" font-size="10.5" font-weight="700" fill="#334155" class="mono">파티션</text>
+    <rect x="672" y="66" width="120" height="24" rx="5" fill="#eff6ff" stroke="#93c5fd"/><text x="732" y="83" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e1 (키 A)</text>
+    <rect x="802" y="66" width="120" height="24" rx="5" fill="#eff6ff" stroke="#93c5fd"/><text x="862" y="83" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">e2 (키 A)</text>
+    <rect x="932" y="66" width="120" height="24" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="992" y="83" font-size="10.5" font-weight="700" fill="#475569" text-anchor="middle" class="mono">e3 (키 B)</text>
+
+    <rect x="584" y="112" width="488" height="38" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="828" y="136" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">워커 번호 = hash(키) mod 워커 수</text>
+    <text x="584" y="166" font-size="10.5" fill="#14532d">파티셔너가 하는 일을 워커 풀에 대해 한 번 더 하는 셈이다 &#8595;</text>
+
+    <path d="M732,152 L700,178" stroke="#16a34a" stroke-width="1.4" marker-end="url(#fAg)"/>
+    <path d="M862,152 L700,178" stroke="#16a34a" stroke-width="1.4" marker-end="url(#fAg)"/>
+    <path d="M992,152 L960,178" stroke="#16a34a" stroke-width="1.4" marker-end="url(#fAg)"/>
+
+    <rect x="584" y="184" width="230" height="72" rx="9" fill="#ffffff" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="600" y="206" font-size="11" font-weight="700" fill="#15803d">워커1 (키 A 전담) · 단일 스레드</text>
+    <rect x="600" y="216" width="94" height="28" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="647" y="235" font-size="10.5" font-weight="700" fill="#14532d" text-anchor="middle" class="mono">e1</text>
+    <rect x="702" y="216" width="94" height="28" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="749" y="235" font-size="10.5" font-weight="700" fill="#14532d" text-anchor="middle" class="mono">e2</text>
+
+    <rect x="828" y="184" width="120" height="72" rx="9" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="888" y="206" font-size="11" font-weight="700" fill="#64748b" text-anchor="middle">워커2</text>
+    <text x="888" y="232" font-size="10.5" fill="#94a3b8" text-anchor="middle">(비어 있음)</text>
+
+    <rect x="962" y="184" width="110" height="72" rx="9" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="1017" y="206" font-size="11" font-weight="700" fill="#334155" text-anchor="middle">워커3</text>
+    <rect x="978" y="216" width="78" height="28" rx="6" fill="#f1f5f9" stroke="#cbd5e1"/><text x="1017" y="235" font-size="10.5" font-weight="700" fill="#475569" text-anchor="middle" class="mono">e3</text>
+
+    <rect x="584" y="272" width="488" height="96" rx="9" fill="#ffffff" stroke="#bbf7d0" stroke-width="1.4"/>
+    <text x="604" y="296" font-size="12" font-weight="800" fill="#15803d" class="mono">완료 순서: (키 A 안에서) e1 &#8594; e2 · 키 B는 무관하게 진행</text>
+    <text x="604" y="320" font-size="11.5" fill="#14532d">같은 키의 작업이 <tspan font-weight="700">한 워커의 큐에 순서대로</tspan> 쌓이므로,</text>
+    <text x="604" y="340" font-size="11.5" fill="#14532d">워커가 3개여도 <tspan font-weight="700">키 단위 순서</tspan>는 그대로다.</text>
+    <text x="604" y="362" font-size="11.5" font-weight="700" fill="#d97706">&#9888; 대신 핫 키가 있으면 그 워커만 밀린다 (5절과 같은 구조)</text>
+  </svg>
+  <figcaption>여기서 쓴 기법은 2절의 파티셔너와 <b>완전히 같은 발상</b>이다 — 해시로 목적지를 고정해 순서 경계를 만든다. 그래서 <b>부작용도 같다</b>: 워커 단위 핫 스팟이 생긴다.</figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 순서를 읽어놓고 워커 풀에 무작위 투입</div>
+<pre><code><span class="kw">private final</span> ExecutorService pool = Executors.<span class="fn">newFixedThreadPool</span>(<span class="nm">8</span>);
+
+<span class="cm">@KafkaListener(topics = "user-events")</span>
+<span class="kw">public void</span> <span class="fn">onMessage</span>(ConsumerRecord&lt;String, UserEvent&gt; rec) {
+<span class="ln-bad">    pool.<span class="fn">submit</span>(() -&gt; handler.<span class="fn">handle</span>(rec.<span class="fn">value</span>()));  <span class="cm">// 어느 워커가 잡을지 모른다</span></span>
+}
+<span class="cm">// 같은 키의 e1(느림)과 e2(빠름)가 다른 워커에 들어가면</span>
+<span class="cm">// 완료 순서가 뒤집힌다 — 파티션 순서는 아무 잘못이 없다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 같은 키는 같은 워커로 라우팅</div>
+<pre><code><span class="cm">// 워커마다 "단일 스레드 + 자기 큐"를 갖게 만든다</span>
+<span class="kw">private final</span> List&lt;ExecutorService&gt; workers =
+    IntStream.<span class="fn">range</span>(<span class="nm">0</span>, <span class="nm">8</span>)
+             .<span class="fn">mapToObj</span>(i -&gt; Executors.<span class="fn">newSingleThreadExecutor</span>())
+             .<span class="fn">toList</span>();
+
+<span class="cm">@KafkaListener(topics = "user-events")</span>
+<span class="kw">public void</span> <span class="fn">onMessage</span>(ConsumerRecord&lt;String, UserEvent&gt; rec) {
+<span class="ln-good">    <span class="kw">int</span> idx = Math.<span class="fn">floorMod</span>(rec.<span class="fn">key</span>().<span class="fn">hashCode</span>(), workers.<span class="fn">size</span>());</span>
+<span class="ln-good">    workers.<span class="fn">get</span>(idx).<span class="fn">submit</span>(() -&gt; handler.<span class="fn">handle</span>(rec.<span class="fn">value</span>()));</span>
+}
+<span class="cm">// 같은 키 → 같은 인덱스 → 같은 단일 스레드 큐 → 순서 유지</span></code></pre>
+  </div>
+</div>
+
+<div class="callout warn"><span class="t">병렬화는 순서만 흔드는 게 아니다</span>
+워커에 넘긴 순간 <b>"이 메시지를 처리했다"와 "오프셋을 커밋해도 된다"가 어긋나기 시작한다.</b> 아직 워커 큐에 남아 있는 메시지의 오프셋까지 커밋해 버리면 장애 시 그 구간이 통째로 사라진다. 병렬화는 <b>순서뿐 아니라 오프셋 커밋의 전제까지</b> 흔든다 — 그쪽 논의는 <code>30-single-consumer-throughput-and-offset-commit.md</code>가 깊게 다룬다.
+</div>
+
+<h3>③ 실패 재시도 / DLQ — 두 가지를 다 가질 수는 없다</h3>
+
+<p>메시지 하나가 실패해서 나중에 재처리되면, <b>그 키의 후속 메시지가 먼저 처리되어 순서가 깨진다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 356" role="img" aria-label="실패한 메시지를 붙잡으면 파티션이 막히고 건너뛰면 순서가 깨지는 양자택일 구조와, 키 단위로 보류 범위를 좁히는 절충안을 나타낸 도식.">
+    <defs>
+      <marker id="fBa" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">함정 ③ — 실패 처리 전략과 순서 요구는 <tspan fill="#dc2626">정면으로 충돌</tspan>한다</text>
+
+    <rect x="380" y="42" width="360" height="52" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="400" y="64" font-size="11" font-weight="700" fill="#334155" class="mono">파티션 (키 A)</text>
+    <rect x="520" y="52" width="100" height="32" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/><text x="570" y="73" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle">프로필수정</text>
+    <rect x="628" y="52" width="100" height="32" rx="6" fill="#f8fafc" stroke="#cbd5e1"/><text x="678" y="73" font-size="10.5" fill="#475569" text-anchor="middle">탈퇴</text>
+    <text x="400" y="84" font-size="10" fill="#dc2626">&#9888; 실패</text>
+
+    <path d="M470,98 L300,132" stroke="#64748b" stroke-width="1.6" marker-end="url(#fBa)"/>
+    <path d="M650,98 L820,132" stroke="#64748b" stroke-width="1.6" marker-end="url(#fBa)"/>
+
+    <!-- left: hold -->
+    <rect x="40" y="138" width="480" height="140" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+    <text x="64" y="164" font-size="12.5" font-weight="800" fill="#b45309">선택 A — 실패 건을 붙잡고 재시도한다</text>
+    <text x="64" y="190" font-size="11.5" font-weight="700" fill="#16a34a">&#10003; 순서: 지켜진다 (뒤가 앞을 못 넘는다)</text>
+    <text x="64" y="212" font-size="11.5" font-weight="700" fill="#dc2626">&#10005; 처리량: 파티션이 통째로 멈춘다</text>
+    <text x="64" y="236" font-size="11" fill="#78350f">영원히 실패하는 메시지 하나가 뒤의 전부를 막는다</text>
+    <text x="64" y="256" font-size="11" font-weight="700" fill="#b45309">&#8594; 이것이 <tspan text-decoration="underline">poison pill</tspan> — 랙이 무한히 쌓인다</text>
+
+    <!-- right: skip -->
+    <rect x="600" y="138" width="480" height="140" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="624" y="164" font-size="12.5" font-weight="800" fill="#b91c1c">선택 B — 재시도 토픽/DLQ로 보내고 넘어간다</text>
+    <text x="624" y="190" font-size="11.5" font-weight="700" fill="#16a34a">&#10003; 처리량: 파티션은 계속 흐른다</text>
+    <text x="624" y="212" font-size="11.5" font-weight="700" fill="#dc2626">&#10005; 순서: 깨진다</text>
+    <text x="624" y="236" font-size="11" fill="#7f1d1d">[탈퇴]가 먼저 처리되고, 나중에 [프로필수정]이 재처리돼</text>
+    <text x="624" y="256" font-size="11" font-weight="700" fill="#b91c1c">&#8594; <tspan text-decoration="underline">탈퇴한 사용자를 되살리는 갱신</tspan>이 일어난다</text>
+
+    <rect x="240" y="292" width="640" height="48" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="560" y="313" font-size="11.5" font-weight="800" fill="#1d4ed8" text-anchor="middle">절충 — 차단 범위를 <tspan text-decoration="underline">파티션</tspan>이 아니라 <tspan text-decoration="underline">키</tspan>로 좁힌다</text>
+    <text x="560" y="332" font-size="11" fill="#1e3a8a" text-anchor="middle">"그 키가 DLQ에 있는 동안 같은 키의 후속만 함께 보류" · 대가는 키별 보류 상태를 관리하는 복잡도</text>
+  </svg>
+  <figcaption><b>어느 쪽을 포기할지 의식적으로 선택해야 한다.</b> 두 가지를 다 갖는 방법은 없다는 것을 인정하는 것이 이 항목의 답이다. (재시도·DLQ 설계 전반은 <code>25-consumer-retry-dlq-design.md</code>)</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>면접에서 이렇게 말하면 된다</h4>
+  <div class="rule red">순서가 중요한 토픽에서는 "실패 건만 건너뛰고 뒤를 계속 처리"하는 DLQ 전략 자체가 순서 요구와 <u>양립할 수 없다</u></div>
+  <p style="margin:8px 0 0;font-size:.95rem">붙잡으면 <b>순서는 지키지만 파티션이 막히고</b>(poison pill), 건너뛰면 <b>파티션은 흐르지만 순서가 깨진다.</b> 절충안은 <b>차단 범위를 키 단위로 좁히는 것</b>이지만, 이는 해결이 아니라 <b>복잡도를 사서 손해를 줄이는 거래</b>다.</p>
+</div>
+
+<h3>④ 파티션 증설 — 분모가 바뀌면 목적지가 바뀐다</h3>
+
+<p>2-1에서 붙잡아 둔 사실 — <b>파티션 수가 나눗셈의 분모</b>라는 것 — 이 여기서 값을 한다. 파티션 수를 늘리면 <code>hash(키) mod 파티션 수</code>의 <b>분모가 바뀐다.</b> 분자는 그대로인데 나머지가 달라지므로, <b>같은 키가 다른 파티션으로 가기 시작한다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 430" role="img" aria-label="해시값 0부터 11까지가 파티션 3개일 때와 4개일 때 각각 어느 파티션으로 가는지 비교한 표. 12개 중 3개만 제자리에 남고 나머지 9개는 다른 파티션으로 옮겨간다. 아래쪽은 사용자 42의 과거 이벤트가 파티션 2에 남고 새 이벤트가 파티션 3으로 들어가 순서 보장이 끊기는 상황을 보여준다.">
+    <defs>
+      <marker id="fCa" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">파티션 3 &#8594; 4 증설 &nbsp;·&nbsp; 분모가 바뀌면 나머지가 바뀌고, <tspan fill="#dc2626">나머지가 바뀌면 목적지가 바뀐다</tspan></text>
+
+    <rect x="24" y="40" width="1072" height="164" rx="11" fill="#f8fafc" stroke="#e5e7eb" stroke-width="1.4"/>
+    <g font-size="11.5" font-weight="700" fill="#334155">
+      <text x="44" y="80">해시값</text><text x="44" y="114">mod 3</text><text x="44" y="148">mod 4</text><text x="44" y="182">그대로?</text>
+    </g>
+    <g font-size="12" text-anchor="middle" class="mono">
+      <text x="156" y="80" fill="#1f2937">0</text><text x="156" y="114" fill="#475569">0</text><text x="156" y="148" fill="#475569">0</text>
+      <text x="234" y="80" fill="#1f2937">1</text><text x="234" y="114" fill="#475569">1</text><text x="234" y="148" fill="#475569">1</text>
+      <text x="312" y="80" fill="#1f2937">2</text><text x="312" y="114" fill="#475569">2</text><text x="312" y="148" fill="#475569">2</text>
+      <text x="390" y="80" fill="#1f2937">3</text><text x="390" y="114" fill="#475569">0</text><text x="390" y="148" fill="#475569">3</text>
+      <text x="468" y="80" fill="#1f2937">4</text><text x="468" y="114" fill="#475569">1</text><text x="468" y="148" fill="#475569">0</text>
+      <text x="546" y="80" fill="#1f2937">5</text><text x="546" y="114" fill="#475569">2</text><text x="546" y="148" fill="#475569">1</text>
+      <text x="624" y="80" fill="#1f2937">6</text><text x="624" y="114" fill="#475569">0</text><text x="624" y="148" fill="#475569">2</text>
+      <text x="702" y="80" fill="#1f2937">7</text><text x="702" y="114" fill="#475569">1</text><text x="702" y="148" fill="#475569">3</text>
+      <text x="780" y="80" fill="#1f2937">8</text><text x="780" y="114" fill="#475569">2</text><text x="780" y="148" fill="#475569">0</text>
+      <text x="858" y="80" fill="#1f2937">9</text><text x="858" y="114" fill="#475569">0</text><text x="858" y="148" fill="#475569">1</text>
+      <text x="936" y="80" fill="#1f2937">10</text><text x="936" y="114" fill="#475569">1</text><text x="936" y="148" fill="#475569">2</text>
+      <text x="1014" y="80" fill="#1f2937">11</text><text x="1014" y="114" fill="#475569">2</text><text x="1014" y="148" fill="#475569">3</text>
+    </g>
+    <g>
+      <rect x="132" y="164" width="48" height="26" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="156" y="182" font-size="12" font-weight="800" fill="#15803d" text-anchor="middle">O</text>
+      <rect x="210" y="164" width="48" height="26" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="234" y="182" font-size="12" font-weight="800" fill="#15803d" text-anchor="middle">O</text>
+      <rect x="288" y="164" width="48" height="26" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="312" y="182" font-size="12" font-weight="800" fill="#15803d" text-anchor="middle">O</text>
+      <rect x="366" y="164" width="48" height="26" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="390" y="182" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">X</text>
+      <rect x="444" y="164" width="48" height="26" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="468" y="182" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">X</text>
+      <rect x="522" y="164" width="48" height="26" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="546" y="182" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">X</text>
+      <rect x="600" y="164" width="48" height="26" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="624" y="182" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">X</text>
+      <rect x="678" y="164" width="48" height="26" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="702" y="182" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">X</text>
+      <rect x="756" y="164" width="48" height="26" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="780" y="182" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">X</text>
+      <rect x="834" y="164" width="48" height="26" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="858" y="182" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">X</text>
+      <rect x="912" y="164" width="48" height="26" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="936" y="182" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">X</text>
+      <rect x="990" y="164" width="48" height="26" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="1014" y="182" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">X</text>
+    </g>
+    <text x="24" y="222" font-size="12.5" font-weight="800" fill="#b91c1c">&#8594; 12개 중 3개(25%)만 제자리, 나머지 75%가 다른 파티션으로 옮겨간다</text>
+
+    <!-- bottom: straddling -->
+    <rect x="24" y="238" width="1072" height="180" rx="11" fill="#fef2f2" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="44" y="264" font-size="12.5" font-weight="800" fill="#b91c1c">2-1의 예시 키로 확인하면 — <tspan class="mono">"user:42"</tspan> 는 해시 8471, <tspan class="mono">8471 mod 3 = 2</tspan> &#8594; <tspan class="mono">8471 mod 4 = 3</tspan></text>
+
+    <rect x="44" y="278" width="470" height="122" rx="10" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="64" y="302" font-size="11.5" font-weight="700" fill="#334155">증설 전 (파티션 3개)</text>
+    <rect x="64" y="314" width="430" height="40" rx="7" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="82" y="339" font-size="10.5" font-weight="700" fill="#334155" class="mono">파티션 2</text>
+    <rect x="170" y="322" width="140" height="24" rx="5" fill="#eff6ff" stroke="#93c5fd"/><text x="240" y="339" font-size="10.5" fill="#1d4ed8" text-anchor="middle">가입</text>
+    <rect x="320" y="322" width="160" height="24" rx="5" fill="#eff6ff" stroke="#93c5fd"/><text x="400" y="339" font-size="10.5" fill="#1d4ed8" text-anchor="middle">프로필수정</text>
+    <text x="64" y="378" font-size="11" fill="#475569">한 파티션 = 한 컨슈머 &#8594; 순서 보장 성립</text>
+
+    <path d="M526,338 L570,338" stroke="#dc2626" stroke-width="1.8" marker-end="url(#fCa)"/>
+    <text x="548" y="326" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="middle">증설</text>
+
+    <rect x="592" y="278" width="484" height="122" rx="10" fill="#ffffff" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="612" y="300" font-size="11.5" font-weight="700" fill="#b91c1c">증설 후 (파티션 4개) — Kafka는 기존 데이터를 재배치하지 않는다</text>
+    <rect x="612" y="308" width="444" height="34" rx="7" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="630" y="330" font-size="10.5" font-weight="700" fill="#334155" class="mono">파티션 2</text>
+    <rect x="718" y="313" width="120" height="24" rx="5" fill="#eff6ff" stroke="#93c5fd"/><text x="778" y="330" font-size="10.5" fill="#1d4ed8" text-anchor="middle">가입</text>
+    <rect x="846" y="313" width="140" height="24" rx="5" fill="#eff6ff" stroke="#93c5fd"/><text x="916" y="330" font-size="10.5" fill="#1d4ed8" text-anchor="middle">프로필수정</text>
+    <text x="998" y="330" font-size="9.5" fill="#64748b">과거 것은 그대로</text>
+    <rect x="612" y="348" width="444" height="34" rx="7" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="630" y="370" font-size="10.5" font-weight="700" fill="#b91c1c" class="mono">파티션 3</text>
+    <rect x="718" y="353" width="120" height="24" rx="5" fill="#fee2e2" stroke="#fca5a5"/><text x="778" y="370" font-size="10.5" fill="#b91c1c" text-anchor="middle">탈퇴</text>
+    <text x="850" y="370" font-size="9.5" font-weight="700" fill="#b91c1c">새 것부터 여기로 &#8594; 두 컨슈머가 병렬로 읽는다</text>
+  </svg>
+  <figcaption><b>한 사용자의 이벤트가 두 파티션에 걸치는 순간, 그 사용자의 순서 보장은 끝난다.</b> 1절에서 본 대로 <b>파티션끼리는 순서 관계가 없기</b> 때문이다 — 파티션 2를 읽는 컨슈머와 파티션 3을 읽는 컨슈머는 서로 다른 사람이고 진도도 다르다.</figcaption>
+</figure>
+
+<div class="callout trap"><span class="t">"처리량이 부족하니 파티션을 늘리자"가 정합성 사고가 되는 경로</span>
+증설 시점을 걸치는 구간에서 <b>키 순서가 깨지고</b>, 되돌리기도 어렵다 — <b>파티션은 줄일 수 없다.</b> 성능 개선이라고 생각하고 누른 버튼이 <b>되돌릴 수 없는 정합성 변경</b>이었다는 점이 이 함정의 성격이다. (상세: <code>32-partition-increase-side-effects.md</code>)
+</div>
+
+<div class="scroll">
+<table class="wide">
+  <caption>함정 4종 총괄 — 어디서 깨지는가 / 무엇으로 막는가 / 무엇을 대가로 내는가</caption>
+  <thead><tr><th style="width:13%">함정</th><th style="width:17%">깨지는 지점</th><th style="width:24%">증상</th><th style="width:24%">대응</th><th>대가 · 남는 문제</th></tr></thead>
+  <tbody>
+    <tr><td><b>① 프로듀서 재시도</b></td><td>발행 &#8594; 기록</td><td>보낸 순서와 <b>기록 순서</b>가 다르다. 같은 키인데도 뒤집힌다.</td><td class="good"><b>멱등 프로듀서</b>(<code>enable.idempotence=true</code>) · 차선책은 in-flight 1</td><td>보장 범위는 <b>프로듀서 인스턴스 1개 &times; 파티션 1개</b>까지. 인스턴스가 2대면 밖의 문제.</td></tr>
+    <tr><td><b>② 컨슈머 병렬</b></td><td>소비 &#8594; 처리</td><td>꺼낸 순서와 <b>완료 순서</b>가 다르다. 느린 건이 뒤로 밀린다.</td><td class="good"><b>같은 키 &#8594; 같은 워커</b> 라우팅 (해시 기반)</td><td>워커 단위 <b>핫 스팟</b> 발생. <b>오프셋 커밋 시점</b> 설계가 함께 필요.</td></tr>
+    <tr class="bad"><td><b>③ 재시도 / DLQ</b></td><td>실패 처리</td><td>실패 건을 건너뛰면 <b>그 키의 후속이 먼저</b> 처리된다.</td><td class="bad">근본 해법 없음 — <b>순서 vs 처리량 중 택일</b></td><td>붙잡으면 <b>poison pill</b>, 건너뛰면 <b>순서 파괴</b>. 절충(키 단위 보류)은 복잡도를 산다.</td></tr>
+    <tr class="bad"><td><b>④ 파티션 증설</b></td><td>운영 변경</td><td>같은 키가 <b>두 파티션에 걸쳐</b> 과거/미래가 병렬 처리된다.</td><td class="bad">사후 해결 불가 — <b>예방</b>(파티션 수 여유 있게 산정)</td><td><b>파티션은 줄일 수 없다.</b> 3&#8594;4 증설만으로 키의 <b>75%가 이동</b>한다.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 이 설계의 대가 — 키 편중(hot partition)과 전역 순서</h2>
+
+<h3>5-1. "특정 키(대형 고객)에 트래픽이 몰리면 어떻게 하나요?"</h3>
+
+<p><b>키 편중(hot partition)</b> 문제다. 전체 트래픽의 상당 부분을 차지하는 대형 고객 하나가 있으면, 그 고객의 이벤트는 <b>전부 한 파티션으로 몰린다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 388" role="img" aria-label="대형 고객 키 하나가 파티션 3개 중 하나에 몰려 있는 상태에서 파티션을 6개로 늘려도 그 키는 여전히 한 파티션에만 쌓이고 나머지 파티션은 한가하게 노는 상황을 막대 길이로 보여주는 도식.">
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">키 편중 — <tspan fill="#dc2626">파티션을 늘려도 해결되지 않는다</tspan>는 것이 이 문제의 결정적 사실</text>
+
+    <!-- left: 3 partitions -->
+    <rect x="24" y="42" width="532" height="252" rx="12" fill="#f8fafc" stroke="#e5e7eb" stroke-width="1.4"/>
+    <text x="44" y="68" font-size="12.5" font-weight="800" fill="#334155">현재 — 파티션 3개 &nbsp;·&nbsp; 키 <tspan class="mono">tenant:bigcorp</tspan> 가 전체의 대부분</text>
+    <g font-size="11" font-weight="700" fill="#475569" class="mono">
+      <text x="44" y="112">P0</text><text x="44" y="160">P1</text><text x="44" y="208">P2</text>
+    </g>
+    <rect x="86" y="96" width="70" height="22" rx="5" fill="#bfdbfe" stroke="#2563eb"/><text x="170" y="112" font-size="10.5" fill="#475569">일반 키들</text>
+    <rect x="86" y="144" width="420" height="22" rx="5" fill="#fca5a5" stroke="#dc2626" stroke-width="1.4"/><text x="296" y="160" font-size="11" font-weight="800" fill="#7f1d1d" text-anchor="middle">tenant:bigcorp — 이 파티션 하나에 전부</text>
+    <rect x="86" y="192" width="84" height="22" rx="5" fill="#bfdbfe" stroke="#2563eb"/><text x="184" y="208" font-size="10.5" fill="#475569">일반 키들</text>
+    <text x="44" y="248" font-size="11.5" font-weight="700" fill="#b91c1c">P1을 맡은 컨슈머 1대만 죽어라 일하고 랙이 쌓인다</text>
+    <text x="44" y="272" font-size="11.5" fill="#475569">P0 · P2를 맡은 컨슈머 2대는 대부분 놀고 있다</text>
+
+    <!-- right: 6 partitions -->
+    <rect x="564" y="42" width="532" height="252" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="584" y="68" font-size="12.5" font-weight="800" fill="#b91c1c">"파티션을 6개로 늘리자" &#8594; 결과는?</text>
+    <g font-size="11" font-weight="700" fill="#475569" class="mono">
+      <text x="584" y="96">P0</text><text x="584" y="126">P1</text><text x="584" y="156">P2</text><text x="584" y="186">P3</text><text x="584" y="216">P4</text><text x="584" y="246">P5</text>
+    </g>
+    <rect x="620" y="84" width="44" height="16" rx="4" fill="#bfdbfe" stroke="#2563eb"/>
+    <rect x="620" y="114" width="36" height="16" rx="4" fill="#bfdbfe" stroke="#2563eb"/>
+    <rect x="620" y="144" width="52" height="16" rx="4" fill="#bfdbfe" stroke="#2563eb"/>
+    <rect x="620" y="174" width="30" height="16" rx="4" fill="#bfdbfe" stroke="#2563eb"/>
+    <rect x="620" y="204" width="420" height="16" rx="4" fill="#fca5a5" stroke="#dc2626" stroke-width="1.4"/><text x="830" y="217" font-size="10.5" font-weight="800" fill="#7f1d1d" text-anchor="middle">tenant:bigcorp — 여전히 한 파티션에 전부</text>
+    <rect x="620" y="234" width="40" height="16" rx="4" fill="#bfdbfe" stroke="#2563eb"/>
+    <text x="584" y="272" font-size="11.5" font-weight="800" fill="#dc2626">늘린 파티션들은 그 키의 부하를 나눠 갖지 못한 채 한가하게 논다</text>
+
+    <rect x="24" y="308" width="1072" height="66" rx="11" fill="#1e293b"/>
+    <text x="560" y="336" font-size="13.5" font-weight="800" fill="#fcd34d" text-anchor="middle">같은 키는 반드시 한 파티션으로 간다 &#8594; 그 키의 처리량 상한 = 컨슈머 한 대의 처리량</text>
+    <text x="560" y="360" font-size="12" fill="#e2e8f0" text-anchor="middle">그리고 그 상한은 <tspan font-weight="700" fill="#fca5a5">파티션 수와 무관하다.</tspan> 파티션 증설은 이 문제에 대한 답이 아니다.</text>
+  </svg>
+  <figcaption>이 그림이 면접에서의 결정적 한 방이다. "핫 파티션이면 파티션을 늘리면 되죠"라고 답하는 순간 <b>키 → 파티션 매핑의 결정성을 이해하지 못했다</b>는 것이 드러난다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>암기 — 키 편중의 핵심 명제</h4>
+  <div class="rule red">그 키의 처리량 상한 = 컨슈머 한 대의 처리량 &nbsp;·&nbsp; 파티션 수와 <u>무관</u></div>
+</div>
+
+<h3>5-2. 대응은 셋이고, 각각 대가가 다르다</h3>
+
+<div class="split g3">
+  <div class="pane b"><h4>1. 순서 요구 범위를 더 좁힌다</h4>
+    <p style="margin:0;font-size:.94rem"><code>userId</code> 대신 <code>userId:deviceId</code>, <code>userId:주문ID</code>처럼 <b>더 잘게 쪼갠 복합 키</b>로도 업무 요구를 만족하면 부하가 분산된다.</p>
+    <p style="margin:8px 0 0;font-size:.94rem;color:#b91c1c"><b>대가: 쪼갠 경계를 넘는 순서가 사라진다.</b></p>
+  </div>
+  <div class="pane g"><h4>2. 컨슈머 처리 자체를 빠르게 한다</h4>
+    <p style="margin:0;font-size:.94rem">상한이 컨슈머 한 대의 처리량이라면 <b>그 한 대를 빠르게 만드는 것</b>이 정면 대응이다. 다운스트림(DB, 외부 API) 최적화, 배치 쓰기, 불필요한 동기 호출 제거.</p>
+    <p style="margin:8px 0 0;font-size:.94rem;color:#15803d"><b>순서 보장 범위를 건드리지 않는 유일한 카드.</b></p>
+  </div>
+  <div class="pane w"><h4>3. 순서 의존을 설계에서 제거한다</h4>
+    <p style="margin:0;font-size:.94rem">이벤트에 <b>버전/시퀀스</b>를 실어 컨슈머가 <b>"최신 것만 반영"</b>하게 만들면 순서가 조금 섞여도 무해해진다.</p>
+    <p style="margin:8px 0 0;font-size:.94rem"><b>층위가 다른 카드</b> — 6절에서 따로 다룬다.</p>
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">1번 카드에는 반드시 대가를 붙여 말해야 한다</span>
+"복합 키로 쪼개면 됩니다"에서 멈추면 <b>부하 문제를 정합성 문제로 바꾸고도 모르는 사람</b>이 된다. 아래 그림이 그 거래의 정체다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="키를 userId로 잡으면 그 사용자의 모든 이벤트가 한 파티션에 순서대로 쌓이지만 부하도 몰리고, userId 콜론 orderId 복합 키로 쪼개면 주문별로 파티션이 갈려 부하는 흩어지지만 같은 사용자의 서로 다른 주문 사이 순서가 사라짐을 대비한 도식.">
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">복합 키는 부하를 나누는 해결책이 아니라 — <tspan fill="#dc2626">순서 보장 단위를 더 잘게 재정의하는 거래</tspan>다</text>
+
+    <rect x="24" y="42" width="532" height="234" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+    <text x="44" y="70" font-size="12.5" font-weight="800" fill="#1d4ed8">키 = <tspan class="mono">userId</tspan></text>
+    <rect x="44" y="84" width="488" height="46" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="62" y="112" font-size="10.5" font-weight="700" fill="#334155" class="mono">파티션 2</text>
+    <rect x="150" y="92" width="112" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="206" y="112" font-size="10.5" fill="#1d4ed8" text-anchor="middle">주문A 생성</text>
+    <rect x="270" y="92" width="112" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="326" y="112" font-size="10.5" fill="#1d4ed8" text-anchor="middle">주문B 생성</text>
+    <rect x="390" y="92" width="126" height="30" rx="6" fill="#eff6ff" stroke="#93c5fd"/><text x="453" y="112" font-size="10.5" fill="#1d4ed8" text-anchor="middle">주문A 취소</text>
+    <text x="44" y="156" font-size="11.5" font-weight="700" fill="#16a34a">&#10003; 그 사용자의 <tspan text-decoration="underline">모든 이벤트</tspan>가 한 줄로 정렬된다</text>
+    <text x="44" y="180" font-size="11.5" fill="#1e3a8a">주문 A와 주문 B 사이의 순서까지 보장된다.</text>
+    <text x="44" y="212" font-size="11.5" font-weight="700" fill="#dc2626">&#10005; 그리고 부하도 이 파티션 하나에 몰린다</text>
+    <text x="44" y="240" font-size="11" fill="#475569">대형 고객이면 이 줄 하나가 컨슈머 한 대의 상한에 걸린다.</text>
+
+    <rect x="564" y="42" width="532" height="234" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
+    <text x="584" y="70" font-size="12.5" font-weight="800" fill="#15803d">키 = <tspan class="mono">userId:orderId</tspan></text>
+    <rect x="584" y="84" width="240" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="602" y="112" font-size="10.5" font-weight="700" fill="#334155" class="mono">파티션 0</text>
+    <rect x="678" y="92" width="66" height="30" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="711" y="112" font-size="10" fill="#14532d" text-anchor="middle">A 생성</text>
+    <rect x="750" y="92" width="66" height="30" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="783" y="112" font-size="10" fill="#14532d" text-anchor="middle">A 취소</text>
+    <rect x="836" y="84" width="240" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="854" y="112" font-size="10.5" font-weight="700" fill="#334155" class="mono">파티션 3</text>
+    <rect x="944" y="92" width="66" height="30" rx="6" fill="#f0fdf4" stroke="#86efac"/><text x="977" y="112" font-size="10" fill="#14532d" text-anchor="middle">B 생성</text>
+    <text x="584" y="156" font-size="11.5" font-weight="700" fill="#16a34a">&#10003; 주문별로 파티션이 갈린다 — 부하는 흩어진다</text>
+    <text x="584" y="188" font-size="11.5" font-weight="700" fill="#dc2626">&#10005; 같은 사용자의 주문 A 이벤트와 주문 B 이벤트 사이에는</text>
+    <text x="584" y="208" font-size="11.5" font-weight="700" fill="#dc2626">&nbsp;&nbsp;&nbsp;이제 순서가 없다</text>
+    <text x="584" y="240" font-size="11" fill="#14532d">분산된 만큼 <tspan font-weight="700">정확히 그만큼의 순서 보장</tspan>을 내놓았다.</text>
+  </svg>
+  <figcaption>왼쪽에서 오른쪽으로 가는 것은 <b>최적화가 아니라 요구사항 변경</b>이다. 코드 한 줄로 바뀌지만, 바뀐 것은 코드가 아니라 <b>시스템이 약속하는 보장</b>이다.</figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead plain"><span class="tag">키 A안</span> 사용자 단위 순서 — 부하 집중</div>
+<pre><code><span class="cm">// 보장: 이 사용자의 모든 이벤트가 발행 순서대로 처리된다</span>
+kafkaTemplate.<span class="fn">send</span>(<span class="st">"order-events"</span>,
+<span class="ln-warn">        event.<span class="fn">getUserId</span>(),                       <span class="cm">// 키 = userId</span></span>
+        event);</code></pre>
+  </div>
+  <div>
+    <div class="codehead plain"><span class="tag">키 B안</span> 주문 단위 순서 — 부하 분산</div>
+<pre><code><span class="cm">// 보장: 한 <span class="fn">주문</span> 안에서만 순서. 주문 간 순서는 <span class="nm">포기</span>한다.</span>
+kafkaTemplate.<span class="fn">send</span>(<span class="st">"order-events"</span>,
+<span class="ln-warn">        event.<span class="fn">getUserId</span>() + <span class="st">":"</span> + event.<span class="fn">getOrderId</span>(),  <span class="cm">// 복합 키</span></span>
+        event);</code></pre>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>먼저 던져야 할 질문 — 순서가 아니라 도메인을 묻는다</h4>
+  <div class="rule">"부하를 어떻게 나눌까"가 아니라 &nbsp;&#8594;&nbsp; <u>"주문 A와 주문 B 사이의 순서가 업무적으로 의미가 있는가"</u></div>
+  <ul class="chk" style="margin-top:10px">
+    <li><b>의미가 없다면</b> — 애초에 <code>userId</code>를 순서 단위로 잡은 것이 과했던 것이다. 2-3의 "요구 좁히기"를 <b>한 단계 덜 한 셈</b>이므로, 지금 좁히는 것이 맞다.</li>
+  </ul>
+  <ul class="chk x" style="margin-top:0">
+    <li><b>의미가 있다면</b> — 이 완화책은 <b>쓸 수 없다.</b> 도메인이 허용하는지 확인하지 않고 키를 쪼개면, <b>부하 문제를 정합성 문제로 바꾼 것</b>이 된다.</li>
+  </ul>
+</div>
+
+<h3>5-3. "토픽 전체의 전역 순서가 필요하다면?"</h3>
+
+<p>파티션을 1개로 만들면 되지만, <b>병렬성을 완전히 포기하는 것</b>이라 처리량 상한이 컨슈머 한 대로 고정된다(1-2의 이중성). 그리고 나중에 파티션을 늘리는 것도 ④의 함정 때문에 쉽지 않다 — 즉 <b>되돌리기 어려운 선택</b>이다.</p>
+
+<div class="callout info"><span class="t">요구 자체를 의심하는 법 — 구체적으로 묻는다</span>
+  <div class="rule" style="margin:10px 0 6px">"A 사용자의 이벤트와 B 사용자의 이벤트가 뒤바뀌면 <u>정확히 무엇이 잘못되는가?</u>"</div>
+  여기에 <b>구체적인 시나리오로 답하지 못하면</b> 그 요구는 전역 순서가 아니라 <b>키 단위 순서</b>였을 가능성이 높다. 대부분은 키 단위 순서로 충분하며, <b>전역 순서 요구는 설계를 다시 볼 신호</b>다.
+</div>
+
+<div class="scroll">
+<table class="wide">
+  <caption>키 설계 선택지 — 무엇을 얻고 무엇을 내놓는가</caption>
+  <thead><tr><th style="width:18%">선택</th><th style="width:22%">순서 보장 범위</th><th style="width:20%">병렬성 상한</th><th style="width:20%">부하 분산</th><th>언제 고르나</th></tr></thead>
+  <tbody>
+    <tr class="bad"><td><b>파티션 1개</b><br><span class="sub">전역 순서</span></td><td class="good">토픽 전체</td><td class="bad">컨슈머 1대 (고정)</td><td class="bad">불가</td><td>전역 순서가 <b>구체적 시나리오로 증명된</b> 예외적 경우에만. 되돌리기 어렵다.</td></tr>
+    <tr class="hl"><td><b>키 = <code>userId</code></b><br><span class="sub">가장 흔한 답</span></td><td class="good">한 사용자 안에서</td><td class="good">파티션 수만큼</td><td>키 분포에 의존</td><td><b>기본 선택.</b> 사용자별 상태 변경 이벤트(가입/수정/탈퇴)처럼 순서가 결과를 바꾸는 경우.</td></tr>
+    <tr><td><b>키 = <code>userId:orderId</code></b><br><span class="sub">복합 키</span></td><td>한 주문 안에서만</td><td class="good">파티션 수만큼</td><td class="good">더 고르게</td><td>핫 키가 실제로 있고, <b>주문 간 순서가 업무적으로 무의미함이 확인됐을 때.</b></td></tr>
+    <tr><td><b>키 없음</b><br><span class="sub">스티키 파티셔닝</span></td><td class="bad">없음</td><td class="good">파티션 수만큼</td><td class="good">가장 고르게</td><td>순서가 아예 무관한 로그·지표성 이벤트. <b>배칭 효율도 가장 좋다.</b></td></tr>
+    <tr><td><b>키 + 버전 필드</b><br><span class="sub">층위 2 병행</span></td><td>키 단위 + <b>역전 내성</b></td><td class="good">파티션 수만큼</td><td>키 분포에 의존</td><td>순서를 지키되 <b>깨져도 결과가 틀어지지 않게</b> 이중 안전장치를 두고 싶을 때(6절).</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 층위 2 — 순서에 의존하지 않게 만든다 <span class="badge senior">시니어 변별 포인트</span></h2>
+
+<p>"순서가 조금 깨져도 되는 시스템으로 설계할 수는 없나요?" — <b>가능하고, 종종 그게 더 좋은 설계다.</b> 여기서 중요한 것은 <b>이것이 앞의 대응들과 다른 층위의 해법</b>이라는 점을 세우는 것이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="층위 1은 파티션 키와 멱등 프로듀서 등으로 순서를 지키는 접근이고 대가로 키 편중과 병렬성 상한과 증설 제약을 치르며, 층위 2는 이벤트에 버전을 실어 낡은 이벤트를 무시함으로써 순서가 필요 없는 형태로 문제를 다시 정의하는 접근임을 대비한 도식.">
+    <defs>
+      <marker id="fDa" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">두 장의 카드 — <tspan fill="#2563eb">순서를 만들어 낸다</tspan> vs <tspan fill="#16a34a">순서가 필요 없게 다시 정의한다</tspan></text>
+
+    <rect x="24" y="42" width="1072" height="116" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="48" y="70" font-size="13" font-weight="800" fill="#1d4ed8">층위 1 — 순서를 지킨다 <tspan font-size="11" font-weight="400" fill="#1e3a8a">(인프라와 배치로 순서를 만들어 내는 일)</tspan></text>
+    <text x="48" y="98" font-size="11.5" font-weight="700" fill="#334155">수단</text>
+    <rect x="100" y="84" width="152" height="24" rx="12" fill="#ffffff" stroke="#93c5fd"/><text x="176" y="101" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">파티션 키</text>
+    <rect x="260" y="84" width="152" height="24" rx="12" fill="#ffffff" stroke="#93c5fd"/><text x="336" y="101" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">멱등 프로듀서</text>
+    <rect x="420" y="84" width="186" height="24" rx="12" fill="#ffffff" stroke="#93c5fd"/><text x="513" y="101" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">키 단위 워커 라우팅</text>
+    <rect x="614" y="84" width="120" height="24" rx="12" fill="#ffffff" stroke="#93c5fd"/><text x="674" y="101" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">순차 처리</text>
+    <text x="48" y="134" font-size="11.5" font-weight="700" fill="#b91c1c">대가</text>
+    <rect x="100" y="120" width="112" height="24" rx="12" fill="#fef2f2" stroke="#fca5a5"/><text x="156" y="137" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle">키 편중</text>
+    <rect x="220" y="120" width="128" height="24" rx="12" fill="#fef2f2" stroke="#fca5a5"/><text x="284" y="137" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle">병렬성 상한</text>
+    <rect x="356" y="120" width="160" height="24" rx="12" fill="#fef2f2" stroke="#fca5a5"/><text x="436" y="137" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle">파티션 증설 제약</text>
+    <rect x="524" y="120" width="176" height="24" rx="12" fill="#fef2f2" stroke="#fca5a5"/><text x="612" y="137" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle">DLQ 전략과의 충돌</text>
+
+    <rect x="24" y="174" width="1072" height="116" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="48" y="202" font-size="13" font-weight="800" fill="#15803d">층위 2 — 순서에 의존하지 않게 만든다 <tspan font-size="11" font-weight="400" fill="#14532d">(순서가 필요 없는 형태로 문제를 다시 정의하는 일)</tspan></text>
+    <text x="48" y="230" font-size="11.5" font-weight="700" fill="#334155">수단</text>
+    <rect x="100" y="216" width="600" height="24" rx="12" fill="#ffffff" stroke="#86efac"/><text x="400" y="233" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="middle">이벤트에 버전 · 타임스탬프를 실어 낡은 이벤트를 무시 (조건부 갱신)</text>
+    <text x="48" y="266" font-size="11.5" font-weight="700" fill="#b45309">대가</text>
+    <rect x="100" y="252" width="220" height="24" rx="12" fill="#fffbeb" stroke="#fcd34d"/><text x="210" y="269" font-size="10.5" font-weight="700" fill="#b45309" text-anchor="middle">이벤트 스키마에 버전 필드 추가</text>
+    <rect x="328" y="252" width="180" height="24" rx="12" fill="#fffbeb" stroke="#fcd34d"/><text x="418" y="269" font-size="10.5" font-weight="700" fill="#b45309" text-anchor="middle">컨슈머 로직 변경</text>
+
+    <rect x="760" y="196" width="316" height="76" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="918" y="220" font-size="11.5" font-weight="800" fill="#15803d" text-anchor="middle">층위 2가 성립하면</text>
+    <text x="918" y="242" font-size="11.5" font-weight="800" fill="#15803d" text-anchor="middle">층위 1의 대가를 <tspan text-decoration="underline">전부 안 내도 된다</tspan></text>
+    <text x="918" y="262" font-size="10.5" fill="#14532d" text-anchor="middle">키 편중도, 증설 제약도, DLQ 충돌도 사라진다</text>
+    <path d="M700,132 L756,222" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#fDa)"/>
+
+    <rect x="24" y="300" width="1072" height="30" rx="8" fill="#1e293b"/>
+    <text x="560" y="320" font-size="12" font-weight="700" fill="#fcd34d" text-anchor="middle">둘은 대체재가 아니라 서로 다른 층위의 카드다 — 상황에 맞게 고르고, 필요하면 겹쳐 쓴다</text>
+  </svg>
+  <figcaption>면접에서 <b>"둘 중 뭐가 낫냐"</b>는 질문이 아니다. <b>"두 카드를 다 알고 있고, 어느 쪽을 쓸지 판단할 기준을 갖고 있는가"</b>가 확인 대상이다.</figcaption>
+</figure>
+
+<h3>6-1. 구현은 조건부 갱신 한 줄이다</h3>
+
+<p>방법은 이벤트에 <b>버전 번호나 발생 시각</b>을 실어, 컨슈머가 <b>"내가 가진 상태보다 최신일 때만 반영"</b>하게 만드는 것이다. 이런 성질을 순서 뒤바뀜을 견딘다는 뜻에서 <b>out-of-order tolerant</b>라고 부른다.</p>
+
+<div class="codehead good"><span class="tag">SQL</span> 조건부 갱신 — 낡은 이벤트는 WHERE 조건이 걸러낸다</div>
+<pre><code><span class="cm">-- 이벤트에 실려 온 version이 지금 저장된 값보다 클 때만 반영한다.</span>
+<span class="cm">-- 늦게 도착한 낡은 이벤트는 WHERE 조건에 걸려 0행 갱신이 되고,</span>
+<span class="cm">-- 결과적으로 조용히 무시된다 — 순서를 지키는 대신 <span class="fn">순서를 무의미하게 만든 것</span>이다.</span>
+<span class="kw">UPDATE</span> user_profile
+   <span class="kw">SET</span> nickname   = :nickname,
+       version    = :eventVersion,
+       updated_at = now()
+ <span class="kw">WHERE</span> user_id = :userId
+<span class="ln-good">   <span class="kw">AND</span> version  &lt; :eventVersion;   <span class="cm">-- 이 한 줄이 순서 의존을 없앤다</span></span></code></pre>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="저장된 버전이 5일 때 버전 6 이벤트가 도착하면 조건이 참이라 1행이 갱신되고, 늦게 도착한 버전 4 이벤트는 WHERE 조건에 걸려 0행 갱신으로 조용히 무시되는 과정을 보여주는 도식.">
+    <defs>
+      <marker id="fEa" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="fEr" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">조건부 갱신의 동작 — <tspan fill="#16a34a">최신만 반영</tspan>, 낡은 것은 <tspan fill="#64748b">0행 갱신으로 조용히 무시</tspan></text>
+
+    <rect x="400" y="46" width="320" height="70" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="560" y="72" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">현재 DB 상태</text>
+    <text x="560" y="98" font-size="13" font-weight="800" fill="#1e3a8a" text-anchor="middle" class="mono">user_id=42 · version=5</text>
+
+    <!-- case 1 -->
+    <rect x="24" y="146" width="524" height="130" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="48" y="172" font-size="12.5" font-weight="800" fill="#15803d">도착: <tspan class="mono">version = 6</tspan> (정상 순서)</text>
+    <rect x="48" y="184" width="476" height="30" rx="7" fill="#ffffff" stroke="#86efac"/>
+    <text x="286" y="204" font-size="11.5" fill="#14532d" text-anchor="middle" class="mono">WHERE version &lt; 6 &nbsp;&#8594;&nbsp; 5 &lt; 6 &nbsp;=&nbsp; 참</text>
+    <path d="M286,218 L286,234" stroke="#16a34a" stroke-width="1.8" marker-end="url(#fEa)"/>
+    <text x="286" y="256" font-size="12" font-weight="800" fill="#15803d" text-anchor="middle">1행 갱신 &#8594; version=6 으로 전진</text>
+
+    <!-- case 2 -->
+    <rect x="572" y="146" width="524" height="130" rx="11" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="596" y="172" font-size="12.5" font-weight="800" fill="#475569">도착: <tspan class="mono">version = 4</tspan> (늦게 도착한 낡은 이벤트)</text>
+    <rect x="596" y="184" width="476" height="30" rx="7" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="834" y="204" font-size="11.5" fill="#334155" text-anchor="middle" class="mono">WHERE version &lt; 4 &nbsp;&#8594;&nbsp; 5 &lt; 4 &nbsp;=&nbsp; 거짓</text>
+    <path d="M834,218 L834,234" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#fEr)"/>
+    <text x="834" y="256" font-size="12" font-weight="800" fill="#475569" text-anchor="middle">0행 갱신 &#8594; 조용히 무시 (오류가 아니다)</text>
+  </svg>
+  <figcaption>순서를 <b>지킨 것이 아니라 무의미하게 만든 것</b>이다. 이벤트가 어떤 순서로 도착하든 <b>최종 상태는 항상 가장 큰 버전의 값</b>으로 수렴한다.</figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 0행을 오류로 취급한다</div>
+<pre><code><span class="kw">int</span> updated = profileMapper.<span class="fn">updateIfNewer</span>(userId, nickname, eventVersion);
+<span class="ln-bad"><span class="kw">if</span> (updated == <span class="nm">0</span>) {</span>
+<span class="ln-bad">    <span class="kw">throw new</span> <span class="nm">IllegalStateException</span>(<span class="st">"프로필 갱신 실패"</span>);  <span class="cm">// ✕</span></span>
+}
+<span class="cm">// 낡은 이벤트가 도착할 때마다 예외가 터지고,</span>
+<span class="cm">// 컨슈머가 이 메시지를 <span class="nm">무한 재시도</span>하게 된다.</span>
+<span class="cm">// "정상적으로 예상되는 결과"를 장애로 오인한 것이다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 0행은 정상 결과다</div>
+<pre><code><span class="kw">int</span> updated = profileMapper.<span class="fn">updateIfNewer</span>(userId, nickname, eventVersion);
+<span class="ln-good"><span class="kw">if</span> (updated == <span class="nm">0</span>) {</span>
+    <span class="cm">// 0행 = 이미 더 최신 상태가 반영돼 있다는 뜻.</span>
+    <span class="cm">// 오류가 아니라 <span class="fn">정상적으로 예상되는 결과</span>이므로 조용히 넘어간다.</span>
+<span class="ln-good">    log.<span class="fn">debug</span>(<span class="st">"낡은 이벤트 무시: user={}, version={}"</span>, userId, eventVersion);</span>
+}
+<span class="cm">// 예외를 던지지 않으므로 오프셋이 정상 전진하고, 파티션도 막히지 않는다.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>규칙 — 버전 값은 어디서 가져오는가</h4>
+  <div class="rule ok">발신 측 애그리거트의 버전(예: 프로필 레코드의 낙관적 락 버전)을 <u>그대로 실어 보낸다</u></div>
+  <p style="margin:8px 0 0;font-size:.95rem"><b>타임스탬프는 서버 간 시계 차이 때문에 미세한 역전에 취약하다.</b> "거의 동시에" 발생한 두 이벤트의 시각이 서버 A와 서버 B에서 각각 찍히면, 실제 발생 순서와 반대로 기록될 수 있다. 단조 증가가 보장된 <b>애그리거트 버전</b>이 안전하다.</p>
+</div>
+
+<h3>6-2. 이 기법이 통하지 않는 경우 — 여기까지 말해야 답이 완성된다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 292" role="img" aria-label="닉네임 변경 같은 상태 이벤트는 최종 상태를 실어 나르므로 낡은 것을 버려도 결과가 맞지만, 잔액에서 100원을 뺐다 같은 증분 이벤트는 전부 반영돼야 하므로 하나를 버리면 잔액이 틀어진다는 대비 도식.">
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">적용 조건 — 이벤트가 <tspan fill="#16a34a">"최종 상태"</tspan>를 나르는가, <tspan fill="#dc2626">"변화량"</tspan>을 나르는가</text>
+
+    <rect x="24" y="42" width="532" height="234" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="48" y="70" font-size="12.5" font-weight="800" fill="#15803d">상태 이벤트 &#10003; 적용 가능</text>
+    <rect x="48" y="82" width="484" height="34" rx="7" fill="#ffffff" stroke="#86efac"/>
+    <text x="290" y="104" font-size="11.5" font-weight="700" fill="#14532d" text-anchor="middle">"닉네임을 <tspan class="mono">X</tspan> 로 바꿨다" (v6)</text>
+    <text x="48" y="140" font-size="11.5" fill="#14532d">v4, v5, v6이 어떤 순서로 도착하든</text>
+    <text x="48" y="162" font-size="11.5" font-weight="700" fill="#15803d">최종 상태는 언제나 v6의 값 &#8594; 결과가 맞다</text>
+    <rect x="48" y="178" width="484" height="42" rx="7" fill="#dcfce7" stroke="#86efac"/>
+    <text x="290" y="196" font-size="11" fill="#14532d" text-anchor="middle">도착 순서 v6 &#8594; v4 &#8594; v5 &nbsp;&nbsp;|&nbsp;&nbsp; 반영: v6만 · 나머지 무시</text>
+    <text x="290" y="214" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">최종 nickname = X &nbsp;(정답)</text>
+    <text x="48" y="246" font-size="11" fill="#475569">낡은 것을 <tspan font-weight="700">버려도</tspan> 최종 결과가 맞기 때문에 성립한다.</text>
+    <text x="48" y="266" font-size="11" font-weight="700" fill="#15803d">지켜야 할 축: <tspan text-decoration="underline">최신성</tspan></text>
+
+    <rect x="564" y="42" width="532" height="234" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="588" y="70" font-size="12.5" font-weight="800" fill="#b91c1c">증분 이벤트 &#10005; 적용 불가</text>
+    <rect x="588" y="82" width="484" height="34" rx="7" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="830" y="104" font-size="11.5" font-weight="700" fill="#7f1d1d" text-anchor="middle">"잔액에서 <tspan class="mono">100원</tspan> 을 뺐다"</text>
+    <text x="588" y="140" font-size="11.5" fill="#7f1d1d">순서와 무관하게 <tspan font-weight="700">전부</tspan> 반영돼야 하고,</text>
+    <text x="588" y="162" font-size="11.5" font-weight="700" fill="#b91c1c">하나를 버리면 잔액이 틀어진다</text>
+    <rect x="588" y="178" width="484" height="42" rx="7" fill="#fee2e2" stroke="#fca5a5"/>
+    <text x="830" y="196" font-size="11" fill="#7f1d1d" text-anchor="middle">-100, -100, -100 중 하나를 "낡았다"고 버리면</text>
+    <text x="830" y="214" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">잔액이 100원 더 남는다 &nbsp;(오답)</text>
+    <text x="588" y="246" font-size="11" fill="#7f1d1d">순서 의존을 없애는 대신 <tspan font-weight="700">다른 축</tspan>을 지켜야 한다.</text>
+    <text x="588" y="266" font-size="11" font-weight="700" fill="#b91c1c">지켜야 할 축: <tspan text-decoration="underline">멱등성</tspan> (같은 이벤트를 두 번 반영하지 않기)</text>
+  </svg>
+  <figcaption>증분형 이벤트는 <code>04-idempotent-consumer-implementation.md</code>의 영역이다. <b>"순서 내성"과 "멱등성"은 서로 다른 축</b>이고, 이벤트의 성격이 어느 쪽을 요구하는지 먼저 판별해야 한다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>두 축을 헷갈리지 않기</caption>
+  <thead><tr><th style="width:24%"></th><th>순서 내성 (out-of-order tolerant)</th><th>멱등성 (idempotent)</th></tr></thead>
+  <tbody>
+    <tr><th>막으려는 사고</th><td>이벤트가 <b>뒤바뀐 순서</b>로 도착</td><td>같은 이벤트가 <b>두 번</b> 도착</td></tr>
+    <tr><th>전형적 수단</th><td>버전 비교 후 <b>조건부 갱신</b> (낡으면 무시)</td><td>처리 이력 테이블 · 고유 키 제약 (이미 봤으면 무시)</td></tr>
+    <tr><th>맞는 이벤트</th><td class="good">상태형 — "닉네임이 X가 됐다"</td><td class="good">증분형 — "100원을 뺐다"</td></tr>
+    <tr class="hl"><th>같이 필요할 때</th><td colspan="2">대부분의 실무 컨슈머는 <b>둘 다</b> 필요하다. 재시도는 중복을 만들고, 병렬·재처리는 역전을 만든다.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo">
+  <h4>마무리 멘트 — 이 문장으로 답을 닫는다</h4>
+  <div class="rule"><b>순서 보장은 공짜가 아니다</b> — 순서에 의존하는 범위를 최소화하는 것 자체가 설계 실력이다</div>
+  <p style="margin:8px 0 0;font-size:.95rem">키 편중, 재시도 전략 제약, 파티션 증설 불가라는 비용을 <b>계속 치르게</b> 하기 때문이다. 그리고 <b>"순서를 보장하는 법"과 "순서 의존을 없애는 법"은 서로 다른 층위의 카드이고, 둘을 모두 갖고 상황에 맞게 고르는 사람이 시니어다.</b></p>
+</div>
+
+<div class="callout info"><span class="t">RabbitMQ에서의 대응</span>
+순서 단위가 <b>파티션이 아니라 큐</b>이고, <b>consistent hash exchange</b>로 키별 큐를 나눠 같은 구조를 만든다. 순서가 성립하는 조건과 그것을 깨뜨리는 것들은 <code>15-rabbitmq-message-ordering.md</code>에서 다룬다. <b>"순서 단위 = 병렬 단위"라는 이중성은 두 브로커에 공통</b>이라는 점을 짚으면 브로커 중립적으로 이해했다는 신호가 된다.
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<div class="memo">
+  <h4>30초 답변 스크립트 — 이 순서로 말한다</h4>
+  <div class="step"><span class="n">1</span><div class="body"><b>단위</b> — "순서는 <b>파티션 안에서만</b> 보장됩니다. 파티션이 다르면 순서 관계 자체가 없습니다."</div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>메커니즘</b> — "<code>hash(키) mod 파티션 수</code>로 목적지가 정해지고 해시는 결정적이라, <b><code>userId</code>를 키로 주면 그 사용자 이벤트는 언제나 같은 파티션</b>입니다."</div></div>
+  <div class="step"><span class="n">3</span><div class="body"><b>보강</b> — "여기에 <b>컨슈머 그룹 안에서 파티션 하나는 컨슈머 하나</b>라는 규칙이 붙어 <b>저장 순서와 소비 순서가 둘 다</b> 지켜집니다."</div></div>
+  <div class="step red"><span class="n">4</span><div class="body"><b>함정</b> — "다만 키는 <b>목적지만</b> 정합니다. <b>프로듀서 재시도</b>는 멱등 프로듀서로 막고, <b>컨슈머 워커 풀</b>은 키 단위 라우팅이 필요하고, <b>DLQ 건너뛰기</b>와 <b>파티션 증설</b>은 순서와 정면으로 충돌합니다."</div></div>
+  <div class="step ok"><span class="n">5</span><div class="body"><b>대가와 층위 2</b> — "대가는 <b>키 편중</b>이고 <b>파티션을 늘려도 그 키의 상한은 컨슈머 한 대</b>입니다. 그래서 저는 <b>이벤트에 버전을 실어 최신일 때만 반영</b>하는, 순서 의존 자체를 없애는 카드를 함께 검토합니다."</div></div>
+</div>
+
+<div class="grid g3">
+  <div class="tile big"><div class="k">파티션</div><div class="s">순서 보장의 유일한 경계</div></div>
+  <div class="tile big red"><div class="k">75%</div><div class="s">파티션 3&#8594;4 증설 시 목적지가 바뀌는 키의 비율<br>(12개 중 3개만 제자리)</div></div>
+  <div class="tile big red"><div class="k">1대</div><div class="s">핫 키의 처리량 상한 — 파티션 수와 무관</div></div>
+</div>
+
+<div class="memo warn">
+  <h4>"같은 키를 썼는데 순서가 안 맞아요" — 진단 순서</h4>
+  <ol style="margin:6px 0 0;padding-left:20px">
+    <li><b>정말 같은 키인가</b> — 키가 <code>null</code>로 새는 경로는 없는가(이벤트 일부만 키 누락). 키를 문자열로 만들 때 <b>앞뒤 공백·대소문자</b>가 섞이지는 않았는가.</li>
+    <li><b>프로듀서 인스턴스가 몇 대인가</b> — 멱등 프로듀서의 보장은 <b>인스턴스 하나 안에서</b>다. 2대가 같은 키를 발행하면 그 사이 순서는 보장 밖이다.</li>
+    <li><b><code>enable.idempotence</code>가 켜져 있는가</b> — 꺼져 있고 재시도가 활성이면 발행 단계에서 이미 역전이 가능하다.</li>
+    <li><b>컨슈머가 내부에서 병렬화하고 있는가</b> — <code>@Async</code>, 스레드 풀, 리액티브 파이프라인이 끼어 있으면 꺼낸 순서와 완료 순서가 다르다.</li>
+    <li><b>재시도 토픽 / DLQ를 쓰는가</b> — 실패 건을 건너뛰는 순간 그 키의 순서는 설계상 깨진다.</li>
+    <li><b>최근에 파티션을 늘렸는가</b> — 증설 시점을 걸치는 키는 두 파티션에 흩어져 있다.</li>
+  </ol>
+  <p style="margin:10px 0 0;font-size:.95rem"><b>위에서부터 순서대로 확인하는 이유</b>는 메시지가 흐르는 순서와 같기 때문이다 — 발행 이전(키) → 발행(재시도) → 소비(병렬) → 실패 처리 → 운영 변경.</p>
+</div>
+
+<h3>꼬리질문 셀프 테스트 <span class="sub">— 질문만 보고 스스로 답해본 뒤 펼쳐서 확인한다</span></h3>
+
+<details class="q"><summary>특정 키(대형 고객)에 트래픽이 몰리면 어떻게 하나요?<span class="hint">힌트: "파티션을 늘린다"는 여기서 오답이다. 왜 오답인지부터 말해야 한다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>키 편중(hot partition) 문제다.</b> 전체 트래픽의 상당 부분을 차지하는 대형 고객 하나가 있으면 그 고객의 이벤트는 전부 한 파티션으로 몰린다.</p>
+  <div class="callout trap" style="margin-top:10px"><span class="t">결정적인 사실 — 파티션을 늘려도 해결되지 않는다</span>
+  같은 키는 <b>반드시 한 파티션으로</b> 가므로, 파티션을 10개로 늘려도 그 키는 여전히 그중 <b>하나에만</b> 쌓인다. <b>그 키의 처리량 상한은 컨슈머 한 대의 처리량이고, 그 상한은 파티션 수와 무관하다.</b> 늘린 파티션들은 그 키의 부하를 나눠 갖지 못한 채 한가하게 논다.
+  </div>
+  <p style="margin-top:12px">대응은 셋이다.</p>
+  <div class="split g3" style="margin-top:8px">
+    <div class="pane b"><h4>1. 순서 요구 범위를 좁힌다</h4><p style="margin:0;font-size:.93rem"><code>userId:orderId</code> 같은 복합 키. <b>대가: 주문 간 순서가 사라진다.</b> 도메인이 허용하는지 먼저 확인해야 한다.</p></div>
+    <div class="pane g"><h4>2. 컨슈머를 빠르게 한다</h4><p style="margin:0;font-size:.93rem">다운스트림 최적화, 배치 쓰기, 동기 호출 제거. <b>순서 보장 범위를 건드리지 않는 유일한 카드.</b></p></div>
+    <div class="pane w"><h4>3. 순서 의존을 없앤다</h4><p style="margin:0;font-size:.93rem">버전 기반 조건부 갱신. 층위가 다른 해법이라 <b>층위 1의 대가를 모두 회피</b>한다.</p></div>
+  </div>
+  <p style="margin-top:12px"><b>1번을 말할 때 반드시 붙일 문장</b> — "이것은 부하를 나누는 해결책이 아니라 <b>순서 보장 단위를 더 잘게 재정의하는 것</b>입니다. 그래서 먼저 <b>주문 A와 주문 B 사이의 순서가 업무적으로 의미가 있는지</b>를 확인합니다. 의미가 있다면 이 카드는 쓸 수 없고, 키를 쪼개는 순간 <b>부하 문제를 정합성 문제로 바꾼 것</b>이 됩니다."</p>
+</div></details>
+
+<details class="q"><summary>토픽 전체의 전역 순서가 필요하다면 어떻게 하나요?<span class="hint">힌트: 방법은 한 줄로 끝난다. 그 다음에 할 말이 진짜 답이다</span></summary><div class="a">
+  <p><b>파티션을 1개로 만들면 된다.</b> 하지만 이것은 <b>병렬성을 완전히 포기하는 것</b>이라 처리량 상한이 <b>컨슈머 한 대</b>로 고정된다(1-2의 이중성). 게다가 나중에 파티션을 늘리는 것도 ④의 함정 때문에 쉽지 않다 — <b>되돌리기 어려운 선택</b>이다.</p>
+  <p>그래서 실무에서는 그 전에 <b>"정말 전역 순서가 필요한가"라는 요구 자체를 의심</b>해야 한다. 의심하는 방법은 <b>구체적으로 묻는 것</b>이다.</p>
+  <div class="rule">"A 사용자의 이벤트와 B 사용자의 이벤트가 뒤바뀌면 <u>정확히 무엇이 잘못되는가?</u>"</div>
+  <p>여기에 <b>구체적인 시나리오로 답하지 못하면</b> 그 요구는 전역 순서가 아니라 <b>키 단위 순서</b>였을 가능성이 높다. 대부분은 키 단위 순서로 충분하며, <b>전역 순서 요구는 설계를 다시 볼 신호</b>다.</p>
+  <div class="callout info" style="margin-bottom:0"><span class="t">그래도 정말 필요한 경우라면</span>
+  파티션 1개를 쓰되 <b>그 토픽의 트래픽 상한을 명시적으로 산정</b>하고(컨슈머 1대가 감당 가능한 양인지), 순서가 필요한 이벤트만 <b>별도 토픽으로 분리</b>해 나머지 트래픽을 끌어들이지 않는 것이 현실적이다.
+  </div>
+</div></details>
+
+<details class="q"><summary>키 없이 보내면 어떻게 분배되나요?<span class="hint">힌트: 메시지마다 라운드로빈이 아니다. 왜 그런지가 포인트</span></summary><div class="a">
+  <p>키가 없으면 파티셔너가 <b>배치를 파티션들에 번갈아 붙이는 방식</b>으로 분산시킨다. 한 배치를 한 파티션에 채워 보내고 다음 배치는 다른 파티션으로 보내는 방식이라 <b>스티키 파티셔닝(sticky partitioning)</b>이라고 부른다 — <b>한 파티션에 잠시 "붙어 있다가" 옮겨간다</b>는 뜻이다.</p>
+  <p><b>왜 메시지마다 바꾸지 않는가 — 배칭 효율 때문이다.</b> 파티션별로 배치가 만들어지므로, 메시지를 파티션마다 흩뿌리면 <b>어느 배치도 잘 안 차서 작은 요청이 여러 개</b> 나간다. 한 파티션에 몰아 채우면 <b>배치가 빨리 차서 큰 요청 하나</b>로 나간다.</p>
+  <div class="split" style="margin-top:10px">
+    <div class="pane g"><h4>얻는 것</h4><ul><li>파티션 간 <b>고른 분산</b>(장기적으로)</li><li><b>배칭 효율</b> — 요청 수가 줄고 처리량이 오른다</li></ul></div>
+    <div class="pane r"><h4>잃는 것</h4><ul><li>같은 발신자의 메시지가 여러 파티션에 흩어지므로 <b>순서 보장은 전혀 없다</b></li><li>키가 없으므로 <b>로그 컴팩션 토픽에도 쓸 수 없다</b></li></ul></div>
+  </div>
+</div></details>
+
+<details class="q"><summary>컨슈머를 여러 대 띄우면 순서는 어떻게 되나요?<span class="hint">힌트: 순서는 멀쩡하다. 대신 다른 것이 깨진다</span></summary><div class="a">
+  <p>컨슈머 그룹 안에서 <b>파티션 하나는 최대 한 컨슈머에게만 할당</b>되므로, <b>파티션 내 순서는 컨슈머 수와 무관하게 유지된다.</b> 컨슈머를 늘리면 파티션이 재분배될 뿐, 한 파티션을 둘이 나눠 읽는 일은 없다.</p>
+  <div class="callout warn" style="margin-top:10px"><span class="t">다만 리밸런싱 직후가 다르다</span>
+  새로 할당받은 컨슈머는 <b>커밋된 오프셋부터</b> 읽는데, 이전 컨슈머가 <b>처리는 했지만 커밋을 못 한 구간</b>이 있으면 그 구간을 다시 읽는다. <b>순서는 유지되지만 같은 메시지가 두 번 오는 것</b>이므로, <b>순서와 별개로 멱등 처리가 필요하다.</b>
+  </div>
+  <p style="margin-top:10px"><b>이 구분이 중요하다</b> — 순서(ordering)와 중복(duplication)은 다른 축이고, 컨슈머 증설은 순서를 흔들지 않지만 중복은 만들 수 있다. (<code>26-consumer-rebalancing-and-in-flight-messages.md</code>, <code>04-idempotent-consumer-implementation.md</code>)</p>
+</div></details>
+
+<details class="q"><summary>순서가 조금 깨져도 되는 시스템으로 설계할 수는 없나요?<span class="hint">힌트: "가능합니다"로 시작하되, 앞의 대응들과 <b>층위가 다르다</b>는 것을 세워야 한다</span> <span class="badge senior">시니어 변별 포인트</span></summary><div class="a">
+  <p><b>가능하고, 종종 그게 더 좋은 설계다.</b></p>
+  <div class="layer" style="border-color:#2563eb;background:#eff6ff">
+    <div class="lt" style="color:#1d4ed8">층위 1 : 순서를 지킨다</div>
+    <p style="margin:0;font-size:.94rem"><b>수단</b> — 파티션 키, 멱등 프로듀서, 키 단위 워커 라우팅, 순차 처리<br>
+    <b>대가</b> — 키 편중, 병렬성 상한, 파티션 증설 제약, DLQ 전략과의 충돌</p>
+  </div>
+  <div class="layer" style="border-color:#16a34a;background:#f0fdf4">
+    <div class="lt" style="color:#15803d">층위 2 : 순서에 의존하지 않게 만든다</div>
+    <p style="margin:0;font-size:.94rem"><b>수단</b> — 이벤트에 버전·타임스탬프를 실어 낡은 이벤트를 무시(조건부 갱신)<br>
+    <b>대가</b> — 이벤트 스키마에 버전 필드 추가, 컨슈머 로직 변경</p>
+  </div>
+  <p><b>층위 1은 인프라와 배치로 순서를 만들어 내는 일이고, 층위 2는 순서가 필요 없는 형태로 문제를 다시 정의하는 일이다.</b> 그래서 층위 2가 성립하면 <b>층위 1의 대가를 전부 안 내도 된다</b> — 키 편중도, 파티션 증설 제약도, DLQ 충돌도 사라진다.</p>
+  <p>구현은 <code>WHERE version &lt; :eventVersion</code> 조건부 갱신 한 줄이고, <b>0행 갱신은 오류가 아니라 정상 결과</b>로 처리해야 한다(예외를 던지면 컨슈머가 무한 재시도한다).</p>
+  <p style="margin-bottom:0"><b>그리고 이 기법이 통하지 않는 경우를 함께 말해야 답이 완성된다.</b> 이 방식은 이벤트가 <b>"최종 상태를 실어 나르는"</b> 형태일 때 성립한다. <b>"잔액에서 100원을 뺐다"는 증분 이벤트</b>라 <b>전부</b> 반영돼야 하고, 하나를 버리면 잔액이 틀어진다 — 증분형은 <b>멱등성</b>이라는 다른 축을 지켜야 한다.</p>
+</div></details>
+
+<details class="q"><summary>멱등 프로듀서를 켰는데도 순서가 어긋납니다. 무엇을 먼저 의심하나요?<span class="hint">힌트: 그 장치가 지켜주는 <b>범위</b>를 정확히 말할 수 있어야 한다</span> <span class="badge trap">함정</span></summary><div class="a">
+  <p><b>애플리케이션 인스턴스가 몇 대인지를 먼저 본다.</b></p>
+  <div class="rule red">멱등 프로듀서의 보장 = <u>하나의 프로듀서 인스턴스</u>가 <u>하나의 파티션</u>에 보낸 것들 사이의 순서</div>
+  <p>시퀀스 번호는 <b>프로듀서 ID별로 따로</b> 관리된다. 그래서 서버가 2대이고 둘 다 같은 <code>userId</code>를 발행하면, 두 인스턴스가 보낸 메시지들 사이의 순서는 <b>이 장치가 다루는 범위 밖</b>이다. 두 요청이 네트워크에서 뒤집히면 그대로 뒤집힌 순서로 기록된다.</p>
+  <p>그 외에 볼 것들:</p>
+  <ul class="chk x">
+    <li><b>컨슈머 쪽 병렬화</b> — 발행은 멀쩡한데 소비 측 워커 풀이 순서를 흩뜨리고 있을 수 있다. 증상만 보면 구별이 안 되므로, <b>파티션 로그를 직접 읽어</b> 기록 순서가 맞는지부터 확인한다.</li>
+    <li><b>재시도 토픽 경유</b> — 실패한 메시지가 다른 토픽을 돌아 늦게 들어오고 있지 않은가.</li>
+    <li><b>키 누락</b> — 일부 경로에서 키가 <code>null</code>로 발행돼 다른 파티션으로 갔을 수 있다.</li>
+  </ul>
+  <p style="margin-bottom:0"><b>진단의 갈림길은 "기록 순서가 틀렸는가, 처리 순서가 틀렸는가"</b>다. 전자면 발행 단계(①), 후자면 소비 단계(②③) 문제다.</p>
+</div></details>
+
+<details class="q"><summary>파티션을 잘못 늘렸습니다. 줄여서 되돌리면 되지 않나요?<span class="hint">힌트: 되돌릴 수 있는지부터가 문제다</span> <span class="badge trap">함정</span></summary><div class="a">
+  <p><b>Kafka에서 파티션은 줄일 수 없다.</b> 늘리는 것만 가능하다. 그래서 증설은 <b>되돌릴 수 없는 결정</b>이고, "일단 늘려보고 아니면 되돌리자"는 선택지가 애초에 없다.</p>
+  <p>줄일 수 없는 이유를 생각해 보면 자연스럽다 — 파티션을 없애려면 <b>그 안에 이미 쌓인 데이터를 어디로 옮길지</b>를 정해야 하는데, 옮기는 순간 <b>오프셋 체계와 키-파티션 매핑이 둘 다 무너진다.</b> 컨슈머들이 커밋해 둔 오프셋도 의미를 잃는다.</p>
+  <p>현실적인 수습은 <b>새 토픽을 만들어 마이그레이션하는 것</b>이다 — 원하는 파티션 수로 새 토픽을 만들고, 프로듀서를 전환하고, 구 토픽의 잔여분을 다 소비한 뒤 폐기한다. <b>비용이 큰 작업</b>이므로 결론은 하나다.</p>
+  <div class="rule red">파티션 수는 <u>토픽을 만들 때</u> 여유 있게 정한다 — 증설은 정합성 변경이지 성능 튜닝이 아니다</div>
+  <p style="margin-bottom:0">파티션 수 산정 자체는 <code>29-partition-count-sizing.md</code>, 증설 부작용 전반은 <code>32-partition-increase-side-effects.md</code>가 다룬다.</p>
+</div></details>
+
+<details class="q"><summary>컨슈머 내부를 병렬화하면서 순서도 지키려면, 오프셋 커밋은 어떻게 하나요?<span class="hint">힌트: "처리했다"와 "커밋해도 된다"가 어긋나기 시작한다</span> <span class="badge senior">시니어 변별 포인트</span></summary><div class="a">
+  <p>키 단위로 워커에 라우팅하면 <b>순서는 지켜지지만 완료 시점이 뒤죽박죽</b>이 된다. 오프셋 100, 101, 102를 서로 다른 워커에 넘겼는데 <b>101이 먼저 끝났다고 101을 커밋하면</b>, 그 순간 장애가 나도 <b>아직 처리 중인 100은 다시 오지 않는다</b> — 유실이다.</p>
+  <p><b>원칙은 하나다: 앞이 다 끝나기 전에는 뒤를 커밋하지 않는다.</b> 구현은 이렇게 한다.</p>
+  <ul class="chk">
+    <li>파티션별로 <b>"넘긴 오프셋"과 "완료된 오프셋"을 따로 추적</b>한다.</li>
+    <li>커밋은 <b>빈틈 없이 연속으로 완료된 마지막 지점까지만</b> 한다 — 100이 아직이면 101·102가 끝났어도 커밋은 99에 머문다.</li>
+    <li>워커 큐가 너무 길어지면 <b>해당 파티션의 poll을 일시 중지(pause)</b>해 미완료 구간이 무한정 늘어나지 않게 한다.</li>
+  </ul>
+  <p style="margin-bottom:0">이 구조에서는 <b>장애 시 재처리 구간이 반드시 생기므로</b>(연속 완료 지점 이후의 완료분이 다시 온다) <b>멱등 처리가 필수</b>가 된다. 깊은 논의는 <code>30-single-consumer-throughput-and-offset-commit.md</code>.</p>
+</div></details>
+
+<details class="q"><summary>키를 지정하면 순서 말고 또 무엇이 따라오나요?<span class="hint">힌트: 키는 Kafka에서 순서 전용 장치가 아니다</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p>키는 <b>세 가지 역할</b>을 동시에 한다.</p>
+  <div class="grid g3" style="margin-top:8px">
+    <div class="tile"><div class="k">① 파티션 결정</div><div class="d">이 문서의 주제. 같은 키 &#8594; 같은 파티션 &#8594; 순서 보장 단위.</div></div>
+    <div class="tile"><div class="k">② 로컬 상태의 분할 키</div><div class="d">스트림 처리에서 <b>키별 집계·조인</b>의 단위가 된다. 같은 키가 같은 인스턴스로 모이므로 상태를 나눠 가질 수 있다.</div></div>
+    <div class="tile"><div class="k">③ 로그 컴팩션의 단위</div><div class="d">컴팩션이 켜진 토픽에서는 <b>같은 키의 오래된 레코드가 최신 것으로 정리</b>된다. 그래서 <b>키 없는 메시지는 컴팩션 토픽에 부적합</b>하다.</div></div>
+  </div>
+  <p style="margin-top:12px;margin-bottom:0">그래서 키 설계를 바꾸면 <b>순서만 바뀌는 게 아니다.</b> 예를 들어 <code>userId</code>에서 <code>userId:orderId</code>로 바꾸면 컴팩션 토픽에서는 <b>"사용자별 최신 상태"가 아니라 "주문별 최신 상태"가 남게</b> 된다 — 저장되는 데이터의 의미 자체가 달라진다. (컴팩션은 <code>36-log-compaction-compacted-topic.md</code>)</p>
+</div></details>
+
+<details class="q"><summary>키를 <code>null</code>로 보내는 것과 빈 문자열 <code>""</code>로 보내는 것은 같은가요?<span class="hint">힌트: 전혀 다르다. 하나는 "키 없음", 하나는 "특정 키"다</span> <span class="badge trap">함정</span></summary><div class="a">
+  <p><b>완전히 다르다.</b></p>
+  <div class="split" style="margin-top:8px">
+    <div class="pane b"><h4>키 = <code>null</code></h4><p style="margin:0;font-size:.94rem"><b>"키가 없다"</b>는 뜻이다. 파티셔너가 스티키 파티셔닝으로 <b>배치 단위로 흩뿌린다.</b> 순서 보장 없음, 분산은 고름.</p></div>
+    <div class="pane r"><h4>키 = <code>""</code> (빈 문자열)</h4><p style="margin:0;font-size:.94rem"><b>엄연한 하나의 키</b>다. 해시되어 <b>특정 파티션 하나로 고정</b>된다 — 모든 메시지가 그 파티션에 몰린다.</p></div>
+  </div>
+  <div class="callout trap" style="margin-top:12px;margin-bottom:0"><span class="t">실제로 잘 생기는 사고</span>
+  <code>event.getUserId()</code>가 <code>null</code>일 때 <b>"안전하게" 빈 문자열로 치환</b>하는 방어 코드(<code>Optional.ofNullable(id).orElse("")</code>)를 넣으면, 사용자 ID가 없는 모든 이벤트가 <b>한 파티션에 전부 쌓인다.</b> 분산을 고르게 하려던 코드가 <b>인위적인 핫 파티션</b>을 만든 셈이다. 키가 없어야 하는 이벤트는 <b>키를 <code>null</code>로 두는 것이 맞다.</b>
+  </div>
+</div></details>
+
+<details class="q"><summary>"사용자별 순서를 보장해 주세요"라는 요구를 받았을 때, 무엇부터 확인하나요?<span class="hint">힌트: 키를 정하기 전에 물어야 할 것이 있다</span></summary><div class="a">
+  <p><b>키를 정하는 것은 마지막 단계다.</b> 그 전에 세 가지를 확인한다.</p>
+  <div class="step"><span class="n">1</span><div class="body"><b>"어떤 두 이벤트가 뒤바뀌면 무엇이 잘못되는가?"</b> — 구체적 시나리오를 받아낸다. "가입 전에 탈퇴가 처리되면 없는 사용자를 지우려 한다"처럼 답이 나와야 한다. 답이 안 나오면 <b>실제로는 순서가 필요 없는 요구</b>일 수 있다.</div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>"그 두 이벤트가 공유하는 최소 식별자는 무엇인가?"</b> — 그것이 키다. 사용자 단위인지, 주문 단위인지, 디바이스 단위인지가 여기서 정해진다. <b>필요 이상으로 넓게 잡으면 핫 파티션을 자초</b>한다.</div></div>
+  <div class="step"><span class="n">3</span><div class="body"><b>"그 이벤트는 상태형인가 증분형인가?"</b> — 상태형이면 <b>층위 2(조건부 갱신)</b>로 순서 의존을 아예 없앨 수 있는지 먼저 검토한다. 그쪽이 성립하면 층위 1의 대가를 전부 안 내도 된다.</div></div>
+  <p style="margin-top:12px;margin-bottom:0"><b>이 순서로 물으면 "요구를 기술로 번역했다"는 인상을 준다</b> — 반대로 질문을 듣자마자 "<code>userId</code>를 키로 쓰면 됩니다"라고 답하면, 맞는 답이어도 <b>요구를 검증하지 않고 받아 적는 사람</b>으로 보인다.</p>
+</div></details>
+
+<details class="q"><summary>이 설계가 RabbitMQ에서도 그대로 통하나요?<span class="hint">힌트: 이름은 다르지만 구조는 같다. 그리고 이중성도 같다</span></summary><div class="a">
+  <p><b>구조는 같고 이름과 수단이 다르다.</b> RabbitMQ에서는 <b>순서 단위가 파티션이 아니라 큐</b>다. 하나의 큐를 하나의 컨슈머가 읽는 동안에는 순서가 유지되고, <b>큐가 여러 개면 큐 사이의 순서는 없다</b> — Kafka의 파티션과 정확히 같은 관계다.</p>
+  <p>"같은 키는 같은 큐로" 라우팅하려면 <b>consistent hash exchange</b>를 써서 키별로 큐를 나눈다. 이렇게 하면 Kafka의 파티션 키와 같은 구조가 만들어진다.</p>
+  <div class="callout info" style="margin-top:10px;margin-bottom:0"><span class="t">브로커를 넘어 공통인 것</span>
+  <b>"순서 보장 단위 = 병렬 처리 단위"라는 이중성</b>은 두 브로커에 공통이다. 순서를 넓게 보장하려면 처리 주체를 하나로 좁혀야 하고, 병렬성을 얻으려면 순서 경계를 잘게 쪼개야 한다 — <b>이것은 특정 제품의 특성이 아니라 순서라는 요구 자체의 성질</b>이다. 상세는 <code>15-rabbitmq-message-ordering.md</code>.
+  </div>
+</div></details>
+
+<details class="q"><summary>순서 보장이 잘 되고 있는지 운영에서 어떻게 확인하나요?<span class="hint">힌트: "장애가 안 났다"는 확인이 아니다</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p>순서 역전은 <b>조용히 일어나고 결과만 이상해지는</b> 종류의 사고라, 터진 뒤에 로그를 봐서는 원인을 못 찾는 경우가 많다. 그래서 <b>관측 가능하게 만들어 두는 것</b>이 설계의 일부다.</p>
+  <ul class="chk">
+    <li><b>이벤트에 시퀀스/버전을 싣는다</b> — 층위 2를 안 쓰더라도 <b>싣기만</b> 해두면, 컨슈머가 "직전에 본 버전보다 작은 값이 왔다"를 감지해 <b>역전 발생 자체를 카운터로 노출</b>할 수 있다.</li>
+    <li><b>역전 감지 시 처리 방침을 정한다</b> — 경보만 울릴지, 무시할지, 보류할지. <b>감지 후 아무것도 안 하는 것도 명시적 선택</b>이어야 한다.</li>
+    <li><b>파티션별 랙을 따로 본다</b> — 특정 파티션만 랙이 크면 <b>핫 키의 신호</b>다. 전체 평균 랙만 보면 묻힌다.</li>
+    <li><b>재시도 토픽/DLQ 유입량을 키 단위로 본다</b> — 특정 키가 반복 실패하고 있다면 그 키의 순서는 이미 깨져 있다.</li>
+  </ul>
+  <p style="margin-bottom:0"><b>핵심은 "순서가 지켜졌다"를 가정하지 않고 측정하는 것</b>이다 — 함정 4종 중 ②③④는 <b>예외도 에러도 없이</b> 순서를 깨기 때문이다.</p>
+</div></details>
+
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  Kafka의 순서는 <b>파티션 단위로만</b> 보장되므로 사용자별 순서는 <b><code>userId</code>를 키로 삼아</b>(키의 해시를 파티션 수로 나눈 나머지가 목적지이므로 같은 키는 언제나 같은 파티션) <b>한 파티션에 고정</b>하는 것으로 풀되 — <b>프로듀서 재시도 역전(멱등 프로듀서로 해결), 컨슈머 내부 병렬 처리, DLQ 전략과의 충돌, 그리고 분모가 바뀌면 목적지가 바뀌는 파티션 증설</b>이라는 함정과, <b>키 편중을 복합 키로 완화하면 그만큼 순서 보장 단위가 잘게 쪼개진다</b>는 대가까지 함께 관리해야 하며, 그 위에 <b>"순서에 의존하지 않게 만드는" 조건부 갱신</b>이라는 다른 층위의 카드가 하나 더 있다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/06-messaging/24-message-ordering-partition-key.md</code> · 이어서 볼 문서: 멱등 컨슈머 구현(04) · RabbitMQ 메시지 순서(15) · Kafka 핵심 구성요소(21) · 파티션과 컨슈머 수(22) · 재시도·DLQ 설계(25) · 리밸런싱과 in-flight 메시지(26) · 프로듀서 acks(27) · 단일 컨슈머 처리량과 오프셋 커밋(30) · 파티션 증설 부작용(32)</p>
+</main>
+</body>
+</html>

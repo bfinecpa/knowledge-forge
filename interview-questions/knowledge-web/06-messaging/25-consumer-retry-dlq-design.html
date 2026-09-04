@@ -1,0 +1,2087 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>컨슈머 재시도와 DLQ 설계 — 실패 메시지 하나가 파티션 전체를 막지 않게</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo.warn{border-color:var(--warn)}.memo.warn::before{background:var(--warn);content:"진단"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+.formula{font-family:var(--mono);font-size:1.12rem;font-weight:700;text-align:center;padding:16px 12px;border-radius:12px;background:#1e293b;color:#e2e8f0;margin:12px 0;line-height:1.9}
+.formula .hi{color:#fcd34d}
+.formula .hi2{color:#86efac}
+.formula .hi3{color:#fca5a5}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+tr.bad td{background:var(--danger-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.mono{font-family:var(--mono)}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.split.g3{grid-template-columns:1fr 1fr 1fr}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane.w{background:var(--warn-soft);border-color:var(--warn-line)}
+.pane.w h4{color:var(--warn)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+.step.warn .n{background:var(--warn)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+pre.wide{width:1120px;margin-left:calc(50% - 560px)}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.ln-warn{display:block;background:rgba(217,119,6,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--warn)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.nm{color:#fca5a5}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+.cmp.g3{grid-template-columns:1fr 1fr 1fr}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* misc */
+.formula.small{font-size:.95rem;line-height:1.85;text-align:left}
+.chk{list-style:none;padding:0;margin:8px 0}
+.chk li{padding-left:26px;position:relative;margin:6px 0;font-size:.95rem}
+.chk li::before{content:"\2713";position:absolute;left:4px;color:var(--ok);font-weight:800}
+.chk.x li::before{content:"\2715";color:var(--danger)}
+.layer{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card);margin:12px 0}
+.layer .lt{font-weight:800;font-size:1.02rem;margin-bottom:6px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">06 메시징 · 이벤트 &nbsp;|&nbsp; 컨슈머 재시도와 DLQ 설계 ⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>컨슈머 재시도와 DLQ 설계 — 실패 메시지 하나가 파티션 전체를 막지 않게<br><span class="sub">"실패하면 어떻게 되는가"를 <b>설계하지 않은 컨슈머</b>는 반드시 운영에서 그 대가를 치른다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"컨슈머가 메시지 처리에 실패하면 어떻게 하나요? <span style="color:#2563eb">재시도/DLQ</span> 설계를 설명해주세요."</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>파티션은 한 줄로 선 대기열이라, 실패한 메시지 하나를 붙잡고 무한 재시도하면 그 뒤의 모든 메시지가 멈춘다(poison pill).</b> 그래서 실패 처리의 뼈대는 <b>"실패를 분류하고, 회복 가능한 것만 제한된 횟수로 재시도하고, 끝내 안 되는 것은 DLQ로 치워 흐름을 살리는 것"</b>이다. 재시도는 <b>순서를 지키는 블로킹 방식</b>과 <b>순서를 포기하는 재시도 토픽 방식</b> 중 도메인 요구에 맞춰 고르되, 블로킹 재시도는 그 대기 시간이 <b><code>max.poll.interval.ms</code>를 넘기면 컨슈머가 죽은 것으로 판정돼 리밸런싱이 터진다</b>는 함정을 계산에 넣어야 한다. DLQ는 버리는 곳이 아니라 <b>진단 정보 · 유입 알림 · 재투입 절차까지 이어지는 운영 절차의 시작점</b>으로 설계한다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>구조부터 못박습니다.</b> 컨슈머는 파티션마다 <b>"어디까지 읽었는가"라는 숫자 하나(오프셋)</b>만 들고 있어서 <b>"3번은 실패, 4번은 성공"을 표시할 자리가 없습니다.</b> 그래서 하나가 막히면 <b>뒤 전체가 멈추고(선두 차단)</b>, 컨슈머를 늘려도 소용이 없습니다 — 한 파티션은 그룹 안에서 컨슈머 하나가 전담하기 때문입니다.</div></li>
+    <li><span class="n">2</span><div><b>실패를 먼저 분류합니다.</b> 기준은 <b>"시간이 지나면 결과가 달라지는가"</b> 하나입니다. 타임아웃·커넥션 고갈 같은 <b>일시적 실패만</b> 제한 횟수로 재시도하고, 역직렬화·검증 실패 같은 <b>영구적 실패는 재시도 없이 즉시 DLQ</b>로 보냅니다. 성공 확률이 0인 일에 파티션을 점유시키는 것은 <b>뒤에 선 정상 메시지의 지연을 늘리는 해악</b>입니다.</div></li>
+    <li><span class="n">3</span><div><b>재시도 방식은 트레이드오프로 고릅니다.</b> <b>순서가 계약인 도메인은 블로킹 재시도 + 짧은 백오프</b>(<code>재시도 시간 &times; 실패 건수 &lt; max.poll.interval.ms</code> 부등식을 반드시 계산합니다), <b>건별 독립 도메인은 재시도 토픽</b>입니다. 그리고 <b>DLQ는 종착역이 아니라 병원</b>이라 <b>진단 헤더 · 유입 즉시 알림 · 재투입 절차</b>까지가 설계이며, 이 전부는 <b>멱등 컨슈머</b> 위에서만 안전합니다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 이 문서가 겨냥하는 약점</a></li>
+    <li><a href="#s1">왜 문제인가 — 파티션은 한 줄 대기열이다</a></li>
+    <li><a href="#s2">실패의 분류 — 설계의 출발점</a></li>
+    <li><a href="#s3">블로킹 재시도 — 순서를 지키고 흐름을 포기한다</a></li>
+    <li><a href="#s4">숨은 함정 — 재시도가 컨슈머 생존 판정과 충돌한다</a></li>
+    <li><a href="#s5">논블로킹 재시도 — 흐름을 지키고 순서를 포기한다</a></li>
+    <li><a href="#s6">선택 기준 — 무엇을 포기할지는 도메인이 정한다</a></li>
+    <li><a href="#s7">DLQ 설계 — 버리는 곳이 아니라 병원이다</a></li>
+    <li><a href="#s8">전체 실패 경로 한 장 · 설계 체크리스트</a></li>
+    <li><a href="#s9">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+    <li><a href="#summary">한 줄 요약</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도 · 이 문서가 겨냥하는 약점</h2>
+
+<div class="card">
+  <p style="margin-top:0"><b>질문</b> — "컨슈머가 메시지 처리에 실패하면 어떻게 하나요? 재시도/DLQ(Dead Letter Queue) 설계를 설명해주세요."</p>
+  <p><b>출제 의도</b> — <b>실패 메시지 하나가 파티션 전체를 막는 poison pill 문제</b>를 아는지 확인한다. "실패하면 어떻게 되나"를 설계하지 않은 컨슈머는 반드시 운영에서 그 대가를 치른다 — <b>실패 경로를 미리 설계하는 습관이 있는 개발자인지</b>를 가리는 질문이다.</p>
+  <p style="margin-bottom:0">즉 이 질문은 <b>"Kafka API를 아는가"가 아니라 "정상 경로 말고 비정상 경로도 그려 봤는가"</b>를 묻는다. 정상 경로는 누구나 만든다. 비정상 경로가 설계된 코드는 드물다.</p>
+</div>
+
+<div class="split">
+  <div class="pane r"><h4>이렇게 답하면 반쪽이다</h4>
+    <ul>
+      <li>"실패하면 <b>재시도합니다</b>" — <b>몇 번</b> 하고, <b>그 다음엔</b> 어떻게 되는지가 빠지면 무한 재시도와 구분되지 않는다.</li>
+      <li>"실패하면 <b>DLQ로 보냅니다</b>" — 무엇을 재시도하고 무엇을 바로 보낼지의 <b>분류 기준</b>이 없으면 절반은 낭비, 절반은 유실이다.</li>
+      <li>"<b>try-catch로 잡아 로그를 남깁니다</b>" — 이 문서에서 가장 위험한 오답이다. <b>오프셋이 커밋되어 메시지가 영구 유실</b>된다.</li>
+      <li>블로킹 재시도를 말하면서 <b><code>max.poll.interval.ms</code>를 언급하지 않는다</b> — 실제로 운영해 본 적이 없다는 신호로 읽힌다.</li>
+      <li>DLQ를 <b>"넣는 곳"</b>으로만 설명 — 꺼내는 절차(알림·분류·재투입)가 없으면 DLQ는 유실과 같다.</li>
+    </ul>
+  </div>
+  <div class="pane g"><h4>이 문서가 채워 주는 것</h4>
+    <ul>
+      <li><b>왜</b> 하나가 막히면 전체가 막히는가 — 오프셋이 <b>숫자 하나</b>라는 저장 구조가 근거다.</li>
+      <li>같은 문제가 <b>RabbitMQ에는 없는 이유</b> — 로그 기반 vs 큐 기반의 대가.</li>
+      <li>재시도 두 방식이 <b>정확히 반대되는 것을 포기</b>한다는 구조와, 그 선택을 도메인 요구로 환원하는 언어.</li>
+      <li><b>재시도 시간 예산 부등식</b> — 블로킹 재시도가 리밸런싱을 부르는 계산을 손으로 따라가기.</li>
+      <li>DLQ를 <b>운영 루프</b>로 그리기 — 진단 헤더 · 유입 알림 · 재투입 · 멱등성 전제.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>이 문서를 관통하는 한 문장</h4>
+  <div class="rule">실패 처리의 목표는 <u>그 메시지를 성공시키는 것</u>이 아니라 <u>줄을 계속 흐르게 하는 것</u>이다</div>
+  <p style="margin:8px 0 0;font-size:.95rem">재시도·DLQ·분류·알림·재투입은 전부 이 한 문장에서 파생된다. "이 메시지를 어떻게든 처리해야 한다"에 매달리면 무한 재시도가 나오고, <b>"뒤에 선 수만 건을 어떻게 흐르게 할 것인가"</b>로 시선을 옮기면 DLQ가 자연스럽게 나온다.</p>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 왜 문제인가 — 파티션은 한 줄 대기열이다</h2>
+
+<h3>1-1. 전제 지식 — 컨슈머는 파티션마다 오프셋 하나만 들고 있다</h3>
+
+<p>Kafka 컨슈머가 파티션에서 메시지를 읽는 방식을 정확히 알아야 이 문제가 보인다.</p>
+
+<p>컨슈머는 파티션마다 <b>"어디까지 읽었는가"를 나타내는 숫자 하나</b>만 들고 있다. 이 숫자가 <b>오프셋(offset)</b>이다. 메시지를 처리하고 오프셋을 앞으로 밀고, 다시 처리하고 밀고를 반복한다. <b>"3번은 실패했지만 4번은 성공했다"를 따로 표시할 자리가 없다.</b> 진행 상태를 나타낼 수 있는 것은 <b>숫자 하나뿐</b>이기 때문이다.</p>
+
+<div class="callout info"><span class="t">비유 — 오프셋은 책갈피지, 형광펜이 아니다</span>
+책갈피는 <b>"여기까지 읽었다"는 한 지점</b>만 표시한다. 3페이지를 이해 못 했다고 책갈피를 4페이지에 꽂으면 3페이지는 영영 안 읽은 채로 넘어간 것이고, 3페이지에 계속 꽂아 두면 4·5·6페이지를 시작할 수도 없다. <b>"3페이지만 빼고 읽음"을 표현할 수단이 책갈피에는 없다</b> — 그게 형광펜(메시지별 ack)이 필요한 이유이고, Kafka에는 그 형광펜이 없다.
+</div>
+
+<p>그래서 3번에서 막히면 다음 그림이 된다. 이 그림 하나가 이 문서 전체의 출발점이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="파티션 P0의 로그에서 오프셋 3번이 처리 실패해 컨슈머의 오프셋 포인터가 3번에서 멈추고, 뒤의 4·5·6번 메시지가 브로커에 저장되어 있는데도 소비되지 못하는 선두 차단 구조를 보여주는 도식. 컨슈머를 추가로 붙여도 파티션 하나는 그룹 안에서 컨슈머 하나가 전담하므로 도움이 되지 않는다는 점도 표시되어 있다.">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a1g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">선두 차단(head-of-line blocking) — 브로커에는 멀쩡히 있는데 아무도 못 읽는다</text>
+
+    <rect x="24" y="42" width="1072" height="150" rx="11" fill="#f8fafc" stroke="#e5e7eb" stroke-width="1.4"/>
+    <text x="44" y="66" font-size="12.5" font-weight="700" fill="#334155">파티션 <tspan class="mono">P0</tspan> — 브로커 디스크에 저장된 append-only 로그 (메시지는 아무 데도 사라지지 않았다)</text>
+
+    <!-- offsets -->
+    <g font-size="11" fill="#64748b" class="mono">
+      <text x="118" y="92" text-anchor="middle">offset 1</text>
+      <text x="258" y="92" text-anchor="middle">offset 2</text>
+      <text x="398" y="92" text-anchor="middle">offset 3</text>
+      <text x="538" y="92" text-anchor="middle">offset 4</text>
+      <text x="678" y="92" text-anchor="middle">offset 5</text>
+      <text x="818" y="92" text-anchor="middle">offset 6</text>
+    </g>
+
+    <rect x="56" y="100" width="124" height="46" rx="8" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
+    <text x="118" y="122" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">완료</text>
+    <text x="118" y="138" font-size="10.5" fill="#15803d" text-anchor="middle">처리 성공</text>
+
+    <rect x="196" y="100" width="124" height="46" rx="8" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
+    <text x="258" y="122" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">완료</text>
+    <text x="258" y="138" font-size="10.5" fill="#15803d" text-anchor="middle">처리 성공</text>
+
+    <rect x="336" y="96" width="124" height="54" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2.4"/>
+    <text x="398" y="118" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">독약</text>
+    <text x="398" y="136" font-size="10.5" fill="#b91c1c" text-anchor="middle">처리 실패 반복</text>
+
+    <rect x="476" y="100" width="124" height="46" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="538" y="122" font-size="12.5" font-weight="700" fill="#475569" text-anchor="middle">정상</text>
+    <text x="538" y="138" font-size="10.5" fill="#dc2626" text-anchor="middle">읽히지 못함</text>
+
+    <rect x="616" y="100" width="124" height="46" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="678" y="122" font-size="12.5" font-weight="700" fill="#475569" text-anchor="middle">정상</text>
+    <text x="678" y="138" font-size="10.5" fill="#dc2626" text-anchor="middle">읽히지 못함</text>
+
+    <rect x="756" y="100" width="124" height="46" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="818" y="122" font-size="12.5" font-weight="700" fill="#475569" text-anchor="middle">정상</text>
+    <text x="818" y="138" font-size="10.5" fill="#dc2626" text-anchor="middle">읽히지 못함</text>
+
+    <text x="906" y="120" font-size="12" fill="#64748b" class="mono">... 계속 쌓임</text>
+    <text x="906" y="140" font-size="12" font-weight="700" fill="#dc2626">랙(lag) 폭증</text>
+
+    <!-- pointer -->
+    <path d="M398,158 L398,186" stroke="#dc2626" stroke-width="2.4" marker-end="url(#a1r)"/>
+
+    <rect x="252" y="206" width="292" height="58" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+    <text x="398" y="228" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">컨슈머의 오프셋 포인터가 여기서 멈춘다</text>
+    <text x="398" y="248" font-size="11.5" fill="#7f1d1d" text-anchor="middle">3번을 성공시키지 못하면 앞으로 밀 수가 없다</text>
+
+    <!-- consumer group -->
+    <rect x="24" y="284" width="530" height="100" rx="11" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.4"/>
+    <text x="44" y="308" font-size="12.5" font-weight="700" fill="#1d4ed8">컨슈머 그룹 <tspan class="mono">order-service</tspan></text>
+    <rect x="46" y="320" width="150" height="48" rx="9" fill="#ffffff" stroke="#93c5fd" stroke-width="1.6"/>
+    <text x="121" y="340" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">consumer-1</text>
+    <text x="121" y="357" font-size="10.5" fill="#dc2626" text-anchor="middle">P0 담당 · 3번에 갇힘</text>
+    <rect x="212" y="320" width="150" height="48" rx="9" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.6"/>
+    <text x="287" y="340" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle" class="mono">consumer-2</text>
+    <text x="287" y="357" font-size="10.5" fill="#64748b" text-anchor="middle">다른 파티션 담당</text>
+    <rect x="378" y="320" width="150" height="48" rx="9" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="453" y="340" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle" class="mono">consumer-3 (증설)</text>
+    <text x="453" y="357" font-size="10.5" fill="#dc2626" text-anchor="middle">P0을 도울 수 없다</text>
+
+    <rect x="574" y="284" width="522" height="100" rx="11" fill="#fffbeb" stroke="#fde68a" stroke-width="1.4"/>
+    <text x="594" y="308" font-size="12.5" font-weight="800" fill="#b45309">왜 컨슈머를 늘려도 소용없나</text>
+    <text x="594" y="330" font-size="12" fill="#78350f">한 파티션은 컨슈머 그룹 안에서 <tspan font-weight="700">컨슈머 하나가 전담</tspan>한다.</text>
+    <text x="594" y="350" font-size="12" fill="#78350f">그래서 다른 컨슈머가 대신 4번을 가져갈 방법이 <tspan font-weight="700">없다.</tspan></text>
+    <text x="594" y="370" font-size="12" fill="#78350f">이건 설정 문제가 아니라 <tspan font-weight="700">할당 규칙 자체</tspan>다. (22번 문서)</text>
+  </svg>
+  <figcaption><b>이 그림에서 읽어야 할 것</b> — 4·5·6번은 <b>브로커에 멀쩡히 저장되어 있다.</b> 유실이 아니라 <b>도달 불가</b>다. 그리고 <b>스케일 아웃이 해법이 되지 않는</b> 유일한 종류의 지연이다 — 파티션당 컨슈머 하나라는 규칙 때문에, 컨슈머를 아무리 붙여도 그 파티션의 4번을 대신 읽어 줄 주체가 없다.</figcaption>
+</figure>
+
+<p>이것을 <b>선두 차단(head-of-line blocking)</b>이라고 부른다. <b>큐 앞사람이 계산을 못 끝내면 뒷줄 전체가 멈추는 계산대</b>와 같은 구조다. 그래서 "실패한 메시지를 어떻게 할 것인가"라는 질문은 사실 <b>"이 계산대의 줄을 계속 흐르게 할 것인가"</b>라는 질문이다.</p>
+
+<h3>1-2. poison pill — 왜 "독약"인가</h3>
+
+<p><b>poison pill</b>은 "삼키면 죽는 독약"이라는 뜻이다. 이름 그대로다 — <b>컨슈머가 그 메시지를 처리하려 할 때마다 실패해서, 결국 파이프라인 전체를 마비시키는 메시지</b>를 가리킨다.</p>
+
+<p>이름이 잘 붙은 이유는 <b>증상이 정확히 중독이기 때문</b>이다. 컨슈머 프로세스는 살아 있고 CPU도 돌고 있는데, <b>파티션 소비만 조용히 멈춰 있다.</b></p>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k">프로세스는 살아 있다</div><div class="d">헬스체크는 통과한다. 재시작 알람도 안 울린다. <b>"죽지 않았으므로 정상"</b>이라는 판정이 사고를 늦춘다.</div></div>
+  <div class="tile red"><div class="k">랙만 계속 쌓인다</div><div class="d">유일하게 정직한 지표다. <b>컨슈머 랙</b>(아직 소비하지 못한 메시지 수)이 시간에 비례해 선형으로 증가한다. (31번 문서)</div></div>
+  <div class="tile red"><div class="k">로그가 너무 많아 안 보인다</div><div class="d">같은 예외가 초당 수십 번씩 반복된다. <b>로그가 많은 것이 오히려 은폐 효과</b>를 낸다 — 노이즈로 인식되어 넘어간다.</div></div>
+</div>
+
+<p>더 나쁜 것은 <b>전염된다</b>는 점이다. 4절에서 자세히 보겠지만, 무한 재시도는 브로커가 이 컨슈머를 <b>죽었다고 판정</b>하게 만들고, 그러면 파티션이 다른 컨슈머로 넘어가고, 그 컨슈머도 같은 독약을 삼켜 똑같이 마비된다. 결국 <b>컨슈머 그룹 전체가 재시도-리밸런싱 루프에 갇힌다.</b></p>
+
+<div class="chain">
+  <span class="chip r">메시지 하나 실패</span><span class="arrow">→</span>
+  <span class="chip r">무한 재시도</span><span class="arrow">→</span>
+  <span class="chip r">poll() 중단</span><span class="arrow">→</span>
+  <span class="chip r">브로커가 사망 판정</span><span class="arrow">→</span>
+  <span class="chip r">리밸런싱</span><span class="arrow">→</span>
+  <span class="chip r">다른 컨슈머가 같은 독약 수령</span><span class="arrow">→</span>
+  <span class="chip r">그룹 전체 마비</span>
+</div>
+
+<div class="memo red">
+  <h4>poison pill 진단 3종 신호</h4>
+  <p style="margin:0 0 8px">면접에서 "그럼 그 상황을 어떻게 알아채나요?"가 뒤따라 온다. 세 가지를 묶어 답하면 실제 경험처럼 들린다.</p>
+  <ul class="chk x" style="margin:0">
+    <li><b>특정 파티션의 랙만</b> 선형 증가 — 전체 평균 랙만 보면 묻힌다. <b>파티션별 랙</b>을 봐야 보인다.</li>
+    <li>그 컨슈머의 <b>커밋 오프셋이 한 값에 고정</b>돼 있다 — 처리량 0인데 프로세스는 살아 있다.</li>
+    <li><b>같은 예외 · 같은 오프셋</b>이 로그에 반복된다 — 오프셋 번호가 안 바뀐다는 것이 결정적 단서다.</li>
+  </ul>
+</div>
+
+<h3>1-3. 이 문제가 RabbitMQ에는 없다</h3>
+
+<p><b>구조가 원인이라는 것을 보여주는 가장 좋은 대조</b>가 RabbitMQ다. 같은 "메시지 처리 실패"인데 한쪽만 줄이 막히는 이유는 브로커의 성숙도 차이가 아니라 <b>저장 모델의 차이</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="왼쪽은 Kafka의 로그 기반 모델로 오프셋 커서 하나가 3번에서 막혀 뒤의 4·5·6이 소비되지 못하는 구조, 오른쪽은 RabbitMQ의 큐 기반 모델로 메시지마다 개별 ack/nack이 가능해 3번이 dead-letter exchange로 빠져도 4·5는 그대로 흘러가는 구조를 대비한 도식.">
+    <defs>
+      <marker id="a2r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a2g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="a2b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">같은 실패, 다른 결과 — 진행 상태를 <tspan fill="#dc2626">커서 하나</tspan>로 표현하느냐 <tspan fill="#16a34a">메시지마다</tspan> 표현하느냐</text>
+
+    <!-- LEFT : Kafka -->
+    <rect x="24" y="42" width="530" height="282" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="46" y="68" font-size="13" font-weight="800" fill="#b91c1c">Kafka — 로그(log) 기반</text>
+    <text x="46" y="88" font-size="11.5" fill="#7f1d1d">진행 상태 = <tspan class="mono" font-weight="700">오프셋 숫자 하나</tspan> · 메시지 단위 완료 표시 불가</text>
+
+    <rect x="46" y="104" width="486" height="60" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <rect x="60" y="116" width="86" height="36" rx="6" fill="#f0fdf4" stroke="#bbf7d0"/><text x="103" y="139" font-size="12" font-weight="700" fill="#15803d" text-anchor="middle" class="mono">2 완료</text>
+    <rect x="156" y="112" width="86" height="44" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/><text x="199" y="139" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle" class="mono">3 실패</text>
+    <rect x="252" y="116" width="86" height="36" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/><text x="295" y="139" font-size="12" fill="#64748b" text-anchor="middle" class="mono">4 대기</text>
+    <rect x="348" y="116" width="86" height="36" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/><text x="391" y="139" font-size="12" fill="#64748b" text-anchor="middle" class="mono">5 대기</text>
+    <rect x="444" y="116" width="76" height="36" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/><text x="482" y="139" font-size="12" fill="#64748b" text-anchor="middle" class="mono">6 대기</text>
+
+    <path d="M199,172 L199,196" stroke="#dc2626" stroke-width="2.2" marker-end="url(#a2r)"/>
+    <text x="199" y="216" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">커서가 여기서 정지</text>
+    <text x="199" y="234" font-size="11" fill="#7f1d1d" text-anchor="middle">넘어가려면 3번을 성공시키거나</text>
+    <text x="199" y="250" font-size="11" fill="#7f1d1d" text-anchor="middle">3번을 <tspan font-weight="700">포기(=DLQ)</tspan>해야 한다</text>
+
+    <rect x="330" y="188" width="196" height="76" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <text x="428" y="210" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">"건너뛰기"가 없다</text>
+    <text x="428" y="230" font-size="10.8" fill="#7f1d1d" text-anchor="middle">커서를 4로 밀면 3번은</text>
+    <text x="428" y="246" font-size="10.8" fill="#7f1d1d" text-anchor="middle">영영 다시 못 읽는다 = 유실</text>
+
+    <text x="46" y="292" font-size="11.5" font-weight="700" fill="#7f1d1d">얻은 것: 재소비(replay) 가능성 · 높은 처리량 · 다수 컨슈머 그룹의 독립 소비</text>
+    <text x="46" y="312" font-size="11.5" font-weight="700" fill="#b91c1c">치른 대가: 선두 차단 — 이것은 버그가 아니라 <tspan text-decoration="underline">모델의 대가</tspan>다</text>
+
+    <!-- RIGHT : RabbitMQ -->
+    <rect x="566" y="42" width="530" height="282" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="588" y="68" font-size="13" font-weight="800" fill="#15803d">RabbitMQ — 큐(queue) 기반</text>
+    <text x="588" y="88" font-size="11.5" fill="#166534">진행 상태 = <tspan class="mono" font-weight="700">메시지마다 ack / nack</tspan> · ack된 메시지는 큐에서 삭제</text>
+
+    <rect x="588" y="104" width="242" height="150" rx="9" fill="#ffffff" stroke="#bbf7d0"/>
+    <text x="709" y="124" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">큐 <tspan class="mono">orders</tspan></text>
+
+    <rect x="602" y="134" width="214" height="32" rx="6" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="616" y="155" font-size="11.5" font-weight="700" fill="#b91c1c" class="mono">3</text>
+    <text x="700" y="155" font-size="11" fill="#b91c1c" text-anchor="middle">nack (재큐 or DLX)</text>
+
+    <rect x="602" y="172" width="214" height="32" rx="6" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="616" y="193" font-size="11.5" font-weight="700" fill="#15803d" class="mono">4</text>
+    <text x="700" y="193" font-size="11" fill="#15803d" text-anchor="middle">ack → 삭제, 처리 완료</text>
+
+    <rect x="602" y="210" width="214" height="32" rx="6" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="616" y="231" font-size="11.5" font-weight="700" fill="#15803d" class="mono">5</text>
+    <text x="700" y="231" font-size="11" fill="#15803d" text-anchor="middle">ack → 삭제, 처리 완료</text>
+
+    <path d="M836,150 L900,150" stroke="#dc2626" stroke-width="2" marker-end="url(#a2r)"/>
+    <rect x="906" y="128" width="172" height="46" rx="8" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="992" y="147" font-size="11.5" font-weight="700" fill="#c2410c" text-anchor="middle">dead-letter</text>
+    <text x="992" y="164" font-size="11.5" font-weight="700" fill="#c2410c" text-anchor="middle">exchange</text>
+
+    <path d="M836,205 L900,205" stroke="#16a34a" stroke-width="2" marker-end="url(#a2g)"/>
+    <rect x="906" y="186" width="172" height="40" rx="8" fill="#ffffff" stroke="#bbf7d0"/>
+    <text x="992" y="211" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">그대로 흘러간다</text>
+
+    <text x="588" y="292" font-size="11.5" font-weight="700" fill="#166534">얻은 것: 실패 하나가 <tspan text-decoration="underline">뒤를 막지 않는다</tspan> · 브로커가 재시도/DLX 타이밍을 대신 관리</text>
+    <text x="588" y="312" font-size="11.5" font-weight="700" fill="#15803d">치른 대가: 재소비 불가(ack하면 삭제) · 처리량 상한 · 소비 위치를 되감을 수 없음</text>
+  </svg>
+  <figcaption><b>결론</b> — poison pill로 인한 선두 차단은 <b>Kafka의 버그가 아니라 로그 기반 모델의 대가</b>다. Kafka는 그 대가를 치르는 대신 <b>재소비(replay) 가능성과 높은 처리량</b>을 얻었다(02번 문서). 이 트레이드오프를 말할 수 있으면 <b>"Kafka를 쓸 줄 안다"가 아니라 "Kafka가 왜 그렇게 생겼는지 안다"</b>가 된다.</figcaption>
+</figure>
+
+<div class="callout ok"><span class="t">면접에서 쓰기 좋은 한 문장</span>
+"이 문제는 Kafka가 부족해서 생기는 게 아니라, <b>진행 상태를 커서 하나로 표현하는 대신 재소비 가능성과 처리량을 얻은 설계의 대가</b>입니다. 그래서 해법도 <b>'커서를 어떻게든 앞으로 밀 수 있게 만드는 것'</b> — 즉 실패 메시지를 다른 곳(DLQ·재시도 토픽)으로 옮겨 커밋 가능하게 만드는 방향으로 나옵니다."
+</div>
+
+<h3>1-4. 흔한 두 가지 잘못된 극단</h3>
+
+<p>구조를 알았으니 잘못된 대응을 보자. 실무에서 가장 자주 보는 <b>두 극단</b>이다. 그리고 이 둘은 <b>정확히 반대 방향으로 틀렸다</b> — 하나는 커서를 너무 쉽게 밀고, 하나는 영영 안 민다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">잘못된 극단 1</span> 예외를 삼키고 넘어간다 — 조용한 유실</div>
+<pre><code><span class="cm">// 겉보기엔 "에러 처리를 한" 코드다. 실제로는 유실 장치다.</span>
+<span class="nm">@KafkaListener</span>(topics = <span class="st">"orders"</span>)
+<span class="kw">public void</span> <span class="fn">consume</span>(OrderEvent event) {
+    <span class="kw">try</span> {
+        orderService.process(event);
+    } <span class="kw">catch</span> (Exception e) {
+<span class="ln-bad">        log.error(<span class="st">"처리 실패"</span>, e);   <span class="cm">// 로그만 남기고 끝</span></span>
+    }
+}
+<span class="cm">// 예외가 리스너 밖으로 나가지 않는다</span>
+<span class="cm">//   → 컨테이너는 "성공"으로 보고 오프셋을 커밋한다</span>
+<span class="cm">//   → 그 메시지는 다시 읽을 방법이 없다</span>
+</code></pre>
+    <div class="callout trap" style="margin-top:8px"><span class="t">진짜 문제는 "로그를 남긴 것"이 아니다</span>
+    <b>오프셋이 커밋된다는 것</b>이다. 예외를 잡아 삼키면 리스너는 정상 종료한 것처럼 보이므로 컨테이너가 오프셋을 앞으로 민다. <b>데이터 유실이고, 유실됐다는 사실조차 로그 파일 안에만 남는다.</b> 로그 보존 기간이 지나면 그 사실마저 사라진다.
+    </div>
+  </div>
+  <div>
+    <div class="codehead bad"><span class="tag">잘못된 극단 2</span> 성공할 때까지 무한 재시도 — poison pill</div>
+<pre><code><span class="cm">// "메시지를 잃지 않겠다"는 선의가 파이프라인을 죽인다.</span>
+<span class="nm">@KafkaListener</span>(topics = <span class="st">"orders"</span>)
+<span class="kw">public void</span> <span class="fn">consume</span>(OrderEvent event) {
+<span class="ln-bad">    <span class="kw">while</span> (<span class="kw">true</span>) {                  <span class="cm">// 끝나는 조건이 없다</span></span>
+        <span class="kw">try</span> {
+            orderService.process(event);
+            <span class="kw">break</span>;
+        } <span class="kw">catch</span> (Exception e) {
+<span class="ln-bad">            sleep(<span class="st">1000</span>);            <span class="cm">// 영구적 실패면 영원히 반복</span></span>
+        }
+    }
+}
+<span class="cm">// → 이 파티션의 뒤 메시지 전부가 멈춘다</span>
+<span class="cm">// → 그리고 곧 max.poll.interval.ms를 넘긴다 (4절)</span>
+</code></pre>
+    <div class="callout trap" style="margin-top:8px"><span class="t">여기에 한 겹의 재앙이 더 있다</span>
+    무한 재시도는 <b>단지 이 파티션만 멈추는 것으로 끝나지 않는다.</b> <code>max.poll.interval.ms</code>(같은 컨슈머가 <code>poll()</code>을 다시 부르기까지 허용되는 최대 간격) 초과 → <b>리밸런싱 → 전염</b>으로 이어진다. 이 연쇄는 4절에서 도식으로 본다.
+    </div>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="두 잘못된 극단을 축 위에 배치한 도식. 왼쪽 끝은 예외를 삼켜 오프셋을 즉시 커밋해 데이터가 유실되는 방향, 오른쪽 끝은 무한 재시도로 오프셋이 영영 진행되지 않아 파티션이 멈추는 방향이며, 가운데가 제한 재시도 후 DLQ로 보내는 올바른 설계 지점임을 보여준다.">
+    <defs>
+      <marker id="a3" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">실패 처리 스펙트럼 — 두 극단 사이 어디에 설 것인가</text>
+
+    <!-- axis -->
+    <line x1="90" y1="150" x2="1030" y2="150" stroke="#334155" stroke-width="2.4" marker-end="url(#a3)"/>
+    <text x="96" y="140" font-size="11.5" font-weight="700" fill="#64748b">커서를 너무 쉽게 민다</text>
+    <text x="940" y="140" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">커서를 영영 안 민다</text>
+
+    <!-- left extreme -->
+    <rect x="60" y="52" width="290" height="80" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="205" y="76" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">극단 1 — 예외 삼키기</text>
+    <text x="205" y="97" font-size="11.5" fill="#7f1d1d" text-anchor="middle">오프셋 즉시 커밋 · 흐름은 살아 있다</text>
+    <text x="205" y="117" font-size="12" font-weight="800" fill="#dc2626" text-anchor="middle">대가 = 데이터 유실 (조용히)</text>
+    <path d="M205,132 L205,144" stroke="#dc2626" stroke-width="2"/>
+    <circle cx="205" cy="150" r="8" fill="#dc2626"/>
+
+    <!-- right extreme -->
+    <rect x="770" y="52" width="290" height="80" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="915" y="76" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">극단 2 — 무한 재시도</text>
+    <text x="915" y="97" font-size="11.5" fill="#7f1d1d" text-anchor="middle">유실은 없다 · 흐름이 죽는다</text>
+    <text x="915" y="117" font-size="12" font-weight="800" fill="#dc2626" text-anchor="middle">대가 = 파티션 정지 + 리밸런싱</text>
+    <path d="M915,132 L915,144" stroke="#dc2626" stroke-width="2"/>
+    <circle cx="915" cy="150" r="8" fill="#dc2626"/>
+
+    <!-- center -->
+    <circle cx="560" cy="150" r="11" fill="#16a34a"/>
+    <path d="M560,164 L560,182" stroke="#16a34a" stroke-width="2.2"/>
+    <rect x="360" y="186" width="400" height="96" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="560" y="210" font-size="13" font-weight="800" fill="#15803d" text-anchor="middle">설계된 지점 — 분류 → 제한 재시도 → DLQ</text>
+    <text x="560" y="232" font-size="11.5" fill="#166534" text-anchor="middle">유실도 없고(메시지는 DLQ에 남는다),</text>
+    <text x="560" y="250" font-size="11.5" fill="#166534" text-anchor="middle">흐름도 막히지 않는다(커서는 앞으로 간다).</text>
+    <text x="560" y="270" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">"버리지 않으면서 비켜 세우는" 자리가 DLQ다.</text>
+
+    <!-- tick labels -->
+    <text x="205" y="176" font-size="11" fill="#94a3b8" text-anchor="middle">try-catch + log</text>
+    <text x="915" y="176" font-size="11" fill="#94a3b8" text-anchor="middle">while(true) + sleep</text>
+  </svg>
+  <figcaption>두 극단은 <b>서로 다른 실수가 아니라 같은 실수의 두 방향</b>이다 — <b>"실패한 메시지를 어디에 둘 것인가"라는 자리를 만들지 않은 것.</b> 그 자리를 만들면(=DLQ) 유실과 정지를 동시에 피할 수 있다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>재시도 설계의 최소 계약</h4>
+  <div class="rule ok">재시도는 반드시 <u>"횟수 제한 + 초과 시 DLQ"</u>와 세트다 — 끝이 없는 재시도는 재시도가 아니라 장애다</div>
+  <p style="margin:8px 0 0;font-size:.95rem">이 한 줄이 성립하지 않는 모든 실패 처리 코드는 극단 1이거나 극단 2다. 면접에서 재시도를 말할 때는 <b>항상 "몇 번"과 "그 다음"을 붙여서</b> 말한다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 실패의 분류 — 설계의 출발점</h2>
+
+<p>모든 실패를 같게 다루면 안 된다. 기준은 <b>하나뿐</b>이고, 이 한 문장이 이후의 모든 분기를 만든다.</p>
+
+<div class="memo">
+  <h4>실패 분류의 단 하나의 기준</h4>
+  <div class="rule">"시간이 지나면 결과가 달라지는가?"</div>
+  <p style="margin:8px 0 0;font-size:.95rem"><b>달라진다 → 일시적(transient) → 재시도 대상.</b> &nbsp;·&nbsp; <b>안 달라진다 → 영구적(permanent) → 즉시 DLQ.</b><br>예외 이름을 외우는 대신 이 질문을 던지면, 처음 보는 예외도 그 자리에서 분류할 수 있다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="실패 분류 결정 트리 도식. 처리 실패에서 시작해 '시간이 지나면 결과가 달라지는가'를 묻고, 예이면 일시적 실패로 제한 횟수 재시도 경로로, 아니오이면 영구적 실패로 재시도 없이 즉시 DLQ 경로로 분기하며, 각 분기의 대표 예외와 처리 방식이 함께 표시되어 있다.">
+    <defs>
+      <marker id="a4b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a4g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="a4r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">실패 분류 결정 트리 — 이 분기를 코드에 박아 두는 것이 실패 경로 설계의 첫 단추다</text>
+
+    <!-- start -->
+    <rect x="460" y="44" width="200" height="46" rx="10" fill="#1e293b"/>
+    <text x="560" y="73" font-size="13" font-weight="800" fill="#e2e8f0" text-anchor="middle">리스너에서 예외 발생</text>
+    <path d="M560,90 L560,116" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a4b)"/>
+
+    <!-- decision -->
+    <rect x="360" y="122" width="400" height="56" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="147" font-size="13" font-weight="800" fill="#1d4ed8" text-anchor="middle">시간이 지나면 결과가 달라지는가?</text>
+    <text x="560" y="167" font-size="11" fill="#1e40af" text-anchor="middle">= 지금 실패한 원인이 스스로 사라질 수 있는 종류인가</text>
+
+    <!-- branches -->
+    <path d="M420,178 L300,178 L300,214" stroke="#16a34a" stroke-width="2.2" fill="none" marker-end="url(#a4g)"/>
+    <text x="330" y="200" font-size="12.5" font-weight="800" fill="#15803d">예</text>
+    <path d="M700,178 L830,178 L830,214" stroke="#dc2626" stroke-width="2.2" fill="none" marker-end="url(#a4r)"/>
+    <text x="792" y="200" font-size="12.5" font-weight="800" fill="#b91c1c">아니오</text>
+
+    <!-- transient -->
+    <rect x="46" y="220" width="508" height="164" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.8"/>
+    <text x="300" y="246" font-size="13.5" font-weight="800" fill="#15803d" text-anchor="middle">일시적(transient) 실패</text>
+    <text x="300" y="266" font-size="11.5" fill="#166534" text-anchor="middle">지금은 실패했지만 잠시 후에는 성공할 수 있다</text>
+
+    <rect x="66" y="278" width="140" height="90" rx="9" fill="#ffffff" stroke="#bbf7d0"/>
+    <text x="136" y="298" font-size="11" font-weight="800" fill="#15803d" text-anchor="middle">대표 사례</text>
+    <text x="136" y="317" font-size="10.5" fill="#166534" text-anchor="middle">DB 커넥션 풀 고갈</text>
+    <text x="136" y="333" font-size="10.5" fill="#166534" text-anchor="middle">외부 API 타임아웃</text>
+    <text x="136" y="349" font-size="10.5" fill="#166534" text-anchor="middle">락 경합 / 일시적 5xx</text>
+
+    <rect x="216" y="278" width="150" height="90" rx="9" fill="#ffffff" stroke="#bbf7d0"/>
+    <text x="291" y="298" font-size="11" font-weight="800" fill="#15803d" text-anchor="middle">처리</text>
+    <text x="291" y="317" font-size="10.5" fill="#166534" text-anchor="middle">백오프를 두고</text>
+    <text x="291" y="333" font-size="10.5" font-weight="700" fill="#166534" text-anchor="middle">제한 횟수만큼 재시도</text>
+    <text x="291" y="349" font-size="10.5" fill="#166534" text-anchor="middle">(소진하면 DLQ)</text>
+
+    <rect x="376" y="278" width="158" height="90" rx="9" fill="#ffffff" stroke="#bbf7d0"/>
+    <text x="455" y="298" font-size="11" font-weight="800" fill="#15803d" text-anchor="middle">기대 효과</text>
+    <text x="455" y="317" font-size="10.5" fill="#166534" text-anchor="middle">상대 시스템이 회복되면</text>
+    <text x="455" y="333" font-size="10.5" fill="#166534" text-anchor="middle">사람 개입 없이 성공</text>
+    <text x="455" y="349" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="middle">DLQ 유입 자체를 줄인다</text>
+
+    <!-- permanent -->
+    <rect x="578" y="220" width="508" height="164" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.8"/>
+    <text x="832" y="246" font-size="13.5" font-weight="800" fill="#b91c1c" text-anchor="middle">영구적(permanent) 실패</text>
+    <text x="832" y="266" font-size="11.5" fill="#7f1d1d" text-anchor="middle">100번 재시도해도 100번 실패한다</text>
+
+    <rect x="598" y="278" width="140" height="90" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <text x="668" y="298" font-size="11" font-weight="800" fill="#b91c1c" text-anchor="middle">대표 사례</text>
+    <text x="668" y="317" font-size="10.5" fill="#7f1d1d" text-anchor="middle">역직렬화 실패</text>
+    <text x="668" y="333" font-size="10.5" fill="#7f1d1d" text-anchor="middle">검증 실패(필드 누락)</text>
+    <text x="668" y="349" font-size="10.5" fill="#7f1d1d" text-anchor="middle">NPE 등 코드 버그</text>
+
+    <rect x="748" y="278" width="150" height="90" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <text x="823" y="298" font-size="11" font-weight="800" fill="#b91c1c" text-anchor="middle">처리</text>
+    <text x="823" y="317" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle">재시도 생략</text>
+    <text x="823" y="333" font-size="10.5" fill="#7f1d1d" text-anchor="middle">곧바로 DLQ 발행</text>
+    <text x="823" y="349" font-size="10.5" fill="#7f1d1d" text-anchor="middle">= 파티션을 즉시 비운다</text>
+
+    <rect x="908" y="278" width="158" height="90" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <text x="987" y="298" font-size="11" font-weight="800" fill="#b91c1c" text-anchor="middle">재시도하면?</text>
+    <text x="987" y="317" font-size="10.5" fill="#7f1d1d" text-anchor="middle">성공 확률 0인 일에</text>
+    <text x="987" y="333" font-size="10.5" fill="#7f1d1d" text-anchor="middle">파티션을 점유시킨다</text>
+    <text x="987" y="349" font-size="10.5" font-weight="700" fill="#dc2626" text-anchor="middle">= 뒤 정상 메시지에 해악</text>
+  </svg>
+  <figcaption>영구적 실패를 재시도하는 것은 <b>단순한 시간 낭비가 아니다.</b> 재시도하는 동안 파티션이 멈춰 있으므로 <b>뒤에 줄 선 정상 메시지들의 지연을 늘리는 해악</b>이다. <b>성공 가능성이 0인 일에 파티션을 점유시키는 셈</b>이다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table class="wide">
+  <caption>실패 유형 분류표 — 면접에서 예시를 즉시 대려면 이 표를 통째로 인출할 수 있어야 한다</caption>
+  <thead>
+    <tr><th>유형</th><th>대표 예외 · 상황</th><th>원인의 위치</th><th>시간이 해결하나</th><th>처리</th><th>재시도의 의미</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b style="color:#16a34a">일시적</b></td>
+      <td>외부 API 타임아웃, HTTP 503, 커넥션 리셋</td>
+      <td>상대 시스템의 순간 과부하</td>
+      <td class="good">예 — 회복되면 성공</td>
+      <td>백오프 + 제한 재시도</td>
+      <td>사람 개입 없이 자동 복구된다</td>
+    </tr>
+    <tr>
+      <td><b style="color:#16a34a">일시적</b></td>
+      <td>DB 커넥션 풀 고갈, 데드락 / 락 타임아웃</td>
+      <td>우리 쪽 자원 경합</td>
+      <td class="good">예 — 경합이 풀리면 성공</td>
+      <td>백오프 + 제한 재시도</td>
+      <td>백오프가 <b>경합 완화 장치</b>로도 작동한다</td>
+    </tr>
+    <tr>
+      <td><b style="color:#16a34a">일시적</b></td>
+      <td>낙관적 락 충돌(동시 수정 감지)</td>
+      <td>동시성</td>
+      <td class="good">예 — 다시 읽으면 성공</td>
+      <td>짧은 백오프 + 재시도</td>
+      <td>재시도가 <b>정상 흐름의 일부</b>인 유일한 케이스</td>
+    </tr>
+    <tr class="bad">
+      <td><b style="color:#dc2626">영구적</b></td>
+      <td>역직렬화 실패 — 스키마가 컨슈머가 아는 구조와 다름</td>
+      <td>메시지 자체</td>
+      <td class="bad">아니오</td>
+      <td><b>즉시 DLQ</b></td>
+      <td>바이트가 바뀌지 않는 한 결과도 안 바뀐다</td>
+    </tr>
+    <tr class="bad">
+      <td><b style="color:#dc2626">영구적</b></td>
+      <td>검증 실패 — 필수 필드 누락, 값 범위 위반</td>
+      <td>메시지 자체</td>
+      <td class="bad">아니오</td>
+      <td><b>즉시 DLQ</b></td>
+      <td>사람이 보정해야 풀린다</td>
+    </tr>
+    <tr class="bad">
+      <td><b style="color:#dc2626">영구적</b></td>
+      <td>NPE, 타입 캐스팅 실패 등 코드 버그</td>
+      <td>우리 코드</td>
+      <td class="bad">아니오</td>
+      <td><b>즉시 DLQ</b></td>
+      <td>배포해야 풀린다 — 재시도로는 절대 안 풀린다</td>
+    </tr>
+    <tr>
+      <td><b style="color:#d97706">애매</b></td>
+      <td>외부 API가 <code>400 Bad Request</code>를 반환</td>
+      <td>메시지 내용 + 상대 규칙</td>
+      <td class="bad">보통 아니오</td>
+      <td>영구로 취급 → DLQ</td>
+      <td><b>4xx는 영구, 5xx는 일시</b>로 나누는 것이 실무 기본선</td>
+    </tr>
+    <tr>
+      <td><b style="color:#d97706">애매</b></td>
+      <td>외부 API가 <code>429 Too Many Requests</code></td>
+      <td>레이트 리밋</td>
+      <td class="good">예 — 단 <b>긴</b> 대기 필요</td>
+      <td>재시도하되 <b>긴 백오프</b></td>
+      <td>블로킹 재시도로는 감당 못 하는 대표 사례 → 재시도 토픽</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout warn"><span class="t">애매한 것을 어떻게 다루는지가 실력이다</span>
+<b>4xx는 영구, 5xx는 일시</b>가 출발선이지만 예외가 있다 — <b>429(레이트 리밋)</b>와 <b>408(요청 타임아웃)</b>은 4xx인데도 일시적이다. 반대로 5xx여도 <b>"이 페이로드로는 상대가 항상 500을 낸다"</b>면 영구다. 그래서 분류는 <b>상태 코드가 아니라 "재시도했을 때 결과가 달라질 근거가 있는가"</b>로 판정하고, 확신이 없으면 <b>일시적으로 잡되 재시도 횟수를 작게</b> 두는 것이 안전하다 — 몇 번 해보고 DLQ로 가면 정보(재시도 횟수 헤더)가 남기 때문이다.
+</div>
+
+<h3>2-1. 분류를 코드에 박는 자리</h3>
+
+<p>분류를 <b>머릿속에만 두면 설계가 아니다.</b> <b>예외 타입으로 코드에 박아두는 것</b>이 실패 경로 설계의 첫 단추다. Spring Kafka에서는 에러 핸들러에 <b>"재시도하지 않을 예외"</b>를 등록하는 자리가 그것이다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 분류 없이 전부 똑같이 재시도</div>
+<pre><code><span class="nm">@Bean</span>
+<span class="kw">public</span> DefaultErrorHandler <span class="fn">errorHandler</span>(
+        KafkaTemplate&lt;Object, Object&gt; template) {
+
+    <span class="kw">var</span> recoverer = <span class="kw">new</span> DeadLetterPublishingRecoverer(template);
+
+<span class="ln-bad">    <span class="cm">// 모든 예외를 똑같이 3번 재시도한다.</span></span>
+<span class="ln-bad">    <span class="kw">return new</span> DefaultErrorHandler(recoverer,</span>
+<span class="ln-bad">            <span class="kw">new</span> FixedBackOff(<span class="st">1000L</span>, <span class="st">3</span>));</span>
+}
+
+<span class="cm">// 결과 — 역직렬화 실패 메시지 하나가</span>
+<span class="cm">//   1초 대기 → 실패 → 1초 → 실패 → 1초 → 실패</span>
+<span class="cm">//   = 성공 확률 0인 일에 파티션을 3초 점유</span>
+<span class="cm">// 이런 메시지가 배치에 100건이면 300초. 5절의 부등식이 깨진다.</span>
+</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 영구 실패는 재시도를 건너뛰게 한다</div>
+<pre><code><span class="nm">@Bean</span>
+<span class="kw">public</span> DefaultErrorHandler <span class="fn">errorHandler</span>(
+        KafkaTemplate&lt;Object, Object&gt; template) {
+
+    <span class="cm">// 재시도를 다 소진했을 때 실행할 "복구기".</span>
+    <span class="cm">// 기본 동작 = 원본 토픽명 + ".DLT" 토픽으로 발행</span>
+    <span class="kw">var</span> recoverer = <span class="kw">new</span> DeadLetterPublishingRecoverer(template);
+
+    <span class="cm">// 1초 간격 최대 3회 → 그래도 실패하면 recoverer 호출</span>
+    <span class="kw">var</span> handler = <span class="kw">new</span> DefaultErrorHandler(recoverer,
+            <span class="kw">new</span> FixedBackOff(<span class="st">1000L</span>, <span class="st">3</span>));
+
+<span class="ln-good">    <span class="cm">// ★ 분류를 코드에 박는 자리 ★</span></span>
+<span class="ln-good">    handler.addNotRetryableExceptions(</span>
+<span class="ln-good">            DeserializationException.class,   <span class="cm">// 영구</span></span>
+<span class="ln-good">            ValidationException.class);       <span class="cm">// 영구</span></span>
+    <span class="kw">return</span> handler;
+}
+<span class="cm">// 여기 등록된 예외는 재시도를 건너뛰고 곧바로 DLQ로 간다</span>
+<span class="cm">// — 성공 가능성이 0이므로 파티션을 3초간 점유할 이유가 없다.</span>
+</code></pre>
+  </div>
+</div>
+
+<div class="callout info"><span class="t">읽는 법 — 이 코드의 세 조각</span>
+<b>① recoverer</b> = "재시도를 다 써버린 뒤 무엇을 할 것인가"(여기서는 DLQ 발행). <b>② BackOff</b> = "몇 번, 얼마 간격으로 재시도할 것인가". <b>③ NotRetryable 목록</b> = "①로 곧장 보낼 예외". 세 조각이 각각 <b>DLQ 정책 · 재시도 예산 · 실패 분류</b>에 대응한다. 면접에서 코드를 못 적더라도 <b>이 세 조각의 이름과 역할</b>만 말하면 설계를 이해한 것으로 들린다.
+</div>
+
+<div class="callout trap"><span class="t">함정 — 역직렬화 실패는 애초에 리스너에 도달하지 못한다</span>
+<b>역직렬화는 리스너 메서드가 호출되기 전 단계에서 일어난다.</b> 바이트를 객체로 바꾸는 데 실패하면 리스너에 넘길 인자를 만들 수 없으므로, <b>리스너 안의 <code>try-catch</code>로는 절대 잡을 수 없다.</b> 아무 대비 없이 두면 그 레코드에서 계속 같은 예외가 나며 진행이 막힌다. Spring Kafka는 이 상황을 위해 <b><code>ErrorHandlingDeserializer</code></b>를 제공한다 — 실제 역직렬화기를 감싸서, 실패했을 때 예외를 터뜨리는 대신 <b>예외 정보를 헤더에 담아 컨테이너의 에러 핸들러로 넘긴다.</b> 그래야 위 코드의 <code>DeserializationException</code> 분류가 <b>실제로 작동</b>한다. 이 조합을 언급하면 "실제로 겪어 봤다"는 신호가 된다.
+</div>
+
+<div class="memo warn">
+  <h4>분류를 안 하면 생기는 연쇄 — 한 줄로 외우기</h4>
+  <div class="chain" style="justify-content:center">
+    <span class="chip r">분류 없음</span><span class="arrow">→</span>
+    <span class="chip r">영구 실패도 N회 재시도</span><span class="arrow">→</span>
+    <span class="chip r">파티션 점유 시간 N배</span><span class="arrow">→</span>
+    <span class="chip r">정상 메시지 지연 증가</span><span class="arrow">→</span>
+    <span class="chip r">poll 간격 초과</span><span class="arrow">→</span>
+    <span class="chip r">리밸런싱</span>
+  </div>
+  <p style="margin:8px 0 0;font-size:.95rem">분류는 <b>"정확성"의 문제가 아니라 "시간 예산"의 문제</b>다. 이 연쇄가 4절의 부등식으로 곧장 이어진다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 블로킹 재시도 — 순서를 지키고 흐름을 포기한다</h2>
+
+<p>재시도 방식은 두 가지다. 그리고 이 둘은 <b>정확히 반대되는 것을 포기한다.</b> 하나는 <b>흐름을 포기하고 순서를 지키며</b>, 다른 하나는 <b>순서를 포기하고 흐름을 지킨다.</b> 이 대칭을 먼저 머리에 넣고 각각을 보면 헷갈리지 않는다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 190" role="img" aria-label="두 재시도 방식이 서로 반대되는 것을 포기한다는 대칭 구조를 보여주는 도식. 블로킹 재시도는 순서를 지키고 흐름을 포기하며, 논블로킹 재시도 토픽 방식은 흐름을 지키고 순서를 포기한다.">
+    <text x="16" y="24" font-size="13.5" font-weight="700" fill="#1f2937">두 방식은 정확히 반대되는 것을 포기한다</text>
+    <rect x="16" y="40" width="424" height="132" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.6"/>
+    <text x="228" y="66" font-size="13" font-weight="800" fill="#1d4ed8" text-anchor="middle">블로킹 재시도 (in-place)</text>
+    <rect x="40" y="80" width="180" height="34" rx="8" fill="#dcfce7" stroke="#86efac"/>
+    <text x="130" y="102" font-size="12" font-weight="800" fill="#15803d" text-anchor="middle">지킨다 — 순서</text>
+    <rect x="236" y="80" width="180" height="34" rx="8" fill="#fee2e2" stroke="#fca5a5"/>
+    <text x="326" y="102" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">포기 — 흐름</text>
+    <text x="228" y="140" font-size="11.5" fill="#1e40af" text-anchor="middle">재시도 동안 그 파티션은 통째로 멈춘다</text>
+    <text x="228" y="158" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">그래서 백오프를 길게 걸 수 없다</text>
+
+    <rect x="460" y="40" width="424" height="132" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="672" y="66" font-size="13" font-weight="800" fill="#15803d" text-anchor="middle">논블로킹 재시도 (재시도 토픽)</text>
+    <rect x="484" y="80" width="180" height="34" rx="8" fill="#dcfce7" stroke="#86efac"/>
+    <text x="574" y="102" font-size="12" font-weight="800" fill="#15803d" text-anchor="middle">지킨다 — 흐름</text>
+    <rect x="680" y="80" width="180" height="34" rx="8" fill="#fee2e2" stroke="#fca5a5"/>
+    <text x="770" y="102" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">포기 — 순서</text>
+    <text x="672" y="140" font-size="11.5" fill="#166534" text-anchor="middle">실패 메시지를 옆 토픽으로 빼내 커밋한다</text>
+    <text x="672" y="158" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">그래서 긴 백오프를 걸 수 있다</text>
+  </svg>
+  <figcaption>이 대칭이 <b>선택 기준의 전부</b>다. "어느 쪽이 좋은가"가 아니라 <b>"우리 도메인은 둘 중 무엇을 포기할 수 있는가"</b>가 질문이다.</figcaption>
+</figure>
+
+<h3>3-1. 무엇인가</h3>
+
+<p><b>같은 파티션 자리에서, 같은 컨슈머 스레드가 백오프를 두고 몇 번 재시도한 뒤, 횟수를 초과하면 DLQ로 보내는 방식</b>이다.</p>
+
+<div class="callout info"><span class="t">용어 — 백오프(backoff)</span>
+재시도 사이에 두는 <b>대기 시간</b>이다. 보통 실패가 거듭될수록 간격을 늘린다(<b>지수 백오프</b>). 늘리는 이유는 <b>이미 힘들어하는 상대 시스템에 재시도 폭풍을 얹지 않기 위해서</b>다 — 장애 난 API에 우리까지 초당 수천 번 두드리면, 상대의 회복을 우리가 방해하는 셈이 된다. 백오프는 "기다림"이 아니라 <b>"상대에게 회복할 시간을 주는 장치"</b>로 이해하는 것이 맞다.
+</div>
+
+<p>Spring Kafka의 <code>DefaultErrorHandler</code>가 이 모델이며, 구성 코드는 <a href="#s2">2-1</a>에서 이미 봤다. 동작을 그림으로 펼치면 이렇다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 380" role="img" aria-label="블로킹 재시도의 동작 도식. 같은 컨슈머 스레드가 파티션의 같은 위치에서 1초 간격으로 세 번 재시도하고, 모두 실패하면 DLT 토픽으로 발행한 뒤 오프셋을 커밋하고 다음 메시지로 넘어간다. 재시도 동안 뒤 메시지는 대기하지만 순서는 유지된다.">
+    <defs>
+      <marker id="a5b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a5r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a5g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">블로킹 재시도 — 같은 스레드가 제자리에서 버틴다 (시간축 →)</text>
+
+    <!-- timeline axis -->
+    <line x1="120" y1="60" x2="1080" y2="60" stroke="#cbd5e1" stroke-width="1.4"/>
+    <g font-size="10.5" fill="#94a3b8" class="mono">
+      <text x="150" y="52">t=0s</text><text x="330" y="52">t=1s</text><text x="510" y="52">t=2s</text><text x="690" y="52">t=3s</text><text x="880" y="52">t=3s+</text>
+    </g>
+
+    <!-- consumer thread lane -->
+    <rect x="24" y="72" width="1072" height="106" rx="11" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+    <text x="44" y="96" font-size="12.5" font-weight="800" fill="#1d4ed8">컨슈머 스레드 (한 개)</text>
+    <text x="44" y="114" font-size="11" fill="#1e40af">offset 3 처리 중</text>
+
+    <rect x="140" y="126" width="150" height="38" rx="8" fill="#fee2e2" stroke="#fca5a5"/>
+    <text x="215" y="150" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">시도 1 → 실패</text>
+    <path d="M292,145 L320,145" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#a5b)"/>
+    <rect x="322" y="126" width="90" height="38" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="367" y="150" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">1초 대기</text>
+
+    <rect x="420" y="126" width="150" height="38" rx="8" fill="#fee2e2" stroke="#fca5a5"/>
+    <text x="495" y="150" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">시도 2 → 실패</text>
+    <path d="M572,145 L600,145" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#a5b)"/>
+    <rect x="602" y="126" width="90" height="38" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="647" y="150" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">1초 대기</text>
+
+    <rect x="700" y="126" width="150" height="38" rx="8" fill="#fee2e2" stroke="#fca5a5"/>
+    <text x="775" y="150" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">시도 3 → 실패</text>
+    <path d="M852,145 L880,145" stroke="#dc2626" stroke-width="1.8" marker-end="url(#a5r)"/>
+    <rect x="884" y="122" width="192" height="46" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="1.6"/>
+    <text x="980" y="141" font-size="11.5" font-weight="800" fill="#c2410c" text-anchor="middle">recoverer 호출</text>
+    <text x="980" y="158" font-size="11" fill="#c2410c" text-anchor="middle">orders.DLT 로 발행</text>
+
+    <!-- partition lane -->
+    <rect x="24" y="190" width="1072" height="86" rx="11" fill="#f8fafc" stroke="#e5e7eb" stroke-width="1.5"/>
+    <text x="44" y="214" font-size="12.5" font-weight="800" fill="#334155">같은 파티션의 뒤 메시지 (offset 4, 5, 6 ...)</text>
+    <rect x="140" y="228" width="710" height="34" rx="8" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="495" y="250" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">3초 동안 아무것도 처리되지 않음 — 흐름 정지</text>
+    <path d="M856,245 L880,245" stroke="#16a34a" stroke-width="1.8" marker-end="url(#a5g)"/>
+    <rect x="884" y="228" width="192" height="34" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="980" y="250" font-size="11.5" font-weight="800" fill="#15803d" text-anchor="middle">offset 4 처리 재개</text>
+
+    <!-- order guarantee -->
+    <rect x="24" y="288" width="530" height="76" rx="11" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
+    <text x="44" y="312" font-size="12.5" font-weight="800" fill="#15803d">얻는 것 — 파티션 내 순서 유지</text>
+    <text x="44" y="332" font-size="11.5" fill="#166534">재시도가 끝날 때까지 뒤 메시지를 읽지 않으므로,</text>
+    <text x="44" y="352" font-size="11.5" fill="#166534">같은 키의 이벤트가 <tspan font-weight="700">발행된 순서 그대로</tspan> 처리된다.</text>
+
+    <rect x="566" y="288" width="530" height="76" rx="11" fill="#fef2f2" stroke="#fecaca" stroke-width="1.5"/>
+    <text x="586" y="312" font-size="12.5" font-weight="800" fill="#b91c1c">잃는 것 — 그 파티션의 처리량</text>
+    <text x="586" y="332" font-size="11.5" fill="#7f1d1d">3초는 이 메시지 <tspan font-weight="700">하나</tspan>에 대한 값이다. 실패가 연달아</text>
+    <text x="586" y="352" font-size="11.5" fill="#7f1d1d">나오면 <tspan font-weight="700">누적</tspan>되고, 그 누적이 다음 절의 함정을 부른다.</text>
+  </svg>
+  <figcaption><b>핵심은 "같은 스레드가 <code>sleep</code>하며 버틴다"</b>는 점이다. 오프셋 커서가 제자리에 있고 뒤 메시지를 아직 읽지 않았으므로 순서는 완벽히 지켜지지만, <b>그 시간만큼 파티션 전체가 정지</b>한다.</figcaption>
+</figure>
+
+<div class="split">
+  <div class="pane g"><h4>블로킹 재시도의 장점</h4>
+    <ul>
+      <li><b>파티션 내 순서가 유지된다.</b> 같은 키의 이벤트가 발행 순서대로 처리된다 — 순서가 계약인 도메인에서 유일한 선택지다.</li>
+      <li><b>추가 토픽이 필요 없다.</b> 재시도 토픽 · DLT 토픽 계층을 만들고 운영할 필요가 없어 구조가 단순하다.</li>
+      <li><b>추적이 쉽다.</b> 메시지가 원본 토픽 밖으로 나가지 않으므로 "지금 어디 있나"를 헷갈릴 일이 없다.</li>
+      <li><b>재시도 중에도 in-flight 상태가 명확하다.</b> 커밋이 안 됐으므로, 컨슈머가 죽어도 그 메시지는 다시 배달된다(유실 없음).</li>
+    </ul>
+  </div>
+  <div class="pane r"><h4>블로킹 재시도의 단점</h4>
+    <ul>
+      <li><b>재시도하는 동안 그 파티션이 멈춘다.</b> 실패 메시지 뒤의 정상 메시지 전부가 그만큼 늦어진다.</li>
+      <li><b>긴 백오프를 걸 수 없다.</b> "10분 뒤 다시" 같은 정책은 사실상 불가능하다 — 파티션을 10분 세울 수 없기 때문이다.</li>
+      <li><b>실패가 몰리면 시간이 누적된다.</b> 한 번의 <code>poll()</code>이 가져온 배치 안에서 실패가 여러 건이면 대기 시간이 곱해진다.</li>
+      <li><b>그 누적이 컨슈머 생존 판정과 충돌한다.</b> — 다음 절의 함정.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout warn"><span class="t">놓치기 쉬운 사실 — 재시도 횟수 카운터는 메모리에 있다</span>
+Spring Kafka의 블로킹 재시도는 <b>"이 레코드를 몇 번 시도했는지"를 컨슈머 프로세스의 메모리에서 추적</b>한다. 그래서 <b>재시도 도중 컨슈머가 재시작되거나 파티션이 다른 컨슈머로 넘어가면 그 카운터는 남아 있지 않고</b>, 새 컨슈머는 그 메시지를 <b>처음부터</b> 다시 시도한다. 반면 <b>재시도 토픽 방식은 "몇 단계까지 갔는지"가 토픽 자체로 기록</b>되므로 재시작에 영향을 받지 않는다. 이 차이는 <b>"재시도 상태를 어디에 두느냐(메모리 vs 브로커)"</b>의 문제이고, 장애가 잦은 환경에서 블로킹 재시도가 예상보다 오래 도는 이유이기도 하다.
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 숨은 함정 — 재시도가 컨슈머 생존 판정과 충돌한다</h2>
+
+<p>블로킹 재시도는 <b>컨슈머 스레드가 <code>sleep</code>하면서 기다린다.</b> 그 말은 그동안 <b><code>poll()</code>을 부르지 못한다</b>는 뜻이다.</p>
+
+<p>그런데 Kafka 브로커는 컨슈머가 살아 있는지를 <b>두 가지</b>로 판정하는데, 그중 하나가 <b><code>max.poll.interval.ms</code> — <code>poll()</code> 호출 사이의 최대 허용 간격</b>이다(다른 하나인 <code>session.timeout.ms</code>와의 구분은 35번 문서에서 다룬다). 이 간격을 넘기면 브로커는 <b>"살아는 있는데 일을 진척시키지 못하는 컨슈머"</b>로 보고 그룹에서 쫓아낸다.</p>
+
+<div class="memo red">
+  <h4>이 절의 한 문장</h4>
+  <div class="rule red">재시도 전략이 <u>컨슈머 생존 판정</u>과 정면으로 충돌한다</div>
+  <p style="margin:8px 0 0;font-size:.95rem">"메시지를 살리려는 재시도"가 "컨슈머를 죽이는 판정"을 부른다. <b>재시도 시간은 자유롭게 쓸 수 있는 자원이 아니라 <u>예산</u>이 있는 자원</b>이라는 것이 이 절의 결론이다.</p>
+</div>
+
+<h3>4-1. 연쇄가 어떻게 터지는가</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 520" role="img" aria-label="블로킹 재시도의 누적 시간이 max.poll.interval.ms 기본값 300초를 넘겨 브로커가 컨슈머를 죽은 것으로 판정하고, 리밸런싱으로 파티션이 다른 컨슈머에게 넘어가며, 새 주인이 마지막 커밋 오프셋부터 같은 메시지를 다시 받아 같은 재시도를 반복하는 무한 루프를 보여주는 도식.">
+    <defs>
+      <marker id="a6b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a6r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="a6w" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">재시도 → poll 중단 → 사망 판정 → 리밸런싱 → 같은 메시지 재수령 → 무한 루프</text>
+
+    <!-- thread box -->
+    <rect x="24" y="42" width="640" height="286" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.6"/>
+    <text x="46" y="66" font-size="13" font-weight="800" fill="#1d4ed8">컨슈머 스레드 — 한 개다. 이게 핵심이다</text>
+
+    <rect x="46" y="78" width="180" height="34" rx="8" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="136" y="100" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">poll()</text>
+    <path d="M230,95 L268,95" stroke="#2563eb" stroke-width="2" marker-end="url(#a6b)"/>
+    <rect x="272" y="78" width="230" height="34" rx="8" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="387" y="100" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">최대 500건 수신 <tspan class="mono" font-size="10.5">(max.poll.records)</tspan></text>
+
+    <line x1="80" y1="120" x2="80" y2="300" stroke="#93c5fd" stroke-width="1.6"/>
+
+    <g font-size="11.5">
+      <rect x="96" y="124" width="386" height="30" rx="7" fill="#ffffff" stroke="#fca5a5"/>
+      <text x="110" y="144" fill="#b91c1c" font-weight="700">1번째 레코드 실패 → 1초 &times; 3회 대기 후 DLQ</text>
+      <text x="470" y="144" fill="#7f1d1d" text-anchor="end" class="mono" font-weight="700">누적 3초</text>
+
+      <rect x="96" y="158" width="386" height="30" rx="7" fill="#ffffff" stroke="#fca5a5"/>
+      <text x="110" y="178" fill="#b91c1c" font-weight="700">2번째 레코드도 실패 → 같은 과정</text>
+      <text x="470" y="178" fill="#7f1d1d" text-anchor="end" class="mono" font-weight="700">누적 6초</text>
+
+      <rect x="96" y="192" width="386" height="30" rx="7" fill="#ffffff" stroke="#fca5a5"/>
+      <text x="110" y="212" fill="#b91c1c" font-weight="700">3번째 레코드도 실패 → 같은 과정</text>
+      <text x="470" y="212" fill="#7f1d1d" text-anchor="end" class="mono" font-weight="700">누적 9초</text>
+
+      <text x="288" y="240" fill="#94a3b8" text-anchor="middle" font-size="15" font-weight="800">⋮</text>
+
+      <rect x="96" y="250" width="386" height="34" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+      <text x="110" y="272" fill="#b91c1c" font-weight="800">100번째 레코드까지 실패하면</text>
+      <text x="470" y="272" fill="#b91c1c" text-anchor="end" class="mono" font-weight="800">누적 300초</text>
+    </g>
+
+    <text x="46" y="308" font-size="11.5" fill="#1e40af">이 <tspan font-weight="700">300초 내내 <tspan class="mono">poll()</tspan>을 한 번도 부르지 못했다.</tspan> 스레드가 하나뿐이기 때문이다.</text>
+
+    <!-- threshold marker -->
+    <path d="M482,267 L560,267" stroke="#dc2626" stroke-width="2.4" marker-end="url(#a6r)"/>
+    <rect x="566" y="240" width="98" height="54" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="615" y="260" font-size="10.5" font-weight="800" fill="#b91c1c" text-anchor="middle">한도 도달</text>
+    <text x="615" y="277" font-size="10" fill="#7f1d1d" text-anchor="middle" class="mono">300000ms</text>
+    <text x="615" y="289" font-size="9.5" fill="#7f1d1d" text-anchor="middle">기본값 = 5분</text>
+
+    <!-- broker -->
+    <rect x="692" y="42" width="404" height="120" rx="12" fill="#1e293b"/>
+    <text x="712" y="70" font-size="13" font-weight="800" fill="#e2e8f0">브로커(그룹 코디네이터)의 판정</text>
+    <text x="712" y="96" font-size="11.5" fill="#cbd5e1">"이 컨슈머가 5분째 <tspan class="mono" fill="#fcd34d">poll</tspan>을 안 한다."</text>
+    <text x="712" y="118" font-size="11.5" fill="#cbd5e1">"프로세스는 살아 있을지 몰라도</text>
+    <text x="712" y="138" font-size="12" font-weight="800" fill="#fca5a5">일을 진척시키지 못하니 죽은 걸로 친다."</text>
+
+    <path d="M894,168 L894,196" stroke="#dc2626" stroke-width="2.4" marker-end="url(#a6r)"/>
+
+    <rect x="692" y="200" width="404" height="60" rx="11" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="894" y="224" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">리밸런싱 발생</text>
+    <text x="894" y="245" font-size="11.5" fill="#7f1d1d" text-anchor="middle">이 컨슈머의 파티션이 다른 컨슈머에게 넘어간다</text>
+
+    <path d="M894,264 L894,292" stroke="#dc2626" stroke-width="2.4" marker-end="url(#a6r)"/>
+
+    <rect x="692" y="296" width="404" height="76" rx="11" fill="#fff7ed" stroke="#fdba74" stroke-width="1.6"/>
+    <text x="894" y="320" font-size="12.5" font-weight="800" fill="#c2410c" text-anchor="middle">새 주인은 마지막 커밋 오프셋부터 읽는다</text>
+    <text x="894" y="341" font-size="11.5" fill="#9a3412" text-anchor="middle">재시도하던 그 메시지를 <tspan font-weight="700">처음부터 다시</tspan> 받는다</text>
+    <text x="894" y="360" font-size="11.5" fill="#9a3412" text-anchor="middle">재시도 카운터도 <tspan font-weight="700">0부터</tspan> 시작한다</text>
+
+    <!-- loop arrow -->
+    <path d="M692,334 C620,334 600,400 660,400 L820,400" stroke="#dc2626" stroke-width="2.4" fill="none"/>
+    <path d="M660,400 L200,400 L200,340" stroke="#dc2626" stroke-width="2.4" fill="none" marker-end="url(#a6r)"/>
+    <rect x="330" y="382" width="300" height="34" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="480" y="404" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">새 컨슈머도 같은 이유로 쫓겨난다 — 반복</text>
+
+    <!-- bottom summary -->
+    <rect x="24" y="432" width="1072" height="72" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="44" y="458" font-size="13" font-weight="800" fill="#b91c1c">결과 — 재시도하려다 파티션을 빼앗기고, 다른 컨슈머가 같은 메시지를 처음부터 다시 받는다</text>
+    <text x="44" y="480" font-size="11.5" fill="#7f1d1d">리밸런싱이 도는 동안 그룹 전체의 소비가 멈추므로, <tspan font-weight="700">한 메시지의 실패가 그룹 전체의 처리량을 0으로 만든다.</tspan></text>
+    <text x="44" y="498" font-size="11.5" fill="#7f1d1d">그리고 이 루프는 <tspan font-weight="700">스스로 빠져나오지 못한다</tspan> — 사람이 개입해 그 메시지를 치우거나 설정을 바꿔야 끝난다.</text>
+  </svg>
+  <figcaption>1절에서 말한 <b>"poison pill은 전염된다"</b>가 바로 이것이다. 독약 메시지는 컨슈머를 하나씩 순회하며 마비시키고, 리밸런싱이 반복되는 동안 <b>그룹 전체가 소비를 못 한다.</b></figcaption>
+</figure>
+
+<h3>4-2. 숫자로 보면 여유가 생각보다 없다</h3>
+
+<p><code>max.poll.records</code> 기본값은 <b>500</b>이고, 한 번의 <code>poll()</code>이 가져온 500건이 전부 실패한다면 순수 대기 시간만 <b>500 &times; 3초 = 1500초, 25분</b>이다. <code>max.poll.interval.ms</code> 기본값 <b>5분</b>의 <b>다섯 배</b>다. <b>실패가 100건만 몰려도 이미 5분에 도달한다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="재시도 시간 예산을 막대로 비교한 도식. max.poll.interval.ms 기본값 300초가 예산선이고, 실패 10건은 30초로 여유, 100건은 300초로 예산 정확히 소진, 500건 전부 실패는 1500초로 예산의 다섯 배를 초과함을 보여준다.">
+    <defs>
+      <marker id="a7r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">재시도 시간 예산 — 한 번의 <tspan class="mono">poll()</tspan> 안에서 쓸 수 있는 시간은 정해져 있다</text>
+    <text x="24" y="46" font-size="11.5" fill="#64748b">전제: <tspan class="mono">FixedBackOff(1000ms, 3)</tspan> = 실패 1건당 순수 대기 3초 · <tspan class="mono">max.poll.interval.ms = 300000</tspan> (5분)</text>
+
+    <!-- budget line -->
+    <line x1="240" y1="62" x2="240" y2="266" stroke="#dc2626" stroke-width="2.6" stroke-dasharray="7 5"/>
+    <rect x="150" y="62" width="182" height="26" rx="7" fill="#dc2626"/>
+    <text x="241" y="80" font-size="11.5" font-weight="800" fill="#ffffff" text-anchor="middle">예산선 300초 (5분)</text>
+
+    <!-- scale: 300s -> 216px from x=24 ... use px per second = 0.72 -->
+    <g font-size="11.5">
+      <!-- row1 -->
+      <text x="24" y="118" font-weight="700" fill="#334155">실패 10건</text>
+      <rect x="120" y="102" width="22" height="26" rx="5" fill="#16a34a"/>
+      <text x="150" y="120" fill="#15803d" font-weight="700">30초 — 예산의 10% · 안전</text>
+
+      <!-- row2 -->
+      <text x="24" y="164" font-weight="700" fill="#334155">실패 50건</text>
+      <rect x="120" y="148" width="108" height="26" rx="5" fill="#d97706"/>
+      <text x="240" y="166" fill="#b45309" font-weight="700">150초 — 예산의 절반 · 경보</text>
+
+      <!-- row3 -->
+      <text x="24" y="210" font-weight="700" fill="#334155">실패 100건</text>
+      <rect x="120" y="194" width="216" height="26" rx="5" fill="#dc2626"/>
+      <text x="348" y="212" fill="#b91c1c" font-weight="800">300초 — 예산 정확히 소진 · 여기서 리밸런싱</text>
+
+      <!-- row4 -->
+      <text x="24" y="256" font-weight="700" fill="#334155">배치 500건 전부</text>
+      <rect x="120" y="240" width="960" height="26" rx="5" fill="#7f1d1d"/>
+      <text x="600" y="258" fill="#ffffff" font-weight="800" text-anchor="middle">1500초 = 25분 — 예산의 5배 초과 · 리밸런싱 루프 확정</text>
+    </g>
+
+    <text x="24" y="290" font-size="11.5" fill="#7f1d1d"><tspan font-weight="800">읽는 법</tspan> — 재시도 3회는 "고작 3초"처럼 보이지만, <tspan font-weight="800">한 배치 안에서 곱해진다.</tspan> 예산을 좌우하는 것은 백오프 길이가 아니라 <tspan font-weight="800">"한 배치에서 몇 건이 실패할 수 있는가"</tspan>다.</text>
+  </svg>
+  <figcaption>이 그림에서 얻을 통찰 — <b>백오프를 1초에서 0.5초로 줄이는 것보다 <code>max.poll.records</code>를 500에서 50으로 줄이는 것이 예산에 훨씬 크게 기여한다.</b> 곱해지는 쪽을 줄여야 한다.</figcaption>
+</figure>
+
+<h3>4-3. 그래서 블로킹 재시도를 쓸 때의 규칙</h3>
+
+<div class="formula">
+  <span class="hi">재시도 횟수 &times; 백오프 합계</span> &times; <span class="hi2">한 배치의 최대 실패 건수</span> &nbsp;&lt;&nbsp; <span class="hi3">max.poll.interval.ms</span>
+</div>
+
+<div class="memo">
+  <h4>부등식을 만족시키는 세 가지 방법 — 그리고 각각의 대가</h4>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>방법</th><th>손대는 값</th><th>효과</th><th>대가</th></tr></thead>
+    <tbody>
+      <tr><td><b>① 재시도를 줄인다</b></td><td><code>FixedBackOff</code>의 간격 · 횟수</td><td>건당 점유 시간이 직접 줄어든다</td><td>일시적 장애가 <b>회복되기 전에</b> DLQ로 가버릴 수 있다 → DLQ 유입 증가</td></tr>
+      <tr class="hl"><td><b>② 배치를 줄인다</b></td><td><code>max.poll.records</code></td><td><b>곱해지는 항</b>이 줄어 효과가 가장 크다</td><td><code>poll()</code> 호출이 잦아져 오버헤드가 약간 증가 · 최대 처리량이 낮아질 수 있다</td></tr>
+      <tr><td><b>③ 한도를 늘린다</b></td><td><code>max.poll.interval.ms</code></td><td>예산 자체가 커진다</td><td class="bad"><b>공짜가 아니다</b> — 진짜로 죽은 컨슈머를 감지하는 시간도 그만큼 늘어난다</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin:10px 0 0;font-size:.95rem"><b>실무 순서는 ② → ① → ③</b>이다. ②는 대가가 가장 작고 효과가 가장 크며, ③은 <b>장애 감지 지연</b>이라는 다른 종류의 위험을 사 오기 때문에 마지막에 쓴다.</p>
+</div>
+
+<div class="callout trap"><span class="t">③번의 진짜 위험 — 늘린 만큼 장애를 늦게 안다</span>
+<code>max.poll.interval.ms</code>를 10분으로 늘리면, <b>진짜로 멈춘 컨슈머(무한 루프, 데드락, GC 폭주)를 그룹이 10분 동안 정상으로 간주</b>한다. 그 10분 동안 그 파티션들은 아무도 소비하지 않는다. 즉 <b>"재시도가 여유롭게 돌게 하려고 장애 감지를 무디게 만드는" 교환</b>이다. 이 교환을 인지하고 있다는 것만 말해도 <code>max.poll.interval.ms</code>를 그냥 올려버리는 사람과 구분된다. (35번 문서)
+</div>
+
+<div class="callout ok"><span class="t">면접 답변 조립 — 이 절을 30초로 압축하면</span>
+"블로킹 재시도는 <b>같은 스레드가 <code>sleep</code>하며 기다리므로 그동안 <code>poll()</code>을 못 부릅니다.</b> 그 시간이 <code>max.poll.interval.ms</code>를 넘으면 브로커가 <b>진척 없는 컨슈머로 보고 그룹에서 제외</b>해 리밸런싱이 나고, 새 주인이 <b>마지막 커밋 오프셋부터 같은 메시지를 다시 받아</b> 같은 일이 반복됩니다. 그래서 저는 <b>재시도 횟수 &times; 백오프 &times; 배치 내 최대 실패 건수가 <code>max.poll.interval.ms</code>보다 작은지</b>를 먼저 계산하고, 부족하면 <b><code>max.poll.records</code>부터 줄입니다.</b> <code>max.poll.interval.ms</code>를 늘리는 건 <b>장애 감지를 늦추는 대가</b>가 있어 마지막 수단입니다."
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 논블로킹 재시도 — 흐름을 지키고 순서를 포기한다</h2>
+
+<p><b>실패한 메시지를 원본 토픽에서 즉시 커밋해 치우고, 별도의 재시도 토픽으로 발행한 뒤, 그 토픽의 전용 컨슈머가 지연 후 다시 처리하는 방식</b>이다.</p>
+
+<div class="callout info"><span class="t">가장 헷갈리는 지점 — "실패했는데 커밋한다"</span>
+핵심은 <b>"원본 파티션에서는 즉시 커밋하고 넘어간다"</b>는 점이다. 실패했는데 커밋한다는 것이 처음엔 이상하게 들리지만, <b>메시지가 사라지는 게 아니라 다른 토픽으로 옮겨 갔기 때문에</b> 유실이 아니다. <b>원본 파티션 입장에서는 그 메시지에 대한 일이 끝난 것</b>이다.<br><br>
+<b>비유</b> — 은행 창구에서 서류가 미비한 손님을 <b>"별도 상담 데스크로 안내"</b>하는 것과 같다. 그 손님의 업무가 끝난 것은 아니지만 <b>창구 줄에서는 빠졌으므로</b> 다음 손님을 부를 수 있다. 반대로 블로킹 재시도는 <b>그 손님을 창구에 세워둔 채 서류를 다시 확인하는 것</b>이다.
+</div>
+
+<h3>5-1. 계단식 재시도 토픽</h3>
+
+<p>재시도 토픽은 <b>대기 시간별로 계단식으로</b> 만든다. 단계마다 별도 토픽과 전용 컨슈머가 있고, 각 컨슈머는 <b>자기 단계의 지연만큼 기다렸다가</b> 처리한다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 460" role="img" aria-label="계단식 재시도 토픽 구조 도식. 원본 orders 토픽에서 처리 실패한 메시지가 즉시 커밋된 뒤 orders-retry-0으로 발행되고, 5초 대기 후 재처리에 실패하면 orders-retry-1로 15초, 다시 실패하면 orders-retry-2로 45초, 끝내 실패하면 orders-dlt로 이동한다. 총 65초를 기다려도 원본 파티션은 멈추지 않는다는 점을 강조한다.">
+    <defs>
+      <marker id="a8b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a8r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a8g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">계단식 재시도 토픽 — 실패할수록 아래 계단으로, 대기 시간은 길어진다</text>
+
+    <!-- origin topic -->
+    <rect x="24" y="44" width="420" height="94" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="44" y="70" font-size="13" font-weight="800" fill="#1d4ed8" class="mono">orders <tspan font-family="-apple-system" font-size="12">(원본 토픽)</tspan></text>
+    <rect x="44" y="82" width="380" height="40" rx="8" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="234" y="99" font-size="11.5" fill="#1e40af" text-anchor="middle">처리 실패 → <tspan font-weight="800">원본에서는 즉시 오프셋 커밋</tspan></text>
+    <text x="234" y="115" font-size="11.5" font-weight="800" fill="#15803d" text-anchor="middle">파티션이 안 막힌다 — 다음 메시지를 바로 처리</text>
+
+    <path d="M234,140 L234,168" stroke="#dc2626" stroke-width="2.2" marker-end="url(#a8r)"/>
+    <text x="250" y="160" font-size="11" font-weight="700" fill="#b91c1c">재시도 토픽으로 발행</text>
+
+    <!-- stage 0 -->
+    <rect x="24" y="172" width="560" height="60" rx="10" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="44" y="196" font-size="12.5" font-weight="800" fill="#b45309" class="mono">orders-retry-0</text>
+    <text x="230" y="196" font-size="11.5" fill="#78350f">전용 컨슈머가 <tspan font-weight="800">5초</tspan> 대기 후 재처리</text>
+    <rect x="440" y="182" width="128" height="40" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="504" y="207" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">실패 → 다음 계단</text>
+    <path d="M504,234 L504,254" stroke="#d97706" stroke-width="2" marker-end="url(#a8r)"/>
+
+    <!-- stage 1 -->
+    <rect x="94" y="258" width="560" height="60" rx="10" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="114" y="282" font-size="12.5" font-weight="800" fill="#b45309" class="mono">orders-retry-1</text>
+    <text x="300" y="282" font-size="11.5" fill="#78350f">전용 컨슈머가 <tspan font-weight="800">15초</tspan> 대기 후 재처리</text>
+    <rect x="510" y="268" width="128" height="40" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="574" y="293" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">실패 → 다음 계단</text>
+    <path d="M574,320 L574,340" stroke="#d97706" stroke-width="2" marker-end="url(#a8r)"/>
+
+    <!-- stage 2 -->
+    <rect x="164" y="344" width="560" height="60" rx="10" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="184" y="368" font-size="12.5" font-weight="800" fill="#b45309" class="mono">orders-retry-2</text>
+    <text x="370" y="368" font-size="11.5" fill="#78350f">전용 컨슈머가 <tspan font-weight="800">45초</tspan> 대기 후 재처리</text>
+    <rect x="580" y="354" width="128" height="40" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="644" y="379" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">실패 → 종착지</text>
+    <path d="M712,374 L748,374" stroke="#dc2626" stroke-width="2.2" marker-end="url(#a8r)"/>
+
+    <!-- dlt -->
+    <rect x="754" y="344" width="342" height="60" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="774" y="368" font-size="12.5" font-weight="800" fill="#b91c1c" class="mono">orders-dlt</text>
+    <text x="925" y="368" font-size="11.5" font-weight="700" fill="#7f1d1d">사람이 보는 종착지 (DLQ)</text>
+    <text x="925" y="388" font-size="11" fill="#7f1d1d">여기부터는 7절의 운영 루프가 시작된다</text>
+
+    <!-- side panel -->
+    <rect x="608" y="44" width="488" height="272" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="628" y="70" font-size="13" font-weight="800" fill="#15803d">이 구조가 사 오는 것</text>
+
+    <rect x="628" y="82" width="448" height="52" rx="9" fill="#ffffff" stroke="#bbf7d0"/>
+    <text x="646" y="103" font-size="12" font-weight="800" fill="#15803d">총 65초를 기다려도 원본 파티션은</text>
+    <text x="646" y="122" font-size="12" font-weight="800" fill="#15803d">단 한 순간도 멈추지 않았다</text>
+
+    <rect x="628" y="142" width="448" height="52" rx="9" fill="#ffffff" stroke="#bbf7d0"/>
+    <text x="646" y="163" font-size="11.5" fill="#166534">블로킹이었다면 이 65초가 통째로</text>
+    <text x="646" y="182" font-size="11.5" fill="#166534"><tspan class="mono" font-weight="700">max.poll.interval.ms</tspan> 예산에서 빠져나간다</text>
+
+    <rect x="628" y="202" width="448" height="52" rx="9" fill="#ffffff" stroke="#bbf7d0"/>
+    <text x="646" y="223" font-size="11.5" fill="#166534">재시도 진행 단계가 <tspan font-weight="700">토픽으로 기록</tspan>되므로</text>
+    <text x="646" y="242" font-size="11.5" fill="#166534">컨슈머가 재시작돼도 단계가 유지된다</text>
+
+    <rect x="628" y="262" width="448" height="42" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="852" y="288" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">대가 = 원본 순서 보장을 잃는다 (5-3)</text>
+  </svg>
+  <figcaption>지연 시간이 <b>5초 → 15초 → 45초</b>로 늘어나는 것은 배수(<code>multiplier</code>) 때문이고 총합은 <b>65초</b>다. <b>긴 백오프를 걸 수 있다는 것이 이 방식의 가장 큰 실익</b>이다 — 외부 시스템 장애처럼 회복에 수십 초가 필요한 실패를 실제로 구제할 수 있다.</figcaption>
+</figure>
+
+<h3>5-2. 코드 — 블로킹에서 논블로킹으로</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead plain"><span class="tag">A안</span> 블로킹 재시도 — 컨테이너 레벨 에러 핸들러</div>
+<pre><code><span class="nm">@Bean</span>
+<span class="kw">public</span> DefaultErrorHandler <span class="fn">errorHandler</span>(
+        KafkaTemplate&lt;Object, Object&gt; template) {
+    <span class="kw">var</span> recoverer = <span class="kw">new</span> DeadLetterPublishingRecoverer(template);
+<span class="ln-warn">    <span class="kw">var</span> handler = <span class="kw">new</span> DefaultErrorHandler(recoverer,</span>
+<span class="ln-warn">            <span class="kw">new</span> FixedBackOff(<span class="st">1000L</span>, <span class="st">3</span>));  <span class="cm">// 이 3초가</span></span>
+<span class="ln-warn">    <span class="cm">// 파티션 정지 시간이자 poll 예산의 소모다</span></span>
+    handler.addNotRetryableExceptions(
+            DeserializationException.class,
+            ValidationException.class);
+    <span class="kw">return</span> handler;
+}
+
+<span class="nm">@KafkaListener</span>(topics = <span class="st">"orders"</span>)
+<span class="kw">public void</span> <span class="fn">consume</span>(OrderEvent event) {
+    orderService.process(event);
+}
+<span class="cm">// 순서 O · 긴 백오프 X · 추가 토픽 없음</span>
+</code></pre>
+  </div>
+  <div>
+    <div class="codehead plain"><span class="tag">B안</span> 논블로킹 재시도 — 재시도 토픽 자동 구성</div>
+<pre><code><span class="ln-good"><span class="nm">@RetryableTopic</span>(</span>
+<span class="ln-good">        attempts = <span class="st">"4"</span>,        <span class="cm">// 원본 1회 + 재시도 3회</span></span>
+<span class="ln-good">        backoff = <span class="nm">@Backoff</span>(delay = <span class="st">5000</span>, multiplier = <span class="st">3.0</span>),</span>
+<span class="ln-good">        dltTopicSuffix = <span class="st">".dlt"</span>)   <span class="cm">// 5초 → 15초 → 45초</span></span>
+<span class="nm">@KafkaListener</span>(topics = <span class="st">"orders"</span>)
+<span class="kw">public void</span> <span class="fn">consume</span>(OrderEvent event) {
+    orderService.process(event);
+    <span class="cm">// 예외가 나면 프레임워크가 재시도 토픽으로 자동 발행하고,</span>
+    <span class="cm">// 원본 파티션의 오프셋은 곧바로 커밋된다.</span>
+    <span class="cm">// 단계별 토픽(orders-retry-0/-1/-2)과 DLT는 자동 생성.</span>
+}
+<span class="cm">// 순서 X · 긴 백오프 O · 토픽 수가 늘어난다</span>
+</code></pre>
+  </div>
+</div>
+
+<div class="callout info"><span class="t">숫자 읽기 — 왜 5 → 15 → 45인가</span>
+<code>delay = 5000</code>이 첫 지연, <code>multiplier = 3.0</code>이 배수다. <b>5000 &times; 3 = 15000</b>, <b>15000 &times; 3 = 45000</b>이고 총합은 <b>65초</b>다. <code>attempts = "4"</code>는 <b>원본에서의 첫 시도 1회 + 재시도 3회</b>를 뜻하므로, 재시도 토픽이 <b>3개</b>(retry-0/1/2) 만들어진다. <b>"attempts는 총 시도 횟수이지 재시도 횟수가 아니다"</b>는 실수하기 쉬운 지점이다.
+</div>
+
+<h3>5-3. 이 방식이 잃는 것 — 원본 순서</h3>
+
+<p>공짜는 아니다. <b>원본 토픽의 순서 보장을 포기한다.</b> 실패한 메시지가 재시도 토픽으로 빠져나가 나중에 처리되므로, <b>그 뒤에 있던 메시지들이 먼저 처리된다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="논블로킹 재시도로 인한 순서 역전 타임라인. 같은 사용자 A의 이벤트 세 개가 오프셋 10, 11, 12 순서로 도착했지만, 오프셋 10의 주소 변경이 실패해 재시도 토픽으로 빠지면서 오프셋 11 주문 생성과 오프셋 12 주문 결제가 먼저 처리되고, 5초 뒤에야 주소 변경이 처리되어 옛 주소로 배송이 나가는 정합성 사고가 발생함을 보여준다.">
+    <defs>
+      <marker id="a9r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a9b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">순서 역전 — 도착 순서와 처리 순서가 갈라진다 (모두 같은 사용자 A의 이벤트)</text>
+
+    <!-- arrival -->
+    <rect x="24" y="44" width="1072" height="96" rx="11" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+    <text x="44" y="68" font-size="12.5" font-weight="800" fill="#1d4ed8">원본 토픽에 도착한 순서 — 여기까지는 완벽하다 (같은 키 → 같은 파티션 → 오프셋 순)</text>
+    <rect x="44" y="80" width="320" height="44" rx="9" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="60" y="99" font-size="11.5" font-weight="700" fill="#1d4ed8" class="mono">offset 10</text>
+    <text x="60" y="116" font-size="11.5" fill="#1e40af">A의 <tspan font-weight="700">"주소 변경"</tspan> — 외부 API 타임아웃으로 실패</text>
+    <rect x="380" y="80" width="320" height="44" rx="9" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="396" y="99" font-size="11.5" font-weight="700" fill="#1d4ed8" class="mono">offset 11</text>
+    <text x="396" y="116" font-size="11.5" fill="#1e40af">A의 <tspan font-weight="700">"주문 생성"</tspan></text>
+    <rect x="716" y="80" width="320" height="44" rx="9" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="732" y="99" font-size="11.5" font-weight="700" fill="#1d4ed8" class="mono">offset 12</text>
+    <text x="732" y="116" font-size="11.5" fill="#1e40af">A의 <tspan font-weight="700">"주문 결제"</tspan></text>
+
+    <!-- timeline -->
+    <text x="24" y="172" font-size="12.5" font-weight="800" fill="#334155">실제 처리 순서 (시간축 →)</text>
+    <line x1="80" y1="256" x2="1070" y2="256" stroke="#cbd5e1" stroke-width="1.6"/>
+    <g class="mono" font-size="11" fill="#94a3b8">
+      <text x="120" y="278">t0</text><text x="360" y="278">t1</text><text x="600" y="278">t2</text><text x="900" y="278">t5 (5초 뒤)</text>
+    </g>
+    <g>
+      <circle cx="120" cy="256" r="7" fill="#dc2626"/>
+      <circle cx="360" cy="256" r="7" fill="#16a34a"/>
+      <circle cx="600" cy="256" r="7" fill="#16a34a"/>
+      <circle cx="900" cy="256" r="7" fill="#d97706"/>
+    </g>
+
+    <rect x="40" y="188" width="200" height="58" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="140" y="208" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">offset 10 실패</text>
+    <text x="140" y="226" font-size="10.8" fill="#7f1d1d" text-anchor="middle">retry-0으로 발행</text>
+    <text x="140" y="240" font-size="10.8" font-weight="700" fill="#7f1d1d" text-anchor="middle">원본은 즉시 커밋</text>
+
+    <rect x="270" y="188" width="180" height="58" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="360" y="212" font-size="11.5" font-weight="800" fill="#15803d" text-anchor="middle">"주문 생성" 처리</text>
+    <text x="360" y="232" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">먼저 처리됐다</text>
+
+    <rect x="510" y="188" width="180" height="58" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="600" y="212" font-size="11.5" font-weight="800" fill="#15803d" text-anchor="middle">"주문 결제" 처리</text>
+    <text x="600" y="232" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">먼저 처리됐다</text>
+
+    <rect x="790" y="182" width="240" height="64" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="910" y="204" font-size="11.5" font-weight="800" fill="#b45309" text-anchor="middle">재시도 토픽에서</text>
+    <text x="910" y="222" font-size="11.5" font-weight="800" fill="#b45309" text-anchor="middle">"주소 변경" 처리</text>
+    <text x="910" y="239" font-size="10.8" fill="#78350f" text-anchor="middle">5초 뒤에야 반영됐다</text>
+
+    <!-- consequence -->
+    <rect x="24" y="300" width="1072" height="84" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="44" y="326" font-size="13.5" font-weight="800" fill="#b91c1c">결과 — 새 주소로 배송돼야 할 주문이 옛 주소로 나갔다</text>
+    <text x="44" y="350" font-size="11.8" fill="#7f1d1d">예외도 에러 로그도 없다. <tspan font-weight="800">전부 "성공"으로 기록된다.</tspan> 시스템은 정상이고 결과만 틀렸다 — 가장 발견하기 어려운 종류의 사고다.</text>
+    <text x="44" y="371" font-size="11.8" fill="#7f1d1d"><tspan font-weight="800">순서가 계약인 도메인에서는 이 방식이 곧 정합성 버그다.</tspan> 잔액 변동(입금↔출금 역전 시 잔액 부족 오류), 상태 전이(결제 완료↔배송 시작 역전 시 미결제 배송)가 대표적이다.</text>
+  </svg>
+  <figcaption><b>이것이 "흐름을 지키고 순서를 포기한다"의 구체적 모습</b>이다. 재시도 토픽은 파티션을 살렸지만, <b>같은 키 안에서의 인과관계</b>를 깨뜨렸다. 그리고 그 파손은 <b>조용하다</b> — 로그에 아무 흔적이 없다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>논블로킹 재시도를 쓰기 전 반드시 던질 질문</h4>
+  <div class="rule red">"이 토픽에서 <u>같은 키의 두 이벤트가 뒤바뀌면</u> 무엇이 잘못되는가?"</div>
+  <p style="margin:8px 0 0;font-size:.95rem">구체적인 사고 시나리오가 <b>나오면</b> 블로킹으로 가거나 키 단위 보류 로직이 필요하고, <b>안 나오면</b> 재시도 토픽이 정답이다. <b>"순서가 중요한가요?"라고 추상적으로 묻지 말고, 뒤바뀐 결과를 말하게 만드는 것</b>이 요구를 검증하는 방법이다.</p>
+</div>
+
+<div class="callout warn"><span class="t">덜 알려진 운영 부담 — 재시도 토픽도 밀린다</span>
+재시도 토픽은 <b>그 자체로 또 하나의 토픽</b>이다. 전용 컨슈머가 있고, <b>자기만의 랙</b>이 생기고, 파티션 수와 컨슈머 수를 맞춰야 하고, 모니터링 대상이 하나 더 늘어난다. 외부 시스템이 장기 장애일 때는 <b>재시도 토픽에 수십만 건이 쌓여</b> "원본은 멀쩡한데 retry-0이 밀리는" 상황이 온다. 토픽 수는 <b>단계 수 &times; 리스너 수</b>만큼 곱해지므로, 리스너가 많은 서비스에서는 <b>토픽 관리 비용 자체가 선택 기준</b>이 되기도 한다.
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 선택 기준 — 무엇을 포기할지는 도메인이 정한다</h2>
+
+<div class="split">
+  <div class="pane b"><h4>순서가 중요한 도메인 → 블로킹 재시도 + <u>짧은</u> 백오프</h4>
+    <p style="margin:6px 0 0;font-size:.94rem">잔액 변동, 상태 전이처럼 <b>이벤트 사이에 인과관계가 있는</b> 도메인. <b>순서를 지키는 대신 지연을 감수</b>한다. 백오프를 짧게 두는 이유는 <a href="#s4">4절의 부등식</a> 때문이다 — 순서를 지키려면 파티션을 세워야 하고, 세울 수 있는 시간에는 예산이 있다.</p>
+    <p style="margin:8px 0 0;font-size:.9rem;color:#1e40af"><b>예</b> — 계좌 입출금, 주문 상태 전이, 재고 증감, 좌석 예약</p>
+  </div>
+  <div class="pane g"><h4>건별 독립 처리 도메인 → 재시도 토픽</h4>
+    <p style="margin:6px 0 0;font-size:.94rem">각 이벤트가 <b>서로를 참조하지 않는</b> 도메인. <b>흐름을 지키는 대신 순서를 포기</b>한다. 어차피 각 건이 독립적이라 순서가 의미 없으므로 <b>포기해도 잃는 것이 없다</b> — 이 경우엔 트레이드오프가 아니라 순이익이다.</p>
+    <p style="margin:8px 0 0;font-size:.9rem;color:#166534"><b>예</b> — 알림 발송, 로그 적재, 검색 색인 갱신, 통계 집계, 외부 웹훅 전달</p>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="재시도 방식 선택 결정 흐름 도식. 같은 키의 두 이벤트가 뒤바뀌면 실제 사고가 나는지 묻고, 나지 않으면 재시도 토픽, 나면 회복에 긴 대기가 필요한지 묻는다. 짧은 대기로 충분하면 블로킹 재시도, 긴 대기가 필요하면 키 단위 보류를 얹은 논블로킹이나 도메인 재검토가 필요하다는 경로를 보여준다.">
+    <defs>
+      <marker id="a10b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a10g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="a10r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">선택 결정 흐름 — "어느 쪽이 정답"이 아니라 "무엇을 포기할 수 있는가"를 묻는다</text>
+
+    <rect x="380" y="44" width="360" height="52" rx="10" fill="#1e293b"/>
+    <text x="560" y="66" font-size="12.5" font-weight="800" fill="#e2e8f0" text-anchor="middle">Q1. 같은 키의 두 이벤트가 뒤바뀌면</text>
+    <text x="560" y="85" font-size="12.5" font-weight="800" fill="#fcd34d" text-anchor="middle">실제로 어떤 사고가 나는가?</text>
+
+    <path d="M400,96 L200,96 L200,132" stroke="#16a34a" stroke-width="2.2" fill="none" marker-end="url(#a10g)"/>
+    <text x="236" y="118" font-size="11.5" font-weight="800" fill="#15803d">시나리오가 안 나온다</text>
+    <path d="M720,96 L900,96 L900,132" stroke="#dc2626" stroke-width="2.2" fill="none" marker-end="url(#a10r)"/>
+    <text x="810" y="118" font-size="11.5" font-weight="800" fill="#b91c1c">구체적 사고가 나온다</text>
+
+    <!-- left result -->
+    <rect x="34" y="138" width="332" height="106" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="200" y="164" font-size="13" font-weight="800" fill="#15803d" text-anchor="middle">재시도 토픽 (논블로킹)</text>
+    <text x="200" y="186" font-size="11.5" fill="#166534" text-anchor="middle">순서를 포기해도 잃는 것이 없다</text>
+    <text x="200" y="206" font-size="11.5" fill="#166534" text-anchor="middle">긴 백오프로 외부 장애를 실제로 구제</text>
+    <text x="200" y="228" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">원본 파티션은 절대 멈추지 않는다</text>
+
+    <!-- right decision2 -->
+    <rect x="720" y="138" width="360" height="52" rx="10" fill="#1e293b"/>
+    <text x="900" y="160" font-size="12.5" font-weight="800" fill="#e2e8f0" text-anchor="middle">Q2. 회복에 <tspan fill="#fcd34d">긴 대기</tspan>가 필요한가?</text>
+    <text x="900" y="179" font-size="11" fill="#cbd5e1" text-anchor="middle">(수십 초~분 단위 백오프가 있어야 성공하는가)</text>
+
+    <path d="M780,190 L640,190 L640,232" stroke="#2563eb" stroke-width="2.2" fill="none" marker-end="url(#a10b)"/>
+    <text x="676" y="212" font-size="11.5" font-weight="800" fill="#1d4ed8">아니오 — 몇 초면 충분</text>
+    <path d="M1000,190 L1000,232" stroke="#d97706" stroke-width="2.2" fill="none" marker-end="url(#a10b)"/>
+    <text x="1010" y="214" font-size="11.5" font-weight="800" fill="#b45309">예</text>
+
+    <rect x="398" y="238" width="332" height="106" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="564" y="264" font-size="13" font-weight="800" fill="#1d4ed8" text-anchor="middle">블로킹 재시도 + 짧은 백오프</text>
+    <text x="564" y="286" font-size="11.5" fill="#1e40af" text-anchor="middle">순서를 지키고 지연을 감수한다</text>
+    <text x="564" y="306" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">반드시 부등식을 계산할 것</text>
+    <text x="564" y="326" font-size="10.8" class="mono" fill="#1e40af" text-anchor="middle">횟수 × 백오프 × 배치실패건수 &lt; max.poll.interval.ms</text>
+
+    <rect x="762" y="238" width="318" height="106" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="921" y="262" font-size="12.5" font-weight="800" fill="#b45309" text-anchor="middle">난이도 구간 — 셋 중 하나를 고른다</text>
+    <text x="778" y="284" font-size="11" fill="#78350f">① 키 단위 보류 로직 + 논블로킹 <tspan font-weight="700">(복잡)</tspan></text>
+    <text x="778" y="303" font-size="11" fill="#78350f">② 순서 의존을 없앤다 (버전/조건부 갱신)</text>
+    <text x="778" y="322" font-size="11" fill="#78350f">③ 그 실패를 <tspan font-weight="700">즉시 DLQ</tspan>로 보내고 사람이 처리</text>
+    <text x="921" y="338" font-size="10.5" font-weight="700" fill="#b45309" text-anchor="middle">여기서 무엇을 고르는지가 시니어 변별 지점</text>
+
+    <rect x="24" y="358" width="1072" height="34" rx="9" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="560" y="380" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">두 방식의 이름을 아는 것은 <tspan fill="#2563eb">지식</tspan>이고, 어느 쪽을 포기할지 <tspan fill="#2563eb">도메인 요구로 환원해 말하는 것</tspan>이 설계다.</text>
+  </svg>
+  <figcaption><b>Q1을 "순서가 중요한가요?"로 묻지 않는 것이 요령</b>이다. 그렇게 물으면 대부분 "중요합니다"라고 답한다. <b>"뒤바뀌면 무슨 사고가 나는지 말해 달라"</b>고 물어야 진짜 요구가 드러난다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table class="wide">
+  <caption>블로킹 재시도 vs 논블로킹(재시도 토픽) — 면접에서 표째로 인출할 수 있어야 하는 비교</caption>
+  <thead>
+    <tr><th>항목</th><th>블로킹 재시도 (in-place)</th><th>논블로킹 재시도 (재시도 토픽)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><b>재시도 주체</b></td><td>원본 파티션을 읽던 <b>같은 컨슈머 스레드</b></td><td>재시도 토픽의 <b>전용 컨슈머</b></td></tr>
+    <tr><td><b>실패 시 원본 오프셋</b></td><td>재시도가 끝날 때까지 <b>커밋하지 않음</b></td><td><b>즉시 커밋</b> (메시지는 다른 토픽으로 이동)</td></tr>
+    <tr class="hl"><td><b>파티션 내 순서</b></td><td class="good">유지된다</td><td class="bad">깨진다 — 뒤 메시지가 먼저 처리됨</td></tr>
+    <tr class="hl"><td><b>재시도 중 뒤 메시지</b></td><td class="bad">전부 대기 (흐름 정지)</td><td class="good">정상 처리 (흐름 유지)</td></tr>
+    <tr><td><b>걸 수 있는 백오프 길이</b></td><td class="bad">짧게만 — 파티션 정지 시간이므로</td><td class="good">길게 가능 — 분 단위도 현실적</td></tr>
+    <tr><td><b><code>max.poll.interval.ms</code> 압박</b></td><td class="bad">직접적 — 부등식 계산 필수</td><td class="good">없음 — 대기가 poll 밖에서 일어남</td></tr>
+    <tr><td><b>필요한 토픽</b></td><td>원본 + DLT</td><td>원본 + 단계별 retry 토픽 N개 + DLT</td></tr>
+    <tr><td><b>재시도 상태 저장 위치</b></td><td class="bad">컨슈머 <b>메모리</b> — 재시작/리밸런싱 시 초기화</td><td class="good"><b>토픽 자체</b> — 재시작에도 단계가 보존됨</td></tr>
+    <tr><td><b>운영 모니터링 대상</b></td><td>원본 랙 하나</td><td>원본 + 각 retry 토픽의 랙 (대상이 늘어남)</td></tr>
+    <tr><td><b>구현 난이도</b></td><td class="good">낮음 — 에러 핸들러 빈 하나</td><td>중간 — 어노테이션은 간단하나 토픽 관리가 따라옴</td></tr>
+    <tr><td><b>대표 도메인</b></td><td>잔액, 상태 전이, 재고, 예약</td><td>알림, 색인, 로그, 통계, 웹훅</td></tr>
+    <tr><td><b>포기하는 것</b></td><td class="bad">흐름(처리량·지연)</td><td class="bad">순서(정합성 전제)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo">
+  <h4>선택 기준 한 장 요약 — 이 세 줄만 외우면 된다</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">순서 &gt; 지연</div><div class="d"><b>블로킹</b> + 짧은 백오프. 부등식을 계산하고, 부족하면 <code>max.poll.records</code>부터 줄인다.</div></div>
+    <div class="tile ok"><div class="k">지연 &gt; 순서</div><div class="d"><b>재시도 토픽</b>. 긴 백오프를 걸 수 있는 대신 순서 역전을 도메인이 받아들일 수 있어야 한다.</div></div>
+    <div class="tile red"><div class="k">둘 다 필요</div><div class="d"><b>가장 비싼 구간.</b> 키 단위 보류 로직 · 순서 의존 제거 · 즉시 DLQ 중 하나를 <b>명시적으로</b> 고른다.</div></div>
+  </div>
+</div>
+
+<div class="callout ok"><span class="t">"둘 다 필요"할 때의 정직한 답</span>
+키 단위 보류 로직(재시도 중인 키의 후속 메시지를 함께 보류)은 <b>구현 복잡도가 크다</b> — 재시도 중인 키 목록을 어디에 둘 것인지, 컨슈머가 재시작하면 그 목록은 어떻게 되는지, 보류된 메시지가 쌓이면 결국 파티션이 막히는 것 아닌지까지 답해야 한다. 그래서 <b>"그 복잡도를 감수할 만큼 논블로킹이 필요한가"부터 되묻는 것</b>이 실무 판단이다. <b>기술적으로 가능하다는 것과 지금 만들어야 한다는 것은 다르다</b>는 감각을 보여주는 자리다.
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. DLQ 설계 — 버리는 곳이 아니라 병원이다</h2>
+
+<p><b>DLQ(Dead Letter Queue)</b>는 끝내 처리하지 못한 메시지를 모아두는 별도의 토픽이다. "죽은 편지 보관함"이라는 이름은 <b>수취인 불명으로 배달하지 못한 우편물을 모아두는 우체국의 부서</b>에서 왔다.</p>
+
+<div class="callout trap"><span class="t">DLQ가 실패하는 가장 흔한 방식 — 쓰레기통으로 운영하기</span>
+DLQ는 실패 메시지의 <b>종착역이 아니다.</b> 쓰레기통처럼 운영하면 <b>"DLQ에 30만 건이 쌓여 있는데 아무도 모르는"</b> 상태가 된다. 그 순간 <b>DLQ는 유실과 같아진다</b> — 데이터가 어딘가에 있긴 하지만 아무도 꺼내지 않으므로 없는 것과 다르지 않다. 오히려 <b>"우리는 DLQ가 있으니 유실은 없다"는 잘못된 안심</b>을 주기 때문에 더 위험하다.
+</div>
+
+<div class="memo">
+  <h4>DLQ가 기능하려면 반드시 있어야 하는 3종 세트</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">① 진단 정보</div><div class="d">왜 여기 있는지 답할 수 있어야 <b>재투입 판단</b>이 가능하다 → 헤더에 예외·좌표·시각을 함께 싣는다</div></div>
+    <div class="tile"><div class="k">② 유입 알림</div><div class="d">한 건이라도 들어오면 <b>즉시</b> 알린다 → 알림 없는 DLQ는 존재하지 않는 것과 같다</div></div>
+    <div class="tile"><div class="k">③ 재투입 절차</div><div class="d">꺼내는 방법을 <b>미리</b> 만들어 둔다 → 사고 난 뒤에 만들면 이미 늦다</div></div>
+  </div>
+  <p style="margin:10px 0 0;font-size:.95rem"><b>"DLQ에 넣는 것"이 아니라 "DLQ에서 꺼내는 것"까지가 설계</b>다. 셋 중 하나라도 빠지면 DLQ는 데이터가 조용히 쌓이는 곳이 된다.</p>
+</div>
+
+<h3>7-1. 진단 정보를 함께 담는다</h3>
+
+<p>원본 메시지만 복사하면 나중에 원인을 알 수 없다. <b>"이 메시지가 왜 여기 있는가"에 답할 수 있어야</b> 재투입 판단이 가능하다. 그래서 다음을 Kafka 헤더에 함께 실어 보낸다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="DLQ로 발행되는 메시지의 구조 도식. 원본 메시지 본문(키와 값)은 그대로 유지되고, 그 위에 원본 토픽·파티션·오프셋·타임스탬프, 예외 클래스명·예외 메시지·스택 트레이스 같은 진단 헤더가 봉투처럼 덧붙는 모습을 보여준다.">
+    <defs>
+      <marker id="a11b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">DLQ 메시지 = 원본 본문 <tspan fill="#2563eb">+ 진단 헤더라는 봉투</tspan> — 본문은 손대지 않는다</text>
+
+    <!-- original -->
+    <rect x="24" y="46" width="300" height="180" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="174" y="72" font-size="12.5" font-weight="800" fill="#334155" text-anchor="middle">원본 메시지 (그대로 복사)</text>
+    <rect x="44" y="86" width="260" height="54" rx="9" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="58" y="106" font-size="11" font-weight="700" fill="#475569" class="mono">key</text>
+    <text x="58" y="126" font-size="11" fill="#334155" class="mono">"user-1042"</text>
+    <rect x="44" y="148" width="260" height="60" rx="9" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="58" y="168" font-size="11" font-weight="700" fill="#475569" class="mono">value</text>
+    <text x="58" y="188" font-size="10.5" fill="#334155" class="mono">{"orderId":"A-9931", ...}</text>
+    <text x="174" y="220" font-size="10.5" fill="#64748b" text-anchor="middle">재투입할 때 <tspan font-weight="700">그대로 다시 보내야</tspan> 한다</text>
+
+    <path d="M330,136 L372,136" stroke="#2563eb" stroke-width="2.4" marker-end="url(#a11b)"/>
+    <text x="351" y="126" font-size="10.5" font-weight="700" fill="#2563eb" text-anchor="middle">+</text>
+
+    <!-- headers -->
+    <rect x="380" y="46" width="716" height="240" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="400" y="72" font-size="12.5" font-weight="800" fill="#1d4ed8">진단 헤더 — <tspan class="mono">DeadLetterPublishingRecoverer</tspan>가 기본으로 넣어 준다</text>
+
+    <g font-size="10.6" class="mono">
+      <rect x="400" y="84" width="330" height="30" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+      <text x="414" y="104" fill="#1d4ed8" font-weight="700">DLT_ORIGINAL_TOPIC</text>
+      <text x="720" y="104" fill="#334155" text-anchor="end">orders</text>
+
+      <rect x="400" y="118" width="330" height="30" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+      <text x="414" y="138" fill="#1d4ed8" font-weight="700">DLT_ORIGINAL_PARTITION</text>
+      <text x="720" y="138" fill="#334155" text-anchor="end">3</text>
+
+      <rect x="400" y="152" width="330" height="30" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+      <text x="414" y="172" fill="#1d4ed8" font-weight="700">DLT_ORIGINAL_OFFSET</text>
+      <text x="720" y="172" fill="#334155" text-anchor="end">184392</text>
+
+      <rect x="400" y="186" width="330" height="30" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+      <text x="414" y="206" fill="#1d4ed8" font-weight="700">DLT_ORIGINAL_TIMESTAMP</text>
+      <text x="720" y="206" fill="#334155" text-anchor="end">1712...</text>
+
+      <rect x="746" y="84" width="330" height="30" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+      <text x="760" y="104" fill="#b91c1c" font-weight="700">DLT_EXCEPTION_FQCN</text>
+      <text x="1066" y="104" fill="#334155" text-anchor="end">...TimeoutException</text>
+
+      <rect x="746" y="118" width="330" height="30" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+      <text x="760" y="138" fill="#b91c1c" font-weight="700">DLT_EXCEPTION_MESSAGE</text>
+      <text x="1066" y="138" fill="#334155" text-anchor="end">read timed out</text>
+
+      <rect x="746" y="152" width="330" height="64" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+      <text x="760" y="172" fill="#b91c1c" font-weight="700">DLT_EXCEPTION_STACKTRACE</text>
+      <text x="760" y="190" fill="#64748b" font-size="10">at com.acme.OrderService...</text>
+      <text x="760" y="206" fill="#64748b" font-size="10">at com.acme.OrderListener...</text>
+    </g>
+
+    <rect x="400" y="226" width="676" height="46" rx="9" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="416" y="245" font-size="11.5" font-weight="700" fill="#1d4ed8">여기에 직접 더하면 좋은 것</text>
+    <text x="416" y="263" font-size="11" fill="#1e40af">재시도 횟수(몇 번 해보고 포기했나) · 컨슈머 그룹/인스턴스 ID · 트레이스 ID(분산 추적 연결)</text>
+
+    <text x="24" y="308" font-size="11.5" fill="#64748b"><tspan font-weight="800" fill="#1f2937">왜 헤더인가</tspan> — 본문을 감싸 새 구조로 만들면 <tspan font-weight="700">재투입할 때 다시 벗겨내야</tspan> 하고, 그 벗기는 코드가 또 하나의 버그 지점이 된다.</text>
+    <text x="24" y="328" font-size="11.5" fill="#64748b">헤더에 실으면 <tspan font-weight="700">본문은 원본 그대로</tspan>라 재투입이 "그대로 다시 보내기"로 끝난다. <tspan font-weight="800" fill="#1f2937">이것이 헤더를 쓰는 실질적 이유다.</tspan></text>
+  </svg>
+  <figcaption>진단 헤더는 <b>"차트"</b>다. 환자(메시지)를 병원(DLQ)에 눕힐 때 <b>어디서 왔고 무슨 증상이었는지</b>를 함께 붙여 두지 않으면, 나중에 아무도 치료 방침을 정할 수 없다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>DLQ에 함께 담을 것 — 각 항목이 <b>어떤 판단</b>에 쓰이는지까지 묶어서 외운다</caption>
+  <thead><tr><th>담을 것</th><th>왜 필요한가</th><th>이걸로 내리는 판단</th></tr></thead>
+  <tbody>
+    <tr><td><b>원본 메시지 본문</b></td><td>재투입할 때 그대로 다시 보내야 한다</td><td>재투입 가능 여부</td></tr>
+    <tr><td><b>실패 예외 클래스와 메시지</b></td><td>원인 분류(코드 버그 / 외부 장애 / 데이터 오류)의 1차 근거</td><td>어느 갈래로 보낼 것인가</td></tr>
+    <tr><td><b>스택 트레이스</b></td><td>코드 어느 줄에서 터졌는지 — 버그 수정의 출발점</td><td>수정 대상 코드 위치</td></tr>
+    <tr><td><b>재시도 횟수</b></td><td>"몇 번 해보고 포기했나"</td><td>일시 장애였는지, 처음부터 영구 실패였는지</td></tr>
+    <tr><td><b>원본 토픽 · 파티션 · 오프셋</b></td><td>원본 로그에서 앞뒤 메시지를 찾아볼 좌표</td><td>이 건만의 문제인지, 그 구간 전체의 문제인지</td></tr>
+    <tr><td><b>최초 실패 시각</b></td><td>다른 시스템의 장애 시각과 대조</td><td>외부 장애와의 인과 확인</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4>실무 함정 — DLT 파티션 수가 원본보다 적으면 발행이 실패한다</h4>
+
+<p><b>기본 동작은 원본과 같은 파티션 번호로 DLT에 발행하는 것</b>이라, DLT의 파티션 수가 원본보다 적으면 <b>존재하지 않는 파티션으로 보내려다 실패</b>한다. 목적지 결정 함수를 직접 주면 피할 수 있다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 기본 동작 — 원본 파티션 번호를 그대로 쓴다</div>
+<pre><code><span class="kw">var</span> recoverer = <span class="kw">new</span> DeadLetterPublishingRecoverer(template);
+
+<span class="cm">// 원본 orders 파티션 수 = 12</span>
+<span class="cm">// DLT  orders.DLT 파티션 수 = 3   ← 흔한 구성</span>
+<span class="ln-bad"><span class="cm">// 원본 파티션 7번의 메시지가 실패하면</span></span>
+<span class="ln-bad"><span class="cm">//   → orders.DLT 의 7번 파티션으로 보내려 한다</span></span>
+<span class="ln-bad"><span class="cm">//   → 7번 파티션이 없다 → DLQ 발행 자체가 실패</span></span>
+
+<span class="cm">// 증상이 고약하다:</span>
+<span class="cm">//   DLQ로 치우려던 메시지가 못 치워지고</span>
+<span class="cm">//   그 자리에서 다시 막힌다 = poison pill 재현</span>
+</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 목적지 결정 함수를 직접 준다</div>
+<pre><code><span class="kw">var</span> recoverer = <span class="kw">new</span> DeadLetterPublishingRecoverer(template,
+<span class="ln-good">        <span class="cm">// 파티션 번호를 음수로 두면 원본 파티션 번호를</span></span>
+<span class="ln-good">        <span class="cm">// 그대로 쓰지 않고 Kafka가 알아서 고르게 한다.</span></span>
+<span class="ln-good">        <span class="cm">// DLT의 파티션 수가 원본보다 적어도 안전하다.</span></span>
+<span class="ln-good">        (record, ex) -&gt; <span class="kw">new</span> TopicPartition(</span>
+<span class="ln-good">                record.topic() + <span class="st">".DLT"</span>, -<span class="st">1</span>));</span>
+
+<span class="cm">// 부수 효과: 원본 파티션 번호 정보는 헤더에 남아 있으므로</span>
+<span class="cm">// 진단에는 지장이 없다 (DLT_ORIGINAL_PARTITION)</span>
+</code></pre>
+  </div>
+</div>
+
+<div class="callout warn"><span class="t">DLQ 발행이 실패하면 어떻게 되나</span>
+recoverer 자체가 실패하면(브로커 장애, DLT 토픽 부재, 위의 파티션 불일치) <b>그 레코드의 오프셋은 커밋되지 않고 예외가 전파</b>된다. 즉 <b>"DLQ로 치우기"가 실패하면 메시지는 원래 자리에 남아 다시 막는다.</b> 유실되지 않는다는 점은 다행이지만, <b>DLQ 경로가 무너지면 poison pill 상태로 되돌아간다</b>는 뜻이기도 하다. 그래서 <b>DLT 토픽을 미리 만들어 두고(자동 생성에 의존하지 않기), 파티션 수를 원본 이상으로 두거나 목적지 함수를 지정하는 것</b>이 사전 조치다.
+</div>
+
+<h3>7-2. 유입 자체를 알람으로 건다</h3>
+
+<p><b>DLQ에 메시지가 들어오는 것 자체가 장애 신호다.</b> 이건 "쌓인 양이 많아지면 알린다"가 아니라 <b>"한 건이라도 들어오면 알린다"</b>에 가깝다. DLQ는 <b>정상 상황에서 비어 있어야 하는 토픽</b>이기 때문이다.</p>
+
+<div class="split">
+  <div class="pane b"><h4>방법 ① DLQ 토픽의 초당 유입량</h4>
+    <p style="margin:6px 0 0;font-size:.94rem">DLQ 토픽에 초당 몇 건이 들어오는지를 지표로 뽑아 <b>0보다 크면 알린다.</b> 가장 직접적이고, <b>"방금 실패가 시작됐다"</b>는 사실을 가장 빨리 알려 준다.</p>
+  </div>
+  <div class="pane b"><h4>방법 ② DLQ 토픽의 컨슈머 랙</h4>
+    <p style="margin:6px 0 0;font-size:.94rem">DLQ를 읽는 <b>운영용 컨슈머를 하나 두고</b>, 그 랙이 0이 아니면 <b>"처리되지 않은 실패 메시지가 있다"</b>는 뜻이다. ①과 달리 <b>"아직 안 치웠다"는 상태</b>를 알려 주므로 <b>방치를 막는 데</b> 강하다.</p>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>가장 흔한 설계 누락</h4>
+  <div class="rule red">알림 없는 DLQ는 <u>존재하지 않는 것</u>과 같다</div>
+  <p style="margin:8px 0 0;font-size:.95rem">실패가 발생했다는 사실을 사람이 즉시 알지 못하면, DLQ는 그저 데이터가 조용히 쌓이는 곳이 된다. <b>재시도·DLQ 설계에서 이 항목이 빠지는 것이 가장 흔한 실수</b>다 — 그리고 면접에서 이 항목을 먼저 말하면 <b>"운영을 해 본 사람"</b>으로 분류된다.</p>
+</div>
+
+<div class="callout info"><span class="t">두 지표를 같이 거는 이유</span>
+①만 걸면 <b>"들어온 순간"은 알지만 "아직 안 치웠다"는 모른다.</b> ②만 걸면 <b>운영 컨슈머가 죽어 있을 때 랙이 안 늘어</b> 조용해질 수 있다. <b>①은 발생 감지, ②는 방치 감지</b>로 역할이 다르므로 둘 다 건다. 여기에 <b>DLQ 토픽의 보존 기간(retention)</b>을 원본보다 <b>길게</b> 잡아 두는 것까지 하면 좋다 — 조사에 착수하기 전에 증거가 삭제되는 사고를 막는다.
+</div>
+
+<h3>7-3. 재투입(re-drive) 절차를 미리 만든다</h3>
+
+<p>원인을 고친 뒤 DLQ의 메시지를 다시 처리해야 한다. 방법은 <b>원인의 종류에 따라 둘로 갈린다.</b></p>
+
+<div class="split">
+  <div class="pane g"><h4>(가) 코드나 외부 시스템이 문제였던 경우</h4>
+    <p style="margin:6px 0 0;font-size:.94rem"><b>DLQ에서 그대로 다시 소비한다.</b> 코드를 고쳐 배포하거나 외부 시스템이 복구된 뒤, <b>DLQ를 읽어 원본 처리 로직으로 흘려보내는 전용 컨슈머를 잠시 켠다.</b> 메시지 내용은 손댈 필요가 없다.</p>
+  </div>
+  <div class="pane w"><h4>(나) 메시지 내용 자체가 문제였던 경우</h4>
+    <p style="margin:6px 0 0;font-size:.94rem"><b>수정해서 원본 토픽으로 다시 발행한다.</b> 필수 필드가 빠졌거나 값이 잘못된 경우다. 이때는 <b>사람이 내용을 보정한 뒤</b> 원본 토픽에 새로 발행한다. 자동화하면 안 되는 유일한 경로다.</p>
+  </div>
+</div>
+
+<div class="codehead plain"><span class="tag">재투입 도구</span> DLQ 전용 컨슈머 — 평소엔 꺼 두고, 필요할 때만 켠다</div>
+<pre class="wide"><code><span class="cm">// autoStartup = "false" → 애플리케이션이 떠도 자동으로 시작하지 않는다.</span>
+<span class="cm">// 운영자가 관리 API나 액추에이터로 이 컨테이너를 "켜야" 소비가 시작된다.</span>
+<span class="cm">// 재투입은 "항상 돌아가는 기능"이 아니라 "의도적으로 여는 밸브"여야 한다.</span>
+<span class="nm">@KafkaListener</span>(id = <span class="st">"orders-dlt-redrive"</span>,
+        topics = <span class="st">"orders.DLT"</span>,
+<span class="ln-good">        autoStartup = <span class="st">"false"</span>)</span>
+<span class="kw">public void</span> <span class="fn">redrive</span>(OrderEvent event,
+                    <span class="nm">@Header</span>(KafkaHeaders.DLT_ORIGINAL_TOPIC)  String originTopic,
+                    <span class="nm">@Header</span>(KafkaHeaders.DLT_ORIGINAL_OFFSET) <span class="kw">long</span> originOffset,
+                    <span class="nm">@Header</span>(KafkaHeaders.DLT_EXCEPTION_FQCN)  String failedWith) {
+
+    log.info(<span class="st">"재투입 시작 origin={}:{} 최초실패={}"</span>, originTopic, originOffset, failedWith);
+
+<span class="ln-good">    <span class="cm">// ★ 원본과 "같은 처리 로직"을 부른다 ★</span></span>
+<span class="ln-good">    <span class="cm">// 재투입용 로직을 따로 만들면 두 경로가 갈라져 반드시 어긋난다.</span></span>
+<span class="ln-good">    orderService.process(event);   <span class="cm">// 이 메서드는 멱등해야 한다 (아래)</span></span>
+
+    <span class="cm">// 여기서 또 실패하면? → 예외를 그대로 던져 커밋을 막고,</span>
+    <span class="cm">// 밸브를 닫은 뒤 원인을 다시 본다. DLQ의 DLQ를 만들지 않는다.</span>
+}
+</code></pre>
+
+<div class="callout trap"><span class="t">어느 쪽이든 전제 — 컨슈머의 멱등성</span>
+재투입한 메시지가 사실은 <b>이미 부분적으로 처리됐을 수 있고</b>(예: DB에는 저장됐는데 후속 API 호출에서 실패해 DLQ로 갔다), 재투입 도구가 <b>중복 발행</b>할 수도 있다. <b>같은 메시지를 두 번 처리해도 결과가 한 번과 같아야</b> 재투입이 안전한 작업이 된다. 멱등하지 않은 컨슈머에 재투입 버튼을 다는 것은 <b>"이중 출금 버튼"</b>을 다는 것과 같다. (04번 문서)
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 470" role="img" aria-label="DLQ 운영 루프 도식. DLQ 유입이 발생하면 알림이 발송되고, 헤더의 예외 정보로 코드 버그·외부 장애·데이터 오류 세 갈래로 원인을 분류한다. 코드 버그는 수정 후 배포, 외부 장애는 복구 확인 뒤 DLQ에서 재소비하고, 데이터 오류는 수동 보정하거나 비즈니스 협의 후 근거를 남기고 종결한다. 마지막에 DLQ 랙이 0으로 돌아왔는지 확인한다.">
+    <defs>
+      <marker id="a12b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a12g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="a12w" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">DLQ 운영 루프 — "넣는 것"이 아니라 "꺼내는 것"까지가 설계다</text>
+
+    <rect x="410" y="42" width="300" height="44" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="560" y="70" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">DLQ 유입 (한 건이라도)</text>
+    <path d="M560,88 L560,110" stroke="#dc2626" stroke-width="2.2" marker-end="url(#a12b)"/>
+
+    <rect x="410" y="114" width="300" height="44" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="560" y="142" font-size="12.5" font-weight="800" fill="#b45309" text-anchor="middle">즉시 알림 발송</text>
+    <path d="M560,160 L560,182" stroke="#d97706" stroke-width="2.2" marker-end="url(#a12b)"/>
+
+    <rect x="380" y="186" width="360" height="46" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="560" y="215" font-size="12.5" font-weight="800" fill="#1d4ed8" text-anchor="middle">헤더의 예외 정보로 원인 분류</text>
+
+    <!-- three branches -->
+    <path d="M440,232 L200,232 L200,268" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a12b)"/>
+    <path d="M560,232 L560,268" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a12b)"/>
+    <path d="M680,232 L920,232 L920,268" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a12b)"/>
+
+    <rect x="70" y="272" width="260" height="44" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="200" y="300" font-size="12.5" font-weight="800" fill="#334155" text-anchor="middle">코드 버그</text>
+    <rect x="430" y="272" width="260" height="44" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="560" y="300" font-size="12.5" font-weight="800" fill="#334155" text-anchor="middle">외부 장애</text>
+    <rect x="790" y="272" width="260" height="44" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="920" y="300" font-size="12.5" font-weight="800" fill="#334155" text-anchor="middle">데이터 오류</text>
+
+    <path d="M200,316 L200,344" stroke="#16a34a" stroke-width="2" marker-end="url(#a12g)"/>
+    <path d="M560,316 L560,344" stroke="#16a34a" stroke-width="2" marker-end="url(#a12g)"/>
+    <path d="M920,316 L920,344" stroke="#d97706" stroke-width="2" marker-end="url(#a12w)"/>
+
+    <rect x="70" y="348" width="260" height="46" rx="10" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="200" y="370" font-size="11.8" font-weight="700" fill="#15803d" text-anchor="middle">수정 후 배포</text>
+    <text x="200" y="387" font-size="10.5" fill="#166534" text-anchor="middle">스택 트레이스가 수정 지점을 준다</text>
+
+    <rect x="430" y="348" width="260" height="46" rx="10" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="560" y="370" font-size="11.8" font-weight="700" fill="#15803d" text-anchor="middle">복구 확인</text>
+    <text x="560" y="387" font-size="10.5" fill="#166534" text-anchor="middle">상대 시스템이 정상인지 먼저 검증</text>
+
+    <rect x="790" y="348" width="260" height="46" rx="10" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="920" y="370" font-size="11.8" font-weight="700" fill="#b45309" text-anchor="middle">수동 보정 또는 비즈니스 협의 후 폐기</text>
+    <text x="920" y="387" font-size="10.5" fill="#78350f" text-anchor="middle">자동화하면 안 되는 유일한 갈래</text>
+
+    <!-- merge -->
+    <path d="M200,394 L200,416 L380,416" stroke="#16a34a" stroke-width="2" fill="none"/>
+    <path d="M560,394 L560,416" stroke="#16a34a" stroke-width="2" fill="none"/>
+    <path d="M380,416 L560,416" stroke="#16a34a" stroke-width="2" fill="none"/>
+    <path d="M560,416 L560,428" stroke="#16a34a" stroke-width="2" marker-end="url(#a12g)"/>
+
+    <rect x="380" y="432" width="360" height="34" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="560" y="454" font-size="12" font-weight="800" fill="#15803d" text-anchor="middle">DLQ에서 재소비 → 랙 0 복귀 확인</text>
+
+    <path d="M920,394 L920,414" stroke="#d97706" stroke-width="2" fill="none" marker-end="url(#a12w)"/>
+    <rect x="790" y="418" width="290" height="46" rx="9" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="935" y="438" font-size="11.5" font-weight="800" fill="#b45309" text-anchor="middle">근거를 남기고 종결</text>
+    <text x="935" y="456" font-size="10.5" fill="#78350f" text-anchor="middle">"이 데이터는 왜 없나"가 반드시 온다</text>
+  </svg>
+  <figcaption>루프의 마지막 칸이 <b>"랙 0 복귀 확인"</b>이라는 점이 중요하다. <b>재투입을 실행한 것과 재투입이 끝난 것은 다르다</b> — 확인하지 않으면 절반만 처리된 채로 잊힌다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>DLQ는 병원이다 — 비유로 통째 인출하기</h4>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>병원</th><th>DLQ 설계</th><th>안 하면</th></tr></thead>
+    <tbody>
+      <tr><td>줄을 막는 환자를 <b>대기열에서 빼낸다</b></td><td>실패 메시지를 파티션에서 치운다 (흐름 유지)</td><td class="bad">뒤에 선 사람 전부가 멈춘다</td></tr>
+      <tr><td><b>차트를 붙인다</b></td><td>진단 헤더 (예외 · 좌표 · 시각)</td><td class="bad">왜 왔는지 몰라 아무 처치도 못 한다</td></tr>
+      <tr><td><b>접수 알림</b>이 울린다</td><td>유입 즉시 알림</td><td class="bad">환자가 복도에 방치된다</td></tr>
+      <tr><td>치료 후 <b>일상에 복귀</b>시킨다</td><td>재투입(re-drive)</td><td class="bad">병원이 시체 안치소가 된다 = 유실</td></tr>
+      <tr><td><b>퇴원 확인</b></td><td>랙 0 복귀 확인</td><td class="bad">처리했다고 믿었는데 남아 있다</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin:10px 0 0;font-size:.95rem"><b>시체 안치소처럼 운영하는 순간 데이터 유실과 같아진다.</b> 이 비유 하나로 3종 세트를 전부 복원할 수 있다.</p>
+</div>
+
+<div class="callout ok"><span class="t">가산점 — 재투입은 "그때의 코드"가 아니라 "지금의 코드"로 처리된다</span>
+DLQ 재투입 시 메시지는 <b>실패 당시의 코드가 아니라 수정된 현재 코드로 처리된다.</b> 그 사이 <b>스키마가 진화했다면</b> 구버전 메시지를 현재 컨슈머가 읽을 수 있는지 — <b>하위 호환성</b> — 를 먼저 확인해야 한다. 특히 <b>DLQ에 며칠씩 묵은 메시지</b>가 있다면 실제로 자주 문제가 된다. "재투입 전에 스키마 호환성을 확인한다"는 한마디가 <b>DLQ를 실제로 운영해 봤다는 신호</b>다. (06번 문서)
+</div>
+
+<div class="callout info"><span class="t">RabbitMQ에서의 대응</span>
+재시도 토픽 대신 <b><code>x-dead-letter-exchange</code>와 TTL 대기 큐</b>를 엮어 <b>브로커가 타이머 역할</b>을 한다 — Kafka에서 우리가 직접 만들어야 했던 "지연 후 재처리" 계단을 브로커 기능으로 대체하는 셈이다. 대신 <b>requeue 무한 루프</b>라는 고유 함정이 따라온다. 상세는 <code>14-rabbitmq-retry-dlx-dlq.md</code>.
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 전체 실패 경로 한 장 · 설계 체크리스트</h2>
+
+<p>지금까지의 조각을 하나의 지도로 합치면 이렇다. <b>면접에서 이 그림을 순서대로 말하는 것이 곧 답변</b>이 된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 560" role="img" aria-label="컨슈머 실패 처리 전체 경로 지도. 메시지 수신에서 시작해 처리 성공이면 오프셋 커밋, 실패면 예외를 일시적과 영구적으로 분류한다. 영구적 실패는 즉시 DLQ로, 일시적 실패는 순서 요구에 따라 블로킹 재시도 또는 재시도 토픽으로 가고, 재시도를 소진하면 DLQ로 간다. DLQ에서는 알림, 분류, 재투입 루프가 돌고, 이 모든 경로의 밑단에 멱등 컨슈머가 깔려 있다.">
+    <defs>
+      <marker id="a13b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a13g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="a13r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a13w" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">컨슈머 실패 처리 전체 지도 — 정상 경로 1개, 실패 경로 4개</text>
+
+    <!-- poll -->
+    <rect x="24" y="44" width="180" height="46" rx="10" fill="#1e293b"/>
+    <text x="114" y="72" font-size="12.5" font-weight="800" fill="#e2e8f0" text-anchor="middle" class="mono">poll() → 레코드</text>
+    <path d="M204,67 L242,67" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a13b)"/>
+
+    <rect x="246" y="44" width="180" height="46" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="336" y="72" font-size="12.5" font-weight="800" fill="#1d4ed8" text-anchor="middle">리스너 처리 시도</text>
+
+    <!-- success -->
+    <path d="M426,58 L520,58" stroke="#16a34a" stroke-width="2.2" marker-end="url(#a13g)"/>
+    <text x="473" y="48" font-size="11" font-weight="800" fill="#15803d" text-anchor="middle">성공</text>
+    <rect x="526" y="40" width="200" height="38" rx="9" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="626" y="64" font-size="12" font-weight="800" fill="#15803d" text-anchor="middle">오프셋 커밋 → 다음 메시지</text>
+
+    <!-- failure -->
+    <path d="M336,90 L336,118" stroke="#dc2626" stroke-width="2.2" marker-end="url(#a13r)"/>
+    <text x="352" y="110" font-size="11" font-weight="800" fill="#b91c1c">예외</text>
+
+    <rect x="196" y="122" width="280" height="46" rx="10" fill="#1e293b"/>
+    <text x="336" y="143" font-size="12" font-weight="800" fill="#e2e8f0" text-anchor="middle">분류 — 시간이 지나면</text>
+    <text x="336" y="161" font-size="12" font-weight="800" fill="#fcd34d" text-anchor="middle">결과가 달라지는가?</text>
+
+    <!-- permanent -->
+    <path d="M476,145 L600,145" stroke="#dc2626" stroke-width="2.2" marker-end="url(#a13r)"/>
+    <text x="538" y="136" font-size="11" font-weight="800" fill="#b91c1c" text-anchor="middle">아니오 = 영구</text>
+    <rect x="606" y="122" width="220" height="46" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="716" y="143" font-size="11.8" font-weight="800" fill="#b91c1c" text-anchor="middle">경로 A — 재시도 없이</text>
+    <text x="716" y="161" font-size="11.8" font-weight="800" fill="#b91c1c" text-anchor="middle">즉시 DLQ</text>
+
+    <!-- transient -->
+    <path d="M336,168 L336,196" stroke="#16a34a" stroke-width="2.2" marker-end="url(#a13g)"/>
+    <text x="352" y="188" font-size="11" font-weight="800" fill="#15803d">예 = 일시</text>
+
+    <rect x="196" y="200" width="280" height="46" rx="10" fill="#1e293b"/>
+    <text x="336" y="221" font-size="12" font-weight="800" fill="#e2e8f0" text-anchor="middle">같은 키 순서가</text>
+    <text x="336" y="239" font-size="12" font-weight="800" fill="#fcd34d" text-anchor="middle">정합성의 전제인가?</text>
+
+    <!-- blocking -->
+    <path d="M196,223 L120,223 L120,262" stroke="#2563eb" stroke-width="2.2" fill="none" marker-end="url(#a13b)"/>
+    <text x="132" y="248" font-size="11" font-weight="800" fill="#1d4ed8">예</text>
+    <rect x="24" y="266" width="286" height="112" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="167" y="290" font-size="12.5" font-weight="800" fill="#1d4ed8" text-anchor="middle">경로 B — 블로킹 재시도</text>
+    <text x="167" y="311" font-size="11" fill="#1e40af" text-anchor="middle">같은 스레드가 제자리에서 N회 재시도</text>
+    <text x="167" y="330" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">순서 유지 · 파티션 정지</text>
+    <rect x="44" y="340" width="246" height="28" rx="7" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="167" y="359" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle" class="mono">횟수×백오프×실패건수 &lt; max.poll.interval.ms</text>
+
+    <!-- nonblocking -->
+    <path d="M476,223 L552,223 L552,262" stroke="#16a34a" stroke-width="2.2" fill="none" marker-end="url(#a13g)"/>
+    <text x="500" y="248" font-size="11" font-weight="800" fill="#15803d">아니오</text>
+    <rect x="330" y="266" width="286" height="112" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="473" y="290" font-size="12.5" font-weight="800" fill="#15803d" text-anchor="middle">경로 C — 재시도 토픽</text>
+    <text x="473" y="311" font-size="11" fill="#166534" text-anchor="middle">원본 즉시 커밋 → retry-0/1/2 계단</text>
+    <text x="473" y="330" font-size="11" font-weight="700" fill="#1d4ed8" text-anchor="middle">흐름 유지 · 순서 역전</text>
+    <rect x="350" y="340" width="246" height="28" rx="7" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="473" y="359" font-size="10.5" font-weight="700" fill="#b45309" text-anchor="middle">긴 백오프 가능 · 토픽/랙 관리 비용</text>
+
+    <!-- exhausted -> DLQ -->
+    <path d="M167,378 L167,400 L716,400 L716,382" stroke="#dc2626" stroke-width="2" fill="none" marker-end="url(#a13r)"/>
+    <path d="M473,378 L473,400" stroke="#dc2626" stroke-width="2" fill="none"/>
+    <text x="330" y="394" font-size="11" font-weight="800" fill="#b91c1c" text-anchor="middle">재시도 소진</text>
+
+    <!-- DLQ box -->
+    <rect x="606" y="186" width="490" height="196" rx="12" fill="#fff7ed" stroke="#d97706" stroke-width="2"/>
+    <text x="851" y="212" font-size="13" font-weight="800" fill="#b45309" text-anchor="middle">DLQ (orders.DLT) — 종착역이 아니라 병원</text>
+
+    <rect x="626" y="224" width="450" height="34" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="646" y="246" font-size="11.5" fill="#78350f"><tspan font-weight="800">① 진단 헤더</tspan> — 예외 FQCN · 메시지 · 스택 · 원본 토픽/파티션/오프셋 · 시각</text>
+
+    <rect x="626" y="264" width="450" height="34" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="646" y="286" font-size="11.5" fill="#78350f"><tspan font-weight="800">② 유입 알림</tspan> — 유입량 &gt; 0 즉시 · 운영 컨슈머 랙 &ne; 0 방치 감지</text>
+
+    <rect x="626" y="304" width="450" height="34" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="646" y="326" font-size="11.5" fill="#78350f"><tspan font-weight="800">③ 재투입</tspan> — 원인 분류 → 수정 → 밸브를 열어 재소비 → 랙 0 확인</text>
+
+    <text x="851" y="362" font-size="11.5" font-weight="800" fill="#b45309" text-anchor="middle">셋 중 하나라도 빠지면 DLQ = 조용한 유실</text>
+
+    <!-- redrive loop back -->
+    <path d="M851,382 L851,416 L12,416 L12,67 L18,67" stroke="#16a34a" stroke-width="2" fill="none" stroke-dasharray="7 5" marker-end="url(#a13g)"/>
+    <rect x="296" y="403" width="452" height="26" rx="7" fill="#ffffff"/>
+    <text x="522" y="421" font-size="11" font-weight="800" fill="#15803d" text-anchor="middle">재투입 — 원본과 같은 처리 로직으로 되돌린다</text>
+
+    <!-- idempotency foundation -->
+    <rect x="24" y="440" width="1072" height="52" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="463" font-size="13" font-weight="800" fill="#1d4ed8" text-anchor="middle">이 모든 경로의 토대 — 멱등 컨슈머 (같은 메시지를 두 번 처리해도 결과가 한 번과 같다)</text>
+    <text x="560" y="483" font-size="11.5" fill="#1e40af" text-anchor="middle">재시도 · 리밸런싱 후 재수신 · DLQ 재투입 — <tspan font-weight="700">세 경로 모두 같은 메시지를 다시 흘려보낸다.</tspan> 멱등하지 않으면 실패 처리 장치가 곧 중복 처리 장치가 된다.</text>
+
+    <rect x="24" y="502" width="1072" height="46" rx="11" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="560" y="522" font-size="11.8" fill="#334155" text-anchor="middle"><tspan font-weight="800">경로 A/B/C의 공통 종착지가 DLQ라는 점</tspan>이 이 지도의 요지다 — 재시도 방식을 무엇으로 고르든 <tspan font-weight="800">"끝내 안 되는 것을 어디에 둘 것인가"</tspan>는 반드시 답해야 한다.</text>
+    <text x="560" y="540" font-size="11.8" fill="#334155" text-anchor="middle">그리고 <tspan font-weight="800">정상 경로에서 실패 경로로 갈라지는 첫 분기가 "분류"</tspan>다. 분류가 없으면 나머지 설계가 전부 헛돈다.</text>
+  </svg>
+  <figcaption><b>답변 순서로 그대로 쓸 수 있는 지도</b> — ① 왜 막히는가(오프셋 하나) → ② 분류 → ③ 영구는 즉시 DLQ / 일시는 재시도 → ④ 순서 요구에 따라 블로킹 vs 재시도 토픽 → ⑤ 소진하면 DLQ → ⑥ DLQ 3종 세트 → ⑦ 전부 멱등 위에서.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>설계 체크리스트 — 실패 경로를 리뷰할 때 이 9개를 확인한다</h4>
+  <ul class="chk">
+    <li><b>예외를 삼키는 <code>catch</code>가 없는가</b> — 로그만 남기고 넘어가는 코드는 유실 장치다.</li>
+    <li><b>재시도 횟수에 상한이 있는가</b> — 상한 없는 재시도는 재시도가 아니라 장애다.</li>
+    <li><b>영구 실패 예외가 재시도 목록에서 제외돼 있는가</b> — <code>addNotRetryableExceptions</code> 등록 여부.</li>
+    <li><b>역직렬화 실패를 잡을 장치가 있는가</b> — <code>ErrorHandlingDeserializer</code> 없이는 리스너에 도달조차 못 한다.</li>
+    <li><b>부등식을 계산했는가</b> — 재시도 횟수 &times; 백오프 &times; 배치 내 최대 실패 건수 &lt; <code>max.poll.interval.ms</code>.</li>
+    <li><b>DLT 토픽이 미리 만들어져 있고 파티션 수가 안전한가</b> — DLQ 발행 실패는 poison pill 재현이다.</li>
+    <li><b>DLQ 유입에 알림이 걸려 있는가</b> — 유입량과 방치(랙) 둘 다.</li>
+    <li><b>재투입 도구가 있고, 원본과 같은 처리 로직을 부르는가</b> — 사고 난 뒤에 만들면 늦다.</li>
+    <li><b>컨슈머가 멱등한가</b> — 위 8개가 전부 이 항목 위에서만 안전하다.</li>
+  </ul>
+</div>
+
+<div class="memo warn">
+  <h4>외워 둘 숫자와 이름</h4>
+  <div class="grid g4">
+    <div class="tile big"><div class="k">300,000ms</div><div class="s"><code>max.poll.interval.ms</code> 기본값 = <b>5분</b></div></div>
+    <div class="tile big"><div class="k">500</div><div class="s"><code>max.poll.records</code> 기본값 — 곱해지는 항</div></div>
+    <div class="tile big"><div class="k">.DLT</div><div class="s"><code>DeadLetterPublishingRecoverer</code>의 기본 접미사</div></div>
+    <div class="tile big"><div class="k">5 → 15 → 45</div><div class="s">delay 5000 · multiplier 3.0의 계단 (합 65초)</div></div>
+  </div>
+  <div class="grid g2" style="margin-top:10px">
+    <div class="tile"><div class="k">DefaultErrorHandler</div><div class="d">블로킹 재시도 — <b>recoverer + BackOff + NotRetryable 목록</b> 세 조각</div></div>
+    <div class="tile"><div class="k">@RetryableTopic</div><div class="d">논블로킹 재시도 — <b>attempts는 총 시도 횟수</b>(원본 1회 포함)</div></div>
+    <div class="tile"><div class="k">DeadLetterPublishingRecoverer</div><div class="d">DLQ 발행 + 진단 헤더 자동 부착 · 목적지 함수로 파티션 함정 회피</div></div>
+    <div class="tile"><div class="k">ErrorHandlingDeserializer</div><div class="d">역직렬화 실패를 <b>예외 대신 헤더</b>로 넘겨 에러 핸들러가 다룰 수 있게 한다</div></div>
+  </div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>9-1. 인출 카드 — 면접 전날 이것만 다시 본다</h3>
+
+<div class="grid g2">
+  <div class="tile"><div class="k">① 왜 막히는가</div><div class="d">컨슈머는 파티션마다 <b>오프셋 숫자 하나</b>만 들고 있다 → "3번만 실패"를 표시할 자리가 없다 → <b>선두 차단</b> → 컨슈머를 늘려도 소용없다(파티션당 컨슈머 1)</div></div>
+  <div class="tile red"><div class="k">② 두 극단</div><div class="d"><b>예외 삼키기</b> = 오프셋 커밋 = 조용한 유실 / <b>무한 재시도</b> = poison pill = 파티션 정지 + 리밸런싱 루프</div></div>
+  <div class="tile"><div class="k">③ 분류 기준</div><div class="d">"<b>시간이 지나면 결과가 달라지는가</b>" — 예: 일시적(타임아웃·커넥션·락) → 재시도 / 아니오: 영구적(역직렬화·검증·NPE) → 즉시 DLQ</div></div>
+  <div class="tile"><div class="k">④ 두 재시도 방식</div><div class="d"><b>블로킹</b> = 순서 지키고 흐름 포기 / <b>재시도 토픽</b> = 흐름 지키고 순서 포기. 무엇을 포기할지는 <b>도메인</b>이 정한다</div></div>
+  <div class="tile red"><div class="k">⑤ 부등식</div><div class="d"><code>재시도 횟수 × 백오프 × 배치 내 최대 실패 건수 &lt; max.poll.interval.ms</code> — 초과하면 리밸런싱. 손대는 순서는 <b><code>max.poll.records</code> → 백오프 → 한도</b></div></div>
+  <div class="tile ok"><div class="k">⑥ DLQ 3종 세트</div><div class="d"><b>진단 헤더 · 유입 알림 · 재투입 절차.</b> 하나라도 빠지면 DLQ = 조용한 유실. <b>병원 비유</b>로 통째 복원</div></div>
+  <div class="tile ok"><div class="k">⑦ 토대</div><div class="d">재시도 · 리밸런싱 후 재수신 · DLQ 재투입 — 셋 다 같은 메시지를 다시 흘린다 → <b>멱등 컨슈머가 전제</b></div></div>
+  <div class="tile"><div class="k">⑧ 구조적 통찰</div><div class="d">선두 차단은 Kafka의 버그가 아니라 <b>로그 기반 모델의 대가</b> — 재소비 가능성과 처리량을 얻은 값이다</div></div>
+</div>
+
+<div class="card">
+  <h4 style="margin-top:0">30초 답변 스크립트 — 그대로 외워 두는 문장</h4>
+  <p style="margin-bottom:0">"<b>먼저 왜 위험한지부터 말씀드리면</b>, 컨슈머는 파티션마다 오프셋 숫자 하나만 들고 있어서 <b>실패한 메시지를 건너뛸 방법이 없습니다.</b> 그래서 하나를 무한 재시도하면 <b>뒤 전체가 멈추고</b>, 대기 시간이 <code>max.poll.interval.ms</code>를 넘으면 <b>리밸런싱까지 나서 그룹 전체가 마비</b>됩니다.<br><br>
+  <b>그래서 저는 세 단계로 설계합니다.</b> ① <b>실패를 분류</b>합니다 — 시간이 지나면 결과가 달라지는 일시적 실패만 재시도하고, 역직렬화·검증 실패 같은 영구적 실패는 <b>재시도 없이 바로 DLQ</b>로 보냅니다. ② <b>재시도 방식은 도메인으로 고릅니다</b> — 순서가 정합성의 전제인 도메인은 <b>블로킹 재시도에 짧은 백오프</b>를 쓰고 <b>부등식을 계산</b>합니다. 순서가 무의미한 도메인은 <b>재시도 토픽</b>으로 긴 백오프를 겁니다. ③ <b>DLQ는 병원처럼</b> 운영합니다 — 진단 헤더를 붙이고, <b>한 건이라도 들어오면 알림</b>을 보내고, <b>재투입 절차</b>를 미리 만들어 둡니다.<br><br>
+  <b>마지막으로</b> 이 전부는 <b>멱등 컨슈머</b> 위에서만 안전합니다. 재시도도 재투입도 결국 같은 메시지를 다시 흘려보내는 일이기 때문입니다."</p>
+</div>
+
+<h3>9-2. 꼬리질문 셀프 테스트</h3>
+<p class="sub">먼저 <b>답을 소리 내어 말해 본 뒤</b> 펼친다. 눈으로 읽고 "아 맞다"는 인출이 아니다.</p>
+
+<details class="q"><summary>재시도 횟수 제한 없이 성공할 때까지 재시도하면 안 되나요?<span class="hint">힌트: "언젠간 성공한다"는 가정이 틀린 실패가 있다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>안 된다.</b> 영구적 실패(잘못된 페이로드, 코드 버그)는 <b>몇 번을 해도 실패</b>하므로 무한 재시도는 그대로 poison pill이 된다.</p>
+  <p>연쇄는 이렇게 이어진다.</p>
+  <div class="chain">
+    <span class="chip r">그 파티션의 뒤 메시지 전체가 멈춤</span><span class="arrow">→</span>
+    <span class="chip r">대기 시간이 <code>max.poll.interval.ms</code> 초과</span><span class="arrow">→</span>
+    <span class="chip r">브로커가 컨슈머를 그룹에서 제외</span><span class="arrow">→</span>
+    <span class="chip r">리밸런싱</span><span class="arrow">→</span>
+    <span class="chip r">재할당받은 컨슈머도 같은 메시지에서 막힘</span><span class="arrow">→</span>
+    <span class="chip r">그룹 전체가 리밸런싱 루프</span>
+  </div>
+  <div class="rule red" style="margin-top:12px">재시도는 반드시 "횟수 제한 + 초과 시 DLQ"와 세트다 — 끝이 없는 재시도는 재시도가 아니라 장애다</div>
+  <p style="margin-bottom:0"><b>덧붙이면 좋은 말</b> — "무한 재시도는 <b>유실을 막으려는 선의</b>에서 나옵니다. 그런데 실제로는 <b>그 메시지 하나를 지키려다 뒤에 선 수만 건을 멈추는</b> 거래를 하는 셈이라, <b>DLQ가 있으면 유실 없이도 흐름을 지킬 수 있다</b>는 점이 핵심입니다."</p>
+</div></details>
+
+<details class="q"><summary>재시도 토픽 방식을 쓰면 무엇을 잃나요?<span class="hint">힌트: 얻은 것(흐름)의 정반대를 생각한다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>같은 키의 순서 보장을 잃는다.</b> 실패 메시지가 재시도 토픽으로 빠진 사이 <b>원본 파티션의 후속 이벤트가 먼저 처리</b>되므로, "상태 변경 → 후속 처리"처럼 <b>순서가 정합성의 전제인 도메인에서는 논블로킹 재시도가 곧 버그</b>다.</p>
+  <p>대응은 두 가지다.</p>
+  <div class="step"><span class="n">1</span><div class="body"><b>순서 민감 도메인은 블로킹 재시도로 간다.</b> 지연을 감수하고 순서를 지킨다. 대신 <a href="#s4">부등식</a>을 반드시 계산한다.</div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>키 단위 순서 유지 로직을 얹는다.</b> 재시도 중인 키를 컨슈머가 기억해 두었다가, 그 키의 후속 메시지가 오면 <b>함께 보류하거나 같은 재시도 경로로 보낸다.</b></div></div>
+  <div class="callout trap" style="margin-top:12px"><span class="t">2번을 말했다면 반드시 따라올 반문</span>
+  구현 복잡도가 크다 — <b>재시도 중인 키 목록을 어디에 둘 것인지</b>(메모리? 외부 저장소?), <b>컨슈머가 재시작하면 그 목록은 어떻게 되는지</b>, <b>보류된 메시지가 쌓이면 결국 파티션이 막히는 것 아닌지</b>까지 답해야 한다. 그래서 <b>"그 복잡도를 감수할 만큼 논블로킹이 필요한가"부터 되묻는 것</b>이 실무 판단이다.
+  </div>
+  <p style="margin-bottom:0"><b>변별 포인트는 지식이 아니라 환원</b>이다 — 두 방식의 이름을 아는 것은 지식이고, <b>어느 쪽을 포기할지를 도메인 요구로 환원해 말하는 것</b>이 설계다.</p>
+</div></details>
+
+<details class="q"><summary>어떤 예외는 재시도하고 어떤 예외는 바로 DLQ로 보내나요?<span class="hint">힌트: 예외 목록을 외우는 게 아니라 기준 한 줄을 든다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p>기준은 <b>"시간이 지나면 결과가 달라지는가"</b> 하나다.</p>
+  <div class="split" style="margin-top:8px">
+    <div class="pane g"><h4>재시도 (일시적)</h4><p style="margin:0;font-size:.94rem"><b>타임아웃 · 커넥션 실패 · 락 경합 · 일시적 5xx</b> — 상대가 회복되거나 경합이 풀리면 성공한다. 재시도에 <b>가치가 있다.</b></p></div>
+    <div class="pane r"><h4>즉시 DLQ (영구적)</h4><p style="margin:0;font-size:.94rem"><b>역직렬화 실패 · 검증 실패 · NPE</b> — 바이트가 바뀌거나 코드를 고치기 전에는 결과가 안 바뀐다. 재시도가 <b>무의미하다.</b></p></div>
+  </div>
+  <p style="margin-top:12px">코드로는 <b>예외 타입을 분리해 에러 핸들러에 등록</b>한다(Spring Kafka의 <code>addNotRetryableExceptions</code>).</p>
+  <p style="margin-bottom:0">이 분류를 안 하면 <b>영구 실패 메시지가 재시도 횟수만큼 파티션을 붙잡아</b> 정상 메시지들의 지연을 키운다. <a href="#s4">4절</a>에서 본 대로 그 지연이 <code>max.poll.interval.ms</code> 압박으로도 이어진다 — <b>분류는 정확성 문제가 아니라 시간 예산 문제다.</b></p>
+</div></details>
+
+<details class="q"><summary>재시도하면 중복 처리가 생길 수 있지 않나요?<span class="hint">힌트: 생긴다. 경로가 둘이다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>생긴다.</b> 경로가 둘이다.</p>
+  <ul>
+    <li><b>처리는 성공했는데 오프셋 커밋 전에 실패한 경우</b> — 재시도가 곧 중복이다. (컨슈머 강제 종료, 리밸런싱 등)</li>
+    <li><b>DLQ 재투입</b> — 이미 일부 처리된 메시지를 다시 흘려보내는 것이므로 중복 가능성이 있다.</li>
+  </ul>
+  <p>Kafka의 기본 세계관이 <b>at-least-once</b>(최소 한 번 전달, 중복 허용)이므로 <b>재시도/DLQ 설계는 멱등 컨슈머를 전제로 성립</b>한다. 이벤트 고유 키로 처리 이력을 기록해 두 번째 처리를 건너뛰는 방식이 대표적이다. (04번 문서)</p>
+  <div class="rule">"재시도 설계와 멱등성 설계는 한 몸"</div>
+  <p style="margin-bottom:0"><b>멱등하지 않은 컨슈머에 재시도를 붙이는 것은 중복 처리를 늘리는 장치를 다는 것과 같다.</b> 재시도 횟수를 3으로 올리는 순간, 부분 성공 후 실패하는 케이스에서 <b>부작용이 최대 3번</b> 일어날 수 있다는 뜻이기 때문이다.</p>
+</div></details>
+
+<details class="q"><summary>DLQ에 쌓인 메시지는 실제로 어떻게 운영하나요?<span class="hint">힌트: 절차를 순서대로. 마지막 칸을 빠뜨리지 않는다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><a href="#s7">7-3</a>의 운영 루프를 순서대로 말하면 된다.</p>
+  <div class="chain">
+    <span class="chip r">들어오는 즉시 알림</span><span class="arrow">→</span>
+    <span class="chip b">헤더의 예외 정보로 원인 분류</span><span class="arrow">→</span>
+    <span class="chip b">원인 수정</span><span class="arrow">→</span>
+    <span class="chip g">재투입 도구로 원본 처리 경로에 재투입</span><span class="arrow">→</span>
+    <span class="chip g">재투입 후 DLQ 비움 확인(랙 0)</span>
+  </div>
+  <p style="margin-top:12px">원인 분류는 <b>코드 버그 / 외부 장애 / 데이터 오류</b> 세 갈래다. 앞의 둘은 <b>고친 뒤 그대로 재소비</b>하면 되고, <b>데이터 오류처럼 재처리가 불가능한 건</b>은 비즈니스 부서와 협의해 수동 보정하거나 폐기를 결정하고 <b>그 근거를 반드시 남긴다.</b> 나중에 <b>"이 데이터는 왜 없나"</b>라는 질문이 반드시 온다.</p>
+  <p style="margin-bottom:0"><b>핵심 문장</b> — "<b>DLQ에 넣는 것"이 아니라 "DLQ에서 꺼내는 것"까지가 설계</b>다. 그리고 마지막 칸(<b>랙 0 복귀 확인</b>)을 빠뜨리지 않는 것이 실제로 운영해 본 사람의 답이다.</p>
+</div></details>
+
+<details class="q"><summary>블로킹 재시도가 시간이 부족하면 <code>max.poll.interval.ms</code>를 크게 잡으면 되지 않나요?<span class="hint">힌트: 그 값이 원래 무엇을 위한 값인지 생각한다</span> <span class="badge trap">함정</span></summary><div class="a">
+  <p><b>가능하지만 마지막 수단이다.</b> 그 값은 원래 <b>"진척 없는 컨슈머를 감지하는 시간"</b>이기 때문이다.</p>
+  <p><code>max.poll.interval.ms</code>를 10분으로 늘리면 <b>진짜로 멈춘 컨슈머</b>(무한 루프, 데드락, GC 폭주, 외부 호출 무한 대기)를 그룹이 <b>10분 동안 정상으로 간주</b>한다. 그 10분 동안 그 컨슈머가 맡은 파티션들은 <b>아무도 소비하지 않는다.</b> 즉 <b>재시도를 여유롭게 돌리려고 장애 감지를 무디게 만드는 교환</b>이다.</p>
+  <div class="scroll" style="margin-top:10px">
+  <table>
+    <thead><tr><th>순서</th><th>손대는 값</th><th>왜 이 순서인가</th></tr></thead>
+    <tbody>
+      <tr class="hl"><td><b>1순위</b></td><td><code>max.poll.records</code>를 줄인다</td><td><b>곱해지는 항</b>이라 효과가 가장 크고, 대가(약간의 처리량·오버헤드)가 가장 작다</td></tr>
+      <tr><td><b>2순위</b></td><td>재시도 횟수 · 백오프를 줄인다</td><td>대가는 <b>DLQ 유입 증가</b> — 일시 장애가 회복되기 전에 포기할 수 있다</td></tr>
+      <tr><td><b>3순위</b></td><td><code>max.poll.interval.ms</code>를 늘린다</td><td class="bad">대가가 <b>다른 종류의 위험</b>(장애 감지 지연)이라 마지막</td></tr>
+      <tr><td><b>대안</b></td><td>애초에 <b>재시도 토픽</b>으로 간다</td><td>순서를 포기할 수 있는 도메인이라면 이 문제 자체가 사라진다</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin-bottom:0"><b>이 순서를 말할 수 있으면</b> "설정값을 올려서 해결한다"는 사람과 확실히 구분된다. (35번 문서)</p>
+</div></details>
+
+<details class="q"><summary>DLQ로 보내는 것 자체가 실패하면 어떻게 되나요?<span class="hint">힌트: 실패 처리 경로도 실패할 수 있다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>메시지는 유실되지 않지만, poison pill 상태로 되돌아간다.</b></p>
+  <p>recoverer(DLQ 발행)가 실패하면 <b>그 레코드의 오프셋은 커밋되지 않고 예외가 전파</b>된다. 즉 <b>"치우기"가 실패했으므로 메시지는 원래 자리에 남아 다시 막는다.</b> 유실이 없다는 점은 다행이지만, <b>DLQ 경로가 무너지면 우리가 방금 설계한 모든 것이 무력해진다</b>는 뜻이기도 하다.</p>
+  <p><b>DLQ 발행이 실패하는 대표 원인 세 가지</b>와 사전 조치는 이렇다.</p>
+  <ul class="chk x">
+    <li><b>DLT 토픽이 없다</b> — 자동 생성이 꺼진 클러스터에서 흔하다. → <b>DLT 토픽을 사전에 만들어 두고 배포 체크리스트에 넣는다.</b></li>
+    <li><b>DLT 파티션 수가 원본보다 적다</b> — 기본 동작이 원본 파티션 번호를 그대로 쓰기 때문. → <b>목적지 함수로 파티션을 <code>-1</code>로 지정</b>하거나 파티션 수를 맞춘다.</li>
+    <li><b>브로커/네트워크 장애</b> — 원본을 못 읽는 상황이면 DLT에도 못 쓴다. → 이건 <b>구조적으로 못 피한다.</b> 브로커가 살아나면 재개되도록 두고, <b>알림으로 인지</b>하는 것이 답이다.</li>
+  </ul>
+  <div class="callout warn" style="margin-top:10px;margin-bottom:0"><span class="t">"DLQ의 DLQ를 만들면 되지 않나요"에 대한 답</span>
+  <b>만들지 않는다.</b> 실패 경로를 무한히 겹치면 <b>어디까지 가야 끝인지</b>에 답할 수 없고, 관리 대상만 늘어난다. 대신 <b>"DLQ 발행 실패"를 별도의 강한 알림</b>으로 올려 <b>사람이 즉시 개입</b>하게 만드는 것이 실무 답이다. <b>자동화의 종착점은 사람</b>이라는 것을 인정하는 지점이 설계에 반드시 하나는 있어야 한다.
+  </div>
+</div></details>
+
+<details class="q"><summary>역직렬화 실패는 왜 리스너 안의 <code>try-catch</code>로 못 잡나요?<span class="hint">힌트: 리스너 메서드는 언제 호출되는가</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>역직렬화는 리스너 메서드가 호출되기 전 단계에서 일어나기 때문</b>이다. 바이트를 객체로 바꾸는 데 실패하면 <b>리스너에 넘길 인자 자체를 만들 수 없으므로</b>, 리스너 본문은 애초에 실행되지 않는다. 그 안의 <code>try-catch</code>가 잡을 기회가 없다.</p>
+  <figure style="margin:12px 0">
+    <svg viewBox="0 0 880 170" role="img" aria-label="역직렬화 실패 지점을 보여주는 도식. 브로커에서 가져온 바이트가 역직렬화 단계를 거쳐야 리스너 메서드로 전달되는데, 역직렬화 단계에서 실패하면 리스너에 도달하지 못하므로 리스너 안의 try-catch는 무력하다는 것을 표시한다.">
+      <defs><marker id="a14" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker></defs>
+      <rect x="14" y="46" width="150" height="48" rx="9" fill="#1e293b"/>
+      <text x="89" y="76" font-size="12" font-weight="700" fill="#e2e8f0" text-anchor="middle">브로커에서 받은 바이트</text>
+      <path d="M168,70 L206,70" stroke="#2563eb" stroke-width="2" marker-end="url(#a14)"/>
+      <rect x="210" y="40" width="180" height="60" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+      <text x="300" y="64" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">역직렬화 (Deserializer)</text>
+      <text x="300" y="84" font-size="11" fill="#7f1d1d" text-anchor="middle">여기서 터진다</text>
+      <path d="M394,70 L432,70" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a14)"/>
+      <rect x="436" y="40" width="200" height="60" rx="9" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="5 4"/>
+      <text x="536" y="64" font-size="12" font-weight="700" fill="#64748b" text-anchor="middle">리스너 메서드</text>
+      <text x="536" y="84" font-size="11" fill="#94a3b8" text-anchor="middle">호출되지 않는다 → try-catch 무력</text>
+      <rect x="660" y="34" width="206" height="72" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+      <text x="763" y="56" font-size="11.5" font-weight="800" fill="#15803d" text-anchor="middle">ErrorHandlingDeserializer</text>
+      <text x="763" y="76" font-size="10.8" fill="#166534" text-anchor="middle">실제 역직렬화기를 감싸서</text>
+      <text x="763" y="93" font-size="10.8" fill="#166534" text-anchor="middle">예외를 <tspan font-weight="700">헤더에 담아</tspan> 넘긴다</text>
+      <path d="M300,110 C300,142 640,142 700,112" stroke="#16a34a" stroke-width="1.8" fill="none" stroke-dasharray="6 4"/>
+      <text x="500" y="152" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">→ 그래야 컨테이너의 에러 핸들러가 <tspan class="mono">DeserializationException</tspan>으로 분류·DLQ 처리할 수 있다</text>
+    </svg>
+  </figure>
+  <p>아무 대비 없이 두면 <b>그 레코드에서 계속 같은 예외가 나며 진행이 막힌다</b> — 전형적인 poison pill이다. Spring Kafka는 이를 위해 <b><code>ErrorHandlingDeserializer</code></b>를 제공한다. 실제 역직렬화기를 감싸서, 실패했을 때 <b>예외를 터뜨리는 대신 예외 정보를 헤더에 담아 컨테이너의 에러 핸들러로 넘긴다.</b></p>
+  <p style="margin-bottom:0"><b>이걸 붙여야 비로소</b> <code>addNotRetryableExceptions(DeserializationException.class)</code> 같은 분류가 <b>실제로 작동</b>한다. "분류 코드를 짰는데 왜 안 걸리지"의 대표 원인이 이것이다.</p>
+</div></details>
+
+<details class="q"><summary>블로킹 재시도 도중 컨슈머가 재시작되면 재시도 횟수는 어떻게 되나요?<span class="hint">힌트: 그 카운터는 어디에 저장돼 있나</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>초기화된다 — 처음부터 다시 시도한다.</b></p>
+  <p>Spring Kafka의 블로킹 재시도는 <b>"이 레코드를 몇 번 시도했는지"를 컨슈머 프로세스의 메모리에서 추적</b>한다. 그래서 <b>재시작·리밸런싱으로 파티션 주인이 바뀌면 그 카운터는 남아 있지 않고</b>, 새 컨슈머는 마지막 커밋 오프셋부터 읽어 <b>그 메시지를 1회차부터</b> 시도한다.</p>
+  <div class="split" style="margin-top:8px">
+    <div class="pane r"><h4>블로킹 — 상태가 <u>메모리</u>에</h4><p style="margin:0;font-size:.94rem">배포가 잦거나 리밸런싱이 잦은 환경에서는 <b>같은 메시지가 예상보다 훨씬 많이 재시도</b>될 수 있다. "3회 제한"이 실제로는 3회가 아닐 수 있다는 뜻이다.</p></div>
+    <div class="pane g"><h4>재시도 토픽 — 상태가 <u>브로커</u>에</h4><p style="margin:0;font-size:.94rem">"몇 단계까지 갔는지"가 <b>어느 토픽에 있는가</b>로 표현되므로 재시작에 영향을 받지 않는다. <b>재시도 진행 상태가 영속화</b>돼 있는 셈이다.</p></div>
+  </div>
+  <p style="margin-top:12px;margin-bottom:0"><b>실무적 함의</b> — 멱등성이 없으면 이 차이가 곧 <b>부작용 반복 횟수의 차이</b>가 된다. 그리고 <b>"재시도 상태를 어디에 두느냐"</b>라는 관점으로 두 방식을 비교할 수 있으면, 표를 외운 사람이 아니라 구조를 이해한 사람으로 들린다.</p>
+</div></details>
+
+<details class="q"><summary>DLQ에 며칠 묵은 메시지를 재투입할 때 주의할 점은?<span class="hint">힌트: 그 사이 무엇이 바뀌었을까</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p><b>재투입 메시지는 "실패 당시의 코드"가 아니라 "수정된 현재 코드"로 처리된다.</b> 그 사이 <b>스키마가 진화했다면</b> 구버전 메시지를 현재 컨슈머가 읽을 수 있는지 — <b>하위 호환성</b> — 를 먼저 확인해야 한다.</p>
+  <ul class="chk">
+    <li><b>스키마 호환성</b> — 그 사이 필드가 필수로 바뀌었거나 제거됐다면, 재투입한 순간 <b>다시 역직렬화 실패</b>로 DLQ에 돌아온다.</li>
+    <li><b>비즈니스 시효</b> — 3일 지난 "재고 예약" 이벤트를 지금 처리하는 것이 <b>맞는 일인가</b>. 기술적으로 가능해도 업무적으로 틀릴 수 있다.</li>
+    <li><b>후속 상태와의 충돌</b> — 그 사이 같은 엔티티에 <b>더 최신 이벤트가 이미 반영</b>됐다면, 재투입이 <b>오래된 값으로 덮어쓰기</b>가 될 수 있다.</li>
+    <li><b>DLQ 보존 기간</b> — DLQ retention이 짧으면 <b>조사에 착수하기 전에 증거가 삭제</b>된다. 원본보다 <b>길게</b> 잡아 두는 것이 안전하다.</li>
+  </ul>
+  <p style="margin-bottom:0">특히 세 번째는 놓치기 쉽다 — <b>재투입은 "시간을 거슬러 과거 이벤트를 지금 적용하는 일"</b>이라, 순서를 다루던 24번 문서의 문제가 여기서 다시 나타난다. <b>"재투입 전에 스키마 호환성과 최신 상태 충돌을 확인한다"</b>는 한마디가 실제 운영 경험의 신호다. (06번 문서)</p>
+</div></details>
+
+<details class="q"><summary>배치 리스너(한 번에 여러 건 처리)에서는 재시도가 어떻게 달라지나요?<span class="hint">힌트: 배치 중 3번째가 실패하면 나머지는?</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>"어느 레코드가 실패했는지"를 알려 주지 않으면 배치 전체가 재시도된다.</b> 이것이 배치 리스너의 핵심 함정이다.</p>
+  <div class="split" style="margin-top:8px">
+    <div class="pane r"><h4>알려 주지 않으면</h4><p style="margin:0;font-size:.94rem">배치 안에서 <b>3번째가 실패</b>해도 프레임워크는 그 사실을 모르므로 <b>배치 전체를 다시</b> 처리한다 → <b>1·2번은 두 번 처리</b>되고(멱등성 없으면 사고), 재시도 시간도 배치 크기만큼 곱해진다.</p></div>
+    <div class="pane g"><h4>알려 주면</h4><p style="margin:0;font-size:.94rem"><code>BatchListenerFailedException</code>에 <b>실패한 레코드의 인덱스</b>를 담아 던지면, 프레임워크가 <b>그 앞까지는 커밋</b>하고 <b>실패 레코드만 재시도/DLQ 처리</b>한 뒤 나머지를 이어서 진행한다.</p></div>
+  </div>
+  <p style="margin-top:12px">그래서 <b>배치 리스너를 쓸 때는 "실패 지점을 프레임워크에 알려 줄 수 있는 형태로" 예외를 던지는 것</b>이 설계의 일부다. 단순히 <code>RuntimeException</code>을 던지면 위의 왼쪽 상황이 된다.</p>
+  <p style="margin-bottom:0"><b>부등식 관점의 함의</b> — 배치 리스너는 <b>한 번의 <code>poll()</code>에서 처리하는 건수가 크므로</b> 재시도 시간 예산 계산이 더 빡빡하다. <b>배치 크기와 재시도 정책은 함께 정해야</b> 한다.</p>
+</div></details>
+
+<details class="q"><summary>DLQ 토픽은 원본 토픽마다 하나씩 두나요, 서비스에 하나만 두나요?<span class="hint">힌트: 정답은 없지만 판단 근거는 있다</span></summary><div class="a">
+  <p><b>기본은 "원본 토픽마다 하나"</b>다. 프레임워크 기본 동작(<code>원본명 + .DLT</code>)도 그렇고, 이유가 분명하다.</p>
+  <div class="scroll" style="margin-top:8px">
+  <table>
+    <thead><tr><th>방식</th><th>장점</th><th>단점</th><th>적합한 상황</th></tr></thead>
+    <tbody>
+      <tr class="hl"><td><b>토픽별 DLQ</b><br>(<code>orders.DLT</code>, <code>payments.DLT</code>)</td><td>재투입 대상이 <b>자동으로 좁혀진다</b> · 스키마가 하나라 역직렬화가 단순 · 알림을 <b>팀/도메인별로</b> 나눌 수 있다</td><td>토픽 수가 늘어난다 · 모니터링 대시보드가 많아진다</td><td>대부분의 경우 — <b>기본값으로 삼는다</b></td></tr>
+      <tr><td><b>서비스 공용 DLQ</b><br>(<code>svc-orders.dlq</code> 하나)</td><td>토픽 수가 적다 · 알림 한 곳만 보면 된다</td><td class="bad"><b>여러 스키마가 섞여</b> 재투입 도구가 복잡해진다 · 특정 원본만 재투입하려면 <b>필터링이 필요</b>하다</td><td>토픽 수가 매우 많고 실패가 드문 저트래픽 서비스</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin-top:10px;margin-bottom:0"><b>판단 기준 한 줄</b> — <b>"재투입할 때 무엇을 골라내야 하는가"</b>로 정한다. 공용 DLQ는 <b>넣기</b>는 편하지만 <b>꺼내기</b>가 어렵고, DLQ 설계의 목적은 <b>꺼내는 것</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>재시도 토픽 자체가 밀리기 시작하면 어떻게 하나요?<span class="hint">힌트: 재시도 토픽도 그냥 토픽이다</span></summary><div class="a">
+  <p>재시도 토픽은 <b>그 자체로 또 하나의 토픽</b>이라 <b>자기만의 랙</b>이 생긴다. "원본은 멀쩡한데 <code>retry-0</code>이 수십만 건 밀리는" 상황은 실제로 자주 온다 — 외부 시스템이 <b>장기 장애</b>일 때가 전형적이다.</p>
+  <div class="step"><span class="n">1</span><div class="body"><b>원인이 하나인지 먼저 본다.</b> 재시도 토픽에 쌓인 메시지의 <b>예외가 전부 같은 종류</b>라면 개별 재시도는 의미가 없다 — <b>공통 원인(외부 시스템 다운)</b>이 있다는 뜻이다.</div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>그렇다면 재시도를 계속 도는 것이 오히려 해롭다.</b> 죽은 상대에게 계속 요청을 보내는 셈이라 <b>회복을 방해</b>한다. 서킷 브레이커처럼 <b>재시도 컨슈머를 잠시 멈추는 것</b>이 나을 수 있다.</div></div>
+  <div class="step warn"><span class="n">3</span><div class="body"><b>재시도 토픽 컨슈머의 처리량을 원본과 별도로 조정한다.</b> 재시도 토픽은 <b>독립된 컨슈머 그룹</b>이므로 파티션 수·컨슈머 수·동시성을 <b>따로</b> 정할 수 있다. 원본과 같게 맞출 이유가 없다.</div></div>
+  <div class="step ok"><span class="n">4</span><div class="body"><b>모니터링에 재시도 토픽 랙을 반드시 포함한다.</b> 원본 랙만 보면 <b>"정상"으로 보이는데 실제로는 대량 실패 중</b>인 상태를 놓친다 — 논블로킹 재시도의 대표적 관측 사각지대다.</div></div>
+  <p style="margin-bottom:0"><b>구조적으로 말하면</b> — 논블로킹 재시도는 <b>선두 차단을 없앤 대신 "실패가 쌓이는 곳"을 원본 밖으로 옮긴 것</b>이다. 문제가 사라진 게 아니라 <b>더 관리하기 좋은 자리로 이동</b>했을 뿐이므로, <b>그 자리를 보고 있어야</b> 이동의 이득이 실현된다.</p>
+</div></details>
+
+<details class="q"><summary>같은 설계를 RabbitMQ에서 하면 무엇이 달라지나요?<span class="hint">힌트: 브로커가 대신 해 주는 일이 늘어난다</span></summary><div class="a">
+  <p><b>"지연 후 재처리"를 우리가 만들지 않고 브로커 기능으로 얻는다</b>는 것이 가장 큰 차이다.</p>
+  <div class="scroll" style="margin-top:8px">
+  <table>
+    <thead><tr><th>관심사</th><th>Kafka</th><th>RabbitMQ</th></tr></thead>
+    <tbody>
+      <tr><td><b>실패 하나의 영향</b></td><td class="bad">선두 차단 — 뒤 전체가 멈춘다</td><td class="good">메시지별 ack/nack — 뒤는 그대로 흐른다</td></tr>
+      <tr><td><b>실패 메시지 격리</b></td><td>DLT 토픽으로 <b>직접 발행</b></td><td><code>x-dead-letter-exchange</code>로 <b>브로커가 이동</b></td></tr>
+      <tr><td><b>지연 재시도</b></td><td>재시도 토픽 계단을 <b>직접 구성</b></td><td>TTL 대기 큐 + DLX로 <b>브로커가 타이머</b> 역할</td></tr>
+      <tr><td><b>고유 함정</b></td><td><code>max.poll.interval.ms</code> 초과 → 리밸런싱</td><td class="bad"><b>requeue 무한 루프</b> — nack + requeue가 즉시 재배달을 반복</td></tr>
+      <tr><td><b>재소비(replay)</b></td><td class="good">오프셋을 되감아 언제든 가능</td><td class="bad">ack하면 삭제 — 되감기 없음</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin-top:10px;margin-bottom:0"><b>공통인 것</b> — 브로커가 무엇이든 <b>"실패를 분류하고, 제한 횟수로 재시도하고, 끝내 안 되는 것은 격리하고, 격리된 것을 꺼내는 절차를 만든다"</b>는 뼈대는 같다. <b>제품 지식이 아니라 실패 경로 설계라는 사고 습관</b>이 본질이라는 것을 이 대조가 보여준다. 상세는 <code>14-rabbitmq-retry-dlx-dlq.md</code>.</p>
+</div></details>
+
+<details class="q"><summary>"우리 서비스는 실패가 거의 없어서 DLQ까지는 과하다"는 말에 어떻게 답하나요?<span class="hint">힌트: DLQ의 비용과 부재의 비용을 비교한다</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p><b>실패가 드물수록 DLQ가 더 필요하다</b>는 것이 답이다. 역설처럼 들리지만 이유가 분명하다.</p>
+  <ul class="chk">
+    <li><b>드문 실패일수록 대비가 없다.</b> 자주 나는 실패는 어차피 사람이 보고 있다. <b>1년에 한 번 나는 실패</b>가 새벽에 터졌을 때 파이프라인 전체를 멈추는 것이다.</li>
+    <li><b>DLQ의 구축 비용은 일회성이고 작다.</b> 토픽 하나 + 에러 핸들러 빈 하나 + 알림 하나다. <b>없을 때의 비용</b>은 장애 시간 &times; 밀린 메시지 수다.</li>
+    <li><b>실패가 없다는 것은 대개 "관측되지 않았다"는 뜻</b>이다. 예외를 삼키는 코드가 있으면 실패율은 항상 0으로 보인다 — <b>DLQ를 붙이는 순간 진짜 실패율이 드러나는</b> 경우가 흔하다.</li>
+  </ul>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "DLQ는 <b>실패가 많아서 만드는 장치가 아니라, 실패했을 때 무엇을 할지 정해 두는 장치</b>입니다. 실패 확률이 아니라 <b>실패 시 영향</b>으로 판단해야 하고, 여기서 영향은 <b>파티션 전체 정지</b>라 항상 큽니다."</p>
+</div></details>
+
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  파티션은 <b>오프셋 하나로만 진행 상태를 표현하는 한 줄 대기열</b>이라 실패 메시지 하나를 무한 재시도하면 <b>뒤 전체가 멈추고(poison pill)</b> 대기 시간이 <code>max.poll.interval.ms</code>를 넘겨 <b>리밸런싱까지 부르므로</b>, 실패를 <b>일시적/영구적으로 분류</b>해 일시적 실패만 <b>제한 횟수로 재시도</b>(순서가 중요하면 블로킹, 흐름이 중요하면 재시도 토픽)하고 나머지는 <b>진단 헤더를 붙여 DLQ로 치운 뒤</b> — <b>유입 알림 · 원인 분류 · 재투입</b>까지 이어지는 운영 루프를 <b>멱등 컨슈머 위에</b> 세우는 것이 재시도/DLQ 설계의 전부다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/06-messaging/25-consumer-retry-dlq-design.md</code> · 이어서 볼 문서: Kafka vs RabbitMQ(02) · 전달 보장 시맨틱(03) · 멱등 컨슈머 구현(04) · 스키마 진화 호환성(06) · RabbitMQ 재시도·DLX·DLQ(14) · Kafka 핵심 구성요소(21) · 파티션과 컨슈머 수(22) · 오프셋 커밋(23) · 메시지 순서와 파티션 키(24) · 리밸런싱과 in-flight 메시지(26) · 컨슈머 랙 진단(31) · max.poll.interval.ms vs session.timeout.ms(35)</p>
+</main>
+</body>
+</html>

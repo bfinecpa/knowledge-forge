@@ -1,0 +1,1638 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RabbitMQ 컨슈머 처리량 올리기 — prefetch, 동시성, 채널 모델과 그 대가</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">06 메시징 · 이벤트 &nbsp;|&nbsp; RabbitMQ 컨슈머 처리량 ⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>RabbitMQ 컨슈머 처리량 올리기 — prefetch, 동시성, 채널 모델과 그 대가<br><span class="sub">1순위는 언제나 「워커를 늘린다」 — 내부 튜닝은 분배 공정성·순서·부분 실패 ack을 대가로 낸다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"RabbitMQ 컨슈머의 처리량을 높이는 방법은? (prefetch 튜닝, 리스너 동시성, connection/channel 모델) 이때 순서 보장과 ack 처리는 어떻게 달라지나요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — RabbitMQ의 처리량 확장은 <b>Kafka보다 단순하다 — 파티션 수 같은 상한이 없어서 큐 하나에 컨슈머를 몇 대든 붙일 수 있다.</b> 그래서 1차 수단은 항상 <b>"워커를 늘린다"</b>이고, 그것으로 부족할 때 컨슈머 내부를 손댄다. 내부 수단은 셋이다: <b>① prefetch를 키워 네트워크 왕복을 줄이고, ② 리스너 동시성(스레드 수)을 올려 한 프로세스가 여러 건을 병렬 처리하고, ③ 메시지를 모아 배치로 처리해 DB 왕복을 줄인다.</b> 그런데 셋 다 무언가를 대가로 낸다 — <b>prefetch를 키우면 부하 분배가 불균등해지고 실패 시 순서가 크게 흐트러지며, 동시성을 올리면 순서가 완전히 사라지고 다운스트림 부하가 배로 늘며, 배치는 "일부만 실패했을 때 어디까지 ack할 것인가"라는 문제를 새로 만든다.</b> 그리고 모든 수단에 앞서 확인할 것이 있다 — <b>병목이 정말 컨슈머인가.</b> 병목이 DB인데 워커를 늘리면 DB만 더 아프다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>설정을 만지기 전에 병목부터 확정합니다.</b> <b>컨슈머 프로세스의 스레드 덤프</b>를 떠서 대부분의 스레드가 <b>DB 커넥션 대기·외부 API 응답 대기·실제 연산</b> 중 어디에 있는지 봅니다. <b>실제 연산 중일 때만</b> 컨슈머 증설·튜닝이 제값을 하고, <b>DB 대기라면 워커 증설은 DB를 더 아프게 할 뿐</b>입니다.</div></li>
+    <li><span class="n">2</span><div><b>그다음 1순위는 워커 증설입니다.</b> Kafka는 <b>파티션 수가 컨슈머 수의 상한</b>이라 급할 때 못 늘리지만, <b>RabbitMQ는 큐 하나에 컨슈머 100대를 붙여도 100대가 모두 일합니다.</b> 그래서 <b>일단 늘려보고, 그래도 부족할 때 내부를 손대는</b> 순서를 지킵니다 — 반대로 하면 튜닝하는 동안 큐만 쌓입니다.</div></li>
+    <li><span class="n">3</span><div><b>내부 수단 셋은 각각 정해진 대가가 있습니다.</b> <b>prefetch는 분배 공정성</b>(한 대가 다 쥐면 나머지가 논다), <b>동시성은 순서</b>(주체가 둘이 되는 순간 순서는 확실히 깨진다), <b>배치는 부분 실패 ack</b>(100건 중 37번만 실패했을 때 어디까지 ack할 것인가)입니다. 그리고 <b>동시성·DB 커넥션 풀·다운스트림 허용량은 반드시 함께 맞춰야</b> 합니다 — 이 불균형이 튜닝 실패의 대부분입니다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 이 문서가 겨냥하는 약점</a></li>
+    <li><a href="#s1">전제 — 처리량은 어디서 나오는가, 병목은 어디인가</a></li>
+    <li><a href="#s2">두 갈래로 갈라 보기 · 갈래 A① prefetch</a></li>
+    <li><a href="#s3">갈래 A② 배치 처리 — 건당 비용과 부분 실패 ack</a></li>
+    <li><a href="#s4">갈래 B — 리스너 동시성과 커넥션·채널 모델</a></li>
+    <li><a href="#s5">튜닝 순서와 대가 총정리</a></li>
+    <li><a href="#s6">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+    <li><a href="#summary">한 줄 요약</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도 · 이 문서가 겨냥하는 약점</h2>
+<div class="card">
+  <p><b>질문</b>: "RabbitMQ 컨슈머의 처리량을 높이는 방법은? <b>(prefetch 튜닝, 리스너 동시성, connection/channel 모델)</b> 이때 <b>순서 보장과 ack 처리</b>는 어떻게 달라지나요?"</p>
+  <p><b>출제 의도</b>: <b>처리량을 올리는 모든 수단이 순서 보장이나 ack 정확성을 대가로 요구한다</b>는 것을 인식하는지 본다. <b>튜닝의 부작용을 미리 말하는지</b>, 그리고 <b>병목을 확인하지 않고 설정부터 바꾸는 습관이 없는지</b>를 확인한다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">질문 문장의 뒷부분이 진짜 채점 구간이다</span>
+    앞부분(<b>prefetch·동시성·채널 모델</b>)은 <b>설정 이름을 아는가</b>를 묻는 지식 구간이라 검색으로도 답할 수 있다. 변별은 뒤에서 난다 — <b>"이때 순서 보장과 ack 처리는 어떻게 달라지나요"</b>는 <b>수단마다 내는 대가가 다르다는 것</b>을 전제로 한 질문이다. 즉 면접관은 <b>"prefetch를 200으로 올립니다"</b> 같은 숫자가 아니라 <b>"올리면 무엇을 잃습니까"</b>를 듣고 싶어 한다.
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">먼저 깨야 할 오해 4개 — 아래 절들이 각각 이것을 겨냥한다</span>
+  ① <b>"처리량이 부족하면 설정을 튜닝한다"</b> → 순서가 거꾸로다. <b>병목이 컨슈머가 아니면 어떤 설정도 효과가 없고</b>, DB가 병목인데 워커를 늘리면 <b>DB만 더 아프다</b> (1절).<br>
+  ② <b>"prefetch를 키우면 처리량이 올라간다"</b> → prefetch가 없애는 것은 <b>메시지 사이의 왕복 대기뿐</b>이다. <b>건당 처리에 500ms가 걸리면 왕복 1ms를 없애 봐야 0.2%</b>이고, 대신 <b>부하 분배가 무너진다</b> (2절).<br>
+  ③ <b>"배치로 묶으면 무조건 빠르다"</b> → 빨라지는 것은 맞지만 <b>"100건 중 37번째만 실패했을 때 어디까지 ack할 것인가"</b>라는 문제가 새로 생긴다. <b>멱등성이 없으면 배치는 쓸 수 없다</b> (3절).<br>
+  ④ <b>"동시성을 올리면 그만큼 빨라진다"</b> → <b>DB 커넥션 풀이 10인데 동시성이 20이면 10개 스레드는 풀 대기만 한다.</b> 자원만 더 쓰고 처리량은 그대로다 (4절).
+</div>
+
+<div class="callout info"><span class="t">이 페이지를 읽는 축 — 수단을 나열 순서대로 외우지 말고 「두 갈래」로 묶는다</span>
+  내부 수단 셋은 나열하면 <b>prefetch · 동시성 · 배치</b>지만, <b>내는 대가의 종류</b>로 묶으면 두 갈래가 된다. <b>갈래 A(prefetch·배치)는 "한 대가 한 번에 더 많이 쥐게" 하는 것</b>이라 처리 주체가 하나로 남고 <b>순서를 덜 흔들며</b>, <b>갈래 B(동시성·워커 증설)는 "처리 주체 자체를 늘리는" 것</b>이라 <b>순서가 확실히 깨진다.</b> 그래서 <b>순서 요구가 걸린 큐라면 A를 먼저 쓰고 B는 그다음</b>이라는 판단이 자동으로 따라 나온다. 2절 첫머리의 도식이 이 축이다.
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 전제 — 처리량은 어디서 나오는가, 병목은 어디인가</h2>
+
+<h3>1-1. 처리량을 곱셈으로 분해한다</h3>
+
+<p>"처리량을 올려주세요"는 그대로는 손댈 곳이 없는 요구다. 먼저 <b>곱셈으로 분해</b>해야 어디를 만질지가 정해진다. 컨슈머 전체 처리량은 <b>세 요소의 곱</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="컨슈머 전체 처리량을 프로세스 수, 프로세스당 스레드 수, 스레드당 초당 처리 건수의 곱으로 분해하고 각 항을 올리는 수단과 그 대가를 보여주는 도식. prefetch는 곱셈 밖에서 스레드의 유휴 시간을 없애는 보정 항으로 표시">
+    <text x="560" y="24" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">전체 처리량 = ① 프로세스 수 × ② 프로세스당 스레드 수 × ③ 스레드당 초당 처리 건수</text>
+
+    <rect x="16" y="44" width="330" height="132" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <circle cx="46" cy="72" r="14" fill="#16a34a"/><text x="46" y="77" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">1</text>
+    <text x="70" y="77" font-size="13" font-weight="700" fill="#15803d">컨슈머 프로세스 수</text>
+    <text x="34" y="102" font-size="11" fill="#334155">올리는 수단 — 파드·인스턴스 증설</text>
+    <text x="34" y="124" font-size="11.5" font-weight="700" fill="#15803d">가장 안전하고 효과가 확실하다</text>
+    <text x="34" y="146" font-size="11" fill="#475569">RabbitMQ는 큐당 컨슈머 수에 상한이 없다</text>
+    <text x="34" y="166" font-size="11" font-weight="700" fill="#b45309">대가 — 자원 비용, 다운스트림 부하 증가</text>
+
+    <text x="360" y="118" font-size="22" font-weight="700" fill="#64748b" text-anchor="middle">×</text>
+
+    <rect x="380" y="44" width="330" height="132" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <circle cx="410" cy="72" r="14" fill="#2563eb"/><text x="410" y="77" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">2</text>
+    <text x="434" y="77" font-size="13" font-weight="700" fill="#1d4ed8">프로세스당 스레드 수</text>
+    <text x="398" y="102" font-size="11" fill="#334155">올리는 수단 — 리스너 동시성 설정</text>
+    <text x="398" y="124" font-size="11.5" font-weight="700" fill="#1d4ed8">프로세스를 안 늘리고 자원을 더 쓴다</text>
+    <text x="398" y="146" font-size="10.5" class="mono" fill="#475569">concurrentConsumers / consumersPerQueue</text>
+    <text x="398" y="166" font-size="11" font-weight="700" fill="#dc2626">대가 — 순서가 사라진다 · 다운스트림 부하 배증</text>
+
+    <text x="724" y="118" font-size="22" font-weight="700" fill="#64748b" text-anchor="middle">×</text>
+
+    <rect x="744" y="44" width="360" height="132" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <circle cx="774" cy="72" r="14" fill="#d97706"/><text x="774" y="77" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">3</text>
+    <text x="798" y="77" font-size="13" font-weight="700" fill="#b45309">스레드당 초당 처리 건수</text>
+    <text x="762" y="102" font-size="11" fill="#334155">올리는 수단 — 배치 처리, 쿼리 튜닝, 불필요한 호출 제거</text>
+    <text x="762" y="124" font-size="11.5" font-weight="700" fill="#b45309">근본적이지만 시간이 든다</text>
+    <text x="762" y="146" font-size="11" fill="#475569">건당 비용 자체를 깎는 유일한 항</text>
+    <text x="762" y="166" font-size="11" font-weight="700" fill="#dc2626">대가 — 배치는 부분 실패 ack 문제를 새로 만든다</text>
+
+    <rect x="16" y="204" width="1088" height="66" rx="11" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="40" y="230" font-size="12.5" font-weight="700" fill="#334155">prefetch — 곱셈 안에 있는 항이 아니다</text>
+    <text x="40" y="252" font-size="11.5" fill="#475569">세 항 중 어느 것도 늘리지 않는다. 각 스레드가 <tspan font-weight="700">다음 메시지를 기다리며 노는 시간(네트워크 왕복)</tspan>을 없애 ③의 실효값을 회복시키는 <tspan font-weight="700">보정 항</tspan>이다.</text>
+    <text x="1080" y="242" font-size="11.5" font-weight="700" fill="#dc2626" text-anchor="end">대가 — 부하 분배가 불균등해진다</text>
+
+    <text x="560" y="300" font-size="12" font-weight="700" fill="#64748b" text-anchor="middle">읽는 법 — "처리량을 올린다"는 요구가 오면 <tspan fill="#1f2937">①②③ 중 어느 항을 올릴 것인지</tspan>부터 정한다. 항이 정해지면 수단과 대가가 자동으로 따라온다.</text>
+    <text x="560" y="320" font-size="11.5" fill="#94a3b8" text-anchor="middle">그리고 그 앞에 반드시 놓이는 질문 — 지금 낮은 것이 정말 ③인가, 아니면 다운스트림이 느린 것인가 (1-3)</text>
+  </svg>
+  <figcaption>세 항은 <b>올리는 수단도 대가도 서로 다르다.</b> "처리량 튜닝"을 하나의 작업으로 뭉뚱그리면 <b>가장 비싼 항을 가장 먼저 건드리는</b> 실수가 나온다 — 실제로는 <b>①이 가장 싸고 확실하며, ③이 가장 근본적이지만 오래 걸린다.</b></figcaption>
+</figure>
+
+<div class="memo">
+  <h4>인출 대상 — 처리량 곱셈식 <span class="badge core">첫 문장으로 쓰기 좋다</span></h4>
+  <div class="rule" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.98rem">전체 처리량 = 프로세스 수 × 프로세스당 스레드 수 × 스레드당 처리 건수&nbsp; (+ prefetch = 유휴 제거 보정)</div>
+  <p class="sub" style="margin:8px 0 0">면접에서 이 한 줄을 먼저 말하면 <b>뒤의 모든 답이 이 틀 안에 정리된다.</b> "워커를 늘립니다"는 ①, "동시성을 올립니다"는 ②, "배치로 묶습니다"는 ③, "prefetch를 키웁니다"는 보정 항이라고 <b>위치를 지정해 말하는 것</b>이 나열식 답변과의 차이다.</p>
+</div>
+
+<h3>1-2. Kafka와 결정적으로 다른 점 — 증설에 상한이 없다</h3>
+
+<p>①(프로세스 수)을 올리는 것이 <b>왜 RabbitMQ에서 특히 강력한 1순위 수단인지</b>는 Kafka와 나란히 놓으면 분명해진다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="Kafka는 파티션 3개인 토픽에 컨슈머 4대를 붙이면 한 대가 놀지만, RabbitMQ는 큐 하나에 컨슈머 4대를 붙이면 4대가 모두 일한다는 대비 도식">
+    <defs>
+      <marker id="m1g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="m1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="m1b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <line x1="560" y1="16" x2="560" y2="324" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+
+    <!-- Kafka -->
+    <text x="280" y="30" font-size="14" font-weight="700" fill="#b91c1c" text-anchor="middle">Kafka — 컨슈머 수의 상한 = 파티션 수</text>
+    <rect x="26" y="46" width="150" height="196" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+    <text x="101" y="68" font-size="11.5" font-weight="700" fill="#334155" text-anchor="middle">토픽 (파티션 3)</text>
+    <rect x="42" y="80" width="118" height="42" rx="7" fill="#e2e8f0" stroke="#94a3b8"/><text x="101" y="106" font-size="11" class="mono" fill="#334155" text-anchor="middle">partition 0</text>
+    <rect x="42" y="130" width="118" height="42" rx="7" fill="#e2e8f0" stroke="#94a3b8"/><text x="101" y="156" font-size="11" class="mono" fill="#334155" text-anchor="middle">partition 1</text>
+    <rect x="42" y="180" width="118" height="42" rx="7" fill="#e2e8f0" stroke="#94a3b8"/><text x="101" y="206" font-size="11" class="mono" fill="#334155" text-anchor="middle">partition 2</text>
+
+    <path d="M164,101 L322,86" fill="none" stroke="#16a34a" stroke-width="1.7" marker-end="url(#m1g)"/>
+    <path d="M164,151 L322,146" fill="none" stroke="#16a34a" stroke-width="1.7" marker-end="url(#m1g)"/>
+    <path d="M164,201 L322,206" fill="none" stroke="#16a34a" stroke-width="1.7" marker-end="url(#m1g)"/>
+
+    <rect x="328" y="66" width="180" height="40" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/><text x="418" y="91" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 1 — 일한다</text>
+    <rect x="328" y="126" width="180" height="40" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/><text x="418" y="151" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 2 — 일한다</text>
+    <rect x="328" y="186" width="180" height="40" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/><text x="418" y="211" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 3 — 일한다</text>
+    <rect x="328" y="246" width="180" height="40" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4"/><text x="418" y="264" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">컨슈머 4 — 논다</text>
+    <text x="418" y="279" font-size="9.5" fill="#b91c1c" text-anchor="middle">할당받을 파티션이 없다</text>
+
+    <text x="280" y="308" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">급할 때 컨슈머를 늘려도 해결되지 않는다</text>
+    <text x="280" y="326" font-size="11" fill="#64748b" text-anchor="middle">파티션 증설은 즉시 할 수 있는 작업이 아니다 — 키 순서가 깨진다</text>
+
+    <!-- RabbitMQ -->
+    <text x="840" y="30" font-size="14" font-weight="700" fill="#15803d" text-anchor="middle">RabbitMQ — 상한이 없다</text>
+    <rect x="586" y="106" width="150" height="76" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="661" y="132" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">큐 1개</text>
+    <text x="661" y="152" font-size="10.5" class="mono" fill="#475569" text-anchor="middle">orders.process</text>
+    <text x="661" y="170" font-size="10" fill="#64748b" text-anchor="middle">경쟁 소비 (competing consumers)</text>
+
+    <path d="M740,130 L884,86" fill="none" stroke="#2563eb" stroke-width="1.7" marker-end="url(#m1b)"/>
+    <path d="M740,140 L884,146" fill="none" stroke="#2563eb" stroke-width="1.7" marker-end="url(#m1b)"/>
+    <path d="M740,150 L884,206" fill="none" stroke="#2563eb" stroke-width="1.7" marker-end="url(#m1b)"/>
+    <path d="M740,160 L884,266" fill="none" stroke="#2563eb" stroke-width="1.7" marker-end="url(#m1b)"/>
+
+    <rect x="890" y="66" width="180" height="40" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/><text x="980" y="91" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 1 — 일한다</text>
+    <rect x="890" y="126" width="180" height="40" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/><text x="980" y="151" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 2 — 일한다</text>
+    <rect x="890" y="186" width="180" height="40" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/><text x="980" y="211" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 3 — 일한다</text>
+    <rect x="890" y="246" width="180" height="40" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/><text x="980" y="271" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 4 — 일한다</text>
+
+    <text x="840" y="308" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">큐 하나에 컨슈머 100대를 붙여도 100대가 모두 일한다</text>
+    <text x="840" y="326" font-size="11" fill="#64748b" text-anchor="middle">운영 중 급한 상황에서 RabbitMQ가 가진 명확한 이점</text>
+  </svg>
+  <figcaption>Kafka에서 파티션은 <b>병렬성의 단위이자 상한</b>이지만, RabbitMQ의 큐는 <b>여러 컨슈머가 나눠 가져가는 하나의 대기줄</b>이다. 그래서 <b>확장 상한이 설계 시점에 묶이지 않는다.</b> 이 차이 하나가 "일단 워커를 늘려보고, 그래도 안 되면 내부를 손댄다"는 <b>작업 순서</b>를 만든다 — 반대 순서로 하면 튜닝에 시간을 쓰는 동안 큐가 계속 쌓인다.</figcaption>
+</figure>
+
+<div class="callout info"><span class="t">단, "상한이 없다"에는 하나의 단서가 붙는다 <span class="badge senior">시니어 변별</span></span>
+  컨슈머 수에는 상한이 없지만, <b>큐 하나의 처리량 상한은 그 큐가 올라가 있는 노드(홈 노드)의 성능</b>이다. 큐는 클러스터 전체에 흩어져 처리되는 것이 아니라 <b>특정 노드가 소유</b>한다. 그래서 <b>그 노드가 CPU·디스크 한계에 닿으면 컨슈머를 아무리 늘려도 더 나오지 않는다.</b> 이때의 해법은 컨슈머 증설이 아니라 <b>큐 자체를 여러 개로 쪼개고(consistent hash exchange 등) 노드에 분산</b>하는 것이다 — 이 지점을 말할 수 있으면 "RabbitMQ는 그냥 컨슈머 늘리면 된다"는 답과 확실히 갈린다. (6절 꼬리질문에서 다시 다룬다)
+</div>
+
+<h3>1-3. 시작은 항상 병목 확인 — 스레드 덤프 한 장</h3>
+
+<p>수단을 고르기 전에 <b>병목이 어디인지 확정</b>해야 한다. 확인 방법은 도구가 필요 없을 만큼 단순하다. <b>컨슈머 프로세스의 스레드 덤프를 뜬다.</b> 대부분의 스레드가 어디에 있는지가 그대로 답이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="컨슈머 프로세스의 스레드 덤프를 떠서 대부분의 스레드 위치에 따라 병목을 DB, 외부 API, 컨슈머 자신, 배달 문제로 나누고 각각의 대응을 보여주는 판별 도식">
+    <defs><marker id="m2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker></defs>
+    <rect x="410" y="14" width="300" height="54" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="560" y="38" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">컨슈머 프로세스의 스레드 덤프를 뜬다</text>
+    <text x="560" y="58" font-size="11" fill="#475569" text-anchor="middle">질문은 하나 — 대부분의 스레드가 어디에 있는가?</text>
+
+    <path d="M470,68 L470,86 L142,86 L142,106" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#m2)"/>
+    <path d="M520,68 L520,86 L418,86 L418,106" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#m2)"/>
+    <path d="M600,68 L600,86 L700,86 L700,106" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#m2)"/>
+    <path d="M650,68 L650,86 L978,86 L978,106" fill="none" stroke="#64748b" stroke-width="1.5" marker-end="url(#m2)"/>
+
+    <rect x="16" y="108" width="252" height="150" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="142" y="130" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">DB 커넥션 대기 · JDBC 실행 중</text>
+    <line x1="34" y1="140" x2="250" y2="140" stroke="#fecaca"/>
+    <text x="34" y="162" font-size="11" fill="#64748b">병목</text><text x="250" y="162" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="end">데이터베이스</text>
+    <text x="34" y="188" font-size="11" fill="#64748b">대응</text>
+    <text x="34" y="208" font-size="11" fill="#334155">쿼리·인덱스 개선, 배치화로</text>
+    <text x="34" y="226" font-size="11" fill="#334155">건당 왕복 자체를 줄인다</text>
+    <text x="142" y="248" font-size="11" font-weight="700" fill="#dc2626" text-anchor="middle">워커 증설은 역효과</text>
+
+    <rect x="292" y="108" width="252" height="150" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="418" y="130" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">HTTP 응답 대기</text>
+    <line x1="310" y1="140" x2="526" y2="140" stroke="#fde68a"/>
+    <text x="310" y="162" font-size="11" fill="#64748b">병목</text><text x="526" y="162" font-size="12" font-weight="700" fill="#b45309" text-anchor="end">외부 API</text>
+    <text x="310" y="188" font-size="11" fill="#64748b">대응</text>
+    <text x="310" y="208" font-size="11" fill="#334155">타임아웃 설정, 병렬 호출,</text>
+    <text x="310" y="226" font-size="11" fill="#334155">캐시로 호출 자체를 줄인다</text>
+    <text x="418" y="248" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">동시성은 상대 허용량까지만</text>
+
+    <rect x="568" y="100" width="252" height="166" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.4"/>
+    <text x="700" y="122" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">실제 연산 중 (CPU)</text>
+    <line x1="586" y1="132" x2="802" y2="132" stroke="#bbf7d0"/>
+    <text x="586" y="154" font-size="11" fill="#64748b">병목</text><text x="802" y="154" font-size="12" font-weight="700" fill="#15803d" text-anchor="end">컨슈머 자신</text>
+    <text x="586" y="180" font-size="11" fill="#64748b">대응</text>
+    <text x="586" y="200" font-size="11" fill="#334155">증설 · 동시성 증가가 유효</text>
+    <rect x="586" y="212" width="216" height="42" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="694" y="230" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">이 칸일 때만</text>
+    <text x="694" y="247" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">이 문서의 수단들이 제값을 한다</text>
+
+    <rect x="852" y="108" width="252" height="150" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+    <text x="978" y="130" font-size="11.5" font-weight="700" fill="#334155" text-anchor="middle">대부분 대기 없음, 큐만 쌓임</text>
+    <line x1="870" y1="140" x2="1086" y2="140" stroke="#e2e8f0"/>
+    <text x="870" y="162" font-size="11" fill="#64748b">병목</text><text x="1086" y="162" font-size="12" font-weight="700" fill="#334155" text-anchor="end">배달이 안 됨</text>
+    <text x="870" y="188" font-size="11" fill="#64748b">대응</text>
+    <text x="870" y="208" font-size="11" fill="#334155">prefetch가 너무 작은가,</text>
+    <text x="870" y="226" font-size="11" fill="#334155">컨슈머가 실제로 붙어 있는가</text>
+    <text x="978" y="248" font-size="11" font-weight="700" fill="#334155" text-anchor="middle">스레드는 노는데 큐는 안 준다</text>
+
+    <text x="560" y="296" font-size="12" font-weight="700" fill="#64748b" text-anchor="middle">네 칸 중 <tspan fill="#16a34a">세 번째 칸</tspan>일 때만 증설·prefetch·동시성·배치가 효과를 낸다. 나머지 셋은 <tspan fill="#dc2626">다른 문제</tspan>이고, 여기에 튜닝을 하면 자원만 더 쓴다.</text>
+    <text x="560" y="314" font-size="11" fill="#94a3b8" text-anchor="middle">덤프를 안 뜨고 시작하는 튜닝은 추측이다 — 면접에서도 이 순서를 먼저 말하는 사람과 설정부터 말하는 사람이 갈린다</text>
+  </svg>
+  <figcaption>스레드 덤프는 <b>"지금 이 프로세스가 무엇을 기다리고 있는가"의 스냅숏</b>이다. 컨슈머 튜닝에서 이보다 저렴하고 결정적인 진단은 없다 — <b>대기 지점이 곧 병목</b>이기 때문이다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>스레드 덤프 판별표 — 이 표의 <b>행 하나를 그대로 말하는 것</b>이 첫 답변이다.</caption>
+  <thead><tr><th style="width:250px">스레드가 있는 곳</th><th style="width:150px">병목</th><th>대응</th></tr></thead>
+  <tbody>
+    <tr><td>DB 커넥션 대기, JDBC 실행 중</td><td class="bad">데이터베이스</td><td>쿼리·인덱스·배치화. <b>워커 증설은 역효과</b></td></tr>
+    <tr><td>HTTP 응답 대기</td><td class="bad">외부 API</td><td>타임아웃, 병렬 호출, 캐시</td></tr>
+    <tr class="hl"><td>실제 연산 중 (CPU)</td><td class="good">컨슈머 자신</td><td><b>증설·동시성 증가가 유효</b> — 이 행이 이 문서의 전제</td></tr>
+    <tr><td>대부분 대기 없음, 큐만 쌓임</td><td>배달이 안 됨</td><td>prefetch·컨슈머 수 확인</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout ok"><span class="t">브로커 지표로도 같은 판별을 할 수 있다 <span class="badge bonus">가산점</span></span>
+  스레드 덤프가 애플리케이션 쪽 진단이라면, <b>브로커 관리 콘솔의 지표</b>는 반대편에서 같은 질문에 답한다. 특히 큐의 <b>consumer utilisation</b>은 <b>"큐가 컨슈머에게 메시지를 밀어넣을 수 있었던 시간의 비율"</b>이다. <b>이 값이 100%보다 낮으면 큐는 더 보낼 수 있는데 컨슈머 쪽 사정으로 못 보내고 있다는 뜻</b>이다 — prefetch 한도가 다 찼거나, ack이 느리거나, 네트워크가 막혀 있다. 여기에 <b>publish rate와 ack(deliver) rate를 나란히</b> 보면 적체가 <b>유입이 늘어서인지 처리가 느려서인지</b>가 바로 갈린다.
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 두 갈래로 갈라 보기 · 갈래 A① prefetch</h2>
+
+<p>컨슈머 내부를 손대는 수단은 셋이다 — <b>① prefetch, ② 리스너 동시성, ③ 배치 처리.</b> 그리고 이 셋 밑을 받치는 <b>커넥션·채널 모델</b>이 있다. 이것들을 나열 순서대로 훑는 대신 <b>두 갈래로 갈라서</b> 보는 편이 낫다. 한쪽은 <b>컨슈머 한 대가 한 번에 더 많이 받아 더 많이 처리하게 만드는 방향</b>이고, 다른 쪽은 <b>처리하는 주체 자체를 늘리는 방향</b>이다.</p>
+
+<p>굳이 이 축으로 가르는 이유는 <b>내는 대가의 종류가 다르기 때문</b>이다. 갈래 A는 처리하는 주체를 늘리지 않는다. 단일 스레드 컨슈머가 prefetch로 50건을 미리 받아 순차 처리하면 <b>그 50건 안의 순서는 그대로</b>고, 배치도 여러 건을 모아 한 번에 저장할 뿐 처리 주체는 여전히 하나다. 순서가 흔들리는 것은 <b>실패가 섞일 때뿐</b>이다 — 쥐고 있는 50건 중 하나가 재시도로 빠지면 나머지가 먼저 지나간다. 즉 순서를 <b>"덜 흔든다"</b>. 갈래 B는 다르다. <b>주체가 둘 이상이 되는 순간 순서는 확실히 깨진다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="갈래 A는 컨슈머 한 대가 여러 건을 쥐고 순차 처리해 순서가 유지되고 실패가 섞일 때만 흔들리는 반면, 갈래 B는 스레드 두 개가 동시에 처리해 완료 순서가 확실히 뒤바뀌는 것을 보여주는 대비 도식">
+    <defs>
+      <marker id="m3b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker>
+      <marker id="m3r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="m3w" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d97706"/></marker>
+    </defs>
+    <line x1="560" y1="14" x2="560" y2="386" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+
+    <!-- A -->
+    <rect x="16" y="14" width="528" height="34" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="280" y="36" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">갈래 A — 한 대가 한 번에 더 많이 (prefetch · 배치)</text>
+    <text x="280" y="68" font-size="11.5" fill="#475569" text-anchor="middle">처리 주체는 <tspan font-weight="700">스레드 1개 그대로</tspan>. 손에 쥐는 양만 늘린다.</text>
+
+    <text x="34" y="98" font-size="11" font-weight="700" fill="#64748b">큐에서 받은 순서</text>
+    <rect x="150" y="84" width="34" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="167" y="102" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">1</text>
+    <rect x="190" y="84" width="34" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="207" y="102" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">2</text>
+    <rect x="230" y="84" width="34" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="247" y="102" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">3</text>
+    <rect x="270" y="84" width="34" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="287" y="102" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">4</text>
+    <path d="M312,97 L352,97" fill="none" stroke="#2563eb" stroke-width="1.6" marker-end="url(#m3b)"/>
+    <rect x="356" y="80" width="172" height="34" rx="7" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="442" y="102" font-size="11" font-weight="700" fill="#1d4ed8" text-anchor="middle">컨슈머 스레드 1개</text>
+
+    <rect x="34" y="128" width="494" height="86" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="50" y="150" font-size="11.5" font-weight="700" fill="#15803d">전부 성공하는 경로 — 순서가 유지된다</text>
+    <rect x="50" y="160" width="42" height="28" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="71" y="179" font-size="11.5" class="mono" font-weight="700" fill="#15803d" text-anchor="middle">1</text>
+    <rect x="98" y="160" width="42" height="28" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="119" y="179" font-size="11.5" class="mono" font-weight="700" fill="#15803d" text-anchor="middle">2</text>
+    <rect x="146" y="160" width="42" height="28" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="167" y="179" font-size="11.5" class="mono" font-weight="700" fill="#15803d" text-anchor="middle">3</text>
+    <rect x="194" y="160" width="42" height="28" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="215" y="179" font-size="11.5" class="mono" font-weight="700" fill="#15803d" text-anchor="middle">4</text>
+    <text x="252" y="179" font-size="11.5" font-weight="700" fill="#15803d">한 스레드가 순차 처리 → 받은 순서 그대로</text>
+    <text x="50" y="206" font-size="10.5" fill="#475569">prefetch 50이든 500이든, 주체가 하나면 그 안의 순서는 흔들리지 않는다</text>
+
+    <rect x="34" y="226" width="494" height="100" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="50" y="248" font-size="11.5" font-weight="700" fill="#b45309">실패가 섞이는 경로 — 여기서만 흔들린다</text>
+    <rect x="50" y="258" width="42" height="28" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="71" y="277" font-size="11.5" class="mono" font-weight="700" fill="#b45309" text-anchor="middle">1</text>
+    <rect x="98" y="258" width="42" height="28" rx="5" fill="#fee2e2" stroke="#dc2626" stroke-dasharray="4 3"/><text x="119" y="277" font-size="11.5" class="mono" font-weight="700" fill="#b91c1c" text-anchor="middle">2✗</text>
+    <rect x="146" y="258" width="42" height="28" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="167" y="277" font-size="11.5" class="mono" font-weight="700" fill="#b45309" text-anchor="middle">3</text>
+    <rect x="194" y="258" width="42" height="28" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="215" y="277" font-size="11.5" class="mono" font-weight="700" fill="#b45309" text-anchor="middle">4</text>
+    <path d="M242,272 L272,272" fill="none" stroke="#d97706" stroke-width="1.6" marker-end="url(#m3w)"/>
+    <rect x="278" y="258" width="150" height="28" rx="5" fill="#fef3c7" stroke="#d97706"/><text x="353" y="277" font-size="11" class="mono" font-weight="700" fill="#b45309" text-anchor="middle">1 · 3 · 4 · … · 2</text>
+    <text x="50" y="306" font-size="10.5" fill="#475569">2번이 재시도로 빠지면 나머지가 먼저 지나간다 — <tspan font-weight="700" fill="#b45309">쥐고 있는 양이 클수록 2번이 더 뒤로 밀린다</tspan></text>
+
+    <rect x="34" y="338" width="494" height="46" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="280" y="358" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">대가의 종류 — 부하 분배 공정성 · 메모리 · 부분 실패 ack</text>
+    <text x="280" y="376" font-size="11" fill="#475569" text-anchor="middle">순서는 <tspan font-weight="700">"덜 흔든다"</tspan> — 잃는 것이 순서가 아니다</text>
+
+    <!-- B -->
+    <rect x="576" y="14" width="528" height="34" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="840" y="36" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">갈래 B — 처리 주체를 늘린다 (동시성 · 워커 증설)</text>
+    <text x="840" y="68" font-size="11.5" fill="#475569" text-anchor="middle">스레드·프로세스가 <tspan font-weight="700">둘 이상</tspan>이 된다.</text>
+
+    <text x="594" y="98" font-size="11" font-weight="700" fill="#64748b">큐에서 받은 순서</text>
+    <rect x="710" y="84" width="34" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="727" y="102" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">1</text>
+    <rect x="750" y="84" width="34" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="767" y="102" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">2</text>
+    <rect x="790" y="84" width="34" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="807" y="102" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">3</text>
+    <rect x="830" y="84" width="34" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="847" y="102" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">4</text>
+    <path d="M872,92 L916,80" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#m3r)"/>
+    <path d="M872,102 L916,116" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#m3r)"/>
+    <rect x="920" y="64" width="168" height="30" rx="7" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="1004" y="84" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">스레드 A — 1, 3을 잡음</text>
+    <rect x="920" y="102" width="168" height="30" rx="7" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="1004" y="122" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">스레드 B — 2, 4를 잡음</text>
+
+    <rect x="594" y="146" width="494" height="132" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="610" y="168" font-size="11.5" font-weight="700" fill="#b91c1c">완료 순서는 각자의 처리 시간이 정한다 (실패가 없어도)</text>
+    <text x="610" y="192" font-size="10.5" fill="#64748b">스레드 A</text>
+    <rect x="676" y="180" width="120" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/><text x="736" y="195" font-size="10" class="mono" fill="#7f1d1d" text-anchor="middle">1 처리 (느림)</text>
+    <rect x="800" y="180" width="66" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/><text x="833" y="195" font-size="10" class="mono" fill="#7f1d1d" text-anchor="middle">3 처리</text>
+    <text x="610" y="220" font-size="10.5" fill="#64748b">스레드 B</text>
+    <rect x="676" y="208" width="58" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/><text x="705" y="223" font-size="10" class="mono" fill="#7f1d1d" text-anchor="middle">2 처리</text>
+    <rect x="738" y="208" width="140" height="20" rx="4" fill="#fecaca" stroke="#dc2626"/><text x="808" y="223" font-size="10" class="mono" fill="#7f1d1d" text-anchor="middle">4 처리 (느림)</text>
+    <line x1="676" y1="236" x2="1070" y2="236" stroke="#94a3b8"/>
+    <text x="1074" y="240" font-size="10" fill="#94a3b8">시간</text>
+    <text x="610" y="258" font-size="11.5" font-weight="700" fill="#b91c1c">완료 순서 = 2 → 1 → 3 → 4</text>
+    <text x="860" y="258" font-size="10.5" fill="#475569">받은 순서와 무관하다 — 실행 시간이 정한다</text>
+    <text x="610" y="272" font-size="10" fill="#94a3b8">컨슈머가 한 대여도 스레드가 여럿이면 마찬가지다</text>
+
+    <rect x="594" y="290" width="494" height="94" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="840" y="312" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">대가의 종류 — 순서가 완전히 사라진다 · 다운스트림 부하 배증</text>
+    <text x="840" y="334" font-size="11" fill="#475569" text-anchor="middle">그래서 갈래 B를 쓴다는 것은 이런 뜻이어야 한다 —</text>
+    <text x="840" y="354" font-size="11.5" font-weight="700" fill="#1f2937" text-anchor="middle">"이 큐에 순서 요구가 없거나, 버전 기반 무시 같은 장치로</text>
+    <text x="840" y="372" font-size="11.5" font-weight="700" fill="#1f2937" text-anchor="middle">순서 의존을 이미 제거해 뒀다"</text>
+  </svg>
+  <figcaption>같은 "처리량 튜닝"이지만 <b>잃는 것이 다르다.</b> 갈래 A는 <b>분배 공정성·메모리·부분 실패 ack</b>을 내고 순서는 실패가 섞일 때만 흔들린다. 갈래 B는 <b>순서 그 자체</b>를 낸다. 그래서 <b>순서 요구가 걸린 큐에서는 A를 먼저 쓰고 B는 그다음</b>이라는 순서가 자연스럽게 나온다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>대가 3종 암기 — <span style="color:#2563eb">"프분 · 동순 · 배부"</span> <span class="badge core">이 여섯 글자면 뒤가 다 따라온다</span></h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">프 → 분</div><div class="d"><b>prefetch</b>는 <b>분배 공정성</b>을 낸다. 한 대가 다 쥐면 나머지가 논다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">동 → 순</div><div class="d"><b>동시성</b>은 <b>순서</b>를 낸다. 주체가 둘이 되는 순간 완전히 사라진다.</div></div>
+    <div class="tile" style="border-color:#fde68a;background:#fffbeb"><div class="k" style="font-family:inherit;color:#b45309">배 → 부</div><div class="d"><b>배치</b>는 <b>부분 실패 ack</b>을 낸다. 100건 중 37번만 실패하면?</div></div>
+  </div>
+  <p class="sub" style="margin:10px 0 0">면접에서 <b>"prefetch를 올립니다, 동시성을 올립니다, 배치로 묶습니다"</b>까지는 누구나 말한다. 갈리는 지점은 <b>각 수단 뒤에 대가를 한 세트로 붙여 말하는가</b>다. 이 세 쌍을 외워 두면 어떤 순서로 질문이 와도 대가가 빠지지 않는다.</p>
+</div>
+
+<h3>2-1. prefetch — 무엇을 줄이는가</h3>
+
+<p>prefetch를 키우면 <b>컨슈머가 다음 메시지를 기다리는 시간</b>이 사라진다. prefetch가 1이면 ack을 보낸 뒤 다음 메시지가 도착할 때까지 <b>네트워크 왕복만큼 논다.</b></p>
+
+<div class="callout info"><span class="t">비유 — 뷔페에서 접시에 몇 개를 담아 오는가</span>
+  prefetch 1은 <b>한 조각 먹을 때마다 뷔페 테이블까지 걸어가는 것</b>이다. 먹는 시간보다 왕복이 아깝다. prefetch 50은 <b>접시에 50개를 담아 와서 자리에서 먹는 것</b>이라 왕복이 사라진다. 대신 <b>내 접시에 쌓아 둔 만큼 다른 사람이 못 먹고</b>(분배 불균등), <b>접시가 무거워지고</b>(메모리), <b>자리를 뜰 때 담아 둔 것을 다 먹거나 반납해야 한다</b>(graceful shutdown 지연). prefetch의 이점과 대가 셋이 이 하나의 그림에 다 들어 있다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="prefetch가 1일 때는 처리와 대기가 번갈아 나타나 왕복 대기로 약 9퍼센트를 손해 보지만 prefetch가 50이면 대기 없이 연속 처리되는 타임라인 비교. 처리 시간이 500밀리초로 길면 왕복 1밀리초는 비율상 무시할 수준임을 함께 표시">
+    <text x="560" y="24" font-size="14" font-weight="700" fill="#1f2937" text-anchor="middle">prefetch가 없애는 것은 「처리 시간」이 아니라 「메시지 사이의 왕복 대기」다</text>
+
+    <text x="20" y="66" font-size="12" class="mono" font-weight="700" fill="#b91c1c">prefetch = 1</text>
+    <text x="20" y="84" font-size="10" fill="#64748b">ack 후 다음 메시지를 기다린다</text>
+    <rect x="200" y="50" width="100" height="30" rx="4" fill="#bfdbfe" stroke="#2563eb"/><text x="250" y="70" font-size="10.5" fill="#1e3a8a" text-anchor="middle">처리 10ms</text>
+    <rect x="300" y="50" width="14" height="30" fill="#fecaca" stroke="#dc2626"/>
+    <rect x="314" y="50" width="100" height="30" rx="4" fill="#bfdbfe" stroke="#2563eb"/><text x="364" y="70" font-size="10.5" fill="#1e3a8a" text-anchor="middle">처리 10ms</text>
+    <rect x="414" y="50" width="14" height="30" fill="#fecaca" stroke="#dc2626"/>
+    <rect x="428" y="50" width="100" height="30" rx="4" fill="#bfdbfe" stroke="#2563eb"/><text x="478" y="70" font-size="10.5" fill="#1e3a8a" text-anchor="middle">처리 10ms</text>
+    <rect x="528" y="50" width="14" height="30" fill="#fecaca" stroke="#dc2626"/>
+    <rect x="542" y="50" width="100" height="30" rx="4" fill="#bfdbfe" stroke="#2563eb"/><text x="592" y="70" font-size="10.5" fill="#1e3a8a" text-anchor="middle">처리 10ms</text>
+    <rect x="642" y="50" width="14" height="30" fill="#fecaca" stroke="#dc2626"/>
+    <rect x="656" y="50" width="100" height="30" rx="4" fill="#bfdbfe" stroke="#2563eb"/><text x="706" y="70" font-size="10.5" fill="#1e3a8a" text-anchor="middle">처리 10ms</text>
+    <rect x="756" y="50" width="14" height="30" fill="#fecaca" stroke="#dc2626"/>
+    <rect x="770" y="50" width="100" height="30" rx="4" fill="#bfdbfe" stroke="#2563eb"/><text x="820" y="70" font-size="10.5" fill="#1e3a8a" text-anchor="middle">처리 10ms</text>
+    <rect x="870" y="50" width="14" height="30" fill="#fecaca" stroke="#dc2626"/>
+    <path d="M884,65 L920,65" fill="none" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <rect x="300" y="88" width="14" height="8" fill="#fecaca" stroke="#dc2626"/>
+    <text x="322" y="96" font-size="10.5" font-weight="700" fill="#b91c1c">= 왕복 대기 1ms — 6번 반복되면 6ms, 처리 60ms 대비 약 9%를 그냥 버린다</text>
+
+    <text x="20" y="152" font-size="12" class="mono" font-weight="700" fill="#15803d">prefetch = 50</text>
+    <text x="20" y="170" font-size="10" fill="#64748b">손안에 이미 있어 대기 없음</text>
+    <rect x="200" y="136" width="100" height="30" rx="4" fill="#bbf7d0" stroke="#16a34a"/><text x="250" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">처리 10ms</text>
+    <rect x="302" y="136" width="100" height="30" rx="4" fill="#bbf7d0" stroke="#16a34a"/><text x="352" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">처리 10ms</text>
+    <rect x="404" y="136" width="100" height="30" rx="4" fill="#bbf7d0" stroke="#16a34a"/><text x="454" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">처리 10ms</text>
+    <rect x="506" y="136" width="100" height="30" rx="4" fill="#bbf7d0" stroke="#16a34a"/><text x="556" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">처리 10ms</text>
+    <rect x="608" y="136" width="100" height="30" rx="4" fill="#bbf7d0" stroke="#16a34a"/><text x="658" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">처리 10ms</text>
+    <rect x="710" y="136" width="100" height="30" rx="4" fill="#bbf7d0" stroke="#16a34a"/><text x="760" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">처리 10ms</text>
+    <rect x="812" y="136" width="100" height="30" rx="4" fill="#bbf7d0" stroke="#16a34a"/><text x="862" y="156" font-size="10.5" fill="#14532d" text-anchor="middle">처리 10ms</text>
+    <path d="M916,151 L952,151" fill="none" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <text x="960" y="156" font-size="11" font-weight="700" fill="#15803d">같은 시간에 1건 더</text>
+
+    <line x1="20" y1="192" x2="1100" y2="192" stroke="#e5e7eb"/>
+
+    <text x="20" y="222" font-size="12" font-weight="700" fill="#b45309">그런데 건당 처리가 500ms라면? — 같은 그림을 비율로 그려 보면</text>
+    <rect x="200" y="234" width="700" height="28" rx="4" fill="#fde68a" stroke="#d97706"/><text x="550" y="253" font-size="11" fill="#78350f" text-anchor="middle">처리 500ms</text>
+    <rect x="900" y="234" width="2" height="28" fill="#dc2626"/>
+    <path d="M901,268 L901,278 L940,278" fill="none" stroke="#dc2626" stroke-width="1.2"/>
+    <text x="946" y="282" font-size="10.5" font-weight="700" fill="#b91c1c">왕복 1ms — 이 선 하나 (0.2%)</text>
+    <text x="200" y="284" font-size="11.5" font-weight="700" fill="#b45309">여기서 prefetch를 키워 얻는 것은 0.2%뿐이고, 잃는 분배 공정성은 그대로다 → <tspan fill="#dc2626">키울 이유가 없다</tspan></text>
+  </svg>
+  <figcaption>핵심은 <b>비율</b>이다. <b>처리 시간이 짧을수록 왕복 대기의 손해가 커지고, 길수록 무시할 수준이 된다.</b> 그래서 prefetch 값은 "일반적으로 몇"이 아니라 <b>"이 큐의 건당 처리 시간이 얼마인가"</b>로 정해진다.</figcaption>
+</figure>
+
+<div class="rule">prefetch 원칙 한 줄 — <b>처리 시간이 짧으면 크게, 길면 작게</b></div>
+
+<h3>2-2. prefetch의 대가 — 네 가지</h3>
+
+<div class="grid g2">
+  <div class="tile red"><div class="k" style="font-family:inherit">① 부하 분배가 불균등해진다</div><div class="d">prefetch 100인 컨슈머 3대, 큐에 150건 → <b>앞의 두 대가 다 가져가고 세 번째는 논다.</b> 증설의 효과 자체가 사라진다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">② 실패 시 순서가 크게 흐트러진다</div><div class="d">손에 쥔 50건 중 3번째가 실패해 재시도로 빠지면 <b>나머지 47건이 먼저 처리된 뒤 돌아온다.</b> 쥔 양이 클수록 더 뒤로 밀린다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">③ 메모리를 쓴다</div><div class="d"><b>prefetch × 컨슈머(채널) 수 × 메시지 크기</b>가 프로세스가 안고 있는 양이다. 동시성과 곱해지면 금세 커진다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">④ 정지 시간이 길어진다</div><div class="d">배포로 컨슈머를 내릴 때 <b>손에 쥔 메시지를 다 처리하거나 반납</b>해야 하므로 graceful shutdown이 느려진다.</div></div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="prefetch 100인 컨슈머 3대와 큐 150건일 때 앞의 두 대가 전부 가져가고 세 번째가 노는 상황과, prefetch 10일 때 세 대가 고르게 나눠 갖고 나머지는 큐에 남아 먼저 끝난 컨슈머에게 가는 상황의 대비">
+    <text x="560" y="24" font-size="14" font-weight="700" fill="#1f2937" text-anchor="middle">prefetch의 첫 번째 대가 — 큐에 남아 있어야 공평하게 나눠진다</text>
+
+    <text x="20" y="62" font-size="12.5" class="mono" font-weight="700" fill="#b91c1c">prefetch = 100 · 컨슈머 3대 · 큐에 150건</text>
+    <rect x="20" y="76" width="190" height="66" rx="9" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+    <text x="115" y="100" font-size="11.5" font-weight="700" fill="#334155" text-anchor="middle">큐 — 남은 건수</text>
+    <text x="115" y="126" font-size="17" class="mono" font-weight="700" fill="#dc2626" text-anchor="middle">0 건</text>
+    <path d="M214,96 L272,96" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#m2)"/>
+    <path d="M214,109 L272,124" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#m2)"/>
+
+    <rect x="278" y="76" width="230" height="30" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="393" y="96" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">컨슈머 1 — 100건을 쥐고 있음</text>
+    <rect x="278" y="112" width="230" height="30" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="393" y="132" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">컨슈머 2 — 50건을 쥐고 있음</text>
+    <rect x="278" y="148" width="230" height="30" rx="7" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4"/>
+    <text x="393" y="168" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="middle">컨슈머 3 — 0건 · 놀고 있음</text>
+
+    <text x="20" y="204" font-size="11.5" font-weight="700" fill="#b91c1c">보이는 증상 — 큐 깊이는 0인데 처리는 안 끝나고, 컨슈머를 늘려도 아무 변화가 없다</text>
+    <text x="20" y="224" font-size="11" fill="#475569">브로커 입장에서는 "이미 다 배달했다". 재분배는 <tspan font-weight="700">컨슈머가 ack하거나 연결이 끊어질 때</tspan>에나 일어난다.</text>
+
+    <line x1="560" y1="46" x2="560" y2="240" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+
+    <text x="580" y="62" font-size="12.5" class="mono" font-weight="700" fill="#15803d">prefetch = 10 · 컨슈머 3대 · 큐에 150건</text>
+    <rect x="580" y="76" width="190" height="66" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="675" y="100" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">큐 — 남은 건수</text>
+    <text x="675" y="126" font-size="17" class="mono" font-weight="700" fill="#15803d" text-anchor="middle">120 건</text>
+    <path d="M774,96 L832,90" fill="none" stroke="#16a34a" stroke-width="1.6" marker-end="url(#m1g)"/>
+    <path d="M774,109 L832,126" fill="none" stroke="#16a34a" stroke-width="1.6" marker-end="url(#m1g)"/>
+    <path d="M774,122 L832,162" fill="none" stroke="#16a34a" stroke-width="1.6" marker-end="url(#m1g)"/>
+
+    <rect x="838" y="76" width="230" height="30" rx="7" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="953" y="96" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 1 — 10건</text>
+    <rect x="838" y="112" width="230" height="30" rx="7" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="953" y="132" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 2 — 10건</text>
+    <rect x="838" y="148" width="230" height="30" rx="7" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="953" y="168" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 3 — 10건</text>
+
+    <text x="580" y="204" font-size="11.5" font-weight="700" fill="#15803d">남은 120건은 큐에 있다 — 먼저 끝낸 컨슈머부터 가져간다</text>
+    <text x="580" y="224" font-size="11" fill="#475569">이것이 <tspan font-weight="700">자연스러운 부하 분산</tspan>이다. 느린 컨슈머에게 일이 몰리지 않는다.</text>
+
+    <rect x="20" y="252" width="1080" height="62" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="276" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">기억할 문장 — <tspan fill="#1f2937">"큐에 남아 있는 메시지만 재분배될 수 있다. 컨슈머가 쥔 순간 그 건은 그 컨슈머의 것이다."</tspan></text>
+    <text x="560" y="300" font-size="11.5" fill="#475569" text-anchor="middle">그래서 <tspan font-weight="700">컨슈머 대수가 많고 처리 시간 편차가 큰 큐일수록 prefetch를 작게</tspan> 잡아야 증설 효과가 살아난다.</text>
+  </svg>
+  <figcaption>prefetch를 키우는 것과 워커를 늘리는 것은 <b>서로를 방해할 수 있다.</b> 큰 prefetch는 <b>메시지를 큐가 아니라 컨슈머 프로세스 안으로 옮겨 놓는데</b>, 큐에 없는 메시지는 새 컨슈머에게 갈 수 없다. "컨슈머를 늘렸는데 처리량이 그대로"의 <b>가장 흔한 원인</b>이 바로 이것이다.</figcaption>
+</figure>
+
+<h3>2-3. prefetch를 정하는 법 — 큐마다 다르게</h3>
+
+<div class="scroll">
+<table>
+  <caption>원칙은 하나 — <b>처리 시간이 짧으면 크게, 길면 작게.</b> 아래는 그 원칙을 구간으로 옮긴 것이다.</caption>
+  <thead><tr><th style="width:180px">건당 처리 시간</th><th style="width:200px">권장 방향</th><th>이유</th></tr></thead>
+  <tbody>
+    <tr><td>1ms 이하</td><td class="good">크게 (수백)</td><td>왕복이 처리 시간을 압도한다 — 안 키우면 대기가 처리보다 길어질 수도 있다</td></tr>
+    <tr><td>10~100ms</td><td>중간 (10~50)</td><td>균형 — 왕복도 무시할 수 없고 분배도 지켜야 한다</td></tr>
+    <tr class="hl"><td>수백 ms 이상</td><td class="good">작게 (1~5)</td><td>왕복은 무시할 수준, <b>공정 분배가 중요</b> — 한 대가 쥐면 몇 분치를 혼자 안는다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>그리고 <b>큐마다 다르게 잡는다.</b> 한 애플리케이션 안에서도 <b>무거운 큐와 가벼운 큐의 prefetch가 같을 이유가 없다.</b> Spring AMQP에서는 <b>리스너 컨테이너 팩토리를 큐 성격별로 나누고</b>, <code>@RabbitListener</code>의 <code>containerFactory</code>로 지정하면 된다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">문제</span> 기본 팩토리 하나를 모든 큐가 공유한다</div>
+<pre><code><span class="cm">// 전역 설정 한 줄로 끝냈다 — 가벼운 큐 기준으로 250</span>
+<span class="cm">// spring.rabbitmq.listener.simple.prefetch: 250</span>
+
+<span class="cm">// 건당 1ms — 이 큐에는 250이 맞다</span>
+@RabbitListener(queues = <span class="st">"metrics.raw"</span>)
+<span class="kw">public void</span> <span class="fn">light</span>(MetricEvent e) { ... }
+
+<span class="ln-bad"><span class="cm">// 건당 3초 — 같은 250이 적용된다</span>
+@RabbitListener(queues = <span class="st">"settlement.batch"</span>)
+<span class="kw">public void</span> <span class="fn">heavy</span>(SettlementEvent e) { ... }</span>
+
+<span class="cm">// 결과: 정산 컨슈머 한 대가 250건을 쥔다</span>
+<span class="cm">//   → 250 × 3초 = 약 12분치를 혼자 안고 있다</span>
+<span class="cm">//   → 컨슈머를 4대로 늘려도 큐가 이미 비어 있어</span>
+<span class="cm">//     새 컨슈머 3대는 놀고, 배포하면 12분간 안 내려간다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">개선</span> 큐 성격별로 팩토리를 나눈다</div>
+<pre><code>@Bean(<span class="st">"heavyFactory"</span>)
+SimpleRabbitListenerContainerFactory <span class="fn">heavy</span>(ConnectionFactory cf) {
+    <span class="kw">var</span> f = <span class="kw">new</span> SimpleRabbitListenerContainerFactory();
+    f.setConnectionFactory(cf);
+<span class="ln-good">    f.setPrefetchCount(<span class="st">2</span>);        <span class="cm">// 건당 수 초 — 공정 분배 우선</span></span>
+    f.setConcurrentConsumers(<span class="st">4</span>);
+    <span class="kw">return</span> f;
+}
+
+@Bean(<span class="st">"lightFactory"</span>)
+SimpleRabbitListenerContainerFactory <span class="fn">light</span>(ConnectionFactory cf) {
+    <span class="kw">var</span> f = <span class="kw">new</span> SimpleRabbitListenerContainerFactory();
+    f.setConnectionFactory(cf);
+<span class="ln-good">    f.setPrefetchCount(<span class="st">250</span>);      <span class="cm">// 건당 1ms 미만 — 왕복 제거가 이득</span></span>
+    f.setConcurrentConsumers(<span class="st">2</span>);
+    <span class="kw">return</span> f;
+}
+
+@RabbitListener(queues = <span class="st">"settlement.batch"</span>,
+                containerFactory = <span class="st">"heavyFactory"</span>)
+<span class="kw">public void</span> <span class="fn">handleHeavy</span>(SettlementEvent e) { ... }</code></pre>
+  </div>
+</div>
+
+<div class="callout warn"><span class="t">"그럼 무거운 큐는 prefetch=1이 정답인가요?" — 거의 맞지만 한 가지 단서가 있다</span>
+  건당 수 초가 걸리는 큐라면 <b>1~5가 사실상 정답</b>이다. 다만 <b>prefetch=1은 ack을 보낸 뒤 다음 메시지가 올 때까지 반드시 한 번 논다</b>는 뜻이기도 하다. 처리가 3초인데 왕복이 1ms면 <b>0.03% 손해</b>라 신경 쓸 값이 아니지만, 브로커와의 지연이 크거나(다른 리전) 처리 시간이 <b>수십 ms 수준으로 애매한 큐</b>라면 <b>2~5</b>가 더 낫다. <b>"1이 안전하다"가 아니라 "왕복 대비 처리 시간의 비율로 정한다"</b>가 원칙이다.
+</div>
+
+<div class="memo green">
+  <h4>prefetch 값을 묻는 질문에 쓰는 답의 형태 <span class="badge core">숫자를 먼저 말하지 않는다</span></h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">① 되묻는다</div><div class="d"><b>"그 큐의 건당 처리 시간이 얼마인가요?"</b> — 이 값이 없으면 어떤 숫자도 근거가 없다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 비율로 판단한다</div><div class="d"><b>왕복 대기 ÷ 건당 처리 시간</b>이 무시할 수준이면 키울 이유가 없다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">③ 큐별로 나눈다</div><div class="d">한 애플리케이션 안에서도 <b>무거운 큐와 가벼운 큐의 값이 같을 이유가 없다.</b></div></div>
+  </div>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 갈래 A② 배치 처리 — 건당 비용과 부분 실패 ack</h2>
+
+<p>prefetch가 없앤 것은 <b>메시지 사이의 대기</b>일 뿐, <b>한 건을 처리하는 비용 자체는 그대로다.</b> 손안에 50건이 있어도 DB에 50번 다녀오는 것은 변하지 않는다. 그 건당 비용을 줄이는 것이 갈래 A의 두 번째 수단인 <b>배치 처리</b>다. 같은 갈래에 두는 이유가 여기서 분명해진다 — <b>둘 다 컨슈머를 한 대로 둔 채, 한 번에 손에 쥐는 양을 늘려 얻는 이득</b>이다.</p>
+
+<div class="rule ok">prefetch는 <b>왕복 대기</b>를 없애고, 배치는 <b>왕복 횟수</b>를 없앤다 — 없애는 대상이 다르므로 둘은 함께 쓴다</div>
+
+<p>메시지 하나마다 DB에 INSERT 한 번이면, 1만 건은 왕복 1만 번이다. 이것을 100건씩 묶어 bulk insert하면 왕복이 <b>100번</b>으로 준다. <b>가장 극적인 개선이 여기서 나오는 경우가 많다</b> — prefetch와 동시성을 아무리 만져도 건당 왕복 자체는 그대로이기 때문이다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">문제</span> 건별 저장 — 메시지 1건마다 DB 왕복 1회</div>
+<pre><code>@RabbitListener(queues = <span class="st">"metrics.raw"</span>)
+<span class="kw">public void</span> <span class="fn">handle</span>(MetricEvent e) {
+<span class="ln-bad">    metricRepository.save(e);   <span class="cm">// 왕복 1회</span></span>
+}
+
+<span class="cm">// 1만 건 유입 → DB 왕복 1만 회</span>
+<span class="cm">// 왕복 1건에 2ms면 그것만으로 20초</span>
+<span class="cm">// prefetch를 500으로 올려도 이 20초는 그대로다</span>
+<span class="cm">//   — prefetch는 "메시지 사이의 대기"만 없앤다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">개선</span> 배치 리스너 — 100건을 모아 왕복 1회</div>
+<pre><code>@Bean
+SimpleRabbitListenerContainerFactory <span class="fn">batchFactory</span>(ConnectionFactory cf) {
+    <span class="kw">var</span> f = <span class="kw">new</span> SimpleRabbitListenerContainerFactory();
+    f.setConnectionFactory(cf);
+    f.setBatchListener(<span class="kw">true</span>);
+    f.setConsumerBatchEnabled(<span class="kw">true</span>);
+<span class="ln-good">    f.setBatchSize(<span class="st">100</span>);                 <span class="cm">// 최대 100건을 모은다</span>
+    f.setReceiveTimeout(<span class="st">1000L</span>);          <span class="cm">// 100건이 안 차도 1초 뒤엔 넘긴다</span>
+    f.setPrefetchCount(<span class="st">200</span>);             <span class="cm">// 배치 크기보다 커야 배치가 찬다</span></span>
+    <span class="kw">return</span> f;
+}
+
+@RabbitListener(queues = <span class="st">"metrics.raw"</span>, containerFactory = <span class="st">"batchFactory"</span>)
+<span class="kw">public void</span> <span class="fn">handleBatch</span>(List&lt;MetricEvent&gt; events) {
+    <span class="cm">// 왕복 1회로 100건 저장</span>
+    metricRepository.saveAll(events);
+}</code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>배치 설정에서 반드시 짝을 맞춰야 하는 두 쌍 <span class="badge trap">둘 다 조용히 망가진다</span></h4>
+  <div class="grid g2">
+    <div class="tile red">
+      <div class="k">prefetchCount &gt; batchSize</div>
+      <div class="d">prefetch가 50인데 batchSize가 100이면 <b>배치가 절대 50건을 넘지 못한다.</b> 설정은 성공하고 에러도 없다 — <b>그냥 기대한 만큼 안 빨라질 뿐</b>이라 원인을 찾기 어렵다.</div>
+    </div>
+    <div class="tile red">
+      <div class="k">batchSize &amp;&amp; receiveTimeout</div>
+      <div class="d">receiveTimeout이 없으면 <b>트래픽이 적을 때 배치가 안 차서 메시지가 무한정 기다린다.</b> <b>"100건 모이거나 1초 지나면 처리"</b>라는 두 조건이 <b>항상 짝</b>이어야 한다.</div>
+    </div>
+  </div>
+  <p class="sub" style="margin:10px 0 0">두 함정의 공통점 — <b>예외가 나지 않는다.</b> 배치 설정 문제는 장애가 아니라 <b>"왜 야간에는 알림이 늦지"</b> 같은 형태로 나타난다. 그래서 <b>설정 리뷰 체크리스트에 이 두 줄을 박아 두는 것</b>이 실무의 방어다.</p>
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">함정</span> 조용히 망가지는 배치 설정</div>
+<pre><code>f.setBatchListener(<span class="kw">true</span>);
+f.setConsumerBatchEnabled(<span class="kw">true</span>);
+f.setBatchSize(<span class="st">100</span>);
+<span class="ln-bad">f.setPrefetchCount(<span class="st">50</span>);      <span class="cm">// batchSize보다 작다</span>
+<span class="cm">// receiveTimeout 미설정</span></span>
+
+<span class="cm">// 증상 ① 배치가 50건을 절대 넘지 않는다</span>
+<span class="cm">//   → 기대한 절반의 개선만 나온다. 에러는 없다.</span>
+<span class="cm">// 증상 ② 야간처럼 유입이 적을 때</span>
+<span class="cm">//   → 100건이 찰 때까지 처리가 미뤄진다.</span>
+<span class="cm">//   → "새벽 알림이 아침에 온다"는 제보로 발견된다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">개선</span> 두 쌍을 맞춘 설정</div>
+<pre><code>f.setBatchListener(<span class="kw">true</span>);
+f.setConsumerBatchEnabled(<span class="kw">true</span>);
+f.setBatchSize(<span class="st">100</span>);
+<span class="ln-good">f.setPrefetchCount(<span class="st">200</span>);     <span class="cm">// batchSize의 2배 — 배치가 항상 찬다</span>
+f.setReceiveTimeout(<span class="st">1000L</span>);  <span class="cm">// 안 차도 1초 뒤엔 넘긴다</span></span>
+
+<span class="cm">// 이 조합의 의미를 한 문장으로:</span>
+<span class="cm">//   "100건이 모이거나 1초가 지나면 처리한다.</span>
+<span class="cm">//    그리고 그 100건을 채울 재고(200)를 항상 손에 둔다."</span>
+<span class="cm">//</span>
+<span class="cm">// 메모리 계산도 잊지 않는다:</span>
+<span class="cm">//   prefetch 200 × 동시성 × 메시지 크기 + 배치 버퍼</span></code></pre>
+  </div>
+</div>
+
+<h3>3-1. 배치의 대가 — 부분 실패의 ack</h3>
+
+<p>배치의 진짜 난점은 성능이 아니라 <b>일부만 실패했을 때</b>다. 건별 ack이던 것이 <b>"이 묶음을 어떻게 처리할 것인가"</b>로 바뀌는 순간, RabbitMQ의 장점이던 <b>메시지별 ack</b>을 스스로 포기하기 쉬워진다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 420" role="img" aria-label="100건 배치 중 37번째가 실패했을 때 전부 ack하면 유실, 전부 nack하면 99건 중복, 실패한 것만 개별 nack한 뒤 마지막 태그로 일괄 ack하면 정확하다는 세 가지 선택지 비교 도식. nack을 일괄 ack보다 먼저 해야 하는 순서 요구도 표시">
+    <text x="560" y="24" font-size="14" font-weight="700" fill="#1f2937" text-anchor="middle">배치 100건 중 37번째가 유효성 위반으로 실패했다 — 어디까지 ack할 것인가</text>
+
+    <rect x="120" y="42" width="440" height="30" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="340" y="62" font-size="11.5" class="mono" fill="#1e3a8a" text-anchor="middle">deliveryTag 1 ~ 36 (성공)</text>
+    <rect x="560" y="42" width="60" height="30" rx="6" fill="#fecaca" stroke="#dc2626" stroke-width="2"/>
+    <text x="590" y="62" font-size="11.5" class="mono" font-weight="700" fill="#b91c1c" text-anchor="middle">37 ✗</text>
+    <rect x="620" y="42" width="380" height="30" rx="6" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="810" y="62" font-size="11.5" class="mono" fill="#1e3a8a" text-anchor="middle">deliveryTag 38 ~ 100 (성공)</text>
+    <text x="1010" y="62" font-size="11" fill="#64748b">← tag 순서</text>
+
+    <!-- option 1 -->
+    <rect x="20" y="96" width="352" height="150" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="196" y="120" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">① 전부 ack</text>
+    <text x="196" y="140" font-size="10.5" class="mono" fill="#475569" text-anchor="middle">basicAck(tag=100, multiple=true)</text>
+    <rect x="40" y="152" width="312" height="26" rx="5" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="196" y="170" font-size="11" fill="#7f1d1d" text-anchor="middle">1~100이 한 번에 브로커에서 삭제된다</text>
+    <text x="196" y="198" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">결과 — 37번이 처리 안 됐는데 사라진다</text>
+    <rect x="118" y="210" width="156" height="26" rx="13" fill="#dc2626"/>
+    <text x="196" y="228" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">유실</text>
+
+    <!-- option 2 -->
+    <rect x="384" y="96" width="352" height="150" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="560" y="120" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">② 전부 nack (requeue)</text>
+    <text x="560" y="140" font-size="10.5" class="mono" fill="#475569" text-anchor="middle">basicNack(tag=100, multiple=true, requeue=true)</text>
+    <rect x="404" y="152" width="312" height="26" rx="5" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="560" y="170" font-size="11" fill="#7f1d1d" text-anchor="middle">1~100이 전부 큐로 돌아간다</text>
+    <text x="560" y="198" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">결과 — 이미 성공한 99건을 다시 처리한다</text>
+    <rect x="482" y="210" width="156" height="26" rx="13" fill="#dc2626"/>
+    <text x="560" y="228" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">중복 99건</text>
+
+    <!-- option 3 -->
+    <rect x="748" y="96" width="352" height="150" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.2"/>
+    <text x="924" y="120" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">③ 실패한 것만 골라 nack</text>
+    <text x="924" y="140" font-size="10.5" class="mono" fill="#475569" text-anchor="middle">nack(37, false, false) → ack(100, multiple=true)</text>
+    <rect x="768" y="152" width="312" height="26" rx="5" fill="#dcfce7" stroke="#bbf7d0"/>
+    <text x="924" y="170" font-size="11" fill="#14532d" text-anchor="middle">37은 DLX로, 나머지 99건은 완료 처리</text>
+    <text x="924" y="198" font-size="12" font-weight="700" fill="#15803d" text-anchor="middle">결과 — 유실도 중복도 없다</text>
+    <rect x="846" y="210" width="156" height="26" rx="13" fill="#16a34a"/>
+    <text x="924" y="228" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">정석 · 직접 구현</text>
+
+    <!-- order requirement -->
+    <rect x="20" y="264" width="1080" height="82" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.7"/>
+    <text x="44" y="288" font-size="12.5" font-weight="700" fill="#b45309">③에는 순서 요구가 붙는다 — <tspan fill="#dc2626">nack이 먼저, 일괄 ack이 나중</tspan></text>
+    <text x="44" y="310" font-size="11.5" fill="#334155"><tspan font-weight="700">multiple=true인 ack은 "그 태그 이하 전부"를 완료 처리한다.</tspan> tag 100을 먼저 일괄 ack하면 <tspan font-weight="700" fill="#dc2626">37도 함께 완료 처리되어</tspan> 뒤늦은 nack은 이미 사라진 태그를 가리킨다.</text>
+    <text x="44" y="332" font-size="11.5" fill="#334155">그래서 코드의 순서가 곧 정확성이다 — <tspan class="mono" font-weight="700" fill="#16a34a">실패 건 개별 nack → 마지막 태그로 일괄 ack</tspan>. 이 두 줄의 순서를 바꾸면 ①(유실)과 같아진다.</text>
+
+    <rect x="20" y="360" width="1080" height="48" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="382" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">그리고 「저장이 통째로 실패하는 경우(DB 다운)」는 다른 판단이다 — 이때는 <tspan fill="#dc2626">전부 nack</tspan>이 맞다.</text>
+    <text x="560" y="400" font-size="11.5" fill="#475569" text-anchor="middle">그 결과 중복이 발생하므로 <tspan font-weight="700">멱등 처리가 전제 조건</tspan>이다 — <tspan font-weight="700">배치 처리는 멱등성 없이는 쓸 수 없다고 봐도 된다.</tspan></text>
+  </svg>
+  <figcaption><b>건별 ack이 가능하다는 것이 RabbitMQ의 강점</b>인데, 배치를 잘못 다루면 그 강점을 스스로 버리게 된다. <b>①과 ②는 "쉬워서" 선택되는 답</b>이고, ③만이 배치의 성능을 취하면서 정확성을 지킨다.</figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">문제</span> 배치 전체를 한 덩어리로 다룬다</div>
+<pre><code>@RabbitListener(queues = <span class="st">"metrics.raw"</span>, containerFactory = <span class="st">"batchFactory"</span>)
+<span class="kw">public void</span> <span class="fn">handleBatch</span>(List&lt;MetricEvent&gt; events) {
+<span class="ln-bad">    metricRepository.saveAll(events);
+    <span class="cm">// 예외 없이 리턴 → 프레임워크가 전부 ack</span>
+    <span class="cm">// 37번이 유효성 위반이어도 그냥 사라진다 (유실)</span>
+    <span class="cm">//</span>
+    <span class="cm">// 반대로 예외를 던지면 → 전부 nack</span>
+    <span class="cm">// 성공한 99건이 다시 처리된다 (중복)</span></span>
+}
+
+<span class="cm">// 둘 중 어느 쪽이든 "묶음 단위"로만 판정하고 있다.</span>
+<span class="cm">// 메시지별 ack이라는 RabbitMQ의 장점을 스스로 버린 상태.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">개선</span> 건별로 판정하고 실패한 것만 골라낸다</div>
+<pre><code>@RabbitListener(queues = <span class="st">"metrics.raw"</span>, containerFactory = <span class="st">"batchFactory"</span>,
+                ackMode = <span class="st">"MANUAL"</span>)
+<span class="kw">public void</span> <span class="fn">handleBatch</span>(List&lt;Message&gt; messages, Channel channel) <span class="kw">throws</span> IOException {
+    List&lt;Message&gt; failed = <span class="kw">new</span> ArrayList&lt;&gt;();
+    List&lt;MetricEvent&gt; valid = <span class="kw">new</span> ArrayList&lt;&gt;();
+
+    <span class="kw">for</span> (Message m : messages) {
+        <span class="kw">try</span> {
+            valid.add(parse(m));
+        } <span class="kw">catch</span> (Exception e) {
+            failed.add(m);   <span class="cm">// 파싱 단계에서 이미 걸러낸다</span>
+        }
+    }
+
+    metricRepository.saveAll(valid);  <span class="cm">// 유효한 것만 한 번에 저장</span>
+
+    <span class="cm">// 성공한 것은 마지막 태그로 일괄 ack (multiple=true)</span>
+    <span class="kw">long</span> lastTag = messages.get(messages.size() - <span class="st">1</span>)
+                           .getMessageProperties().getDeliveryTag();
+
+<span class="ln-good">    <span class="kw">for</span> (Message m : failed) {
+        <span class="cm">// 실패한 것만 개별 거부 → DLX로. 일괄 ack "전에" 처리해야 한다</span>
+        channel.basicNack(m.getMessageProperties().getDeliveryTag(), <span class="kw">false</span>, <span class="kw">false</span>);
+    }
+    channel.basicAck(lastTag, <span class="kw">true</span>);  <span class="cm">// 나머지 전부 완료 처리</span></span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">이 코드에서 반드시 같이 말해야 하는 한 줄</span>
+  <b>저장이 통째로 실패하는 경우(DB 다운)는 위 코드의 대상이 아니다.</b> <code>saveAll</code> 자체가 던지면 <b>전부 nack해서 재시도해야</b> 하고, 그 결과 <b>이미 저장된 일부가 다시 저장될 수 있으므로 중복이 발생</b>한다. 그래서 <b>멱등 처리가 전제 조건</b>이다 — 유니크 키·업서트·처리 이력 테이블 중 무엇이든 있어야 한다. <b>"배치 처리는 멱등성 없이는 쓸 수 없다"</b>는 문장을 세트로 붙이면, 성능만 보고 배치를 고른 답과 확실히 갈린다.
+</div>
+
+<h3>3-2. 배치의 나머지 대가 — 지연과 메모리</h3>
+
+<div class="split">
+  <div class="pane r">
+    <h4>① 모으는 동안 지연이 생긴다</h4>
+    <p style="margin:0"><code>receiveTimeout</code>이 1초면 <b>최악의 경우 1초 늦게 처리</b>된다. 트래픽이 많을 때는 100건이 금방 차서 체감되지 않지만, <b>한산할 때 정확히 이 지연이 드러난다.</b> 그래서 <b>실시간성이 중요한 큐에는 부적합</b>하다 — 결제 승인·알림처럼 <b>지연 자체가 품질인 큐</b>는 배치 대상이 아니다.</p>
+  </div>
+  <div class="pane r">
+    <h4>② 메모리가 별도로 추가된다</h4>
+    <p style="margin:0"><b>배치 크기 × 메시지 크기</b>만큼을 더 쓴다. 중요한 것은 이것이 <b>prefetch 메모리와 별개로 추가된다</b>는 점이다. prefetch 200으로 손에 쥔 양 위에 <b>배치 버퍼 100건이 얹힌다.</b> 힙 계산을 할 때 <b>두 항을 따로 세야</b> 한다.</p>
+  </div>
+</div>
+
+<div class="callout info"><span class="t">배치가 잘 맞는 큐 / 안 맞는 큐 — 판단 기준 한 줄</span>
+  <b>"이 큐의 메시지는 1초 늦어도 되는가?"</b> 이 질문에 <b>예</b>면 배치 후보다 — 지표 수집, 로그 적재, 통계 집계, 검색 색인 갱신처럼 <b>양은 많고 건당 가치는 낮은</b> 큐가 전형적이다. <b>아니오</b>면 배치를 쓰지 않거나 <code>receiveTimeout</code>을 아주 짧게 잡는다. 여기에 <b>멱등성 확보 여부</b>를 더하면 판단이 끝난다 — <b>지연 허용 + 멱등 가능</b> 두 조건이 모두 참일 때만 배치가 안전한 선택이다.
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 갈래 B — 리스너 동시성과 커넥션·채널 모델</h2>
+
+<p>2·3절이 <b>"한 대가 한 번에 더 많이"</b>였다면 여기는 <b>"동시에 일하는 주체를 몇으로 둘 것인가"</b>다. 리스너 동시성은 <b>프로세스 안에서 처리 주체(스레드)를 늘리는 일</b>이고, 커넥션·채널 모델은 <b>그 주체들이 브로커와 메시지·ack을 주고받는 통로를 어떻게 배치할 것인가</b>의 문제다. 통로 이야기를 같은 갈래에 두는 이유는 이렇다 — <b>주체를 아무리 늘려도 통로가 하나로 묶여 막히면 그 앞에서 전부 멈춘다.</b> 4-4의 교착이 정확히 그 사례다.</p>
+
+<div class="callout warn"><span class="t">이 갈래를 쓴다는 것의 전제</span>
+  갈래 B의 수단을 쓴다는 것은 <b>"그 큐에 순서 요구가 없거나, 버전 기반 무시 같은 장치로 순서 의존을 이미 제거해 뒀다"</b>는 뜻이어야 한다. 스레드 두 개가 같은 큐의 메시지를 동시에 붙잡고 있는 이상, <b>어느 것이 먼저 끝날지는 각자의 처리 시간이 정한다.</b> 순서 설계 자체는 <code>15-rabbitmq-message-ordering.md</code>에서 따로 다룬다.
+</div>
+
+<h3>4-1. 두 가지 컨테이너 — 스레드 모델이 다르다</h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4><code>SimpleMessageListenerContainer</code></h4>
+    <p style="margin:0"><code>concurrentConsumers</code>만큼 <b>컨슈머 스레드를 만들고, 각 스레드가 자기 채널을 갖는다.</b> 스레드 하나가 채널 하나에서 <b>순차적으로</b> 메시지를 처리한다.</p>
+    <ul>
+      <li><code>maxConcurrentConsumers</code>를 주면 <b>큐가 쌓일 때 스레드를 자동으로 늘리고 한가해지면 줄인다</b></li>
+      <li>스레드 : 채널 : 컨슈머가 <b>1 : 1 : 1</b>로 묶인다</li>
+      <li><b>부하 변동이 큰 큐에 유용하다</b></li>
+    </ul>
+  </div>
+  <div class="pane b">
+    <h4><code>DirectMessageListenerContainer</code></h4>
+    <p style="margin:0">큐마다 <code>consumersPerQueue</code>만큼 컨슈머를 두고, <b>메시지 처리는 공유 태스크 실행자(스레드 풀)에서 한다.</b></p>
+    <ul>
+      <li>스레드와 컨슈머가 <b>1:1로 묶이지 않는다</b></li>
+      <li>그래서 <b>큐가 많을 때 스레드 낭비가 적다</b></li>
+      <li>대신 자동 스케일 기능이 없다 — <b>동시성은 풀 크기로 관리</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="rule">선택 기준 — <b>큐가 적고 부하 변동이 크면 Simple</b>(자동 스케일이 있다), <b>큐가 많고 스레드를 아껴야 하면 Direct</b>(공유 풀을 쓴다)</div>
+
+<pre><code><span class="cm">// SimpleMessageListenerContainer — 부하에 따라 스레드를 자동 조절</span>
+factory.setConcurrentConsumers(<span class="st">5</span>);      <span class="cm">// 시작 스레드 수</span>
+factory.setMaxConcurrentConsumers(<span class="st">20</span>);  <span class="cm">// 부하에 따라 여기까지 자동 증가</span>
+
+<span class="cm">// 늘리고 줄이는 판단 기준도 노출돼 있다 (필요할 때만 조정)</span>
+<span class="cm">//   consecutiveActiveTrigger  — 연속으로 일감을 받으면 늘린다</span>
+<span class="cm">//   startConsumerMinInterval  — 늘리는 최소 간격</span>
+<span class="cm">//   consecutiveIdleTrigger    — 연속으로 놀면 줄인다</span>
+<span class="cm">//   stopConsumerMinInterval   — 줄이는 최소 간격</span>
+<span class="cm">// 한 번에 하나씩, 간격을 두고 움직이므로 급증 트래픽에 즉시 반응하지는 않는다</span></code></pre>
+
+<h3>4-2. prefetch와 동시성의 관계 — 반드시 곱해서 본다</h3>
+
+<p><code>SimpleMessageListenerContainer</code>에서 <b>prefetch는 채널당 적용</b>되고, <b>스레드마다 채널이 하나씩</b>이므로 결과적으로 <b>스레드당 prefetch</b>가 된다. 그래서 프로세스가 쥐는 총량은 곱이다.</p>
+
+<div class="memo">
+  <h4>메모리 계산식 — 동시성을 올릴 때 반드시 함께 계산한다 <span class="badge trap">가장 자주 빠뜨리는 곱셈</span></h4>
+  <div class="rule" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.98rem">프로세스가 쥐는 최대 메시지 수 = concurrentConsumers × prefetchCount</div>
+  <div class="grid g3" style="margin-top:10px">
+    <div class="tile big"><div class="s">동시성</div><div class="k" style="color:#2563eb">10</div></div>
+    <div class="tile big"><div class="s">× prefetch</div><div class="k" style="color:#2563eb">100</div></div>
+    <div class="tile big red"><div class="s">= 최대 보유</div><div class="k">1,000건</div></div>
+  </div>
+  <p style="margin:10px 0 0">메시지가 <b>100KB면 100MB</b>다. <b>힙 여유를 넘길 수 있다.</b> 여기에 배치를 쓰고 있다면 <b>배치 버퍼가 또 얹힌다.</b></p>
+  <p class="sub" style="margin:6px 0 0"><b>동시성을 올릴 때 prefetch를 그대로 두면 메모리 사용량이 배로 뛴다</b>는 점을 놓치기 쉽다. <b>동시성을 2배로 올렸으면 prefetch를 절반으로 내려 총량을 유지할 것인지</b>를 그 자리에서 함께 정해야 한다.</p>
+</div>
+
+<div class="callout info"><span class="t">한 걸음 더 — <code>basic.qos</code>의 <code>global</code> 플래그 <span class="badge senior">시니어 변별</span></span>
+  AMQP에서 prefetch 한도는 <code>basic.qos</code>로 설정하는데, <b><code>global=false</code>면 그 채널의 각 컨슈머에 개별 적용</b>되고 <b><code>global=true</code>면 채널의 모든 컨슈머가 한도를 공유</b>한다. <code>SimpleMessageListenerContainer</code>는 <b>스레드마다 채널을 따로 갖고 그 채널에 컨슈머가 하나</b>이므로 <b>"채널당 = 컨슈머당 = 스레드당"</b>이 되어 셋이 같은 말이 된다. 반면 <b>한 채널에 여러 컨슈머를 붙이는 구조</b>(직접 클라이언트를 다루거나 Direct 컨테이너를 쓰는 경우)라면 <b>이 셋이 달라질 수 있다</b>는 것을 알고 있어야 계산이 맞는다.
+</div>
+
+<h3>4-3. 동시성의 대가 — 순서와 다운스트림</h3>
+
+<div class="split">
+  <div class="pane r">
+    <h4>① 순서가 완전히 사라진다</h4>
+    <p style="margin:0">스레드가 여럿이면 같은 큐의 메시지들이 동시에 처리되므로, <b>컨슈머가 한 대여도 순서가 보장되지 않는다.</b> "컨슈머를 한 대로 유지했으니 순서는 괜찮다"는 흔한 오해인데, <b>순서를 결정하는 것은 컨슈머 대수가 아니라 동시 처리 주체 수</b>다.</p>
+  </div>
+  <div class="pane r">
+    <h4>② 다운스트림 부하가 배로 늘어난다</h4>
+    <p style="margin:0">동시성 20이면 <b>DB 커넥션도 최대 20개를 동시에 쓴다.</b> <b>커넥션 풀 크기보다 동시성이 크면 스레드들이 풀 대기에서 줄을 선다</b> — <b>동시성만 올리고 풀을 안 늘리면 아무것도 빨라지지 않는다.</b></p>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="컨슈머 동시성 20에 DB 커넥션 풀 10인 경우 스레드 10개가 풀 대기에 줄을 서서 처리량은 그대로이고 자원만 낭비되는 상황과, 동시성과 풀과 다운스트림 허용량을 함께 맞춘 경우의 대비 도식">
+    <defs><marker id="m4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#64748b"/></marker></defs>
+    <text x="560" y="24" font-size="14" font-weight="700" fill="#1f2937" text-anchor="middle">동시성 튜닝이 실패하는 대부분의 이유 — 세 값의 불균형</text>
+
+    <text x="20" y="58" font-size="12.5" font-weight="700" fill="#b91c1c">불균형 — 컨슈머 동시성만 올린 상태</text>
+    <rect x="20" y="70" width="150" height="120" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="95" y="94" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">컨슈머 동시성</text>
+    <text x="95" y="126" font-size="24" class="mono" font-weight="700" fill="#dc2626" text-anchor="middle">20</text>
+    <text x="95" y="150" font-size="10.5" fill="#475569" text-anchor="middle">스레드 20개가</text>
+    <text x="95" y="166" font-size="10.5" fill="#475569" text-anchor="middle">동시에 DB를 찾는다</text>
+    <path d="M174,130 L214,130" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#m4)"/>
+
+    <polygon points="220,74 340,110 340,150 220,186" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="280" y="118" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">DB 커넥션 풀</text>
+    <text x="280" y="142" font-size="18" class="mono" font-weight="700" fill="#dc2626" text-anchor="middle">10</text>
+    <text x="280" y="204" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">여기서 막힌다</text>
+
+    <path d="M344,130 L384,130" fill="none" stroke="#64748b" stroke-width="1.6" marker-end="url(#m4)"/>
+    <rect x="390" y="86" width="140" height="88" rx="9" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="460" y="112" font-size="11.5" font-weight="700" fill="#334155" text-anchor="middle">실제 처리</text>
+    <text x="460" y="142" font-size="20" class="mono" font-weight="700" fill="#334155" text-anchor="middle">10</text>
+    <text x="460" y="162" font-size="10" fill="#64748b" text-anchor="middle">동시성 10일 때와 같다</text>
+
+    <rect x="20" y="216" width="510" height="100" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="240" font-size="11.5" font-weight="700" fill="#b91c1c">남는 스레드 10개가 하는 일 — 풀 대기 큐에서 줄 서기</text>
+    <text x="40" y="262" font-size="11" fill="#475569">· 스레드 스택 메모리를 점유하고</text>
+    <text x="40" y="280" font-size="11" fill="#475569">· prefetch × 10만큼의 메시지를 손에 쥔 채 붙잡아 두고 (다른 워커에게 안 간다)</text>
+    <text x="40" y="298" font-size="11" fill="#475569">· 컨텍스트 스위칭과 풀 경합만 늘린다 — <tspan font-weight="700" fill="#dc2626">처리량은 1건도 늘지 않는다</tspan></text>
+
+    <line x1="560" y1="46" x2="560" y2="320" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+
+    <text x="580" y="58" font-size="12.5" font-weight="700" fill="#15803d">균형 — 세 값을 함께 맞춘 상태</text>
+    <rect x="580" y="70" width="150" height="120" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="655" y="94" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">컨슈머 동시성</text>
+    <text x="655" y="126" font-size="24" class="mono" font-weight="700" fill="#16a34a" text-anchor="middle">10</text>
+    <text x="655" y="150" font-size="10.5" fill="#475569" text-anchor="middle">풀 크기에 맞춘다</text>
+    <text x="655" y="166" font-size="10.5" fill="#475569" text-anchor="middle">(또는 풀을 함께 늘린다)</text>
+    <path d="M734,130 L774,130" fill="none" stroke="#16a34a" stroke-width="1.6" marker-end="url(#m1g)"/>
+
+    <rect x="780" y="86" width="140" height="88" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="850" y="112" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">DB 커넥션 풀</text>
+    <text x="850" y="142" font-size="20" class="mono" font-weight="700" fill="#16a34a" text-anchor="middle">10</text>
+    <text x="850" y="162" font-size="10" fill="#64748b" text-anchor="middle">대기 없음</text>
+    <path d="M924,130 L964,130" fill="none" stroke="#16a34a" stroke-width="1.6" marker-end="url(#m1g)"/>
+
+    <rect x="970" y="86" width="130" height="88" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="1035" y="112" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">다운스트림 API</text>
+    <text x="1035" y="140" font-size="14" class="mono" font-weight="700" fill="#16a34a" text-anchor="middle">50 req/s</text>
+    <text x="1035" y="160" font-size="10" fill="#64748b" text-anchor="middle">이 값도 상한이다</text>
+
+    <rect x="580" y="216" width="520" height="100" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="600" y="240" font-size="11.5" font-weight="700" fill="#15803d">맞춰야 하는 세 값 — 하나라도 작으면 그 값이 전체 처리량이다</text>
+    <text x="600" y="262" font-size="11" fill="#475569">① 컨슈머 동시성 &nbsp;&nbsp;② DB 커넥션 풀 크기 &nbsp;&nbsp;③ 다운스트림 허용량(rate limit)</text>
+    <text x="600" y="284" font-size="11" fill="#475569">셋 중 <tspan font-weight="700">가장 작은 값이 실효 처리량</tspan>이고, 나머지를 올려 봐야 대기만 늘어난다.</text>
+    <text x="600" y="304" font-size="11.5" font-weight="700" fill="#15803d">튜닝은 "셋을 함께 올리는 작업"이지 "동시성 숫자를 올리는 작업"이 아니다.</text>
+  </svg>
+  <figcaption><b>실무에서 동시성 튜닝이 실패하는 대부분의 이유가 이 불균형</b>이다. 컨슈머 동시성만 올리면 <b>병목이 DB 풀 대기로 옮겨갈 뿐</b>이고, 오히려 <b>메모리·컨텍스트 스위칭·메시지 점유</b>라는 비용만 새로 생긴다.</figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">문제</span> 동시성만 올린다</div>
+<pre><code><span class="cm">// application.yml</span>
+<span class="kw">spring</span>:
+  rabbitmq:
+    listener:
+      simple:
+<span class="ln-bad">        concurrency: 20          <span class="cm"># 동시 처리 20건으로 올렸다</span>
+        prefetch: 100            <span class="cm"># 그대로 둠 → 최대 2,000건 보유</span></span>
+  datasource:
+    hikari:
+<span class="ln-bad">      maximum-pool-size: 10      <span class="cm"># 손대지 않음 → 여기서 막힌다</span></span>
+
+<span class="cm"># 결과</span>
+<span class="cm">#  · 처리량은 그대로 (풀 10이 상한)</span>
+<span class="cm">#  · 힙 사용량은 급증 (2,000건 보유)</span>
+<span class="cm">#  · 다른 워커에게 갈 메시지까지 붙잡는다</span>
+<span class="cm">#  · 배포 시 graceful shutdown이 오래 걸린다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">개선</span> 세 값을 함께 맞춘다</div>
+<pre><code><span class="cm"># application.yml</span>
+<span class="kw">spring</span>:
+  rabbitmq:
+    listener:
+      simple:
+<span class="ln-good">        concurrency: 10          <span class="cm"># 풀 크기와 맞춘다</span>
+        max-concurrency: 20      <span class="cm"># 풀을 20으로 올린 뒤에만 여기까지</span>
+        prefetch: 20             <span class="cm"># 10 × 20 = 200건 보유로 억제</span></span>
+  datasource:
+    hikari:
+<span class="ln-good">      maximum-pool-size: 10      <span class="cm"># 동시성과 같은 수</span></span>
+
+<span class="cm"># 그리고 다운스트림 쪽도 함께 확인한다</span>
+<span class="cm">#  · 외부 API rate limit이 50 req/s라면</span>
+<span class="cm">#    동시성을 올리기 전에 그 한도부터 확인한다</span>
+<span class="cm">#  · 한도를 넘길 수 있으면 컨슈머 쪽에 속도 제한을 둔다 (6절)</span></code></pre>
+  </div>
+</div>
+
+<h3>4-4. 발행용과 소비용 커넥션을 분리한다 <span class="badge bonus">가산점</span></h3>
+
+<p>여기서부터는 늘린 주체들이 브로커와 이야기하는 <b>통로</b> 쪽이다. 먼저 용어를 정리하자. <b>커넥션(connection)은 애플리케이션과 브로커 사이의 TCP 연결 하나</b>이고, <b>채널(channel)은 그 커넥션 안에 다중화된 논리적 통신선</b>이다. 채널을 따로 두는 이유는 <b>TCP 연결을 스레드 수만큼 만드는 것이 비싸기 때문</b>이다 — 연결 하나를 뚫어 놓고 그 위에 채널 여러 개를 얹는다.</p>
+
+<div class="callout info"><span class="t">비유 — 커넥션은 도로, 채널은 차선</span>
+  <b>차선(채널)을 늘리는 것은 싸고 빠르지만, 도로(커넥션)를 새로 놓는 것은 비싸다.</b> 그래서 도로 하나에 차선을 여러 개 그어 쓴다. 문제는 <b>도로 자체가 차단되면 차선이 몇 개든 전부 멈춘다</b>는 것이다 — <b>브로커가 커넥션 층에서 발행을 막으면 그 위의 모든 채널이 함께 막힌다.</b> 그래서 <b>성격이 다른 트래픽(발행 / 소비)은 도로를 따로 쓴다.</b>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 430" role="img" aria-label="발행과 소비가 같은 커넥션을 쓰면 브로커 메모리 알람으로 커넥션이 블로킹될 때 소비 쪽 ack까지 막혀 큐가 줄지 않고 알람도 안 풀리는 교착이 생기지만, 발행용 커넥션을 분리하면 컨슈머가 계속 ack해 큐가 줄고 알람이 해제되는 대비 도식">
+    <defs>
+      <marker id="m5r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="m5g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+    <line x1="560" y1="14" x2="560" y2="416" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 5"/>
+
+    <!-- shared -->
+    <text x="280" y="30" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">공유 커넥션 — 발행과 소비가 같은 TCP 연결</text>
+
+    <rect x="24" y="46" width="120" height="150" rx="9" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+    <text x="84" y="70" font-size="11.5" font-weight="700" fill="#334155" text-anchor="middle">애플리케이션</text>
+    <rect x="38" y="82" width="92" height="28" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="84" y="101" font-size="10.5" fill="#334155" text-anchor="middle">컨슈머 스레드 A</text>
+    <rect x="38" y="116" width="92" height="28" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="84" y="135" font-size="10.5" fill="#334155" text-anchor="middle">컨슈머 스레드 B</text>
+    <rect x="38" y="150" width="92" height="28" rx="5" fill="#fde68a" stroke="#d97706"/><text x="84" y="169" font-size="10.5" fill="#78350f" text-anchor="middle">발행 스레드</text>
+
+    <rect x="164" y="46" width="180" height="150" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2.2"/>
+    <text x="254" y="68" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">커넥션 1개 (TCP)</text>
+    <rect x="180" y="82" width="148" height="28" rx="5" fill="#fee2e2" stroke="#fecaca"/><text x="254" y="101" font-size="10.5" class="mono" fill="#7f1d1d" text-anchor="middle">채널 1 (소비 · ack)</text>
+    <rect x="180" y="116" width="148" height="28" rx="5" fill="#fee2e2" stroke="#fecaca"/><text x="254" y="135" font-size="10.5" class="mono" fill="#7f1d1d" text-anchor="middle">채널 2 (소비 · ack)</text>
+    <rect x="180" y="150" width="148" height="28" rx="5" fill="#fee2e2" stroke="#fecaca"/><text x="254" y="169" font-size="10.5" class="mono" fill="#7f1d1d" text-anchor="middle">채널 3 (발행)</text>
+    <text x="254" y="192" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="middle">커넥션이 막히면 1·2·3이 전부 막힌다</text>
+
+    <path d="M348,120 L392,120" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#m5r)"/>
+    <line x1="360" y1="100" x2="380" y2="140" stroke="#dc2626" stroke-width="3"/>
+    <line x1="380" y1="100" x2="360" y2="140" stroke="#dc2626" stroke-width="3"/>
+    <text x="370" y="158" font-size="10" font-weight="700" fill="#b91c1c" text-anchor="middle">블로킹</text>
+
+    <rect x="396" y="60" width="140" height="120" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="466" y="84" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">브로커</text>
+    <text x="466" y="106" font-size="10.5" fill="#475569" text-anchor="middle">메모리 alarm 발동</text>
+    <text x="466" y="126" font-size="10.5" fill="#475569" text-anchor="middle">→ 발행 커넥션을</text>
+    <text x="466" y="144" font-size="10.5" fill="#475569" text-anchor="middle">블로킹한다</text>
+    <text x="466" y="168" font-size="10" fill="#64748b" text-anchor="middle">원래는 발행만 막으려던 것</text>
+
+    <!-- deadlock loop -->
+    <rect x="24" y="214" width="512" height="128" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="280" y="238" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">그래서 교착이 만들어진다</text>
+    <rect x="42" y="250" width="108" height="46" rx="7" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="96" y="270" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle">ack이 막힌다</text>
+    <text x="96" y="286" font-size="9.5" fill="#7f1d1d" text-anchor="middle">처리는 끝났는데</text>
+    <path d="M154,273 L182,273" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#m5r)"/>
+    <rect x="186" y="250" width="108" height="46" rx="7" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="240" y="270" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle">큐가 안 줄어든다</text>
+    <text x="240" y="286" font-size="9.5" fill="#7f1d1d" text-anchor="middle">unacked만 쌓인다</text>
+    <path d="M298,273 L326,273" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#m5r)"/>
+    <rect x="330" y="250" width="108" height="46" rx="7" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="384" y="270" font-size="10.5" font-weight="700" fill="#b91c1c" text-anchor="middle">alarm이 안 풀린다</text>
+    <text x="384" y="286" font-size="9.5" fill="#7f1d1d" text-anchor="middle">메모리가 안 준다</text>
+    <path d="M442,273 L470,273" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#m5r)"/>
+    <rect x="474" y="250" width="46" height="46" rx="7" fill="#dc2626"/>
+    <text x="497" y="270" font-size="10" font-weight="700" fill="#fff" text-anchor="middle">다시</text>
+    <text x="497" y="286" font-size="10" font-weight="700" fill="#fff" text-anchor="middle">처음</text>
+    <path d="M497,300 L497,318 L96,318 L96,300" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#m5r)"/>
+    <text x="280" y="336" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">스스로 빠져나올 수 없다 — 사람이 개입해야 끊긴다</text>
+
+    <!-- separated -->
+    <text x="840" y="30" font-size="13.5" font-weight="700" fill="#15803d" text-anchor="middle">분리 — 발행용 커넥션을 따로 둔다</text>
+
+    <rect x="584" y="46" width="120" height="150" rx="9" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+    <text x="644" y="70" font-size="11.5" font-weight="700" fill="#334155" text-anchor="middle">애플리케이션</text>
+    <rect x="598" y="82" width="92" height="28" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="644" y="101" font-size="10.5" fill="#334155" text-anchor="middle">컨슈머 스레드 A</text>
+    <rect x="598" y="116" width="92" height="28" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="644" y="135" font-size="10.5" fill="#334155" text-anchor="middle">컨슈머 스레드 B</text>
+    <rect x="598" y="150" width="92" height="28" rx="5" fill="#fde68a" stroke="#d97706"/><text x="644" y="169" font-size="10.5" fill="#78350f" text-anchor="middle">발행 스레드</text>
+
+    <rect x="724" y="46" width="180" height="72" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="814" y="68" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">소비용 커넥션 (정상)</text>
+    <rect x="740" y="76" width="148" height="16" rx="4" fill="#dcfce7" stroke="#bbf7d0"/><text x="814" y="89" font-size="9.5" class="mono" fill="#14532d" text-anchor="middle">채널 1 (소비 · ack)</text>
+    <rect x="740" y="96" width="148" height="16" rx="4" fill="#dcfce7" stroke="#bbf7d0"/><text x="814" y="109" font-size="9.5" class="mono" fill="#14532d" text-anchor="middle">채널 2 (소비 · ack)</text>
+
+    <rect x="724" y="128" width="180" height="52" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4"/>
+    <text x="814" y="150" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">발행용 커넥션 (블로킹)</text>
+    <rect x="740" y="158" width="148" height="16" rx="4" fill="#fee2e2" stroke="#fecaca"/><text x="814" y="171" font-size="9.5" class="mono" fill="#7f1d1d" text-anchor="middle">채널 3 (발행) — 막힘</text>
+
+    <path d="M908,82 L948,82" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#m5g)"/>
+    <path d="M908,154 L948,154" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#m5r)"/>
+    <rect x="952" y="60" width="140" height="120" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="1022" y="84" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">브로커</text>
+    <text x="1022" y="106" font-size="10.5" fill="#475569" text-anchor="middle">alarm은 그대로지만</text>
+    <text x="1022" y="126" font-size="10.5" fill="#475569" text-anchor="middle">ack은 계속 들어온다</text>
+    <text x="1022" y="148" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="middle">→ 큐가 줄어든다</text>
+    <text x="1022" y="168" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="middle">→ 메모리가 회수된다</text>
+
+    <rect x="584" y="214" width="512" height="128" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="840" y="238" font-size="12.5" font-weight="700" fill="#15803d" text-anchor="middle">회복 경로가 살아 있다</text>
+    <rect x="602" y="250" width="108" height="46" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="656" y="270" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="middle">ack은 계속 간다</text>
+    <text x="656" y="286" font-size="9.5" fill="#14532d" text-anchor="middle">소비 커넥션은 정상</text>
+    <path d="M714,273 L742,273" fill="none" stroke="#16a34a" stroke-width="1.6" marker-end="url(#m5g)"/>
+    <rect x="746" y="250" width="108" height="46" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="800" y="270" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="middle">큐가 줄어든다</text>
+    <text x="800" y="286" font-size="9.5" fill="#14532d" text-anchor="middle">메모리가 회수된다</text>
+    <path d="M858,273 L886,273" fill="none" stroke="#16a34a" stroke-width="1.6" marker-end="url(#m5g)"/>
+    <rect x="890" y="250" width="108" height="46" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="944" y="270" font-size="10.5" font-weight="700" fill="#15803d" text-anchor="middle">alarm 해제</text>
+    <text x="944" y="286" font-size="9.5" fill="#14532d" text-anchor="middle">발행도 재개된다</text>
+    <path d="M1002,273 L1030,273" fill="none" stroke="#16a34a" stroke-width="1.6" marker-end="url(#m5g)"/>
+    <text x="1062" y="278" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">자동 회복</text>
+    <text x="840" y="336" font-size="11" font-weight="700" fill="#15803d" text-anchor="middle">설정 한 줄로 「적체 장애에서 스스로 빠져나올 수 있는 구조」가 된다</text>
+
+    <rect x="24" y="356" width="1072" height="58" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="380" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">일반화하면 — <tspan fill="#1f2937">"성격이 다른 트래픽은 커넥션을 나눈다."</tspan> 커넥션은 장애가 전파되는 경계이기도 하다.</text>
+    <text x="560" y="402" font-size="11.5" fill="#475569" text-anchor="middle">채널은 커넥션 안에 다중화되므로 <tspan font-weight="700">채널을 아무리 나눠도 커넥션 층의 문제는 격리되지 않는다</tspan> — 이것이 계층을 아는 것의 실익이다.</text>
+  </svg>
+  <figcaption><b>브로커가 메모리 alarm으로 발행을 블로킹하면, 그 커넥션의 모든 채널이 막힌다.</b> 발행과 소비가 같은 커넥션을 쓰고 있으면 <b>소비 쪽 ack까지 막혀</b> 상황이 더 나빠진다 — 처리를 끝내고도 ack을 못 보내니 큐가 안 줄고, 큐가 안 줄어드니 alarm이 안 풀린다. <b>교착이다.</b></figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">문제</span> 기본 상태 — 발행과 소비가 커넥션을 공유</div>
+<pre><code><span class="cm"># application.yml — rabbitmq 커넥션 관련 설정이 없다</span>
+<span class="kw">spring</span>:
+  rabbitmq:
+    host: mq.internal
+<span class="ln-bad">    <span class="cm"># cache 설정 없음 → 발행·소비가 같은 커넥션을 쓴다</span></span>
+
+<span class="cm"># 평상시에는 아무 문제가 없다.</span>
+<span class="cm"># 브로커 메모리 alarm이 뜨는 그 순간에만 드러나고,</span>
+<span class="cm"># 하필 그때가 가장 회복이 급한 순간이다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">개선</span> 발행용 커넥션을 분리</div>
+<pre><code><span class="kw">spring</span>:
+  rabbitmq:
+<span class="ln-good">    <span class="cm"># 발행용 커넥션을 소비용과 분리한다.</span>
+    <span class="cm"># 발행이 블로킹돼도 컨슈머는 계속 ack을 보내 큐를 줄일 수 있다.</span>
+    cache:
+      connection:
+        mode: connection</span></code></pre>
+<pre><code><span class="cm">// 또는 팩토리에서 직접 발행 전용 커넥션 팩토리를 지정한다</span>
+CachingConnectionFactory publisherCf = <span class="kw">new</span> CachingConnectionFactory(host);
+consumerCf.setPublisherConnectionFactory(publisherCf);</code></pre>
+  </div>
+</div>
+
+<h3>4-5. 채널 캐시 크기와 커넥션 수</h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4>채널 캐시는 <b>넉넉하게</b></h4>
+    <p style="margin:0">Spring AMQP는 채널을 캐시해 재사용한다. <b>캐시 크기가 동시 사용 채널 수보다 작으면 매번 채널을 새로 열고 닫아</b> 오버헤드가 생긴다.</p>
+    <div style="margin-top:8px"><b>증상이 특징적이다</b> — <b>처리량은 낮은데 브로커의 채널 생성/종료 지표가 계속 튄다.</b> 이 지표를 보면 바로 판별된다.</div>
+  </div>
+  <div class="pane r">
+    <h4>커넥션 수는 <b>적게</b></h4>
+    <p style="margin:0">반대로 커넥션을 많이 만드는 것은 나쁘다. <b>TCP 연결마다 브로커가 소켓과 메모리를 쓰고, 인증·핸드셰이크 비용</b>도 든다.</p>
+    <div style="margin-top:8px">특히 <b>요청마다 커넥션을 만드는 코드</b>는 반드시 잡아야 한다. <b>초당 수백 개의 커넥션이 생성·소멸하면 브로커의 CPU가 그것만으로 소진된다.</b></div>
+  </div>
+</div>
+
+<pre><code><span class="kw">spring</span>:
+  rabbitmq:
+    cache:
+      channel:
+<span class="ln-good">        size: 50   <span class="cm"># 동시 발행 스레드 수보다 넉넉하게</span></span></code></pre>
+
+<div class="memo green">
+  <h4>통로 설계 규칙 세 줄 <span class="badge core">그대로 외운다</span></h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k" style="font-family:inherit">① 커넥션은 소수</div><div class="d"><b>용도별 1~2개</b>. 요청마다 만드는 코드는 즉시 잡는다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">② 채널은 필요한 만큼</div><div class="d">싸다. <b>캐시 크기를 동시 사용 수보다 넉넉하게</b> 잡는다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">③ 발행과 소비는 분리</div><div class="d"><b>커넥션은 장애가 전파되는 경계</b>다. 성격이 다르면 나눈다.</div></div>
+  </div>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 튜닝 순서와 대가 총정리</h2>
+
+<p>수단을 다 알고 나면 남는 질문은 <b>"어떤 순서로 손대는가"</b>다. 순서가 중요한 이유는 두 가지다 — <b>뒤로 갈수록 대가가 커지고</b>, <b>앞 단계를 건너뛰면 뒤 단계의 효과가 측정되지 않기 때문</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="처리량 튜닝의 순서를 병목 확인, 워커 증설, prefetch 조정, 배치 처리, 리스너 동시성 순서의 파이프라인으로 보여주고 각 단계에서 내는 대가와 다음 단계로 넘어가는 조건을 표시한 도식">
+    <defs><marker id="m6" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker></defs>
+    <text x="560" y="24" font-size="14" font-weight="700" fill="#1f2937" text-anchor="middle">튜닝 순서 — 「병 · 워 · 프 · 배 · 동」 &nbsp;|&nbsp; 앞 단계를 건너뛰면 뒤 단계의 효과를 측정할 수 없다</text>
+
+    <rect x="16" y="48" width="196" height="118" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <circle cx="46" cy="76" r="15" fill="#2563eb"/><text x="46" y="81" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">병</text>
+    <text x="70" y="81" font-size="12.5" font-weight="700" fill="#1d4ed8">병목 확인</text>
+    <text x="32" y="106" font-size="10.5" fill="#334155">스레드 덤프 · consumer</text>
+    <text x="32" y="122" font-size="10.5" fill="#334155">utilisation · publish/ack rate</text>
+    <text x="32" y="146" font-size="10.5" font-weight="700" fill="#2563eb">대가 — 없다 (진단일 뿐)</text>
+    <text x="32" y="160" font-size="9.5" fill="#64748b">여기서 컨슈머가 아니면 즉시 종료</text>
+    <path d="M216,107 L242,107" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m6)"/>
+
+    <rect x="246" y="48" width="196" height="118" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <circle cx="276" cy="76" r="15" fill="#16a34a"/><text x="276" y="81" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">워</text>
+    <text x="300" y="81" font-size="12.5" font-weight="700" fill="#15803d">워커 증설</text>
+    <text x="262" y="106" font-size="10.5" fill="#334155">파드·인스턴스를 늘린다</text>
+    <text x="262" y="122" font-size="10.5" fill="#334155">RabbitMQ는 상한이 없다</text>
+    <text x="262" y="146" font-size="10.5" font-weight="700" fill="#b45309">대가 — 자원 비용, 다운스트림 부하</text>
+    <text x="262" y="160" font-size="9.5" fill="#64748b">순서는 어차피 큐 단위로 이미 깨져 있다</text>
+    <path d="M446,107 L472,107" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m6)"/>
+
+    <rect x="476" y="48" width="196" height="118" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <circle cx="506" cy="76" r="15" fill="#d97706"/><text x="506" y="81" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">프</text>
+    <text x="530" y="81" font-size="12.5" font-weight="700" fill="#b45309">prefetch 조정</text>
+    <text x="492" y="106" font-size="10.5" fill="#334155">건당 처리 시간 대비 왕복</text>
+    <text x="492" y="122" font-size="10.5" fill="#334155">비율로 정한다 · 큐별로 다르게</text>
+    <text x="492" y="146" font-size="10.5" font-weight="700" fill="#dc2626">대가 — 분배 공정성 · 메모리 · 정지 시간</text>
+    <text x="492" y="160" font-size="9.5" fill="#64748b">키우면 ②의 효과를 스스로 깎을 수 있다</text>
+    <path d="M676,107 L702,107" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m6)"/>
+
+    <rect x="706" y="48" width="196" height="118" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <circle cx="736" cy="76" r="15" fill="#d97706"/><text x="736" y="81" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">배</text>
+    <text x="760" y="81" font-size="12.5" font-weight="700" fill="#b45309">배치 처리</text>
+    <text x="722" y="106" font-size="10.5" fill="#334155">건당 왕복 자체를 줄인다</text>
+    <text x="722" y="122" font-size="10.5" fill="#334155">개선 폭이 가장 큰 경우가 많다</text>
+    <text x="722" y="146" font-size="10.5" font-weight="700" fill="#dc2626">대가 — 부분 실패 ack · 지연 · 메모리</text>
+    <text x="722" y="160" font-size="9.5" fill="#64748b">전제: 멱등성 · 1초 지연 허용</text>
+    <path d="M906,107 L932,107" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#m6)"/>
+
+    <rect x="936" y="48" width="168" height="118" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <circle cx="966" cy="76" r="15" fill="#dc2626"/><text x="966" y="81" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">동</text>
+    <text x="990" y="81" font-size="12.5" font-weight="700" fill="#b91c1c">리스너 동시성</text>
+    <text x="952" y="106" font-size="10.5" fill="#334155">스레드를 늘린다</text>
+    <text x="952" y="122" font-size="10.5" fill="#334155">풀·rate limit과 함께</text>
+    <text x="952" y="146" font-size="10.5" font-weight="700" fill="#dc2626">대가 — 순서 소멸 · 부하 배증</text>
+    <text x="952" y="160" font-size="9.5" fill="#64748b">가장 큰 대가라 마지막에 둔다</text>
+
+    <rect x="16" y="186" width="1088" height="46" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="6 4"/>
+    <text x="36" y="206" font-size="11.5" font-weight="700" fill="#334155">모든 단계에 공통으로 깔리는 바닥 — 커넥션·채널 모델</text>
+    <text x="36" y="224" font-size="11" fill="#475569">발행/소비 커넥션 분리 · 채널 캐시 넉넉히 · 커넥션 수는 소수. <tspan font-weight="700">주체를 아무리 늘려도 통로가 막히면 그 앞에서 전부 멈춘다.</tspan></text>
+
+    <text x="560" y="258" font-size="12" font-weight="700" fill="#64748b" text-anchor="middle">각 단계 뒤에는 반드시 <tspan fill="#1f2937">측정</tspan>이 붙는다 — 두 가지를 한꺼번에 바꾸면 <tspan fill="#dc2626">무엇이 효과였는지 알 수 없다.</tspan></text>
+    <text x="560" y="280" font-size="11.5" fill="#94a3b8" text-anchor="middle">면접에서 "prefetch를 올리고 동시성도 올리고 배치도 넣습니다"는 나열이고, "이 순서로 하나씩 바꾸며 측정합니다"는 방법론이다</text>
+  </svg>
+  <figcaption>순서에는 이유가 있다. <b>병목 확인이 없으면 나머지 넷이 전부 추측</b>이 되고, <b>워커 증설을 건너뛰면 가장 싸고 확실한 수단을 놔둔 채 대가가 큰 수단부터 쓰는 셈</b>이 된다. 그리고 <b>prefetch를 크게 잡아 두면 워커 증설 효과가 상쇄</b>되므로, 두 단계는 항상 <b>함께 확인</b>해야 한다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table class="wide">
+  <caption>수단별 대가 총정리 — <b>"이 수단을 쓰면 무엇을 잃습니까"</b>에 대한 답이 이 표의 네 번째 열이다.</caption>
+  <thead><tr><th style="width:130px">수단</th><th style="width:200px">무엇을 줄이는가</th><th style="width:210px">효과가 큰 상황</th><th style="width:250px">대가</th><th>함께 조정할 것</th></tr></thead>
+  <tbody>
+    <tr class="hl"><th>워커 증설<br><span class="sub">갈래 B</span></th><td>전체 대기열 소화 시간</td><td>병목이 컨슈머 CPU일 때 · <b>거의 항상 1순위</b></td><td>자원 비용, 다운스트림 부하 증가</td><td>prefetch(크면 새 워커가 논다), DB 풀, 다운스트림 허용량</td></tr>
+    <tr><th>prefetch<br><span class="sub">갈래 A①</span></th><td>메시지 사이의 <b>왕복 대기</b></td><td>건당 처리가 <b>수 ms 이하</b>로 짧을 때</td><td class="bad">분배 불균등 · 실패 시 순서 흐트러짐 · 메모리 · graceful shutdown 지연</td><td>동시성(곱해진다), 컨슈머 대수, 메시지 크기</td></tr>
+    <tr><th>배치 처리<br><span class="sub">갈래 A②</span></th><td>건당 <b>왕복 횟수</b> (DB·API)</td><td>양이 많고 건당 가치가 낮은 큐 · 지연 1초 허용</td><td class="bad">부분 실패 ack 설계 필요 · 모으는 지연 · 배치 버퍼 메모리</td><td>prefetch(&gt; batchSize), receiveTimeout, <b>멱등성</b></td></tr>
+    <tr><th>리스너 동시성<br><span class="sub">갈래 B</span></th><td>프로세스 내 <b>유휴 CPU</b></td><td>프로세스를 못 늘리는 상황 · I/O 대기가 섞인 작업</td><td class="bad">순서 완전 소멸 · 다운스트림 부하 배증 · 메모리(prefetch와 곱)</td><td>DB 커넥션 풀, 다운스트림 rate limit, prefetch</td></tr>
+    <tr><th>커넥션·채널<br><span class="sub">바닥</span></th><td>연결 생성 비용 · <b>장애 전파</b></td><td>발행과 소비를 함께 하는 애플리케이션</td><td class="good">사실상 없다 — 설정 비용뿐</td><td>채널 캐시 크기, 커넥션 수 상한</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>"컨슈머를 늘렸는데 처리량이 안 늘어납니다" — 확인 순서 4가지 <span class="badge trap">1번과 4번이 RabbitMQ 특유의 답이다</span></h4>
+  <div class="step"><span class="n">1</span><div class="body"><b>prefetch가 너무 큰가.</b> <b>기존 컨슈머가 큐의 메시지를 다 쥐고 있으면 새 컨슈머에게 갈 것이 없다.</b> 큐 깊이는 0인데 unacked가 크다면 확정이다. <b>이것이 가장 흔하다.</b></div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>다운스트림이 한계인가.</b> DB 커넥션 풀, 외부 API rate limit. <b>스레드 덤프로 확인</b>한다 — 대부분의 스레드가 풀 대기에 있으면 여기다.</div></div>
+  <div class="step"><span class="n">3</span><div class="body"><b>Single Active Consumer가 켜져 있는가.</b> 이 설정이 있으면 <b>컨슈머를 몇 대 띄워도 한 대만 일한다.</b> 순서 보장을 위해 켜 둔 것을 잊은 채 증설하는 경우가 있다.</div></div>
+  <div class="step red"><span class="n">4</span><div class="body"><b>큐가 하나뿐인가.</b> <b>큐는 브로커의 특정 노드가 소유</b>하므로, 그 노드가 한계면 컨슈머를 늘려도 소용없다. 이때는 <b>큐를 여러 개로 쪼개고 consistent hash exchange로 나눠야</b> 한다. — <b>"RabbitMQ에서 큐 하나의 처리량 상한은 그 큐의 홈 노드 성능"</b>이라는 구조를 이해했다는 신호라 변별력이 크다.</div></div>
+</div>
+
+<h3>5-1. Kafka에서 처리량을 올리는 것과 무엇이 다른가</h3>
+
+<div class="scroll">
+<table>
+  <caption><b>핵심 차이는 확장의 상한</b>이다.</caption>
+  <thead><tr><th style="width:190px"></th><th>Kafka</th><th>RabbitMQ</th></tr></thead>
+  <tbody>
+    <tr class="hl"><th>컨슈머 증설 상한</th><td class="bad">파티션 수</td><td class="good">없음</td></tr>
+    <tr><th>상한 도달 후 수단</th><td>컨슈머 내부 병렬화 (순서 포기)</td><td>그냥 컨슈머를 더 붙인다</td></tr>
+    <tr><th>배치</th><td class="good"><code>max.poll.records</code>로 자연스럽게 배치 폴링</td><td>배치 리스너 설정 필요</td></tr>
+    <tr><th>진행 관리</th><td>오프셋 하나 (배치 중 실패 시 커밋 지점 고민)</td><td class="good">메시지별 ack (부분 실패 처리 가능)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Kafka는 <b>처음부터 배치 지향</b>이라 폴링 한 번에 수백 건을 가져오는 것이 기본 동작이다. 대신 <b>파티션 상한 때문에 스케일 아웃이 설계 시점에 묶인다.</b> RabbitMQ는 <b>건 단위 push가 기본</b>이라 배치를 쓰려면 명시적으로 설정해야 하지만, <b>컨슈머 증설에 제약이 없다.</b></p>
+
+<div class="rule">이 비교의 핵심 문장 — <b>"Kafka는 처리량 상한이 설계 시점(파티션 수)에 정해지고, RabbitMQ는 운영 중에 워커만 늘리면 된다"</b></div>
+
+<div class="callout info"><span class="t">대가를 내는 자리만 다를 뿐 구조는 같다</span>
+  Kafka 쪽에서 컨슈머 한 대의 처리량을 올릴 때 무엇을 대가로 내는지는 <code>30-single-consumer-throughput-and-offset-commit.md</code>에서 따로 다룬다 — 거기서는 대가가 <b>오프셋 커밋 지점의 정확성</b>으로 나타나고, RabbitMQ에서는 <b>메시지별 ack의 정확성</b>으로 나타난다. <b>"한 번에 여러 건을 손에 쥐면, 그중 일부만 실패했을 때 진행 상태를 어떻게 기록할 것인가"</b>라는 같은 문제가 <b>오프셋이냐 delivery tag냐로 옷만 갈아입은 것</b>이다.
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>6-1. 면접 전날 이것만 — 60초 답변 스크립트</h3>
+
+<div class="card">
+  <div class="step"><span class="n">1</span><div class="body"><b>병목 확인부터 말한다.</b> "먼저 <b>스레드 덤프를 떠서 병목이 정말 컨슈머인지</b> 확인합니다. 대부분의 스레드가 <b>DB 커넥션 대기</b>에 있으면 워커를 늘려도 <b>DB만 더 아프고</b>, <b>실제 연산 중</b>일 때만 증설과 튜닝이 제값을 합니다."</div></div>
+  <div class="step ok"><span class="n">2</span><div class="body"><b>1순위 수단과 그 근거를 붙인다.</b> "그다음은 <b>워커 증설</b>입니다. Kafka는 <b>파티션 수가 컨슈머 수의 상한</b>이라 급할 때 못 늘리지만, <b>RabbitMQ는 큐 하나에 컨슈머를 몇 대든 붙일 수 있어</b> 이게 가장 싸고 확실합니다."</div></div>
+  <div class="step"><span class="n">3</span><div class="body"><b>내부 수단 셋을 대가와 한 세트로 말한다.</b> "그래도 부족하면 내부를 봅니다. <b>prefetch</b>는 왕복 대기를 없애지만 <b>부하 분배가 불균등</b>해지고, <b>배치</b>는 건당 왕복을 없애지만 <b>부분 실패 ack</b> 문제를 만들며, <b>동시성</b>은 스레드를 늘리지만 <b>순서가 완전히 사라집니다.</b>"</div></div>
+  <div class="step"><span class="n">4</span><div class="body"><b>숫자 대신 판단 기준을 준다.</b> "prefetch는 <b>건당 처리 시간 대비 왕복 비율</b>로 정합니다 — <b>1ms짜리 큐면 수백, 수 초짜리 큐면 1~5</b>입니다. 그래서 <b>큐마다 컨테이너 팩토리를 나눠</b> 잡습니다. 그리고 <b>동시성 × prefetch가 프로세스가 쥐는 최대 건수</b>라 메모리를 함께 계산합니다."</div></div>
+  <div class="step red"><span class="n">5</span><div class="body"><b>가장 흔한 실패와 가산점으로 마무리한다.</b> "동시성 튜닝이 실패하는 대부분의 이유는 <b>컨슈머 동시성·DB 커넥션 풀·다운스트림 허용량의 불균형</b>입니다. 그리고 <b>발행용과 소비용 커넥션을 분리</b>해 둡니다 — 브로커 메모리 alarm으로 커넥션이 블로킹되면 <b>ack까지 막혀 큐가 안 줄고 alarm도 안 풀리는 교착</b>이 생기기 때문입니다."</div></div>
+</div>
+
+<div class="scroll">
+<table class="wide">
+  <caption>상황 판단표 — <b>"이럴 땐 뭘 하나요"</b>로 질문이 꺾일 때 이 표의 행 하나를 그대로 말하면 된다.</caption>
+  <thead><tr><th style="width:220px">상황</th><th style="width:250px">눈에 보이는 신호</th><th style="width:330px">조치</th><th>하면 안 되는 것</th></tr></thead>
+  <tbody>
+    <tr><th>큐가 쌓인다<br><span class="sub">원인 미상</span></th><td>queue depth 증가 추세</td><td class="good">스레드 덤프 + publish/ack rate 비교로 <b>병목 위치부터 확정</b></td><td class="bad">설정부터 바꾸기 — 효과를 측정할 기준이 없어진다</td></tr>
+    <tr class="hl"><th>컨슈머를 늘려도 그대로</th><td>큐 깊이 0인데 unacked가 크다</td><td class="good"><b>prefetch를 줄인다</b> — 기존 컨슈머가 다 쥐고 있다</td><td class="bad">컨슈머를 더 늘리기 — 갈 메시지가 없다</td></tr>
+    <tr><th>스레드가 전부 DB 대기</th><td>덤프에 풀 대기 스택 다수</td><td class="good">쿼리·인덱스 개선, <b>배치화</b>, 풀 크기 재검토</td><td class="bad">동시성 증가 — 대기 줄만 길어진다</td></tr>
+    <tr><th>처리량은 낮은데<br>브로커 CPU가 튄다</th><td>채널 생성/종료 지표가 계속 튄다</td><td class="good"><b>채널 캐시 크기</b>를 동시 사용 수보다 크게</td><td class="bad">브로커 증설 — 원인은 클라이언트 쪽이다</td></tr>
+    <tr><th>발행이 막히고<br>큐도 안 줄어든다</th><td>브로커 memory alarm + unacked 정체</td><td class="good"><b>발행/소비 커넥션 분리</b>로 ack 경로를 살린다</td><td class="bad">컨슈머 재시작 반복 — 교착이 그대로다</td></tr>
+    <tr><th>처리량을 올렸더니<br>다운스트림이 죽었다</th><td>다운스트림 5xx·타임아웃 급증</td><td class="good">컨슈머 쪽 <b>속도 제한</b> · 서킷 브레이커 · 동시성을 용량에 맞춤</td><td class="bad">재시도로 계속 두들기기 — 회복을 막는다</td></tr>
+    <tr><th>야간에만 처리가 늦다</th><td>유입이 적은 시간대에 지연 증가</td><td class="good">배치 <code>receiveTimeout</code> 확인 — 배치가 안 차서 기다리고 있다</td><td class="bad">batchSize 늘리기 — 지연이 더 커진다</td></tr>
+    <tr><th>배포가 오래 걸린다</th><td>graceful shutdown 지연</td><td class="good"><b>prefetch를 줄인다</b> — 손에 쥔 양이 곧 정지 시간이다</td><td class="bad">강제 종료 — 쥐고 있던 메시지가 전부 재배달된다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>6-2. 꼬리질문 셀프 테스트 <span class="badge core">답을 먼저 떠올린 뒤 펼친다</span></h3>
+
+<details class="q"><summary>컨슈머를 늘렸는데 처리량이 안 늘어납니다. 무엇을 확인하나요?<span class="hint">힌트: 가장 흔한 원인은 설정 하나다 — 그리고 지표 하나로 확정된다</span></summary><div class="a">
+  <p>순서대로 넷을 확인한다. <b>각 원인마다 확정 지표가 다르다</b>는 것까지 말하면 답이 완성된다.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:210px">확인 항목</th><th style="width:280px">확정 지표</th><th>대응</th></tr></thead>
+    <tbody>
+      <tr class="hl"><th>① prefetch가 너무 큰가<br><span class="sub">가장 흔하다</span></th><td><b>큐 깊이는 0인데 unacked가 크다</b></td><td>prefetch를 줄인다. 기존 컨슈머가 큐를 비워 가서 새 컨슈머에게 갈 것이 없다</td></tr>
+      <tr><th>② 다운스트림이 한계인가</th><td>스레드 덤프에 <b>커넥션 풀 대기</b> 스택이 다수</td><td>풀·rate limit을 함께 올리거나, 병목을 먼저 개선한다</td></tr>
+      <tr><th>③ Single Active Consumer</th><td>관리 콘솔에서 <b>큐의 컨슈머는 여럿인데 한 대만 배달받는다</b></td><td>순서 요구 때문에 켠 것이라면 증설이 애초에 불가능하다 — 큐 분할로 간다</td></tr>
+      <tr><th>④ 큐가 하나뿐인가</th><td><b>그 큐의 홈 노드 CPU·디스크가 포화</b></td><td>큐를 여러 개로 쪼개 노드에 분산한다 (consistent hash exchange)</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="rule" style="margin-top:12px">1번과 4번이 <b>RabbitMQ 특유의 답</b>이라 변별력이 있다</div>
+  <p style="margin-top:10px">특히 4번은 <b>"RabbitMQ에서 큐 하나의 처리량 상한은 그 큐의 홈 노드 성능"</b>이라는 구조를 이해했다는 신호다. <b>"컨슈머는 무한히 붙일 수 있지만 큐는 무한히 빨라지지 않는다"</b>는 문장을 준비해 두면 좋다.</p>
+</div></details>
+
+<details class="q"><summary>prefetch를 무한정 키우면 안 되나요?<span class="hint">힌트: 세 가지가 무너진다 — 그리고 얻는 것에는 상한이 있다</span></summary><div class="a">
+  <p>안 된다. <b>세 가지가 무너진다.</b></p>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 부하 분배</div><div class="d">한 컨슈머가 다 가져가면 나머지가 논다. <b>컨슈머 증설이 무의미해진다.</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② 메모리</div><div class="d"><b>prefetch × 동시성 × 메시지 크기</b>만큼 힙을 쓴다. <b>OOM으로 죽으면 그 안의 메시지가 전부 재배달</b>된다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ 재배포 시간</div><div class="d">graceful shutdown에서 손에 쥔 것을 다 처리해야 하므로 배포가 느려지고, <b>강제 종료하면 대량 재배달</b>이 발생한다.</div></div>
+  </div>
+  <div class="rule red" style="margin-top:12px">정확한 이해 — <b>"prefetch는 왕복 대기를 없애기 위한 것이지 처리량 자체를 늘리는 것이 아니다"</b></div>
+  <p style="margin-top:10px">그래서 <b>얻는 것에는 명확한 상한</b>이 있다. 왕복 대기가 이미 무시할 수준이면 <b>더 키워도 얻는 것이 없고 잃는 것만 있다.</b> 값을 올릴 때는 <b>"지금 왕복 대기가 전체 시간의 몇 %인가"</b>를 먼저 계산하고, 그 %가 곧 <b>얻을 수 있는 최대 개선폭</b>이라는 것을 확인한 뒤 올린다.</p>
+</div></details>
+
+<details class="q"><summary><code>prefetch = 0</code>으로 두면 어떻게 되나요? <span class="badge trap">함정</span><span class="hint">힌트: 0은 "안 받는다"가 아니다</span></summary><div class="a">
+  <p><b>0은 "제한 없음"이다.</b> "아무것도 미리 안 받는다"가 아니라 <b>브로커가 한도 없이 계속 밀어 넣는다</b>는 뜻이다. 컨슈머가 처리하든 말든 <b>큐에 있는 메시지가 전부 컨슈머 프로세스로 흘러들어온다.</b></p>
+  <div class="split">
+    <div class="pane r">
+      <h4>무엇이 무너지나</h4>
+      <ul>
+        <li><b>배압(backpressure)이 사라진다</b> — 유입 속도를 컨슈머가 제어할 수단이 없다</li>
+        <li><b>메모리가 큐 크기에 비례</b>한다 — 적체 상황에서 그대로 OOM</li>
+        <li><b>부하 분배가 완전히 무너진다</b> — 먼저 붙은 컨슈머가 전부 가져간다</li>
+      </ul>
+    </div>
+    <div class="pane b">
+      <h4>그래서 실무 규칙은 하나</h4>
+      <p style="margin:0"><b>prefetch는 반드시 유한한 값으로 명시한다.</b> 값이 커도 되는 큐는 있어도, <b>"제한 없음"이 정답인 큐는 없다.</b> 특히 <b>auto-ack과 결합되면</b> 유실 위험까지 겹친다 — 받자마자 완료 처리된 메시지들이 <b>처리도 되기 전에 프로세스와 함께 사라진다.</b></p>
+    </div>
+  </div>
+  <p class="sub" style="margin:10px 0 0">면접에서의 좋은 마무리 — <b>"prefetch는 성능 설정이기도 하지만 배압 장치이기도 합니다. 0으로 두는 것은 배압을 끄는 것이라 성능 튜닝이 아니라 안전장치 해제에 가깝습니다."</b></p>
+</div></details>
+
+<details class="q"><summary>컨슈머 안에서 스레드 풀에 던져 병렬 처리해도 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 동작은 한다 — 문제는 ack이 언제 나가는가다</span></summary><div class="a">
+  <p>동작은 하지만 <b>ack 처리가 위험해진다.</b> 리스너가 리턴하면 <code>AcknowledgeMode.AUTO</code>는 ack을 보낸다. <b>실제 처리는 아직 시작도 안 했는데 브로커는 완료로 안다.</b></p>
+  <div class="cmp">
+    <div>
+      <div class="codehead bad"><span class="tag">위험</span> 던지고 바로 리턴 — 유실 구조를 손으로 만든 것</div>
+<pre><code>@RabbitListener(queues = <span class="st">"orders"</span>)  <span class="cm">// ackMode=AUTO</span>
+<span class="kw">public void</span> <span class="fn">handle</span>(OrderEvent e) {
+<span class="ln-bad">    executor.submit(() -&gt; process(e));  <span class="cm">// 던지고 바로 리턴</span></span>
+    <span class="cm">// 리턴하는 순간 프레임워크가 ack을 보낸다.</span>
+    <span class="cm">// 아직 처리도 안 했는데 브로커에서 메시지가 삭제된다.</span>
+    <span class="cm">// 프로세스가 죽으면 큐에 있던 작업이 전부 사라진다.</span>
+}</code></pre>
+    </div>
+    <div>
+      <div class="codehead good"><span class="tag">최소 조건</span> MANUAL + 작업 완료 시점에 ack</div>
+<pre><code>@RabbitListener(queues = <span class="st">"orders"</span>, ackMode = <span class="st">"MANUAL"</span>)
+<span class="kw">public void</span> <span class="fn">handle</span>(OrderEvent e, Channel channel,
+                   @Header(AmqpHeaders.DELIVERY_TAG) <span class="kw">long</span> tag) {
+    executor.submit(() -&gt; {
+        <span class="kw">try</span> {
+            process(e);
+<span class="ln-good">            channel.basicAck(tag, <span class="kw">false</span>);   <span class="cm">// 처리 완료 후에 ack</span></span>
+        } <span class="kw">catch</span> (Exception ex) {
+            channel.basicNack(tag, <span class="kw">false</span>, <span class="kw">false</span>);
+        }
+    });
+}</code></pre>
+    </div>
+  </div>
+  <div class="callout trap" style="margin-top:12px"><span class="t">그런데 이렇게 해도 남는 문제 — 배압이 사라진다</span>
+    <b>리스너가 즉시 리턴하므로 prefetch 한도가 배압 역할을 못 한다.</b> 브로커는 "처리가 끝났다"고 보고 계속 밀어넣고, <b>큐 대기열이 컨슈머 프로세스 안으로 옮겨와 무한정 쌓인다.</b> 결국 <b>스레드 풀 큐 크기 제한과 거부 정책까지 직접 설계</b>해야 하고, 거부된 작업의 ack/nack도 손으로 처리해야 한다.
+  </div>
+  <div class="rule ok">결론 — <b>웬만하면 하지 말고 <code>concurrentConsumers</code>를 쓴다.</b> 프레임워크가 채널·ack·배압을 다 처리해 준다</div>
+  <p style="margin-top:10px">직접 스레드 풀을 쓰는 것은 <b>그것으로 표현할 수 없는 요구가 있을 때만</b>이다 — 예를 들어 <b>건별로 다른 우선순위의 실행자에 보내야 하는 경우</b>. 그때도 <b>ack 시점과 배압을 어떻게 되살릴지</b>를 함께 설계해야 한다.</p>
+</div></details>
+
+<details class="q"><summary>동시성을 올렸는데 오히려 느려졌습니다. 왜 그런가요?<span class="hint">힌트: 스레드를 늘려서 얻는 것과 잃는 것을 나란히 센다</span></summary><div class="a">
+  <p>동시성은 <b>대기 시간을 겹쳐 쓰는 기법</b>이지 <b>연산 능력을 늘리는 기법이 아니다.</b> 그래서 <b>겹칠 대기가 없거나, 겹치는 비용이 이득보다 큰 경우</b> 오히려 느려진다. 원인은 대개 넷 중 하나다.</p>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 공유 자원 경합</div><div class="d">DB 커넥션 풀, 같은 행에 대한 락, 캐시 락. <b>스레드가 늘수록 대기 줄만 길어진다.</b> 같은 키를 자주 건드리는 작업이면 <b>락 경합이 스레드 수에 따라 급증</b>한다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② CPU 포화</div><div class="d">이미 CPU가 100%면 스레드를 늘려도 나눠 쓸 뿐이다. <b>컨텍스트 스위칭 비용만 추가</b>된다. CPU 바운드 작업의 동시성은 <b>코어 수 근처</b>가 상한이다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ 다운스트림 rate limit</div><div class="d">상대가 초당 50건까지만 받는데 20스레드로 두들기면 <b>429/타임아웃 → 재시도</b>가 늘어 <b>실효 처리량이 떨어진다.</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">④ 메모리 압박</div><div class="d"><b>동시성 × prefetch</b>가 커져 힙이 빠듯해지면 <b>GC가 잦아진다.</b> 처리량 그래프가 톱니처럼 흔들리면 이쪽을 의심한다.</div></div>
+  </div>
+  <div class="rule" style="margin-top:12px">확인 순서 — <b>스레드 덤프(경합)</b> → <b>CPU 사용률</b> → <b>다운스트림 에러율</b> → <b>GC 지표</b></div>
+  <p style="margin-top:10px">덧붙이면 좋은 한 줄 — <b>"동시성은 I/O 대기가 있는 작업에서만 곱셈이 됩니다. 대기가 없는 작업에서는 나눗셈이 됩니다."</b></p>
+</div></details>
+
+<details class="q"><summary>처리량을 올렸더니 다운스트림이 죽었습니다. 어떻게 하나요?<span class="hint">힌트: 컨슈머가 어디에 서 있는지를 생각한다 — 큐 뒤다</span></summary><div class="a">
+  <p>컨슈머는 <b>큐라는 버퍼 뒤에 있어서 다운스트림을 보호할 수 있는 위치</b>에 있다. <b>이 위치를 활용하는 것이 답</b>이다.</p>
+  <div class="step ok"><span class="n">1</span><div class="body"><b>컨슈머 쪽에 속도 제한을 둔다.</b> 다운스트림이 초당 100건까지 받는다면 컨슈머도 그 이상 보내지 않는다. <b>처리 못 한 메시지는 큐에 남고, 큐는 원래 그러라고 있는 것이다.</b></div></div>
+  <div class="step ok"><span class="n">2</span><div class="body"><b>서킷 브레이커를 건다.</b> 다운스트림 실패율이 임계치를 넘으면 <b>리스너 컨테이너를 멈춘다.</b> 재시도로 두들기는 것보다 낫다 — 두들기면 상대의 회복 자체를 방해한다.</div></div>
+  <div class="step ok"><span class="n">3</span><div class="body"><b>동시성을 다운스트림 용량에 맞춘다.</b> DB 커넥션 풀이 10인데 컨슈머 동시성이 50이면 <b>40개 스레드는 풀 대기만 한다.</b> 자원만 쓰고 처리량은 그대로다.</div></div>
+  <div class="rule ok" style="margin-top:12px"><b>"큐가 있다는 것은 처리 속도를 내가 정할 수 있다는 뜻"</b></div>
+  <p style="margin-top:10px">이 관점이 핵심이다. <b>동기 호출이었다면 트래픽을 그대로 맞아야 했지만, 큐 뒤에서는 소비 속도를 조절해 다운스트림을 보호할 수 있다.</b> 이것이 <b>메시지 큐를 도입하는 본래 이유 중 하나</b>이기도 하다 — 처리량 튜닝 질문에 이 문장을 붙이면 <b>"빠르게 만드는 것"과 "안정적으로 흘리는 것"을 함께 보는 답</b>이 된다.</p>
+  <p class="sub" style="margin:8px 0 0">주의 한 줄 — <b>속도를 낮추면 큐가 쌓인다.</b> 그래서 <b>큐 깊이 알람과 최대 지연 목표(SLO)를 함께 정해 두어야</b> "보호"가 "방치"로 바뀌지 않는다.</p>
+</div></details>
+
+<details class="q"><summary>큐 하나가 한계라면 어떻게 쪼개나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 컨슈머를 늘리는 것과 큐를 늘리는 것은 다른 축이다</span></summary><div class="a">
+  <p>먼저 전제를 분명히 한다. <b>컨슈머 수에는 상한이 없지만, 큐 하나의 처리량 상한은 그 큐를 소유한 노드의 성능</b>이다. <b>그 노드가 포화면 컨슈머를 아무리 늘려도 더 나오지 않는다.</b> 이때만 큐 분할이 답이 된다.</p>
+  <div class="split">
+    <div class="pane b">
+      <h4>방법 — 라우팅 키 해시로 나눈다</h4>
+      <p style="margin:0"><b>consistent hash exchange</b>(플러그인)를 쓰면 라우팅 키의 해시로 <b>여러 큐에 자동 분배</b>된다. 큐를 <code>orders.0 … orders.N</code>으로 만들고 노드에 흩어 두면 <b>노드 단위로 처리량이 곱해진다.</b></p>
+      <p class="sub" style="margin:6px 0 0">플러그인을 못 쓰면 <b>발행 쪽에서 <code>hash(key) % N</code>으로 라우팅 키를 정해</b> direct exchange로 나누는 방식도 같은 효과를 낸다.</p>
+    </div>
+    <div class="pane g">
+      <h4>덤으로 따라오는 이점 — 키 단위 순서</h4>
+      <p style="margin:0">같은 키는 <b>항상 같은 큐</b>로 가므로, <b>그 큐를 단일 컨슈머(또는 Single Active Consumer)로 소비하면 키 단위 순서가 유지</b>된다. <b>전역 순서는 포기하되 필요한 순서만 지키는</b> 구조라, Kafka의 파티션 키와 사실상 같은 모델이 된다.</p>
+    </div>
+  </div>
+  <div class="callout warn" style="margin-top:12px"><span class="t">대가도 같이 말해야 한다</span>
+    <b>① 큐 수를 나중에 바꾸기 어렵다</b> — 해시 분포가 달라져 <b>같은 키가 다른 큐로 가는 기간</b>이 생긴다(Kafka의 파티션 증설과 같은 문제다). <b>② 운영 대상이 N배</b>가 된다 — 큐마다 DLQ·알람·대시보드가 필요하다. <b>③ 키 편중(hot key)</b>이 있으면 특정 큐만 쌓인다.
+  </div>
+  <p class="sub" style="margin:10px 0 0">그래서 순서는 이렇다 — <b>워커 증설 → 내부 튜닝 → 그래도 큐의 홈 노드가 한계일 때 큐 분할.</b> 큐 분할은 <b>구조 변경</b>이므로 튜닝의 마지막에 온다.</p>
+</div></details>
+
+<details class="q"><summary>배치 리스너를 쓰면 순서는 어떻게 되나요?<span class="hint">힌트: 배치 「안」과 배치 「사이」를 나눠 생각한다</span></summary><div class="a">
+  <p>둘로 나눠야 정확하다.</p>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">배치 안</div><div class="d"><b>큐에서 꺼낸 순서 그대로 리스트에 담긴다.</b> 처리 주체가 하나이므로 <b>순서를 지키며 순회할 수 있다.</b> 이 점에서 배치는 <b>갈래 A</b>답게 순서를 크게 흔들지 않는다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">배치 사이 / 실패 후</div><div class="d">동시성이 2 이상이면 <b>배치끼리 병렬로 처리</b>되므로 순서가 없다. 또 <b>부분 실패로 37번이 DLQ·재시도로 빠지면</b> 나머지가 먼저 지나간다.</div></div>
+  </div>
+  <div class="callout trap" style="margin-top:12px"><span class="t">놓치기 쉬운 지점 — <code>saveAll</code>이 순서를 보장하지는 않는다</span>
+    리스트의 순서가 유지된다는 것과 <b>DB에 그 순서대로 반영된다는 것은 다른 말</b>이다. bulk insert는 보통 순서대로 실행되지만, <b>같은 키에 대한 UPDATE가 섞이면 최종 상태는 실행 순서에 의존</b>한다. 배치 안에 <b>같은 엔티티에 대한 이벤트가 여러 건</b> 들어올 수 있다면, <b>키별로 마지막 것만 반영하거나 버전으로 비교</b>하는 처리가 필요하다.
+  </div>
+  <p style="margin-top:10px">그래서 실무 정리는 이렇다 — <b>"배치는 순서에 무관한 이벤트(지표·로그·색인)에 쓰고, 같은 키가 여러 번 나오는 상태 변경 이벤트에 쓸 때는 키별 최종 상태 계산을 배치 안에서 먼저 한다."</b></p>
+</div></details>
+
+<details class="q"><summary>튜닝 효과를 어떤 지표로 확인하나요?<span class="hint">힌트: 큐 깊이 하나만 보면 원인을 구분할 수 없다</span></summary><div class="a">
+  <p>큐 깊이 하나만 보면 <b>"유입이 늘어난 것"과 "처리가 느려진 것"을 구분할 수 없다.</b> 최소 넷을 나란히 본다.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:190px">지표</th><th style="width:300px">읽는 법</th><th>이 값이 말해 주는 것</th></tr></thead>
+    <tbody>
+      <tr><th>publish rate<br>vs ack rate</th><td>두 선을 겹쳐 본다</td><td>publish &gt; ack면 <b>적체가 계속 커진다</b>. 두 선의 차이가 곧 쌓이는 속도다</td></tr>
+      <tr class="hl"><th>unacked 수</th><td>큐 깊이와 함께 본다</td><td><b>큐 깊이 0 + unacked 큼 = prefetch 과대</b>. 컨슈머 증설이 안 먹히는 이유가 바로 보인다</td></tr>
+      <tr><th>consumer utilisation</th><td>100%에서 얼마나 떨어졌는지</td><td>100% 미만이면 <b>큐는 더 보낼 수 있는데 컨슈머 쪽 사정으로 못 보내는 중</b> (prefetch·ack 지연·네트워크)</td></tr>
+      <tr><th>채널 생성/종료 수</th><td>튀는지 평평한지</td><td>계속 튀면 <b>채널 캐시 부족</b>. 처리량이 낮은데 브로커 CPU가 높은 전형적 원인</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin-top:12px">여기에 애플리케이션 쪽에서 <b>건당 처리 시간(p50/p99)</b>과 <b>DB 커넥션 풀 대기 시간</b>을 더하면 진단이 닫힌다. <b>p99만 튀면 특정 메시지가 무겁다는 뜻</b>이고, <b>p50까지 올라가면 다운스트림 전체가 느려진 것</b>이다.</p>
+  <div class="rule ok">튜닝의 규칙 — <b>한 번에 하나만 바꾸고, 바꾸기 전후의 같은 지표를 비교한다</b></div>
+</div></details>
+
+<details class="q"><summary>Simple과 Direct 컨테이너 중 무엇을 쓰나요?<span class="hint">힌트: 큐 개수와 부하 변동성, 두 축이면 정해진다</span></summary><div class="a">
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:170px"></th><th><code>SimpleMessageListenerContainer</code></th><th><code>DirectMessageListenerContainer</code></th></tr></thead>
+    <tbody>
+      <tr><th>스레드 모델</th><td>컨슈머마다 <b>전용 스레드 + 전용 채널</b></td><td>처리는 <b>공유 태스크 실행자(풀)</b>에서</td></tr>
+      <tr class="hl"><th>자동 스케일</th><td class="good"><code>maxConcurrentConsumers</code>로 자동 증감</td><td class="bad">없음 — 풀 크기로 관리</td></tr>
+      <tr><th>큐가 많을 때</th><td class="bad">큐 × 동시성만큼 스레드가 늘어난다</td><td class="good">풀을 공유하므로 스레드 낭비가 적다</td></tr>
+      <tr><th>prefetch 해석</th><td>스레드(=채널)당</td><td>컨슈머당 — 풀 크기와 함께 계산해야 한다</td></tr>
+      <tr><th>적합한 상황</th><td class="good">큐가 적고 <b>부하 변동이 큰</b> 경우</td><td class="good">큐가 많고 <b>스레드를 아껴야 하는</b> 경우</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="rule" style="margin-top:12px"><b>큐가 적고 부하 변동이 크면 Simple, 큐가 많고 스레드를 아껴야 하면 Direct</b></div>
+  <p style="margin-top:10px">덧붙이면 좋은 한 줄 — <b>"둘 다 처리량 자체가 크게 다르지는 않습니다. 차이는 자원 사용 방식과 자동 스케일 여부라서, 큐 개수와 부하 패턴을 보고 고릅니다."</b> 스펙 암기가 아니라 <b>선택 기준</b>을 말하는 형태가 낫다.</p>
+</div></details>
+
+<details class="q"><summary>튜닝했더니 배포가 느려졌습니다. 어디를 보나요?<span class="hint">힌트: 이 문서에서 배포 시간을 늘리는 설정은 하나뿐이다</span></summary><div class="a">
+  <p><b>prefetch다.</b> graceful shutdown은 <b>손에 쥔 메시지를 다 처리하거나 반납할 때까지</b> 기다리므로, <b>prefetch × 동시성이 곧 정지 시간의 재료</b>가 된다. prefetch 250에 건당 3초면 <b>최악의 경우 12분</b>이다.</p>
+  <div class="split">
+    <div class="pane b">
+      <h4>정공법 — 쥐는 양을 줄인다</h4>
+      <p style="margin:0"><b>무거운 큐의 prefetch를 1~5로 내린다.</b> 배포 시간뿐 아니라 <b>부하 분배·메모리</b>까지 함께 좋아지므로, 대부분 이것이 정답이다.</p>
+    </div>
+    <div class="pane b">
+      <h4>보조 — 정지 대기 시간을 정한다</h4>
+      <p style="margin:0">리스너 컨테이너의 <b><code>shutdownTimeout</code></b>으로 <b>얼마나 기다릴지</b>를 명시한다. 시간이 지나면 채널을 닫는데, <b>그 순간 미완료 메시지는 재배달</b>되므로 <b>멱등성이 전제</b>다.</p>
+    </div>
+  </div>
+  <div class="callout trap" style="margin-top:12px"><span class="t">하면 안 되는 것 — 강제 종료(SIGKILL)</span>
+    쥐고 있던 메시지가 <b>전부 재배달</b>된다. prefetch가 클수록 그 양이 크고, <b>배포할 때마다 대량 중복 처리가 일어난다.</b> 멱등성이 없다면 그대로 사고가 된다.
+  </div>
+  <p class="sub" style="margin:10px 0 0">정리 문장 — <b>"prefetch는 성능·분배·메모리·배포 시간 네 가지에 동시에 영향을 줍니다. 그래서 성능만 보고 정하면 안 되는 값입니다."</b></p>
+</div></details>
+
+<h3>6-3. 마지막 점검 — 이 조합이면 처리량 튜닝이 완성된다</h3>
+
+<div class="memo green">
+  <h4>실무 체크리스트 <span class="badge core">순서에 의미가 있다</span></h4>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">① 병목 확정</div><div class="d"><b>스레드 덤프</b> + publish/ack rate + consumer utilisation. <b>컨슈머가 병목일 때만</b> 아래로 내려간다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">② 워커 증설</div><div class="d">RabbitMQ는 <b>큐당 컨슈머 상한이 없다.</b> 가장 싸고 확실한 1순위.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">③ prefetch 재검토</div><div class="d"><b>건당 처리 시간 대비 왕복 비율</b>로 정하고 <b>큐별 팩토리</b>로 분리. 크면 ②가 무력화된다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">④ 배치 도입 검토</div><div class="d">전제 두 개 — <b>1초 지연 허용 + 멱등성.</b> <code>prefetch &gt; batchSize</code>와 <code>receiveTimeout</code> 짝 맞춤.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">⑤ 동시성은 마지막에</div><div class="d"><b>순서 요구가 없는지</b> 확인하고, <b>DB 풀·다운스트림 허용량과 함께</b> 올린다. <b>동시성 × prefetch</b> 메모리 계산 필수.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">⑥ 통로 점검</div><div class="d"><b>발행/소비 커넥션 분리</b> · 채널 캐시 넉넉히 · 커넥션은 소수. <b>평상시엔 안 보이고 장애 때 갈린다.</b></div></div>
+  </div>
+  <p class="sub" style="margin:12px 0 0"><b>①을 건너뛰면 나머지 다섯이 전부 추측</b>이 되고, <b>③을 안 보고 ②만 하면 새 워커가 놀며</b>, <b>⑥을 안 하면 적체 장애에서 스스로 빠져나오지 못한다.</b></p>
+</div>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  RabbitMQ에서 처리량을 올리는 1순위는 <b>파티션 상한이 없다는 이점을 살려 워커를 늘리는 것</b>이고, 내부 수단(prefetch·동시성·배치)은 각각 <b>분배 공정성·순서·부분 실패 ack</b>을 대가로 내므로, 무엇보다 먼저 스레드 덤프로 <b>병목이 정말 컨슈머인지</b> 확인해야 한다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/06-messaging/16-rabbitmq-consumer-throughput-prefetch.md</code> · 이어서 볼 문서: ack/nack과 prefetch(12) · 재시도와 DLQ(14) · 메시지 순서 보장(15) · classic vs quorum queue(17) · 큐 적체 진단(18) · 멱등 컨슈머 구현(04) · Kafka 파티션과 컨슈머 수(22) · Kafka 단일 컨슈머 처리량과 오프셋 커밋(30) · 컨슈머 랙 진단(31)</p>
+</main>
+</body>
+</html>

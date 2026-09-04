@@ -1,0 +1,1649 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>컨슈머 리밸런싱과 in-flight 메시지 — 배포할 때마다 "알림이 두 번 가요"가 생기는 이유</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo.warn{border-color:var(--warn)}.memo.warn::before{background:var(--warn);content:"진단"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+.formula{font-family:var(--mono);font-size:1.12rem;font-weight:700;text-align:center;padding:16px 12px;border-radius:12px;background:#1e293b;color:#e2e8f0;margin:12px 0;line-height:1.9}
+.formula .hi{color:#fcd34d}
+.formula .hi2{color:#86efac}
+
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+tr.bad td{background:var(--danger-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.mono{font-family:var(--mono)}
+
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.split.g3{grid-template-columns:1fr 1fr 1fr}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane.w{background:var(--warn-soft);border-color:var(--warn-line)}
+.pane.w h4{color:var(--warn)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+pre.wide{width:1120px;margin-left:calc(50% - 560px)}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.ln-warn{display:block;background:rgba(217,119,6,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--warn)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.nm{color:#fca5a5}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+<style>
+.cmp.g3{grid-template-columns:1fr 1fr 1fr}
+.formula.small{font-size:.95rem;line-height:1.85;text-align:left}
+.chk{list-style:none;padding:0;margin:8px 0}
+.chk li{padding-left:26px;position:relative;margin:6px 0;font-size:.95rem}
+.chk li::before{content:"\2713";position:absolute;left:4px;color:var(--ok);font-weight:800}
+.chk.x li::before{content:"\2715";color:var(--danger)}
+.layer{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card);margin:12px 0}
+.layer .lt{font-weight:800;font-size:1.02rem;margin-bottom:6px}
+.recall{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+.recall .rc{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:12px 14px}
+.recall .rc .qq{font-weight:800;color:var(--accent);font-size:.95rem;margin-bottom:6px}
+.recall .rc .aa{font-size:.93rem}
+</style>
+</head>
+<body>
+<main>
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">06 메시징 · 이벤트 &nbsp;|&nbsp; 컨슈머 리밸런싱과 in-flight 메시지 ⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>컨슈머 리밸런싱 — 배포할 때마다 "알림이 두 번 가요"가 생기는 이유<br><span class="sub">파티션 <b>소유권이 이전되는 절차</b>와, 그 순간 컨슈머 손에 남아 있던 메시지의 <b>운명</b></span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"컨슈머 리밸런싱은 <span style="color:#2563eb">언제 발생</span>하고, <span style="color:#2563eb">처리 중이던 메시지</span>는 어떻게 되나요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 리밸런싱은 <b>컨슈머 그룹의 멤버 구성이나 구독 대상(파티션)이 바뀔 때</b> — 컨슈머의 합류/이탈/사망 판정, 파티션 증설 — <b>파티션 소유권을 다시 나누는 과정</b>이고, <b>그룹 코디네이터</b>(그 그룹을 관리하는 브로커 한 대)가 변화를 감지해 <b>그룹 리더</b>(멤버 중 한 대)가 계산한 할당안을 전 멤버에게 배포하는 절차로 진행된다. 이때 <b>처리 중이던 메시지는 회수되지 않는다</b>: 옛 주인은 손에 든 메시지를 계속 처리하는데 새 주인은 <b>마지막으로 커밋된 오프셋</b>부터 다시 읽으므로, <b>같은 메시지가 두 컨슈머에서 동시에 처리되는 구간</b>이 생긴다. 즉 리밸런싱의 대가는 유실이 아니라 <b>중복 처리</b>이고(처리 후 커밋 기준), 배포 때마다 이 과정이 일어나므로 <b>컨슈머는 반드시 멱등하게</b> 만들어야 한다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>발생 조건을 세 갈래로 못박습니다.</b> 리밸런싱은 <b>"누가 어느 파티션을 맡는가"라는 배정표를 다시 짜는 절차</b>이고, <b>멤버가 늘 때 / 멤버가 줄 때(정상 종료 또는 사망 판정) / 구독 대상이 바뀔 때(파티션 증설 등)</b> 발생합니다. <b>배포는 종료 + 기동이므로 리밸런싱을 최소 두 번 부릅니다</b> — 즉 리밸런싱은 장애가 아니라 <b>일상 운영의 일부</b>입니다.</div></li>
+    <li><span class="n">2</span><div><b>in-flight 메시지의 운명을 정확히 말합니다.</b> Kafka에는 <b>"회수"라는 동작 자체가 없습니다.</b> 브로커가 아는 것은 <b>"이 그룹이 어디까지 읽었다고 커밋했는가"라는 숫자 하나</b>뿐이라, 옛 주인 메모리 안의 메시지에 대해 브로커가 할 수 있는 일이 없습니다. 그래서 <b>커밋 안 된 구간이 새 주인에게 그대로 재전달</b>되고, <b>옛 주인과 새 주인이 같은 메시지를 동시에 처리하는 구간</b>이 실재합니다 — 이것이 <b>"가끔 알림이 두 번 가요"의 정체</b>입니다.</div></li>
+    <li><span class="n">3</span><div><b>완화책과 한계로 닫습니다.</b> <b>정적 멤버십으로 횟수를, cooperative 리밸런싱으로 정지 범위를, 정상 종료와 <code>onPartitionsRevoked</code>로 리밸런싱당 피해를</b> 줄입니다. 다만 <b>콜백은 늦게 불리거나 아예 안 불릴 수 있어</b> 어떤 완화책도 중복을 0으로 만들지 못합니다. 그래서 결론은 <b>"리밸런싱이 안 나게" 가 아니라 "리밸런싱이 나도 안전하게" — 멱등 컨슈머</b>입니다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 이 문서가 겨냥하는 약점</a></li>
+    <li><a href="#s1">리밸런싱이란 — 배정표를 다시 짜는 일</a></li>
+    <li><a href="#s2">절차 — 코디네이터가 소집하고 리더가 계산한다</a></li>
+    <li><a href="#s3">언제 발생하는가 — 배포는 왜 두 번 부르는가</a></li>
+    <li><a href="#s4">in-flight 메시지의 운명 — 회수가 아니라 재전달</a></li>
+    <li><a href="#s5">중복이냐 유실이냐 · 낡은 세대의 커밋은 거부된다</a></li>
+    <li><a href="#s6">eager vs cooperative — 정지 <u>범위</u>를 줄인다</a></li>
+    <li><a href="#s7">정적 멤버십 — 리밸런싱 <u>횟수</u>를 줄인다</a></li>
+    <li><a href="#s8">정상 종료와 리밸런스 리스너 — <u>피해</u>를 줄인다</a></li>
+    <li><a href="#s9">잦은 리밸런싱의 세 겹 비용과 리밸런스 스톰</a></li>
+    <li><a href="#s10">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+    <li><a href="#summary">한 줄 요약</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도 · 이 문서가 겨냥하는 약점</h2>
+
+<div class="card">
+  <p style="margin-top:0"><b>질문</b> — "컨슈머 리밸런싱은 언제 발생하고, 처리 중이던 메시지는 어떻게 되나요?"</p>
+  <p style="margin-bottom:0"><b>출제 의도</b> — <b>배포할 때마다 중복 처리가 발생하는 이유의 정체</b>를 아는지 본다. 리밸런싱을 모르면 "가끔 알림이 두 번 가요"라는 버그 리포트를 <b>영원히 미제로</b> 남긴다 — <b>리밸런싱의 발생 조건</b>과 <b>그 순간 in-flight 메시지의 운명(커밋 여부에 따른 중복/유실)</b>을 <b>연결해서</b> 설명할 수 있는지가 관전 포인트다.</p>
+</div>
+
+<div class="split">
+  <div class="pane r"><h4>이렇게 답하면 반쪽이다</h4>
+    <ul>
+      <li>"컨슈머가 추가되거나 빠질 때 발생합니다"에서 <b>끝낸다</b> — 조건 나열만 하고 <b>in-flight 메시지 질문에 답하지 않았다.</b> 질문의 무게중심은 뒤쪽에 있다.</li>
+      <li>"처리 중이던 메시지는 <b>다른 컨슈머로 넘어갑니다</b>" — 틀렸다. <b>Kafka는 메시지를 회수하지 않는다.</b> 옛 주인은 계속 처리한다.</li>
+      <li>"리밸런싱이 일어나면 <b>메시지가 유실될 수 있습니다</b>" — 방향이 반대다. 처리 후 커밋이면 <b>중복</b>이 남고, 유실은 <b>처리 전 커밋일 때</b> 생긴다.</li>
+      <li>"<code>onPartitionsRevoked</code>에서 커밋하면 <b>해결됩니다</b>" — <b>줄이는</b> 장치이지 <b>없애는</b> 장치가 아니다. 콜백이 늦게 불리거나 아예 안 불리는 경우가 있다.</li>
+      <li>"리밸런싱이 안 나게 튜닝하겠습니다" — <b>방향 자체가 틀렸다.</b> 배포마다 일어나는 정상 절차를 없앨 수는 없다.</li>
+    </ul>
+  </div>
+  <div class="pane g"><h4>이 문서가 채워 주는 것</h4>
+    <ul>
+      <li><b>절차의 주체 둘</b> — 코디네이터(브로커)와 그룹 리더(컨슈머)가 각각 무엇을 하는지. 이걸 알아야 <b>"왜 그동안 소비가 멈추는가"</b>에 답할 수 있다.</li>
+      <li><b>중복 구간 타임라인</b> — 오프셋 100~105가 A와 B에서 각각 한 번씩 처리되는 과정을 <b>t0부터 t7까지 한 칸씩</b>.</li>
+      <li><b>중복이냐 유실이냐를 가르는 단 하나의 변수</b> — 커밋 시점.</li>
+      <li><b>세대 번호(generation)</b> — 옛 주인의 커밋이 거부되는 것이 버그가 아니라 <b>유실을 막는 안전장치</b>인 이유.</li>
+      <li><b>완화책 3축을 목적별로 분류</b> — 횟수(정적 멤버십) / 범위(cooperative) / 피해(정상 종료·콜백).</li>
+      <li><b>그래도 남는 것</b> — 왜 멱등성이 선택이 아니라 전제인가.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>이 문서를 관통하는 한 문장</h4>
+  <div class="rule">Kafka는 메시지를 <u>회수</u>하지 않는다 — 다시 <u>배달</u>할 뿐이다</div>
+  <p style="margin-bottom:0">"회수"와 "재배달"은 결과가 완전히 다르다. 회수라면 옛 주인의 처리가 취소되어야 하지만, <b>재배달은 옛 주인의 처리를 그대로 둔 채 사본이 하나 더 생기는 것</b>이다. 이 한 글자 차이에서 <b>중복 처리</b>라는 이 문서의 모든 이야기가 나온다.</p>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 리밸런싱이란 — 배정표를 다시 짜는 일</h2>
+
+<h3>1-1. 전제 — 파티션은 그룹 안에서 컨슈머 하나가 전담한다</h3>
+
+<p>리밸런싱을 이해하려면 먼저 <b>컨슈머 그룹</b>의 기본 규칙을 알아야 한다. 컨슈머 그룹은 같은 <code>group.id</code>를 공유하는 컨슈머들의 묶음이고, 이들은 토픽의 파티션을 나눠 갖는다. 이때 규칙이 하나 있다.</p>
+
+<div class="rule">한 파티션은 그룹 안에서 <u>정확히 한 컨슈머</u>만 읽는다</div>
+
+<figure>
+  <svg viewBox="0 0 960 330" role="img" aria-label="토픽 orders의 파티션 6개가 컨슈머 그룹 order-worker의 컨슈머 3대에게 2개씩 배정된 그림. 각 파티션에서 담당 컨슈머로 화살표가 하나씩만 연결되어 있다.">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="20" y="26" font-size="14" font-weight="700" fill="#1f2937">배정표(assignment) — "누가 어느 파티션을 맡는가"는 <tspan fill="#2563eb">반드시 어딘가에 존재한다</tspan></text>
+
+    <rect x="40" y="44" width="300" height="272" rx="11" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4"/>
+    <text x="56" y="68" font-size="12.5" font-weight="700" fill="#334155">토픽 <tspan class="mono">orders</tspan> · 파티션 6개</text>
+    <rect x="60" y="78" width="260" height="30" rx="7" fill="#ffffff" stroke="#94a3b8"/><text x="76" y="98" font-size="12" font-weight="700" fill="#334155" class="mono">partition 0</text>
+    <rect x="60" y="116" width="260" height="30" rx="7" fill="#ffffff" stroke="#94a3b8"/><text x="76" y="136" font-size="12" font-weight="700" fill="#334155" class="mono">partition 1</text>
+    <rect x="60" y="154" width="260" height="30" rx="7" fill="#ffffff" stroke="#94a3b8"/><text x="76" y="174" font-size="12" font-weight="700" fill="#334155" class="mono">partition 2</text>
+    <rect x="60" y="192" width="260" height="30" rx="7" fill="#ffffff" stroke="#94a3b8"/><text x="76" y="212" font-size="12" font-weight="700" fill="#334155" class="mono">partition 3</text>
+    <rect x="60" y="230" width="260" height="30" rx="7" fill="#ffffff" stroke="#94a3b8"/><text x="76" y="250" font-size="12" font-weight="700" fill="#334155" class="mono">partition 4</text>
+    <rect x="60" y="268" width="260" height="30" rx="7" fill="#ffffff" stroke="#94a3b8"/><text x="76" y="288" font-size="12" font-weight="700" fill="#334155" class="mono">partition 5</text>
+
+    <path d="M320,93 C440,93 460,100 576,106" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)"/>
+    <path d="M320,131 C440,131 460,120 576,116" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)"/>
+    <path d="M320,169 C440,169 460,178 576,184" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)"/>
+    <path d="M320,207 C440,207 460,198 576,194" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)"/>
+    <path d="M320,245 C440,245 460,254 576,260" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)"/>
+    <path d="M320,283 C440,283 460,276 576,270" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)"/>
+
+    <rect x="580" y="44" width="340" height="272" rx="11" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.4"/>
+    <text x="596" y="68" font-size="12.5" font-weight="700" fill="#1d4ed8">컨슈머 그룹 <tspan class="mono">group.id = order-worker</tspan></text>
+    <rect x="596" y="80" width="308" height="62" rx="9" fill="#ffffff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="614" y="104" font-size="13" font-weight="800" fill="#1d4ed8" class="mono">컨슈머 C1</text><text x="614" y="126" font-size="11.5" fill="#334155">담당 파티션: <tspan class="mono" font-weight="700">p0, p1</tspan></text>
+    <rect x="596" y="158" width="308" height="62" rx="9" fill="#ffffff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="614" y="182" font-size="13" font-weight="800" fill="#1d4ed8" class="mono">컨슈머 C2</text><text x="614" y="204" font-size="11.5" fill="#334155">담당 파티션: <tspan class="mono" font-weight="700">p2, p3</tspan></text>
+    <rect x="596" y="236" width="308" height="62" rx="9" fill="#ffffff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="614" y="260" font-size="13" font-weight="800" fill="#1d4ed8" class="mono">컨슈머 C3</text><text x="614" y="282" font-size="11.5" fill="#334155">담당 파티션: <tspan class="mono" font-weight="700">p4, p5</tspan></text>
+
+    <text x="360" y="316" font-size="11.5" font-weight="700" fill="#6b7280">파티션 하나에서 나가는 화살표는 언제나 <tspan fill="#dc2626" font-weight="800">정확히 1개</tspan></text>
+  </svg>
+  <figcaption>이 배정표는 <b>고정이 아니다.</b> 멤버 구성이나 파티션 구성이 바뀌면 표를 다시 짜야 하고, <b>그 재배정 과정이 곧 리밸런싱</b>이다.</figcaption>
+</figure>
+
+<h3>1-2. 왜 "한 파티션 = 한 컨슈머"인가 — 오프셋이 뒤죽박죽이 되기 때문</h3>
+
+<p>이 규칙이 그냥 관례가 아니라는 것을 알아야 한다. 두 컨슈머가 같은 파티션을 동시에 읽으면 <b>"어디까지 읽었는가"라는 숫자 하나를 두 명이 번갈아 덮어쓰게</b> 된다.</p>
+
+<figure>
+  <svg viewBox="0 0 960 268" role="img" aria-label="같은 파티션을 두 컨슈머가 동시에 읽을 때 오프셋 커밋이 서로 덮어써져서 재처리와 유실이 동시에 발생하는 구조를 보여주는 도식.">
+    <defs>
+      <marker id="a2r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a2g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#334155"/></marker>
+    </defs>
+    <text x="20" y="26" font-size="14" font-weight="700" fill="#1f2937">금지된 상태 — 같은 파티션을 두 컨슈머가 읽으면 <tspan fill="#dc2626">커밋 값이 서로를 덮어쓴다</tspan></text>
+
+    <rect x="40" y="44" width="330" height="76" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="56" y="66" font-size="12" font-weight="700" fill="#334155" class="mono">partition 0 (로그)</text>
+    <g class="mono" font-size="10.5" fill="#334155" text-anchor="middle">
+      <rect x="56" y="76" width="44" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="78" y="96">88</text>
+      <rect x="106" y="76" width="44" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="128" y="96">89</text>
+      <rect x="156" y="76" width="44" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="178" y="96">90</text>
+      <rect x="206" y="76" width="44" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="228" y="96">…</text>
+      <rect x="256" y="76" width="44" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="278" y="96">149</text>
+      <rect x="306" y="76" width="44" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="328" y="96">150</text>
+    </g>
+
+    <path d="M200,120 C200,150 170,150 170,164" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#a2g)"/>
+    <path d="M250,120 C250,150 300,150 300,164" fill="none" stroke="#334155" stroke-width="1.6" marker-end="url(#a2g)"/>
+    <rect x="66" y="166" width="208" height="52" rx="9" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="82" y="188" font-size="12.5" font-weight="800" fill="#1d4ed8" class="mono">컨슈머 X</text><text x="82" y="208" font-size="11.5" fill="#334155">149까지 처리 → <tspan font-weight="700" class="mono">150</tspan> 커밋</text>
+    <rect x="296" y="166" width="208" height="52" rx="9" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="312" y="188" font-size="12.5" font-weight="800" fill="#1d4ed8" class="mono">컨슈머 Y</text><text x="312" y="208" font-size="11.5" fill="#334155">89까지 처리 → <tspan font-weight="700" class="mono">90</tspan> 커밋</text>
+
+    <path d="M170,222 C170,244 240,244 240,244" fill="none" stroke="#dc2626" stroke-width="1.6"/>
+    <path d="M400,222 C400,244 330,244 292,244" fill="none" stroke="#dc2626" stroke-width="1.6" marker-end="url(#a2r)"/>
+    <rect x="540" y="44" width="380" height="174" rx="11" fill="#fef2f2" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="560" y="70" font-size="13" font-weight="800" fill="#b91c1c">저장되는 값은 하나뿐 — 나중에 쓴 쪽이 이긴다</text>
+    <rect x="560" y="82" width="340" height="34" rx="8" fill="#ffffff" stroke="#fecaca"/>
+    <text x="576" y="104" font-size="11.5" fill="#7f1d1d" class="mono">__consumer_offsets : (order-worker, orders-0) = ?</text>
+    <text x="560" y="140" font-size="11.5" fill="#7f1d1d">· Y가 나중이면 <tspan font-weight="800" class="mono">90</tspan> 이 남는다 → 90~149 <tspan font-weight="800">재처리</tspan>(중복)</text>
+    <text x="560" y="162" font-size="11.5" fill="#7f1d1d">· X가 나중이면 <tspan font-weight="800" class="mono">150</tspan> 이 남는다 → 90~149 <tspan font-weight="800">건너뜀</tspan>(유실)</text>
+    <text x="560" y="192" font-size="12" font-weight="800" fill="#dc2626">"어디까지 읽었는가"가 의미를 잃는다</text>
+    <text x="240" y="262" font-size="11.5" font-weight="700" fill="#dc2626" text-anchor="middle">두 커밋이 같은 칸을 노린다</text>
+  </svg>
+  <figcaption>Kafka가 그룹 안에서 파티션을 <b>독점 소유</b>로 만든 이유는 성능이 아니라 <b>오프셋의 일관성</b> 때문이다. 그래서 소유권을 옮길 때는 반드시 <b>"모두가 동의하는 배정표"</b>를 새로 만들어야 하고, 그 합의 절차가 시간을 잡아먹는다.</figcaption>
+</figure>
+
+<div class="callout info"><span class="t">비유 — 홀 서빙 담당 테이블</span>
+식당에서 서버 3명이 테이블 6개를 2개씩 나눠 맡는다. <b>한 테이블에 담당 서버는 한 명</b>이다. 두 명이 같은 테이블을 맡으면 주문이 주방에 두 번 들어가거나, 서로 "쟤가 받았겠지" 하고 아무도 안 받는다. 그래서 <b>담당표</b>가 존재한다. 새 서버가 출근하거나 한 명이 조퇴하면 <b>담당표를 다시 짜야 하고, 그 재배정이 리밸런싱</b>이다. 이 비유는 뒤에서 계속 쓴다 — <b>"인수인계 없이 담당만 바뀌면 어떻게 되는가"</b>가 이 문서의 핵심이기 때문이다.
+</div>
+
+<div class="memo green">
+  <h4>리밸런싱의 정의 — 한 문장으로</h4>
+  <div class="rule ok">그룹의 <u>멤버 구성</u>이나 <u>파티션 구성</u>이 바뀌면 배정표를 다시 짜야 하고, 그 재배정 과정이 리밸런싱이다</div>
+  <div class="grid g3" style="margin-top:10px">
+    <div class="tile"><div class="k">바뀌는 것</div><div class="d">파티션 <b>소유권</b>(누가 읽을 권리를 갖는가)</div></div>
+    <div class="tile"><div class="k">안 바뀌는 것</div><div class="d">로그에 저장된 <b>메시지 자체</b>. 파티션 로그는 그대로 남는다</div></div>
+    <div class="tile red"><div class="k">회수되지 않는 것</div><div class="d">이미 컨슈머 <b>메모리로 가져간 메시지</b>. 2장의 주제다</div></div>
+  </div>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 절차 — 코디네이터가 소집하고, 리더가 계산한다</h2>
+
+<p>리밸런싱을 <b>"알아서 일어나는 마법"</b>으로 두면 <b>"왜 그동안 소비가 멈추는가"</b>에 답할 수 없다. 절차에는 명확한 주체가 <b>둘</b> 있고, 둘은 완전히 다른 층에 산다.</p>
+
+<div class="split">
+  <div class="pane b"><h4>그룹 코디네이터 (group coordinator) — 브로커 쪽</h4>
+    <ul>
+      <li><b>브로커 중 한 대</b>가 특정 컨슈머 그룹을 관리하는 역할을 맡은 것.</li>
+      <li>어느 브로커가 맡을지는 <b>그룹 이름</b>으로 결정된다 — 그룹 이름을 해시해 <code>__consumer_offsets</code> 토픽의 파티션 하나에 대응시키고, <b>그 파티션의 리더 브로커</b>가 코디네이터가 된다.</li>
+      <li>하는 일: <b>하트비트 수신 · 멤버 변화 감지 · 소집(JoinGroup) · 할당안 배포(SyncGroup) · 오프셋 커밋 저장</b>.</li>
+      <li>하지 <b>않는</b> 일: <b>할당안 계산</b>.</li>
+    </ul>
+  </div>
+  <div class="pane w"><h4>그룹 리더 (group leader) — 컨슈머 쪽</h4>
+    <ul>
+      <li><b>컨슈머 멤버 중 한 대</b>(보통 가장 먼저 그룹에 합류한 컨슈머).</li>
+      <li>유일한 특권이자 임무는 <b>할당안을 계산하는 것</b> 하나뿐이다. 그 외에는 평범한 컨슈머와 같다.</li>
+      <li><b>왜 브로커가 아니라 컨슈머가 계산하는가</b> — 할당 전략(<code>partition.assignment.strategy</code>)을 <b>애플리케이션이 자유롭게 갈아 끼울 수 있게</b> 하기 위해서다. 브로커를 건드리지 않고 배정 규칙을 바꿀 수 있다.</li>
+      <li>그래서 <b>cooperative 전환도 컨슈머 설정 변경</b>으로 이루어진다(6장).</li>
+    </ul>
+  </div>
+</div>
+
+<figure>
+  <svg viewBox="0 0 960 300" role="img" aria-label="그룹 이름을 해시해 __consumer_offsets 파티션을 고르고 그 파티션의 리더 브로커가 그룹 코디네이터가 되는 과정, 그리고 코디네이터는 브로커이고 그룹 리더는 컨슈머라는 역할 분리를 보여주는 도식.">
+    <defs>
+      <marker id="a3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a3o" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+    <text x="20" y="26" font-size="14" font-weight="700" fill="#1f2937">코디네이터는 <tspan fill="#2563eb">계산되어 정해지고</tspan>, 리더는 <tspan fill="#d97706">지정되어 정해진다</tspan></text>
+
+    <rect x="24" y="44" width="912" height="112" rx="11" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.4"/>
+    <text x="44" y="68" font-size="12.5" font-weight="700" fill="#1d4ed8">① 어느 브로커가 이 그룹의 코디네이터인가 — 그룹 이름 하나로 결정된다</text>
+    <rect x="44" y="80" width="176" height="56" rx="9" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="132" y="104" font-size="11.5" fill="#334155" text-anchor="middle">그룹 이름</text><text x="132" y="124" font-size="12" font-weight="800" fill="#1d4ed8" text-anchor="middle" class="mono">order-worker</text>
+    <path d="M226,108 L266,108" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a3)"/>
+    <rect x="272" y="80" width="176" height="56" rx="9" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="360" y="104" font-size="11.5" fill="#334155" text-anchor="middle">해시 → 파티션 번호</text><text x="360" y="124" font-size="12" font-weight="800" fill="#1d4ed8" text-anchor="middle" class="mono">__consumer_offsets-17</text>
+    <path d="M454,108 L494,108" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a3)"/>
+    <rect x="500" y="80" width="196" height="56" rx="9" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="598" y="104" font-size="11.5" fill="#334155" text-anchor="middle">그 파티션의 <tspan font-weight="800">리더 브로커</tspan></text><text x="598" y="124" font-size="12" font-weight="800" fill="#1d4ed8" text-anchor="middle" class="mono">broker-2</text>
+    <path d="M702,108 L742,108" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a3)"/>
+    <rect x="748" y="80" width="168" height="56" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="832" y="112" font-size="13" font-weight="800" fill="#1d4ed8" text-anchor="middle">그룹 코디네이터</text>
+
+    <rect x="24" y="172" width="912" height="112" rx="11" fill="#fffbeb" stroke="#fde68a" stroke-width="1.4"/>
+    <text x="44" y="196" font-size="12.5" font-weight="700" fill="#b45309">② 누가 할당안을 계산하는가 — 코디네이터가 멤버 중 하나를 리더로 지정한다</text>
+    <rect x="44" y="208" width="176" height="56" rx="9" fill="#ffffff" stroke="#fcd34d"/>
+    <text x="132" y="232" font-size="11.5" fill="#334155" text-anchor="middle">코디네이터(브로커)</text><text x="132" y="252" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">멤버 목록을 넘긴다</text>
+    <path d="M226,236 L266,236" stroke="#d97706" stroke-width="1.8" marker-end="url(#a3o)"/>
+    <rect x="272" y="208" width="176" height="56" rx="9" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+    <text x="360" y="232" font-size="13" font-weight="800" fill="#b45309" text-anchor="middle">그룹 리더</text><text x="360" y="252" font-size="11.5" fill="#78350f" text-anchor="middle">= <tspan class="mono">컨슈머 C1</tspan> (멤버 중 하나)</text>
+    <path d="M454,236 L494,236" stroke="#d97706" stroke-width="1.8" marker-end="url(#a3o)"/>
+    <rect x="500" y="208" width="416" height="56" rx="9" fill="#ffffff" stroke="#fcd34d"/>
+    <text x="520" y="230" font-size="11.5" fill="#334155"><tspan font-weight="700">partition.assignment.strategy</tspan> 에 따라 배정표를 계산</text>
+    <text x="520" y="250" font-size="11.5" fill="#78350f">→ 전략을 갈아 끼우는 곳이 <tspan font-weight="800">브로커가 아니라 애플리케이션 설정</tspan>인 이유</text>
+  </svg>
+  <figcaption>이 분리를 알면 <b>"코디네이터 브로커가 죽으면?"</b>이라는 꼬리질문에도 답할 수 있다 — <code>__consumer_offsets</code>의 해당 파티션 리더가 다른 브로커로 옮겨가면서 <b>코디네이터 역할도 함께 이동</b>하고, 컨슈머는 새 코디네이터를 찾아 다시 붙는다.</figcaption>
+</figure>
+
+<h3>2-1. 다섯 단계 — 어디서 시간이 드는가</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 470" role="img" aria-label="리밸런싱 5단계 시퀀스 다이어그램. 코디네이터와 컨슈머 A, B, C의 세로 레인 위에서 변화 감지, JoinGroup 소집, 리더 선정과 할당 계산, SyncGroup 배포, 소비 재개가 순서대로 일어나며 2단계에서 모든 멤버를 기다리는 구간이 소비 정지 구간으로 표시되어 있다.">
+    <defs>
+      <marker id="s5a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="s5b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="s5c" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">리밸런싱 5단계 — <tspan fill="#dc2626">붉은 구간이 "소비가 멈추는 시간"</tspan>이다</text>
+
+    <rect x="150" y="42" width="200" height="34" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="250" y="65" font-size="12.5" font-weight="800" fill="#1d4ed8" text-anchor="middle">코디네이터 (브로커)</text>
+    <rect x="470" y="42" width="150" height="34" rx="9" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+    <text x="545" y="65" font-size="12.5" font-weight="800" fill="#b45309" text-anchor="middle">컨슈머 A (리더)</text>
+    <rect x="660" y="42" width="130" height="34" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="725" y="65" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">컨슈머 B</text>
+    <rect x="830" y="42" width="130" height="34" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="895" y="65" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">컨슈머 C (신규)</text>
+
+    <line x1="250" y1="76" x2="250" y2="444" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="4 4"/>
+    <line x1="545" y1="76" x2="545" y2="444" stroke="#d97706" stroke-width="1.6" stroke-dasharray="4 4"/>
+    <line x1="725" y1="76" x2="725" y2="444" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 4"/>
+    <line x1="895" y1="76" x2="895" y2="444" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 4"/>
+
+    <rect x="980" y="150" width="126" height="188" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="1043" y="176" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">이 구간 동안</text>
+    <text x="1043" y="196" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">소비 정지</text>
+    <text x="1043" y="226" font-size="11" fill="#7f1d1d" text-anchor="middle">(eager 기준</text>
+    <text x="1043" y="244" font-size="11" fill="#7f1d1d" text-anchor="middle">그룹 전체)</text>
+    <text x="1043" y="278" font-size="11" fill="#7f1d1d" text-anchor="middle">랙이 쌓이고</text>
+    <text x="1043" y="296" font-size="11" fill="#7f1d1d" text-anchor="middle">복구 후 따라잡느라</text>
+    <text x="1043" y="314" font-size="11" fill="#7f1d1d" text-anchor="middle">처리가 몰린다</text>
+
+    <circle cx="60" cy="104" r="15" fill="#2563eb"/><text x="60" y="109" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">1</text>
+    <text x="86" y="100" font-size="12.5" font-weight="700" fill="#1f2937">변화 감지</text>
+    <text x="86" y="118" font-size="11" fill="#6b7280">합류 요청 / 탈퇴 통보 / 하트비트 끊김</text>
+    <path d="M880,104 L268,104" stroke="#2563eb" stroke-width="1.8" marker-end="url(#s5a)"/>
+    <text x="600" y="98" font-size="11.5" fill="#1d4ed8" text-anchor="middle">C가 "그룹에 넣어 달라"고 요청</text>
+
+    <circle cx="60" cy="176" r="15" fill="#dc2626"/><text x="60" y="181" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">2</text>
+    <text x="86" y="172" font-size="12.5" font-weight="700" fill="#1f2937">소집 (JoinGroup)</text>
+    <text x="86" y="190" font-size="11" fill="#dc2626" font-weight="700">← 여기서 시간이 든다</text>
+    <path d="M262,150 L536,150" stroke="#2563eb" stroke-width="1.8" marker-end="url(#s5a)"/>
+    <path d="M262,150 L716,150" stroke="#2563eb" stroke-width="1.2" opacity=".55"/>
+    <text x="400" y="144" font-size="11.5" fill="#1d4ed8" text-anchor="middle">"전원 다시 모여라"</text>
+    <path d="M536,182 L262,182" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s5b)"/>
+    <text x="400" y="176" font-size="11.5" fill="#15803d" text-anchor="middle">JoinGroup(구독 토픽 목록)</text>
+    <path d="M716,204 L262,204" stroke="#16a34a" stroke-width="1.8" marker-end="url(#s5b)"/>
+    <text x="480" y="198" font-size="11.5" fill="#15803d" text-anchor="middle">JoinGroup</text>
+    <path d="M886,226 L262,226" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#s5b)"/>
+    <text x="560" y="220" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">한 멤버가 긴 처리 중이면 여기서 전부가 기다린다 — 리밸런싱 시간은 "가장 느린 멤버"가 정한다</text>
+
+    <circle cx="60" cy="268" r="15" fill="#d97706"/><text x="60" y="273" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">3</text>
+    <text x="86" y="264" font-size="12.5" font-weight="700" fill="#1f2937">리더 선정 + 계산</text>
+    <text x="86" y="282" font-size="11" fill="#6b7280">전체 멤버 목록을 리더에게</text>
+    <path d="M262,258 L536,258" stroke="#d97706" stroke-width="1.8" marker-end="url(#s5c)"/>
+    <text x="400" y="252" font-size="11.5" fill="#b45309" text-anchor="middle">"네가 리더다 + 멤버 목록"</text>
+    <rect x="470" y="270" width="150" height="42" rx="8" fill="#fef3c7" stroke="#d97706"/>
+    <text x="545" y="288" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">할당 전략 실행</text>
+    <text x="545" y="304" font-size="10.5" fill="#78350f" text-anchor="middle">"누가 어느 파티션" 표 계산</text>
+
+    <circle cx="60" cy="356" r="15" fill="#2563eb"/><text x="60" y="361" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">4</text>
+    <text x="86" y="352" font-size="12.5" font-weight="700" fill="#1f2937">배포 (SyncGroup)</text>
+    <text x="86" y="370" font-size="11" fill="#6b7280">각자 자기 몫만 잘라서 받는다</text>
+    <path d="M536,340 L262,340" stroke="#d97706" stroke-width="1.8" marker-end="url(#s5c)"/>
+    <text x="400" y="334" font-size="11.5" fill="#b45309" text-anchor="middle">계산 결과 업로드</text>
+    <path d="M262,368 L536,368" stroke="#2563eb" stroke-width="1.8" marker-end="url(#s5a)"/>
+    <path d="M262,368 L716,368" stroke="#2563eb" stroke-width="1.2" opacity=".55"/>
+    <path d="M262,368 L886,368" stroke="#2563eb" stroke-width="1.2" opacity=".55"/>
+    <text x="430" y="362" font-size="11.5" fill="#1d4ed8" text-anchor="middle">"너는 p0,p1" / "너는 p2,p3" / "너는 p4,p5"</text>
+
+    <circle cx="60" cy="420" r="15" fill="#16a34a"/><text x="60" y="425" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">5</text>
+    <text x="86" y="416" font-size="12.5" font-weight="700" fill="#1f2937">소비 재개</text>
+    <text x="86" y="434" font-size="11" fill="#15803d" font-weight="700">마지막 커밋 오프셋부터</text>
+    <rect x="470" y="404" width="490" height="34" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="715" y="426" font-size="12" font-weight="700" fill="#15803d" text-anchor="middle">각 컨슈머가 새로 받은 파티션에서 <tspan class="mono">committed offset</tspan> 부터 읽기 시작 ← 3장의 중복은 여기서 태어난다</text>
+  </svg>
+  <figcaption><b>②에서 모든 멤버가 모일 때까지 기다린다</b>는 점이 핵심이다. 한 멤버가 긴 처리 중이라 늦게 응답하면 그동안 그룹 전체가 ②에 머문다 — 그래서 <b>리밸런싱 시간은 "가장 느린 멤버"에 좌우된다.</b> 그리고 ⑤에서 새 주인이 <b>커밋 오프셋부터</b> 읽는다는 사실이 다음 장 전체의 씨앗이다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>5단계 암기 — <span class="mono">감 · 집 · 계 · 배 · 재</span></h4>
+  <div class="chain">
+    <span class="chip b">감지</span><span class="arrow">→</span>
+    <span class="chip r">집합(JoinGroup)</span><span class="arrow">→</span>
+    <span class="chip w">계산(리더)</span><span class="arrow">→</span>
+    <span class="chip b">배포(SyncGroup)</span><span class="arrow">→</span>
+    <span class="chip g">재개(커밋 오프셋부터)</span>
+  </div>
+  <p style="margin-bottom:0">면접에서 이 다섯 글자만 붙잡고 있으면 절차를 빠뜨리지 않는다. 그리고 <b>"어디서 시간이 드나요?"라고 되물으면 <span style="color:#dc2626">집합</span>이라고 답한다</b> — 전원이 모여야 다음으로 넘어가는 <b>동기 지점(barrier)</b>이기 때문이다.</p>
+</div>
+
+<div class="callout warn"><span class="t">왜 이 절차가 "소비 정지"를 만드는가</span>
+JoinGroup은 <b>전원이 도착해야 통과되는 관문</b>이다. 이 구조 때문에 (ⅰ) 멤버가 많을수록, (ⅱ) 한 번의 <code>poll()</code> 처리 시간이 길수록 리밸런싱이 길어진다. <b>"리밸런싱이 오래 걸린다"는 증상의 원인은 대개 브로커가 아니라 컨슈머의 처리 시간</b>이라는 진단이 여기서 나온다.
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 언제 발생하는가 — 그리고 배포는 왜 두 번 부르는가</h2>
+
+<p>발생 조건은 <b>세 갈래</b>로 정리하면 깔끔하다. 외우기 어렵다면 <b>"늘 때 · 줄 때 · 대상이 바뀔 때"</b> 여섯 글자로 붙잡는다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="리밸런싱 발생 조건을 세 갈래로 분류한 트리 도식. 멤버가 늘 때, 멤버가 줄 때(정상 종료와 사망 판정으로 다시 나뉘고 사망 판정은 하트비트 끊김과 poll 간격 초과로 나뉜다), 구독 대상이 바뀔 때로 구성된다.">
+    <defs>
+      <marker id="t1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">리밸런싱 발생 조건 — <tspan fill="#2563eb">"그룹의 멤버 구성" 또는 "구독 대상"이 바뀌면 배정표를 다시 짠다</tspan></text>
+
+    <rect x="440" y="42" width="240" height="44" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="560" y="70" font-size="13.5" font-weight="800" fill="#1d4ed8" text-anchor="middle">리밸런싱 트리거</text>
+    <path d="M500,86 C500,110 200,100 200,124" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#t1)"/>
+    <path d="M560,86 L560,124" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#t1)"/>
+    <path d="M620,86 C620,110 920,100 920,124" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#t1)"/>
+
+    <rect x="60" y="128" width="280" height="60" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.6"/>
+    <text x="200" y="152" font-size="13" font-weight="800" fill="#15803d" text-anchor="middle">1. 멤버가 늘 때</text>
+    <text x="200" y="174" font-size="11.5" fill="#166534" text-anchor="middle">스케일 아웃 · 배포로 새 인스턴스 기동</text>
+
+    <rect x="420" y="128" width="280" height="60" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="560" y="152" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">2. 멤버가 줄 때</text>
+    <text x="560" y="174" font-size="11.5" fill="#7f1d1d" text-anchor="middle">아래 두 경로로 다시 갈린다</text>
+
+    <rect x="780" y="128" width="280" height="60" rx="10" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="920" y="152" font-size="13" font-weight="800" fill="#b45309" text-anchor="middle">3. 구독 대상이 바뀔 때</text>
+    <text x="920" y="174" font-size="11.5" fill="#78350f" text-anchor="middle">파티션 증설 · 패턴 구독에 새 토픽 매칭</text>
+
+    <path d="M500,188 C500,208 400,206 400,224" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#t1)"/>
+    <path d="M620,188 C620,208 720,206 720,224" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#t1)"/>
+    <rect x="264" y="228" width="272" height="56" rx="9" fill="#ffffff" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="400" y="250" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">(a) 정상 종료 — 탈퇴 통보</text>
+    <text x="400" y="270" font-size="11" fill="#7f1d1d" text-anchor="middle"><tspan class="mono">close()</tspan> 가 "나 나간다"를 즉시 알린다 → 빠르다</text>
+
+    <rect x="584" y="228" width="272" height="56" rx="9" fill="#ffffff" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="720" y="250" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">(b) 사망 판정 — 통보 없이 사라짐</text>
+    <text x="720" y="270" font-size="11" fill="#7f1d1d" text-anchor="middle">코디네이터가 <tspan font-weight="700">타임아웃으로 판정</tspan> → 그만큼 늦다</text>
+
+    <path d="M660,284 C660,300 560,296 560,306" fill="none" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#t1)"/>
+    <path d="M780,284 C780,300 880,296 880,306" fill="none" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#t1)"/>
+    <rect x="360" y="298" width="400" height="26" rx="7" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="560" y="316" font-size="11" fill="#7f1d1d" text-anchor="middle"><tspan class="mono" font-weight="700">session.timeout.ms</tspan> 초과 — 프로세스 사망 · 네트워크 단절 · 긴 GC</text>
+    <rect x="770" y="298" width="330" height="26" rx="7" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="935" y="316" font-size="11" fill="#7f1d1d" text-anchor="middle"><tspan class="mono" font-weight="700">max.poll.interval.ms</tspan> 초과 — 처리가 너무 길다</text>
+  </svg>
+  <figcaption>(b)의 두 타임아웃은 <b>완전히 다른 것을 감시한다</b> — 하나는 <b>"숨을 쉬는가"</b>(하트비트 스레드), 다른 하나는 <b>"일이 진척되는가"</b>(<code>poll()</code> 루프). 이 구분이 곧 진단의 갈림길이라 별도 문서(35번)에서 다룬다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>발생 조건 — 세 갈래 + 하위 두 갈래</h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k">① 멤버 ↑</div><div class="s">합류</div><div class="d">스케일 아웃, <b>배포로 새 인스턴스 기동</b></div></div>
+    <div class="tile red"><div class="k">② 멤버 ↓</div><div class="s">이탈</div><div class="d"><b>정상 종료(통보)</b> / <b>사망 판정(타임아웃)</b> — 판정은 다시 <b>하트비트</b>와 <b><code>poll()</code> 간격</b> 두 종류</div></div>
+    <div class="tile"><div class="k">③ 구독 대상 변경</div><div class="s">파티션 구성</div><div class="d"><b>파티션 증설</b>, 패턴 구독(<code>orders.*</code>)에 새 토픽이 매칭</div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>주의</b> — ③은 <b>컨슈머가 하나도 안 바뀌어도</b> 리밸런싱이 난다. "우리는 배포 안 했는데 리밸런싱이 났다"의 흔한 원인이 <b>파티션 증설</b>이다.</p>
+</div>
+
+<h3>3-1. 배포는 리밸런싱을 두 번 부른다</h3>
+
+<p>여기서 나오는 핵심 통찰이 있다. <b>배포 = 종료 + 기동이므로 리밸런싱이 최소 두 번은 일어난다.</b> 그리고 롤링 배포는 이 두 번을 인스턴스 수만큼 곱한다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="롤링 배포 타임라인. 인스턴스 5대를 순차 교체할 때 각 인스턴스의 종료와 기동이 각각 리밸런싱을 유발해 최대 10회의 리밸런싱이 연쇄적으로 일어나는 것을 보여주는 도식.">
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">롤링 배포 — <tspan fill="#dc2626">5대를 순차 교체하면 리밸런싱이 최대 10번</tspan> 연쇄한다</text>
+
+    <rect x="24" y="42" width="1072" height="64" rx="11" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4"/>
+    <text x="44" y="66" font-size="12.5" font-weight="700" fill="#334155">인스턴스 1대 교체 = 리밸런싱 2회</text>
+    <rect x="300" y="72" width="180" height="26" rx="7" fill="#fef2f2" stroke="#fecaca"/><text x="390" y="90" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">기존 인스턴스 종료</text>
+    <text x="500" y="90" font-size="13" font-weight="800" fill="#6b7280" text-anchor="middle">→</text>
+    <rect x="520" y="72" width="120" height="26" rx="7" fill="#fee2e2" stroke="#fca5a5"/><text x="580" y="90" font-size="11.5" font-weight="800" fill="#dc2626" text-anchor="middle">리밸런싱 ①</text>
+    <rect x="680" y="72" width="160" height="26" rx="7" fill="#f0fdf4" stroke="#bbf7d0"/><text x="760" y="90" font-size="11.5" font-weight="700" fill="#15803d" text-anchor="middle">새 인스턴스 기동</text>
+    <text x="860" y="90" font-size="13" font-weight="800" fill="#6b7280" text-anchor="middle">→</text>
+    <rect x="880" y="72" width="120" height="26" rx="7" fill="#fee2e2" stroke="#fca5a5"/><text x="940" y="90" font-size="11.5" font-weight="800" fill="#dc2626" text-anchor="middle">리밸런싱 ②</text>
+
+    <rect x="24" y="118" width="1072" height="164" rx="11" fill="#fef2f2" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="44" y="142" font-size="12.5" font-weight="700" fill="#b91c1c">롤링 배포로 5대를 순차 교체 — 타임라인</text>
+    <line x1="60" y1="196" x2="1060" y2="196" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="1080" y="200" font-size="11.5" font-weight="700" fill="#6b7280" text-anchor="end">시간 →</text>
+    <g font-size="10.5" text-anchor="middle">
+      <rect x="66" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#fca5a5"/><text x="104" y="181" fill="#7f1d1d">1번 종료</text>
+      <rect x="66" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="104" y="221" fill="#b91c1c" font-weight="800">RB 1</text>
+      <rect x="162" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#86efac"/><text x="200" y="181" fill="#166534">1번 기동</text>
+      <rect x="162" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="200" y="221" fill="#b91c1c" font-weight="800">RB 2</text>
+      <rect x="258" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#fca5a5"/><text x="296" y="181" fill="#7f1d1d">2번 종료</text>
+      <rect x="258" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="296" y="221" fill="#b91c1c" font-weight="800">RB 3</text>
+      <rect x="354" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#86efac"/><text x="392" y="181" fill="#166534">2번 기동</text>
+      <rect x="354" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="392" y="221" fill="#b91c1c" font-weight="800">RB 4</text>
+      <rect x="450" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#fca5a5"/><text x="488" y="181" fill="#7f1d1d">3번 종료</text>
+      <rect x="450" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="488" y="221" fill="#b91c1c" font-weight="800">RB 5</text>
+      <rect x="546" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#86efac"/><text x="584" y="181" fill="#166534">3번 기동</text>
+      <rect x="546" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="584" y="221" fill="#b91c1c" font-weight="800">RB 6</text>
+      <rect x="642" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#fca5a5"/><text x="680" y="181" fill="#7f1d1d">4번 종료</text>
+      <rect x="642" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="680" y="221" fill="#b91c1c" font-weight="800">RB 7</text>
+      <rect x="738" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#86efac"/><text x="776" y="181" fill="#166534">4번 기동</text>
+      <rect x="738" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="776" y="221" fill="#b91c1c" font-weight="800">RB 8</text>
+      <rect x="834" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#fca5a5"/><text x="872" y="181" fill="#7f1d1d">5번 종료</text>
+      <rect x="834" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="872" y="221" fill="#b91c1c" font-weight="800">RB 9</text>
+      <rect x="930" y="164" width="76" height="24" rx="6" fill="#ffffff" stroke="#86efac"/><text x="968" y="181" fill="#166534">5번 기동</text>
+      <rect x="930" y="204" width="76" height="24" rx="6" fill="#fee2e2" stroke="#dc2626"/><text x="968" y="221" fill="#b91c1c" font-weight="800">RB 10</text>
+    </g>
+    <text x="560" y="258" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">매 리밸런싱마다 "소비 정지 + 커밋 안 된 구간 재처리"가 반복된다 — 배포 한 번에 중복 처리가 10번 몰릴 수 있다</text>
+    <text x="560" y="276" font-size="11.5" fill="#7f1d1d" text-anchor="middle">7장의 <tspan font-weight="800">정적 멤버십</tspan>은 이 10번을 0번으로 만드는 것을 노리고, 6장의 <tspan font-weight="800">cooperative</tspan>는 각 리밸런싱의 <tspan font-weight="800">정지 범위</tspan>를 줄인다</text>
+  </svg>
+  <figcaption>이 그림에서 나오는 인식의 전환이 이 주제의 출발점이다 — <b>"리밸런싱은 장애 상황"이 아니라 "일상 운영의 일부"</b>다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>방향을 정하는 문장</h4>
+  <div class="rule ok">"리밸런싱이 <u>안 나게</u> 하는 법"을 찾는 방향은 애초에 틀렸다 — <br>"리밸런싱이 <u>나도 안전한</u> 컨슈머"를 만드는 방향이 맞다</div>
+  <p style="margin-bottom:0">면접에서 완화책을 나열하기 전에 이 문장을 먼저 깔면, 뒤에 이어지는 정적 멤버십·cooperative가 <b>"제거 수단"이 아니라 "비용 절감 수단"</b>이라는 정확한 위치에 놓인다.</p>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. in-flight 메시지의 운명 — 회수가 아니라 재전달</h2>
+
+<h3>4-1. Kafka에는 "회수"라는 동작이 없다</h3>
+
+<p>리밸런싱이 나도 <b>컨슈머 손에 있던 메시지를 Kafka가 뺏어가지는 않는다.</b> 애초에 그런 동작 자체가 없다. 이것이 큐 기반 브로커에서 온 사람이 가장 많이 틀리는 지점이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="RabbitMQ는 브로커가 메시지별 unacked 상태를 들고 있어 회수와 재전달이 가능한 반면, Kafka는 커밋 오프셋 숫자 하나만 알고 있어 컨슈머 메모리 안의 메시지에 개입할 수 없음을 대비한 도식.">
+    <defs>
+      <marker id="k1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#7c3aed"/></marker>
+      <marker id="k2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="k3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">"브로커가 무엇을 알고 있는가"가 두 제품의 운명을 가른다</text>
+
+    <rect x="24" y="42" width="530" height="262" rx="12" fill="#faf5ff" stroke="#ddd6fe" stroke-width="1.6"/>
+    <text x="44" y="68" font-size="13" font-weight="800" fill="#6d28d9">RabbitMQ류(큐 기반) — 회수 모델이 성립한다</text>
+    <rect x="44" y="82" width="230" height="128" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.4"/>
+    <text x="60" y="104" font-size="11.5" font-weight="700" fill="#5b21b6">브로커가 메시지별 상태를 들고 있다</text>
+    <g font-size="10.5" class="mono">
+      <rect x="60" y="114" width="198" height="22" rx="5" fill="#f5f3ff" stroke="#ddd6fe"/><text x="70" y="129" fill="#5b21b6">msg#41  ready</text>
+      <rect x="60" y="140" width="198" height="22" rx="5" fill="#ede9fe" stroke="#c4b5fd"/><text x="70" y="155" fill="#5b21b6">msg#42  unacked → C1</text>
+      <rect x="60" y="166" width="198" height="22" rx="5" fill="#ede9fe" stroke="#c4b5fd"/><text x="70" y="181" fill="#5b21b6">msg#43  unacked → C1</text>
+    </g>
+    <path d="M280,150 L340,150" stroke="#7c3aed" stroke-width="1.8" marker-end="url(#k1)"/>
+    <text x="310" y="142" font-size="10.5" font-weight="700" fill="#6d28d9" text-anchor="middle">C1 연결 끊김</text>
+    <rect x="346" y="98" width="188" height="112" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.4"/>
+    <text x="440" y="124" font-size="12" font-weight="800" fill="#6d28d9" text-anchor="middle">requeue</text>
+    <text x="440" y="148" font-size="11" fill="#5b21b6" text-anchor="middle">ack 안 온 메시지를</text>
+    <text x="440" y="166" font-size="11" fill="#5b21b6" text-anchor="middle">큐로 되돌려</text>
+    <text x="440" y="184" font-size="11" fill="#5b21b6" text-anchor="middle">다른 컨슈머에게 재전달</text>
+    <text x="44" y="238" font-size="11.5" fill="#5b21b6">브로커가 <tspan font-weight="800">메시지 하나하나의 상태</tspan>를 알기 때문에 "누구에게 갔고, 아직 응답이 없다"를</text>
+    <text x="44" y="258" font-size="11.5" fill="#5b21b6">판단할 수 있다 — 그래서 <tspan font-weight="800">"회수"라는 동작이 존재</tspan>한다.</text>
+    <text x="44" y="286" font-size="11.5" font-weight="800" fill="#6d28d9">대가: 브로커가 상태를 들고 있어야 하므로 그만큼 무겁다</text>
+
+    <rect x="570" y="42" width="526" height="262" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.6"/>
+    <text x="590" y="68" font-size="13" font-weight="800" fill="#1d4ed8">Kafka — 브로커가 아는 것은 <tspan class="mono">숫자 하나</tspan> 뿐이다</text>
+    <rect x="590" y="82" width="290" height="70" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="606" y="102" font-size="11.5" font-weight="700" fill="#1d4ed8" class="mono">partition 0 로그 (그대로 남아 있다)</text>
+    <g class="mono" font-size="10" fill="#334155" text-anchor="middle">
+      <rect x="606" y="112" width="38" height="26" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="625" y="129">99</text>
+      <rect x="648" y="112" width="38" height="26" rx="5" fill="#dbeafe" stroke="#93c5fd"/><text x="667" y="129">100</text>
+      <rect x="690" y="112" width="38" height="26" rx="5" fill="#dbeafe" stroke="#93c5fd"/><text x="709" y="129">101</text>
+      <rect x="732" y="112" width="38" height="26" rx="5" fill="#dbeafe" stroke="#93c5fd"/><text x="751" y="129">102</text>
+      <rect x="774" y="112" width="38" height="26" rx="5" fill="#dbeafe" stroke="#93c5fd"/><text x="793" y="129">103</text>
+      <rect x="816" y="112" width="38" height="26" rx="5" fill="#dbeafe" stroke="#93c5fd"/><text x="835" y="129">…</text>
+    </g>
+    <rect x="590" y="162" width="290" height="48" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="606" y="182" font-size="11.5" font-weight="700" fill="#1d4ed8">브로커가 가진 상태의 전부</text>
+    <text x="606" y="200" font-size="11.5" class="mono" fill="#334155">(group, partition) → <tspan font-weight="800" fill="#1d4ed8">committed offset = 100</tspan></text>
+
+    <rect x="900" y="82" width="180" height="128" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="990" y="106" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">컨슈머 A의 메모리</text>
+    <text x="990" y="128" font-size="11" fill="#7f1d1d" text-anchor="middle" class="mono">100,101,102,103,104,105</text>
+    <text x="990" y="152" font-size="11" fill="#7f1d1d" text-anchor="middle">이미 가져간 6건</text>
+    <text x="990" y="180" font-size="12" font-weight="800" fill="#dc2626" text-anchor="middle">브로커는 이 안을</text>
+    <text x="990" y="198" font-size="12" font-weight="800" fill="#dc2626" text-anchor="middle">들여다볼 수 없다</text>
+    <path d="M886,140 L896,140" stroke="#2563eb" stroke-width="1.6" marker-end="url(#k2)"/>
+    <path d="M978,214 L978,240" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#k3)"/>
+    <text x="590" y="238" font-size="11.5" fill="#1e3a8a">브로커가 아는 것은 <tspan font-weight="800">"이 그룹이 어디까지 읽었다고 커밋했는가"</tspan> 하나뿐이라,</text>
+    <text x="590" y="258" font-size="11.5" fill="#1e3a8a">컨슈머가 이미 자기 메모리로 가져간 메시지에 대해 <tspan font-weight="800">할 수 있는 일이 없다.</tspan></text>
+    <text x="590" y="286" font-size="11.5" font-weight="800" fill="#dc2626">결과: 회수 대신 <tspan text-decoration="underline">새 주인에게 커밋 지점부터 재전달</tspan> — 중복이 태어나는 자리</text>
+  </svg>
+  <figcaption>Kafka가 가볍고 빠른 이유(브로커가 메시지별 상태를 안 들고 있음)와 리밸런싱 때 중복이 나는 이유는 <b>같은 설계 결정의 앞뒷면</b>이다. 이걸 한 문장으로 연결하면 면접에서 "이해했다"는 신호가 된다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>같은 상황("컨슈머가 처리 중에 사라졌다")에서 두 브로커의 동작</caption>
+  <thead><tr><th>구분</th><th>RabbitMQ류 큐 기반</th><th>Kafka</th></tr></thead>
+  <tbody>
+    <tr><td>브로커가 가진 상태</td><td>메시지 <b>하나하나</b>의 전달/ack 상태</td><td>그룹별 <b>커밋 오프셋 숫자 하나</b></td></tr>
+    <tr><td>미처리 메시지 처리</td><td class="good">회수(requeue) 후 재전달 가능</td><td class="bad">회수 불가 — 로그에 그대로 있을 뿐</td></tr>
+    <tr><td>재전달의 단위</td><td>메시지 <b>개별</b></td><td><b>커밋 오프셋 이후 구간 전체</b></td></tr>
+    <tr class="hl"><td>옛 주인이 처리 중이던 건</td><td>브로커가 "미완료"로 인식</td><td><b>브로커는 그런 일이 있었다는 것조차 모른다</b></td></tr>
+    <tr><td>그래서 생기는 것</td><td>중복(재전달 후 원본도 처리됐을 수 있음)</td><td><b>중복 구간</b> — 두 컨슈머가 동시에 같은 메시지 처리</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>가장 흔한 오답</h4>
+  <div class="rule red">"처리 중이던 메시지는 다른 컨슈머로 <u>넘어갑니다</u>"</div>
+  <p style="margin-bottom:0">"넘어간다"는 말은 <b>옛 주인에게서 빠져나간다</b>는 뉘앙스를 품는다. 정확한 표현은 <b>"옛 주인은 그대로 처리하고, 새 주인에게 <u>사본이 하나 더</u> 배달된다"</b>이다. 따라서 운명을 결정하는 것은 단 하나 — <b>파티션을 잃는 순간, 처리한 데까지 커밋이 되어 있었는가.</b></p>
+</div>
+
+<h3>4-2. 커밋하는 오프셋은 "다음에 읽을 위치"다</h3>
+
+<p>타임라인을 정확히 읽으려면 먼저 이 규칙을 못박아야 한다. <b>커밋하는 오프셋 값은 "마지막으로 처리한 오프셋"이 아니라 "다음에 읽을 오프셋"이다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 960 210" role="img" aria-label="오프셋 97부터 105까지의 로그에서 99까지 처리 완료했을 때 커밋 값이 99가 아니라 100이며, 새 주인이 100부터 읽기 시작함을 보여주는 수직선 도식.">
+    <defs>
+      <marker id="o1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="20" y="26" font-size="14" font-weight="700" fill="#1f2937">커밋 값 = <tspan fill="#16a34a">마지막으로 처리한 오프셋 + 1</tspan></text>
+    <g class="mono" font-size="12" text-anchor="middle">
+      <rect x="40" y="52" width="82" height="40" rx="7" fill="#dcfce7" stroke="#86efac" stroke-width="1.4"/><text x="81" y="77" fill="#166534" font-weight="700">97</text>
+      <rect x="128" y="52" width="82" height="40" rx="7" fill="#dcfce7" stroke="#86efac" stroke-width="1.4"/><text x="169" y="77" fill="#166534" font-weight="700">98</text>
+      <rect x="216" y="52" width="82" height="40" rx="7" fill="#dcfce7" stroke="#86efac" stroke-width="1.4"/><text x="257" y="77" fill="#166534" font-weight="700">99</text>
+      <rect x="304" y="52" width="82" height="40" rx="7" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/><text x="345" y="77" fill="#1d4ed8" font-weight="800">100</text>
+      <rect x="392" y="52" width="82" height="40" rx="7" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4"/><text x="433" y="77" fill="#64748b">101</text>
+      <rect x="480" y="52" width="82" height="40" rx="7" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4"/><text x="521" y="77" fill="#64748b">102</text>
+      <rect x="568" y="52" width="82" height="40" rx="7" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4"/><text x="609" y="77" fill="#64748b">…</text>
+    </g>
+    <path d="M40,102 L298,102" stroke="#16a34a" stroke-width="2"/>
+    <path d="M40,102 L40,96 M298,102 L298,96" stroke="#16a34a" stroke-width="2"/>
+    <text x="169" y="122" font-size="12" font-weight="700" fill="#15803d" text-anchor="middle">처리 완료 (…97, 98, 99)</text>
+
+    <path d="M345,148 L345,100" stroke="#2563eb" stroke-width="2.2" marker-end="url(#o1)"/>
+    <rect x="240" y="152" width="212" height="42" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="346" y="170" font-size="12" font-weight="800" fill="#1d4ed8" text-anchor="middle">커밋 값 = <tspan class="mono">100</tspan> (99가 아니다)</text>
+    <text x="346" y="188" font-size="11" fill="#1e3a8a" text-anchor="middle">"다음은 100부터 읽어라"</text>
+
+    <rect x="700" y="52" width="236" height="142" rx="11" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="818" y="78" font-size="12.5" font-weight="800" fill="#15803d" text-anchor="middle">그래서 새 주인은</text>
+    <text x="818" y="104" font-size="15" font-weight="800" fill="#166534" text-anchor="middle" class="mono">100 부터 읽는다</text>
+    <text x="818" y="134" font-size="11.5" fill="#166534" text-anchor="middle">커밋 값을 그대로</text>
+    <text x="818" y="152" font-size="11.5" fill="#166534" text-anchor="middle">"읽기 시작 위치"로 쓴다</text>
+    <text x="818" y="180" font-size="11" fill="#6b7280" text-anchor="middle">(변환·보정이 전혀 없다)</text>
+  </svg>
+  <figcaption>이 규칙을 알아야 다음 절 타임라인의 숫자가 <b>한 칸도 어긋나지 않고</b> 읽힌다. 반대로 이걸 모르면 "커밋 100인데 왜 100을 또 처리하지?"에서 막힌다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>인출 카드 — 오프셋 세 종류를 구분한다</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">last processed</div><div class="s">내가 처리한 마지막</div><div class="d">예: <b>99</b> — 커밋하는 값이 <u>아니다</u></div></div>
+    <div class="tile ok"><div class="k">committed</div><div class="s">브로커에 저장된 값</div><div class="d">예: <b>100</b> = 마지막 처리 + 1. <b>새 주인의 출발점</b></div></div>
+    <div class="tile red"><div class="k">in-flight</div><div class="s">이미 가져왔지만 커밋 전</div><div class="d">예: <b>100~105</b> — 리밸런싱 때 <u>통째로 재전달</u>되는 구간</div></div>
+  </div>
+</div>
+
+<h3>4-3. 핵심 — 같은 메시지가 두 컨슈머에서 <u>동시에</u> 처리되는 구간</h3>
+
+<p>"처리 중이던 메시지는 회수되지 않는다"는 문장의 결과가 무엇인지 타임라인으로 보자. <b>"알림이 두 번 가요"의 정확한 정체가 이것이다.</b></p>
+
+<div class="callout info"><span class="t">상황 설정</span>
+파티션 <code>P0</code>을 <b>컨슈머 A</b>가 맡고 있고, 마지막 커밋 값은 <code>100</code>이다(<b>99번까지 처리 완료</b>). A가 <code>100~105</code>를 폴링해 처리하는 중에 <b>새 인스턴스 C가 합류</b>해 리밸런싱이 시작됐고, 재배정 결과 <code>P0</code>의 새 주인은 <b>컨슈머 B</b>가 됐다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 664" role="img" aria-label="리밸런싱 중복 처리 타임라인. 시각 t0부터 t7까지 컨슈머 A와 컨슈머 B의 동작을 나란히 보여준다. A는 100부터 105까지 처리하는 동안 리밸런싱이 시작된 것을 모르고, B는 커밋 값 100부터 다시 읽어 같은 메시지 여섯 건을 중복 처리하며, t5부터 t7까지는 두 컨슈머가 동시에 같은 메시지를 처리하는 구간이다.">
+    <defs>
+      <marker id="tl1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14.5" font-weight="700" fill="#1f2937">중복 구간 타임라인 — <tspan fill="#dc2626">오프셋 100~105가 A와 B에서 각각 한 번씩 처리된다</tspan></text>
+
+    <rect x="24" y="46" width="64" height="34" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="56" y="68" font-size="11.5" font-weight="700" fill="#334155" text-anchor="middle">시각</text>
+    <rect x="94" y="46" width="470" height="34" rx="8" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="329" y="68" font-size="12.5" font-weight="800" fill="#1d4ed8" text-anchor="middle">컨슈머 A — 기존 주인 (자기가 파티션을 잃은 줄 모른다)</text>
+    <rect x="572" y="46" width="436" height="34" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.4"/>
+    <text x="790" y="68" font-size="12.5" font-weight="800" fill="#15803d" text-anchor="middle">컨슈머 B — 새 주인 (커밋 값만 보고 출발한다)</text>
+
+    <rect x="24" y="88" width="64" height="46" rx="7" fill="#f8fafc" stroke="#e2e8f0"/><text x="56" y="116" font-size="12" font-weight="800" fill="#475569" text-anchor="middle" class="mono">t0</text>
+    <rect x="94" y="88" width="470" height="46" rx="7" fill="#ffffff" stroke="#dbeafe"/>
+    <text x="112" y="108" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="700">poll()</tspan> → <tspan class="mono" font-weight="700">100,101,102,103,104,105</tspan> 수신</text>
+    <text x="112" y="126" font-size="10.5" fill="#6b7280">이 6건은 <tspan font-weight="700">이미 A의 메모리 안</tspan>에 있다 — 브로커는 이 사실을 모른다</text>
+    <rect x="572" y="88" width="436" height="46" rx="7" fill="#fbfdfb" stroke="#dcfce7"/>
+    <text x="790" y="116" font-size="11.5" fill="#9ca3af" text-anchor="middle">아직 존재하지 않거나, 다른 파티션을 처리 중</text>
+
+    <rect x="24" y="138" width="64" height="40" rx="7" fill="#f8fafc" stroke="#e2e8f0"/><text x="56" y="163" font-size="12" font-weight="800" fill="#475569" text-anchor="middle" class="mono">t1</text>
+    <rect x="94" y="138" width="470" height="40" rx="7" fill="#ffffff" stroke="#dbeafe"/>
+    <text x="112" y="163" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="700">100</tspan> 처리 완료 <tspan fill="#dc2626" font-weight="700">(커밋은 아직 안 했다)</tspan></text>
+    <rect x="572" y="138" width="436" height="40" rx="7" fill="#fbfdfb" stroke="#dcfce7"/>
+    <text x="790" y="163" font-size="11.5" fill="#9ca3af" text-anchor="middle">—</text>
+
+    <rect x="24" y="182" width="64" height="88" rx="7" fill="#fef2f2" stroke="#fecaca"/><text x="56" y="230" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle" class="mono">t2</text>
+    <rect x="94" y="182" width="470" height="88" rx="7" fill="#ffffff" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="112" y="204" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="700">101</tspan> 처리 중…</text>
+    <rect x="112" y="212" width="434" height="50" rx="7" fill="#fef2f2" stroke="#fca5a5"/>
+    <text x="124" y="230" font-size="11" font-weight="800" fill="#b91c1c">★ 이 시점에 C 합류로 리밸런싱 시작 — 코디네이터가 JoinGroup을 소집한다</text>
+    <text x="124" y="250" font-size="11" fill="#7f1d1d">그러나 A는 <tspan font-weight="700">처리 루프 안</tspan>이라 아직 <tspan class="mono">poll()</tspan>로 돌아오지 못했고, <tspan font-weight="800">리밸런싱이 시작된 줄 모른다</tspan></text>
+    <rect x="572" y="182" width="436" height="88" rx="7" fill="#fbfdfb" stroke="#dcfce7"/>
+    <text x="790" y="232" font-size="11.5" fill="#6b7280" text-anchor="middle">리밸런싱 진행 중 (JoinGroup → SyncGroup)</text>
+
+    <rect x="24" y="274" width="64" height="46" rx="7" fill="#f8fafc" stroke="#e2e8f0"/><text x="56" y="302" font-size="12" font-weight="800" fill="#475569" text-anchor="middle" class="mono">t3</text>
+    <rect x="94" y="274" width="470" height="46" rx="7" fill="#ffffff" stroke="#dbeafe"/>
+    <text x="112" y="302" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="700">102</tspan> 처리 중…</text>
+    <rect x="572" y="274" width="436" height="46" rx="7" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="590" y="302" font-size="11.5" font-weight="700" fill="#15803d">리밸런싱 완료 — <tspan class="mono">P0</tspan> 을 할당받음</text>
+
+    <rect x="24" y="324" width="64" height="46" rx="7" fill="#f8fafc" stroke="#e2e8f0"/><text x="56" y="352" font-size="12" font-weight="800" fill="#475569" text-anchor="middle" class="mono">t4</text>
+    <rect x="94" y="324" width="470" height="46" rx="7" fill="#ffffff" stroke="#dbeafe"/>
+    <text x="112" y="352" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="700">103</tspan> 처리 중…</text>
+    <rect x="572" y="324" width="436" height="46" rx="7" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="590" y="346" font-size="11.5" fill="#166534">마지막 커밋 값 <tspan class="mono" font-weight="800">100</tspan> 을 조회 → <tspan font-weight="800">100부터 읽기 시작</tspan></text>
+    <text x="590" y="364" font-size="10.5" fill="#6b7280">A가 105까지 처리했다는 사실은 <tspan font-weight="700">어디에도 기록되지 않았다</tspan></text>
+
+    <rect x="1016" y="374" width="88" height="216" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+    <text transform="rotate(-90 1060 482)" x="1060" y="476" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">동시 처리 구간</text>
+    <text transform="rotate(-90 1060 482)" x="1060" y="496" font-size="10.5" fill="#7f1d1d" text-anchor="middle">t5 ~ t7 : A와 B가 동시에</text>
+
+    <rect x="24" y="374" width="64" height="46" rx="7" fill="#fef2f2" stroke="#fecaca"/><text x="56" y="402" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle" class="mono">t5</text>
+    <rect x="94" y="374" width="470" height="46" rx="7" fill="#fffbfb" stroke="#fecaca"/>
+    <text x="112" y="402" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="700">104</tspan> 처리 중…</text>
+    <rect x="572" y="374" width="436" height="46" rx="7" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.4"/>
+    <text x="590" y="402" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="800">100</tspan> 처리 <tspan font-size="10.5" fill="#6b7280">← A가 t1에 이미 처리함</tspan></text>
+    <rect x="906" y="384" width="88" height="26" rx="13" fill="#dc2626"/><text x="950" y="402" font-size="11" font-weight="800" fill="#ffffff" text-anchor="middle">중복 1</text>
+
+    <rect x="24" y="424" width="64" height="46" rx="7" fill="#fef2f2" stroke="#fecaca"/><text x="56" y="452" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle" class="mono">t6</text>
+    <rect x="94" y="424" width="470" height="46" rx="7" fill="#fffbfb" stroke="#fecaca"/>
+    <text x="112" y="452" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="700">105</tspan> 처리 완료</text>
+    <rect x="572" y="424" width="436" height="46" rx="7" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.4"/>
+    <text x="590" y="452" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="800">101</tspan> 처리 <tspan font-size="10.5" fill="#6b7280">← A가 t2에 처리함</tspan></text>
+    <rect x="906" y="434" width="88" height="26" rx="13" fill="#dc2626"/><text x="950" y="452" font-size="11" font-weight="800" fill="#ffffff" text-anchor="middle">중복 2</text>
+
+    <rect x="24" y="474" width="64" height="116" rx="7" fill="#fef2f2" stroke="#fecaca"/><text x="56" y="536" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle" class="mono">t7</text>
+    <rect x="94" y="474" width="470" height="116" rx="7" fill="#fffbfb" stroke="#fecaca" stroke-width="1.4"/>
+    <text x="112" y="496" font-size="11.5" fill="#1f2937">이제야 <tspan class="mono" font-weight="700">poll()</tspan> 로 돌아옴</text>
+    <text x="112" y="518" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="700">commitSync(106)</tspan> 시도</text>
+    <rect x="112" y="528" width="434" height="50" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="124" y="548" font-size="12" font-weight="800" fill="#b91c1c">→ <tspan class="mono">CommitFailedException</tspan></text>
+    <text x="124" y="568" font-size="10.5" fill="#7f1d1d">"파티션은 이미 내 것이 아니다" — 5장의 <tspan font-weight="700">세대 번호</tspan>가 이 커밋을 거절한다</text>
+    <rect x="572" y="474" width="436" height="116" rx="7" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.4"/>
+    <text x="590" y="500" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="800">102</tspan> 처리</text>
+    <text x="590" y="524" font-size="11.5" fill="#1f2937"><tspan class="mono" font-weight="800">103, 104, 105</tspan> 처리</text>
+    <rect x="590" y="536" width="400" height="42" rx="7" fill="#ffffff" stroke="#fecaca"/>
+    <text x="604" y="562" font-size="11" fill="#7f1d1d">A가 t3~t6에 처리한 것들을 <tspan font-weight="800">그대로 한 번 더</tspan></text>
+    <rect x="884" y="484" width="106" height="26" rx="13" fill="#dc2626"/><text x="937" y="502" font-size="11" font-weight="800" fill="#ffffff" text-anchor="middle">중복 3</text>
+    <rect x="884" y="512" width="106" height="26" rx="13" fill="#dc2626"/><text x="937" y="530" font-size="11" font-weight="800" fill="#ffffff" text-anchor="middle">중복 4·5·6</text>
+
+    <rect x="24" y="600" width="984" height="50" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="44" y="622" font-size="12.5" font-weight="800" fill="#b91c1c">결과 — 오프셋 <tspan class="mono">100~105</tspan> 여섯 건이 A와 B에서 <tspan text-decoration="underline">각각 한 번씩, 총 두 번</tspan> 처리됐다.</text>
+    <text x="44" y="642" font-size="11.5" fill="#7f1d1d">알림 발송 컨슈머라면 <tspan font-weight="800">사용자에게 알림이 두 번</tspan> 간다. "가끔"인 이유는 <tspan font-weight="700">배포할 때만, 그것도 마침 처리 중인 메시지가 있을 때만</tspan> 발생하기 때문이다.</text>
+  </svg>
+  <figcaption>t5~t7이 <b>두 컨슈머가 같은 메시지를 동시에 처리하고 있던 구간</b>이다. 여기서 <b>"동시"</b>라는 말이 중요하다 — 순차적 재처리가 아니라 <b>병행 실행</b>이므로, "이미 처리했는지" 검사하는 멱등 로직조차 <b>경쟁 조건</b>에 놓인다(그래서 멱등 키에 <b>유니크 제약</b>이 필요하다).</figcaption>
+</figure>
+
+<h3>4-4. 이 그림에서 반드시 짚어야 할 것 셋</h3>
+
+<div class="split g3">
+  <div class="pane b"><h4>① A는 모른다</h4>
+    <p style="margin:0;font-size:.94rem">A는 <b>자기가 파티션을 잃은 줄 모르는 채로</b> 계속 처리한다. 컨슈머가 리밸런싱 상황을 인지하는 시점은 <b><code>poll()</code>을 부를 때</b>인데, <b>처리 루프 안에 있는 동안에는 <code>poll()</code>을 부르지 않기 때문</b>이다.</p>
+  </div>
+  <div class="pane g"><h4>② B는 알 방법이 없다</h4>
+    <p style="margin:0;font-size:.94rem">B가 볼 수 있는 것은 <b>커밋된 오프셋뿐</b>이고 그 값은 <code>100</code>이다. <b>A가 실제로 105까지 처리했다는 사실은 어디에도 기록되지 않았다.</b> 기록되지 않은 것을 참조할 방법은 없다.</p>
+  </div>
+  <div class="pane r"><h4>③ 그래서 구간이 실재한다</h4>
+    <p style="margin:0;font-size:.94rem">"두 컨슈머가 같은 메시지를 <b>동시에</b> 처리하는 구간"은 이론이 아니라 <b>매 배포마다 재현되는 실제 상태</b>다. 이게 <b>"가끔 알림이 두 번 가요"</b> 버그 리포트의 정체다.</p>
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">여기서 파생되는 실무 함정 — 멱등 검사도 경쟁한다</span>
+"처리 이력 테이블을 조회해서 있으면 건너뛴다"는 멱등 로직은 <b>순차 재처리</b>를 가정한다. 그런데 위 타임라인의 t5~t7은 <b>병행 처리</b>라서 <b>A와 B가 같은 순간에 "이력 없음"을 읽고 둘 다 처리</b>할 수 있다. 그래서 멱등 처리의 최후 방어선은 <b>애플리케이션의 <code>if (exists)</code> 검사가 아니라 DB의 유니크 제약</b>이어야 한다 — 상세는 <code>04-idempotent-consumer-implementation.md</code>.
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 중복이냐 유실이냐 · 낡은 세대의 커밋은 거부된다</h2>
+
+<h3>5-1. 같은 리밸런싱인데 결과가 갈린다 — 변수는 <u>커밋 시점</u> 하나</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="처리 후 커밋과 처리 전 커밋을 비교한 도식. 처리 후 커밋에서는 리밸런싱 시 커밋되지 않은 구간이 재전달되어 중복이 발생하고, 처리 전 커밋에서는 커밋은 됐지만 처리를 끝내지 못한 메시지를 새 주인이 건너뛰어 유실이 발생한다.">
+    <defs>
+      <marker id="c1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#334155"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">커밋을 <tspan fill="#2563eb">언제</tspan> 하느냐가 리밸런싱의 결과를 <tspan fill="#dc2626">중복</tspan> 과 <tspan fill="#dc2626">유실</tspan> 로 가른다</text>
+
+    <rect x="24" y="42" width="534" height="262" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="44" y="68" font-size="13" font-weight="800" fill="#15803d">처리 <tspan text-decoration="underline">후</tspan> 커밋 — 실무 정석 (at-least-once)</text>
+    <line x1="60" y1="120" x2="520" y2="120" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#c1)"/>
+    <g text-anchor="middle" font-size="11">
+      <rect x="60" y="100" width="96" height="30" rx="7" fill="#ffffff" stroke="#86efac"/><text x="108" y="120" fill="#166534" font-weight="700" class="mono">poll()</text>
+      <rect x="176" y="100" width="140" height="30" rx="7" fill="#ffffff" stroke="#86efac"/><text x="246" y="120" fill="#166534" font-weight="700">비즈니스 처리</text>
+      <rect x="336" y="100" width="120" height="30" rx="7" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="396" y="120" fill="#15803d" font-weight="800" class="mono">commit</text>
+    </g>
+    <path d="M300,138 L300,158" stroke="#dc2626" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="300" y="154" font-size="16" fill="#dc2626" text-anchor="middle">&#9889;</text>
+    <text x="300" y="176" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">여기서 리밸런싱</text>
+    <rect x="60" y="188" width="460" height="44" rx="9" fill="#ffffff" stroke="#bbf7d0"/>
+    <text x="76" y="208" font-size="11.5" fill="#166534">처리는 했지만 <tspan font-weight="800">커밋 전</tspan>에 파티션을 잃었다 → 새 주인이 <tspan class="mono" font-weight="800">그 구간을 다시</tspan> 읽는다</text>
+    <text x="76" y="226" font-size="11" fill="#6b7280">4장 타임라인이 정확히 이 경우다 (오프셋 100~105 재전달)</text>
+    <rect x="60" y="242" width="460" height="44" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="290" y="262" font-size="13" font-weight="800" fill="#b45309" text-anchor="middle">결과: 중복 처리</text>
+    <text x="290" y="280" font-size="11" fill="#78350f" text-anchor="middle">멱등 처리로 <tspan font-weight="800">흡수 가능</tspan> — 그래서 이쪽을 택한다</text>
+
+    <rect x="578" y="42" width="518" height="262" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="598" y="68" font-size="13" font-weight="800" fill="#b91c1c">처리 <tspan text-decoration="underline">전</tspan> 커밋 — 자동 커밋의 타이밍에 따라 벌어진다</text>
+    <line x1="614" y1="120" x2="1070" y2="120" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#c1)"/>
+    <g text-anchor="middle" font-size="11">
+      <rect x="614" y="100" width="96" height="30" rx="7" fill="#ffffff" stroke="#fca5a5"/><text x="662" y="120" fill="#7f1d1d" font-weight="700" class="mono">poll()</text>
+      <rect x="730" y="100" width="120" height="30" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/><text x="790" y="120" fill="#b91c1c" font-weight="800" class="mono">commit</text>
+      <rect x="870" y="100" width="140" height="30" rx="7" fill="#ffffff" stroke="#fca5a5"/><text x="940" y="120" fill="#7f1d1d" font-weight="700">비즈니스 처리</text>
+    </g>
+    <path d="M940,138 L940,158" stroke="#dc2626" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="940" y="154" font-size="16" fill="#dc2626" text-anchor="middle">&#9889;</text>
+    <text x="940" y="176" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">여기서 리밸런싱</text>
+    <rect x="614" y="188" width="456" height="44" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <text x="630" y="208" font-size="11.5" fill="#7f1d1d"><tspan font-weight="800">커밋은 됐는데</tspan> 처리를 못 끝낸 메시지가 있다 → 새 주인은 그 메시지를 <tspan font-weight="800">건너뛴다</tspan></text>
+    <text x="630" y="226" font-size="11" fill="#6b7280">"어디까지 읽었다"는 기록이 <tspan font-weight="700">사실보다 앞서 있기</tspan> 때문이다</text>
+    <rect x="614" y="242" width="456" height="44" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="842" y="262" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">결과: 유실</text>
+    <text x="842" y="280" font-size="11" fill="#7f1d1d" text-anchor="middle">어떤 사후 조치로도 <tspan font-weight="800">복구할 수 없다</tspan> — 메시지가 처리된 적 없다는 사실조차 모른다</text>
+  </svg>
+  <figcaption>자동 커밋(<code>enable.auto.commit=true</code>)은 <b>백그라운드 타이머가 <code>poll()</code> 시점에 "지난번에 반환한 것까지" 커밋</b>하는 방식이라, <b>처리 완료 여부와 무관하게</b> 커밋이 앞서 나갈 수 있다. 그래서 리밸런싱과 만나면 유실 쪽으로 기운다 — 상세는 <code>23-offset-commit-and-auto-commit-risk.md</code>.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>이 문서에서 가장 자주 인출될 한 문장</h4>
+  <div class="rule ok">중복은 <u>멱등 처리로 흡수할 수 있지만</u>, 유실은 <u>흡수할 방법이 없다</u></div>
+  <p style="margin-bottom:0">"실무 정석이 처리 후 커밋인 이유"를 묻는 질문에 이 한 문장이면 끝난다. 그리고 여기서 다음 결론이 따라 나온다 — <b>리밸런싱이 존재하는 한 "정확히 한 번만 처리됨"을 컨슈머 배정만으로 보장할 수 없고, 중복을 <u>정상 상황</u>으로 받아들이는 멱등 컨슈머가 전제되어야 한다.</b></p>
+</div>
+
+<div class="scroll">
+<table>
+  <caption>커밋 시점 × 리밸런싱 → 결과</caption>
+  <thead><tr><th>커밋 방식</th><th>커밋 시점</th><th>리밸런싱과 만나면</th><th>복구 가능성</th><th>실무 평가</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td>수동 커밋 (처리 후)</td><td>비즈니스 처리 <b>완료 후</b></td><td class="bad">커밋 안 된 구간 <b>중복</b></td><td class="good">멱등 처리로 흡수</td><td class="good">정석</td></tr>
+    <tr class="bad"><td>자동 커밋</td><td>타이머에 따라 <b>처리 전일 수 있음</b></td><td class="bad">처리 못 끝낸 건 <b>유실</b></td><td class="bad">불가</td><td class="bad">위험 — 이 문서 맥락에서는 피한다</td></tr>
+    <tr><td>수동 커밋 (매 건)</td><td>메시지 <b>한 건마다</b></td><td>중복 구간이 <b>최소</b>(최대 1건)</td><td class="good">멱등 처리로 흡수</td><td>커밋 왕복 비용이 커서 처리량 급락</td></tr>
+    <tr><td>수동 커밋 + <code>onPartitionsRevoked</code></td><td>처리 후 + <b>반납 직전 한 번 더</b></td><td>중복 구간 <b>축소</b>(제거는 아님)</td><td class="good">멱등 처리로 흡수</td><td class="good">권장 조합 (8장)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>5-2. 낡은 세대의 커밋은 거부된다 — 버그가 아니라 안전장치 <span class="badge bonus">가산점</span></h3>
+
+<p>4장의 <code>t7</code>에서 A의 커밋이 <code>CommitFailedException</code>으로 실패했다. 이것도 우연이 아니라 <b>설계된 안전장치</b>다. <b>만약 A의 커밋이 성공했다면 어떻게 되는가</b>를 따라가 보면 이유가 드러난다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="그룹 세대 번호 도식. 리밸런싱마다 세대 번호가 올라가고, 옛 세대 번호를 들고 있는 컨슈머 A의 커밋은 코디네이터가 거절하며, 만약 이 커밋이 성공했다면 새 주인 B의 진행 상황을 덮어써서 유실이 발생했을 것임을 보여준다.">
+    <defs>
+      <marker id="g1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="g2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">세대 번호(generation) — 리밸런싱마다 하나씩 올라가는 <tspan fill="#2563eb">그룹의 개정판 번호</tspan></text>
+
+    <line x1="80" y1="76" x2="1060" y2="76" stroke="#cbd5e1" stroke-width="2"/>
+    <circle cx="240" cy="76" r="8" fill="#2563eb"/><circle cx="700" cy="76" r="8" fill="#dc2626"/>
+    <rect x="140" y="42" width="200" height="26" rx="7" fill="#eff6ff" stroke="#93c5fd"/><text x="240" y="60" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">generation = 7</text>
+    <rect x="600" y="42" width="200" height="26" rx="7" fill="#fef2f2" stroke="#fca5a5"/><text x="700" y="60" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">리밸런싱 → <tspan class="mono">generation = 8</tspan></text>
+    <text x="1060" y="66" font-size="11.5" fill="#6b7280" text-anchor="end">시간 →</text>
+
+    <rect x="24" y="98" width="530" height="132" rx="11" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="44" y="122" font-size="12.5" font-weight="800" fill="#b91c1c">컨슈머 A — 리밸런싱 전 세대의 번호를 들고 있다</text>
+    <rect x="44" y="134" width="200" height="44" rx="9" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="144" y="152" font-size="11.5" fill="#7f1d1d" text-anchor="middle">커밋 요청</text>
+    <text x="144" y="170" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle" class="mono">offset=106, gen=7</text>
+    <path d="M250,156 L306,156" stroke="#dc2626" stroke-width="1.8" marker-end="url(#g2)"/>
+    <rect x="312" y="126" width="222" height="60" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="423" y="148" font-size="11.5" fill="#7f1d1d" text-anchor="middle">코디네이터: 현재 세대는 <tspan class="mono" font-weight="800">8</tspan></text>
+    <text x="423" y="170" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">→ 거절 <tspan class="mono" font-size="11">CommitFailedException</tspan></text>
+    <text x="44" y="206" font-size="11.5" fill="#7f1d1d">컨슈머는 커밋할 때 <tspan font-weight="800">자기가 아는 세대 번호를 함께</tspan> 보내고,</text>
+    <text x="44" y="222" font-size="11.5" fill="#7f1d1d">코디네이터는 <tspan font-weight="800">현재 세대와 다르면 커밋을 거절한다.</tspan></text>
+
+    <rect x="574" y="98" width="522" height="132" rx="11" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="594" y="122" font-size="12.5" font-weight="800" fill="#15803d">컨슈머 B — 현재 세대의 멤버</text>
+    <rect x="594" y="134" width="200" height="44" rx="9" fill="#ffffff" stroke="#86efac"/>
+    <text x="694" y="152" font-size="11.5" fill="#166534" text-anchor="middle">커밋 요청</text>
+    <text x="694" y="170" font-size="11.5" font-weight="800" fill="#15803d" text-anchor="middle" class="mono">offset=103, gen=8</text>
+    <path d="M800,156 L856,156" stroke="#2563eb" stroke-width="1.8" marker-end="url(#g1)"/>
+    <rect x="862" y="126" width="214" height="60" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="969" y="148" font-size="11.5" fill="#166534" text-anchor="middle">세대 일치</text>
+    <text x="969" y="170" font-size="12.5" font-weight="800" fill="#15803d" text-anchor="middle">→ 수락</text>
+    <text x="594" y="206" font-size="11.5" fill="#166534">파티션의 <tspan font-weight="800">현재 주인만</tspan> 그 파티션의 진행 상황을 기록할 수 있다 —</text>
+    <text x="594" y="222" font-size="11.5" fill="#166534">이것이 <tspan font-weight="800">"오프셋 기록의 단일 소유권"</tspan>을 지키는 방법이다.</text>
+
+    <rect x="24" y="244" width="1072" height="72" rx="11" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="44" y="268" font-size="12.5" font-weight="800" fill="#b45309">만약 A의 커밋이 성공했다면 — 왜 이 안전장치가 필요한가</text>
+    <text x="44" y="290" font-size="11.5" fill="#78350f">A는 <tspan class="mono" font-weight="800">106</tspan> 을 커밋하는데, B는 그 시점에 아직 <tspan class="mono" font-weight="800">102</tspan> 를 처리 중이다 → <tspan font-weight="800">A의 커밋이 B의 진행 상황을 덮어쓴다.</tspan></text>
+    <text x="44" y="308" font-size="11.5" fill="#b91c1c" font-weight="800">그 상태에서 B가 죽었다 살아나면 <tspan class="mono">103~105</tspan> 를 건너뛴다 — 중복이 유실로 바뀐다. 그래서 거절이 <tspan text-decoration="underline">옳다</tspan>.</text>
+  </svg>
+  <figcaption>비유하자면 <b>문서 개정판 번호</b>다. 7판 기준으로 결재를 올렸는데 이미 8판이 나왔다면 반려된다 — 7판의 내용으로 8판을 덮어쓰면 <b>그 사이의 변경이 사라지기</b> 때문이다.</figcaption>
+</figure>
+
+<div class="callout warn"><span class="t">그래서 코드에서 <code>CommitFailedException</code>을 어떻게 다뤄야 하나</span>
+<b>재시도해도 소용없다.</b> 세대가 이미 바뀌었으므로 몇 번을 던져도 계속 거절된다. 이 예외를 만나면 해야 할 일은 (ⅰ) <b>커밋 재시도가 아니라</b> (ⅱ) <b>"내가 처리한 결과가 중복으로 한 번 더 처리될 것"이라는 사실을 인정</b>하고, (ⅲ) 로컬 상태(버퍼·캐시)를 <b>정리</b>한 뒤 루프를 정상 종료하는 것이다. <b>에러 로그로 남기되 알람을 울릴 대상은 아니다</b> — 리밸런싱마다 나올 수 있는 정상 예외이기 때문이다.
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. eager vs cooperative — 정지 <u>범위</u>를 줄인다</h2>
+
+<h3>6-1. eager 리밸런싱 — 전면 정지(stop-the-world)</h3>
+
+<p>전통적인 방식인 <b>eager(성급한) 리밸런싱</b>의 규칙은 단순하다. <b>리밸런싱이 시작되면 모든 컨슈머가 자기 파티션을 전부 내려놓고, 새 배정을 받을 때까지 기다린다.</b></p>
+
+<p>왜 이렇게 만들었는지는 이해할 만하다. 1장의 규칙(<b>"한 파티션은 한 컨슈머만"</b>) 위반을 확실히 막으려면, 새 배정을 나눠주기 전에 <b>모두가 손을 뗀 상태</b>를 만드는 것이 가장 안전하다. 문제는 <b>그 대가가 크다</b>는 것이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 480" role="img" aria-label="컨슈머 10대가 파티션 30개를 3개씩 맡고 있다가 1대가 이탈할 때, eager 방식은 남은 9대가 전부 파티션을 반납해 30개 전부가 정지하는 반면 cooperative 방식은 이탈한 컨슈머의 파티션 3개만 정지하는 것을 비교한 도식.">
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">같은 이탈, 다른 정지 범위 — <tspan fill="#dc2626">30개 전부</tspan> vs <tspan fill="#16a34a">3개만</tspan></text>
+
+    <text x="40" y="46" font-size="12" font-weight="700" fill="#334155">공통 초기 상태 — 컨슈머 10대가 파티션 30개를 3개씩</text>
+    <g font-size="10.5" text-anchor="middle">
+      <rect x="40" y="54" width="92" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="86" y="72" font-weight="800" fill="#1d4ed8" class="mono">C1</text><text x="86" y="90" fill="#334155" class="mono">p1,p2,p3</text>
+      <rect x="144" y="54" width="92" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="190" y="72" font-weight="800" fill="#1d4ed8" class="mono">C2</text><text x="190" y="90" fill="#334155" class="mono">p4,p5,p6</text>
+      <rect x="248" y="54" width="92" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="294" y="72" font-weight="800" fill="#1d4ed8" class="mono">C3</text><text x="294" y="90" fill="#334155" class="mono">p7,p8,p9</text>
+      <rect x="352" y="54" width="92" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="398" y="72" font-weight="800" fill="#1d4ed8" class="mono">C4</text><text x="398" y="90" fill="#334155" class="mono">p10,p11,p12</text>
+      <rect x="456" y="54" width="92" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="502" y="72" font-weight="800" fill="#1d4ed8" class="mono">C5</text><text x="502" y="90" fill="#334155" class="mono">p13,p14,p15</text>
+      <rect x="560" y="54" width="92" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="606" y="72" font-weight="800" fill="#1d4ed8" class="mono">C6</text><text x="606" y="90" fill="#334155" class="mono">p16,p17,p18</text>
+      <rect x="664" y="54" width="92" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="710" y="72" font-weight="800" fill="#1d4ed8" class="mono">C7</text><text x="710" y="90" fill="#334155" class="mono">p19,p20,p21</text>
+      <rect x="768" y="54" width="92" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="814" y="72" font-weight="800" fill="#1d4ed8" class="mono">C8</text><text x="814" y="90" fill="#334155" class="mono">p22,p23,p24</text>
+      <rect x="872" y="54" width="92" height="46" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="918" y="72" font-weight="800" fill="#1d4ed8" class="mono">C9</text><text x="918" y="90" fill="#334155" class="mono">p25,p26,p27</text>
+      <rect x="976" y="54" width="92" height="46" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/><text x="1022" y="72" font-weight="800" fill="#b91c1c" class="mono">C10</text><text x="1022" y="90" fill="#7f1d1d" class="mono">p28,p29,p30</text>
+    </g>
+    <text x="1022" y="120" font-size="12" font-weight="800" fill="#dc2626" text-anchor="middle">↑ C10 이탈</text>
+    <text x="40" y="120" font-size="12" font-weight="700" fill="#6b7280">실제로 주인이 바뀌어야 하는 파티션은 <tspan font-weight="800" fill="#dc2626">3개뿐</tspan>이다</text>
+
+    <rect x="24" y="134" width="1072" height="144" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="44" y="158" font-size="13" font-weight="800" fill="#b91c1c">eager — 1대가 빠지면 <tspan text-decoration="underline">전원이 손을 놓는다</tspan></text>
+    <g font-size="10.5" text-anchor="middle">
+      <rect x="40" y="170" width="92" height="42" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="86" y="188" font-weight="800" fill="#b91c1c" class="mono">C1</text><text x="86" y="204" fill="#dc2626">[ 반납 ]</text>
+      <rect x="144" y="170" width="92" height="42" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="190" y="188" font-weight="800" fill="#b91c1c" class="mono">C2</text><text x="190" y="204" fill="#dc2626">[ 반납 ]</text>
+      <rect x="248" y="170" width="92" height="42" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="294" y="188" font-weight="800" fill="#b91c1c" class="mono">C3</text><text x="294" y="204" fill="#dc2626">[ 반납 ]</text>
+      <rect x="352" y="170" width="92" height="42" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="398" y="188" font-weight="800" fill="#b91c1c" class="mono">C4</text><text x="398" y="204" fill="#dc2626">[ 반납 ]</text>
+      <rect x="456" y="170" width="92" height="42" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="502" y="188" font-weight="800" fill="#b91c1c" class="mono">C5</text><text x="502" y="204" fill="#dc2626">[ 반납 ]</text>
+      <rect x="560" y="170" width="92" height="42" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="606" y="188" font-weight="800" fill="#b91c1c" class="mono">C6</text><text x="606" y="204" fill="#dc2626">[ 반납 ]</text>
+      <rect x="664" y="170" width="92" height="42" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="710" y="188" font-weight="800" fill="#b91c1c" class="mono">C7</text><text x="710" y="204" fill="#dc2626">[ 반납 ]</text>
+      <rect x="768" y="170" width="92" height="42" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="814" y="188" font-weight="800" fill="#b91c1c" class="mono">C8</text><text x="814" y="204" fill="#dc2626">[ 반납 ]</text>
+      <rect x="872" y="170" width="92" height="42" rx="8" fill="#ffffff" stroke="#fca5a5"/><text x="918" y="188" font-weight="800" fill="#b91c1c" class="mono">C9</text><text x="918" y="204" fill="#dc2626">[ 반납 ]</text>
+      <rect x="976" y="170" width="92" height="42" rx="8" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="4 3"/><text x="1022" y="194" fill="#94a3b8">(이탈)</text>
+    </g>
+    <rect x="40" y="222" width="1028" height="44" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="60" y="240" font-size="12.5" font-weight="800" fill="#b91c1c">이 순간 <tspan text-decoration="underline">30개 파티션 전부가 소비 정지</tspan> — 실제로 주인이 바뀌어야 했던 것은 3개뿐인데 <tspan text-decoration="underline">정지 범위가 10배</tspan></text>
+    <text x="60" y="258" font-size="11" fill="#7f1d1d">멈춘 시간만큼 랙이 쌓이고, 그 랙을 따라잡느라 처리가 느려지면 <tspan font-weight="700">또 쫓겨날 위험</tspan>이 생긴다 → 9장의 리밸런스 스톰</text>
+
+    <rect x="24" y="290" width="1072" height="170" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="44" y="314" font-size="13" font-weight="800" fill="#15803d">cooperative(협력적·점진적) — <tspan text-decoration="underline">주인이 바뀔 파티션만</tspan> 멈춘다</text>
+    <g font-size="10.5" text-anchor="middle">
+      <rect x="40" y="326" width="92" height="42" rx="8" fill="#ffffff" stroke="#86efac"/><text x="86" y="344" font-weight="800" fill="#15803d" class="mono">C1</text><text x="86" y="360" fill="#166534" class="mono">p1,p2,p3</text>
+      <rect x="144" y="326" width="92" height="42" rx="8" fill="#ffffff" stroke="#86efac"/><text x="190" y="344" font-weight="800" fill="#15803d" class="mono">C2</text><text x="190" y="360" fill="#166534" class="mono">p4,p5,p6</text>
+      <rect x="248" y="326" width="92" height="42" rx="8" fill="#ffffff" stroke="#86efac"/><text x="294" y="344" font-weight="800" fill="#15803d" class="mono">C3</text><text x="294" y="360" fill="#166534" class="mono">p7,p8,p9</text>
+      <rect x="352" y="326" width="92" height="42" rx="8" fill="#ffffff" stroke="#86efac"/><text x="398" y="344" font-weight="800" fill="#15803d" class="mono">C4</text><text x="398" y="360" fill="#166534" class="mono">p10,p11,p12</text>
+      <rect x="456" y="326" width="92" height="42" rx="8" fill="#ffffff" stroke="#86efac"/><text x="502" y="344" font-weight="800" fill="#15803d" class="mono">C5</text><text x="502" y="360" fill="#166534" class="mono">p13,p14,p15</text>
+      <rect x="560" y="326" width="92" height="42" rx="8" fill="#ffffff" stroke="#86efac"/><text x="606" y="344" font-weight="800" fill="#15803d" class="mono">C6</text><text x="606" y="360" fill="#166534" class="mono">p16,p17,p18</text>
+      <rect x="664" y="326" width="92" height="42" rx="8" fill="#ffffff" stroke="#86efac"/><text x="710" y="344" font-weight="800" fill="#15803d" class="mono">C7</text><text x="710" y="360" fill="#166534" class="mono">p19,p20,p21</text>
+      <rect x="768" y="326" width="92" height="42" rx="8" fill="#ffffff" stroke="#86efac"/><text x="814" y="344" font-weight="800" fill="#15803d" class="mono">C8</text><text x="814" y="360" fill="#166534" class="mono">p22,p23,p24</text>
+      <rect x="872" y="326" width="92" height="42" rx="8" fill="#ffffff" stroke="#86efac"/><text x="918" y="344" font-weight="800" fill="#15803d" class="mono">C9</text><text x="918" y="360" fill="#166534" class="mono">p25,p26,p27</text>
+      <rect x="976" y="326" width="92" height="42" rx="8" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="4 3"/><text x="1022" y="350" fill="#94a3b8">(이탈)</text>
+    </g>
+    <text x="40" y="388" font-size="11.5" font-weight="700" fill="#166534">→ 남은 9대는 자기 파티션을 <tspan text-decoration="underline">그대로 들고 계속 소비한다</tspan></text>
+    <g font-size="11" text-anchor="middle">
+      <rect x="470" y="374" width="86" height="24" rx="12" fill="#fee2e2" stroke="#dc2626"/><text x="513" y="391" font-weight="800" fill="#b91c1c" class="mono">p28</text>
+      <rect x="564" y="374" width="86" height="24" rx="12" fill="#fee2e2" stroke="#dc2626"/><text x="607" y="391" font-weight="800" fill="#b91c1c" class="mono">p29</text>
+      <rect x="658" y="374" width="86" height="24" rx="12" fill="#fee2e2" stroke="#dc2626"/><text x="701" y="391" font-weight="800" fill="#b91c1c" class="mono">p30</text>
+      <text x="800" y="391" font-size="11" fill="#7f1d1d" text-anchor="start">← 주인 없는 이 3개만 재배정 대상</text>
+    </g>
+    <rect x="40" y="406" width="1028" height="44" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="60" y="424" font-size="12.5" font-weight="800" fill="#15803d">정지한 파티션: <tspan text-decoration="underline">3개 (전체의 10%)</tspan> — 재배정 후 C1[p1,p2,p3,<tspan class="mono">p28</tspan>] C2[…,<tspan class="mono">p29</tspan>] C3[…,<tspan class="mono">p30</tspan>]</text>
+    <text x="60" y="442" font-size="11" fill="#166534">대신 절차가 <tspan font-weight="700">두 번(또는 그 이상)에 나뉘어</tspan> 진행된다 — "누가 무엇을 내려놓을지" 정하고, 내려놓은 뒤 다시 모여 "누가 가져갈지" 정한다 → 이름의 <tspan font-weight="700">incremental</tspan></text>
+  </svg>
+  <figcaption>같은 상황에서 정지 범위가 <b>30개에서 3개로, 10분의 1</b>이 됐다. <b>총 소요 시간은 조금 길어질 수 있지만, 그동안 대부분의 파티션이 계속 소비되고 있다</b>는 것이 결정적 차이다 — 즉 cooperative가 개선하는 지표는 <b>"리밸런싱 소요 시간"이 아니라 "소비 중단 범위"</b>다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>eager vs cooperative — 무엇이 같고 무엇이 다른가</caption>
+  <thead><tr><th>항목</th><th>eager (전통 방식)</th><th>cooperative (협력적·점진적)</th></tr></thead>
+  <tbody>
+    <tr><td>리밸런싱 시작 시 동작</td><td class="bad">전 멤버가 <b>모든 파티션 반납</b></td><td class="good">주인이 바뀔 파티션<b>만</b> 반납</td></tr>
+    <tr class="hl"><td>소비 정지 범위</td><td class="bad">그룹 전체 (예: 30/30)</td><td class="good">이동 대상만 (예: 3/30)</td></tr>
+    <tr><td>절차 라운드</td><td>1라운드로 끝</td><td><b>2라운드 이상</b> (반납 → 재소집 → 배정)</td></tr>
+    <tr><td>총 소요 시간</td><td>짧을 수 있음</td><td>조금 <b>길어질 수 있음</b> (그러나 그동안 대부분 소비 중)</td></tr>
+    <tr><td>안전성 확보 방식</td><td>"모두 손 떼기"로 <b>물리적으로</b> 중복 소유를 배제</td><td>이동 대상만 정확히 계산해 <b>논리적으로</b> 배제</td></tr>
+    <tr><td>적용 방법</td><td colspan="2"><b>컨슈머 설정</b> <code>partition.assignment.strategy</code> — 브로커 변경 없음(할당 계산 주체가 컨슈머 리더이기 때문)</td></tr>
+    <tr class="bad"><td>전환 시 주의</td><td colspan="2">그룹 안에 <b>eager와 cooperative가 섞이면 프로토콜이 어긋난다</b> → 정해진 <b>2단계 롤링 업그레이드</b> 필요</td></tr>
+    <tr><td>특히 유리한 상황</td><td>멤버 변화가 드물고 파티션 수가 적을 때</td><td class="good"><b>롤링 배포가 잦고</b> 멤버·파티션이 많을 때</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>6-2. 적용 — 설정 한 줄과, 반드시 지켜야 하는 2단계 절차</h3>
+
+<div class="cmp">
+<div>
+<div class="codehead bad"><span class="tag">BEFORE</span> 기본값(eager 계열) — 1대만 빠져도 그룹 전체가 멈춘다</div>
+<pre><code><span class="cm"># consumer.properties</span>
+<span class="nm">group.id</span>=order-worker
+<span class="ln-bad"><span class="nm">partition.assignment.strategy</span>=org.apache.kafka.clients.consumer.RangeAssignor</span>
+<span class="cm"># ↑ eager 프로토콜: 리밸런싱마다 전 멤버가 모든 파티션을 반납</span>
+<span class="cm">#   배포 1회(리밸런싱 2회) = 그룹 전체가 2번 정지</span></code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">AFTER</span> 협력적 할당자 — 이동 대상만 잠시 멈춘다</div>
+<pre><code><span class="cm"># consumer.properties</span>
+<span class="nm">group.id</span>=order-worker
+<span class="ln-good"><span class="nm">partition.assignment.strategy</span>=org.apache.kafka.clients.consumer.CooperativeStickyAssignor</span>
+<span class="cm"># ↑ cooperative 프로토콜 + sticky(기존 배정을 최대한 유지)</span>
+<span class="cm">#   "가능한 한 안 옮기고, 옮겨야 하는 것만 옮긴다"</span></code></pre>
+</div>
+</div>
+
+<div class="memo red">
+  <h4>한 번에 갈아 끼우면 안 된다 — 2단계 롤링 업그레이드</h4>
+  <div class="step"><span class="n">1</span><div class="body"><b>1차 배포 — 양쪽을 모두 이해하는 설정</b><br>전략 목록에 <b>기존 eager 할당자와 협력적 할당자를 함께</b> 올린 상태로 전 인스턴스를 교체한다. 이 단계에서 그룹은 여전히 <b>공통분모인 eager 프로토콜</b>로 동작하지만, <b>모든 멤버가 협력적 방식을 "알고 있는" 상태</b>가 된다.</div></div>
+  <div class="step ok"><span class="n">2</span><div class="body"><b>2차 배포 — cooperative 전용</b><br>목록에서 eager 할당자를 <b>빼고</b> 다시 배포한다. 이제 모든 멤버가 협력적 프로토콜에 합의할 수 있으므로 <b>여기서부터 점진적 리밸런싱이 적용</b>된다.</div></div>
+  <p style="margin-bottom:0"><b>왜 두 단계인가</b> — 그룹의 프로토콜은 <b>전 멤버가 공통으로 지원하는 것</b>으로 정해진다. 1단계를 건너뛰고 바로 전환하면, 롤링 도중 <b>구버전 멤버와 신버전 멤버가 서로 다른 규칙</b>으로 파티션을 다루게 되어 <b>"한 파티션 = 한 컨슈머" 규칙이 깨질 위험</b>이 생긴다.</p>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 정적 멤버십 — 리밸런싱 <u>횟수</u>를 줄인다</h2>
+
+<p><b>정적 멤버십(static membership)</b>은 <b>컨슈머에 사람이 정한 고정 ID(<code>group.instance.id</code>)를 부여하는 것</b>이다. 효과를 이해하려면 기본 동작을 먼저 봐야 한다 — <b>기본 동작에서는 컨슈머가 그룹에 합류할 때마다 코디네이터가 새 멤버 ID를 발급한다.</b> 그래서 <b>재시작한 같은 인스턴스</b>도 코디네이터 눈에는 <b>"나간 사람"과 "새로 온 사람"</b>으로 보인다.</p>
+
+<div class="callout info"><span class="t">비유 — 방문증 vs 사원증</span>
+기본 동작은 <b>방문증</b>이다. 잠깐 건물 밖에 나갔다 오면 방문증을 반납하고 새로 발급받으므로, 경비 시스템에는 <b>"한 명 퇴장, 한 명 입장"</b>으로 기록된다. <code>group.instance.id</code>는 <b>사원증</b>이다. 같은 사원증으로 다시 들어오면 <b>"그 사람이 돌아왔다"</b>로 인식되고, 자리(파티션 배정)도 그대로다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="정적 멤버십이 없을 때와 있을 때의 배포 타임라인 비교. 없을 때는 종료와 기동이 각각 리밸런싱을 유발해 2회가 일어나고, 있을 때는 코디네이터가 같은 인스턴스 ID의 복귀로 인식해 리밸런싱이 0회가 된다. 아래에는 재시작 시간이 세션 타임아웃을 넘기면 다시 2회가 되는 전제 조건이 표시되어 있다.">
+    <defs>
+      <marker id="sm1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">배포 1회에 리밸런싱 <tspan fill="#dc2626">2회</tspan> vs <tspan fill="#16a34a">0회</tspan></text>
+
+    <rect x="24" y="40" width="1072" height="118" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="44" y="64" font-size="13" font-weight="800" fill="#b91c1c">정적 멤버십 없음 — 매번 새 멤버 ID를 발급받는다</text>
+    <line x1="60" y1="112" x2="1060" y2="112" stroke="#cbd5e1" stroke-width="2" marker-end="url(#sm1)"/>
+    <rect x="60" y="92" width="150" height="40" rx="8" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="135" y="108" font-size="11" font-weight="700" fill="#7f1d1d" text-anchor="middle">인스턴스 종료</text>
+    <text x="135" y="124" font-size="10" fill="#6b7280" text-anchor="middle" class="mono">member-a1b2 퇴장</text>
+    <rect x="230" y="92" width="250" height="40" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="355" y="108" font-size="11" fill="#7f1d1d" text-anchor="middle">코디네이터: "멤버가 하나 줄었다"</text>
+    <text x="355" y="124" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">→ 리밸런싱 ①</text>
+    <rect x="500" y="92" width="150" height="40" rx="8" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="575" y="108" font-size="11" font-weight="700" fill="#7f1d1d" text-anchor="middle">인스턴스 기동</text>
+    <text x="575" y="124" font-size="10" fill="#6b7280" text-anchor="middle" class="mono">member-c3d4 신규</text>
+    <rect x="670" y="92" width="250" height="40" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="795" y="108" font-size="11" fill="#7f1d1d" text-anchor="middle">코디네이터: "새 멤버가 하나 늘었다"</text>
+    <text x="795" y="124" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">→ 리밸런싱 ②</text>
+    <text x="1050" y="116" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="end">합계 2회</text>
+
+    <rect x="24" y="170" width="1072" height="118" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="44" y="194" font-size="13" font-weight="800" fill="#15803d">정적 멤버십 있음 — <tspan class="mono">group.instance.id = "order-consumer-3"</tspan></text>
+    <line x1="60" y1="242" x2="1060" y2="242" stroke="#cbd5e1" stroke-width="2" marker-end="url(#sm1)"/>
+    <rect x="60" y="222" width="150" height="40" rx="8" fill="#ffffff" stroke="#86efac"/>
+    <text x="135" y="238" font-size="11" font-weight="700" fill="#166534" text-anchor="middle">인스턴스 종료</text>
+    <text x="135" y="254" font-size="10" fill="#6b7280" text-anchor="middle" class="mono">같은 ID 유지</text>
+    <rect x="230" y="222" width="290" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="375" y="238" font-size="11" fill="#166534" text-anchor="middle">"order-consumer-3의 하트비트가 끊겼다.</text>
+    <text x="375" y="254" font-size="11" fill="#166534" text-anchor="middle"><tspan font-weight="800">세션 타임아웃까지 기다려 보자</tspan>" → 재배정 보류</text>
+    <rect x="540" y="222" width="150" height="40" rx="8" fill="#ffffff" stroke="#86efac"/>
+    <text x="615" y="238" font-size="11" font-weight="700" fill="#166534" text-anchor="middle">인스턴스 기동</text>
+    <text x="615" y="254" font-size="10" fill="#6b7280" text-anchor="middle" class="mono">order-consumer-3</text>
+    <rect x="710" y="222" width="290" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="855" y="238" font-size="11" fill="#166534" text-anchor="middle">"돌아왔다. <tspan font-weight="800">배정을 그대로 돌려준다</tspan>"</text>
+    <text x="855" y="254" font-size="11.5" font-weight="800" fill="#15803d" text-anchor="middle">→ 리밸런싱 없음</text>
+    <text x="1050" y="246" font-size="13" font-weight="800" fill="#15803d" text-anchor="end">합계 0회</text>
+
+    <rect x="24" y="300" width="1072" height="86" rx="12" fill="#fffbeb" stroke="#fde68a" stroke-width="1.6"/>
+    <text x="44" y="324" font-size="13" font-weight="800" fill="#b45309">전제 조건 — 이게 깨지면 효과도 사라진다</text>
+    <rect x="44" y="334" width="470" height="38" rx="8" fill="#ffffff" stroke="#fcd34d"/>
+    <text x="279" y="358" font-size="12.5" font-weight="800" fill="#166534" text-anchor="middle" class="mono">재시작 소요 시간 &lt; session.timeout.ms → 0회</text>
+    <rect x="534" y="334" width="470" height="38" rx="8" fill="#fef2f2" stroke="#fca5a5"/>
+    <text x="769" y="358" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle" class="mono">재시작 소요 시간 &gt; session.timeout.ms → 다시 2회</text>
+    <text x="1030" y="358" font-size="11" fill="#78350f" text-anchor="end">타임아웃을 넘겨 돌아오면</text>
+    <text x="1030" y="374" font-size="11" fill="#78350f" text-anchor="end">코디네이터는 이미 재배정을 끝냈다</text>
+  </svg>
+  <figcaption>그래서 정적 멤버십을 쓸 때는 <b>세션 타임아웃을 애플리케이션의 재기동 시간보다 넉넉하게</b> 잡는 것이 보통이다. <b>3장에서 본 "5대 롤링 배포 = 최대 10번 리밸런싱"이 0번이 될 수 있다</b> — 롤링 배포가 잦은 환경에서 효과가 특히 크다.</figcaption>
+</figure>
+
+<div class="cmp">
+<div>
+<div class="codehead bad"><span class="tag">BEFORE</span> 배포마다 멤버 교체로 인식된다</div>
+<pre><code><span class="cm"># 컨슈머 설정 (동적 멤버십 = 기본값)</span>
+<span class="nm">group.id</span>=order-worker
+<span class="ln-bad"><span class="cm"># group.instance.id 없음 → 합류할 때마다 새 멤버 ID 발급</span></span>
+<span class="nm">session.timeout.ms</span>=10000
+
+<span class="cm"># 결과: 파드 재시작 = 퇴장 + 입장 = 리밸런싱 2회</span>
+<span class="cm">#       5대 롤링 배포 → 최대 10회</span></code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">AFTER</span> 재시작을 "복귀"로 인식시킨다</div>
+<pre><code><span class="cm"># 컨슈머 설정 (정적 멤버십)</span>
+<span class="nm">group.id</span>=order-worker
+<span class="ln-good"><span class="nm">group.instance.id</span>=order-consumer-3  <span class="cm"># 인스턴스마다 고유·안정</span></span>
+<span class="ln-good"><span class="nm">session.timeout.ms</span>=60000  <span class="cm"># 재기동 시간보다 넉넉히</span></span>
+
+<span class="cm"># 결과: 세션 타임아웃 안에 같은 ID로 복귀 → 리밸런싱 0회</span>
+<span class="cm"># 주의: ID는 "매번 같은 값"이어야 한다 (아래 함정 참고)</span></code></pre>
+</div>
+</div>
+
+<div class="memo red">
+  <h4>정적 멤버십을 켰는데 리밸런싱이 그대로인 흔한 원인 3가지</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">ID가 매번 바뀐다</div><div class="d">랜덤 UUID나 <b>매번 새로 생성되는 파드 이름</b>을 <code>group.instance.id</code>로 쓰면 정적 멤버십의 의미가 없다. <b>재시작해도 같은 값</b>이 나오는 출처(순번이 고정된 워크로드 식별자 등)를 써야 한다.</div></div>
+    <div class="tile red"><div class="k">재시작이 타임아웃보다 느리다</div><div class="d">JVM 기동 + 워밍업이 <code>session.timeout.ms</code>를 넘으면 코디네이터가 이미 재배정을 끝낸다. <b>실측한 재기동 시간</b>을 기준으로 타임아웃을 잡는다.</div></div>
+    <div class="tile red"><div class="k">ID가 겹친다</div><div class="d">두 인스턴스가 <b>같은 <code>group.instance.id</code></b>를 쓰면 그룹이 이를 <b>같은 멤버</b>로 취급해 충돌이 난다. 배포 도구에서 <b>고유성</b>을 보장해야 한다.</div></div>
+  </div>
+</div>
+
+<div class="callout warn"><span class="t">공짜가 아니다 — 배포 빈도 vs 장애 감지 속도</span>
+정적 멤버십은 <b>"멤버가 사라져도 세션 타임아웃까지 기다린다"</b>는 동작으로 이득을 얻는다. 그 말은 <b>정말로 죽은 인스턴스의 파티션도 그 시간 동안 아무도 읽지 않는다</b>는 뜻이다. 타임아웃을 60초로 늘렸다면 <b>진짜 장애 시 최대 60초 동안 그 파티션은 정지</b>한다.
+<div class="split" style="margin-top:10px">
+  <div class="pane g" style="padding:10px 12px"><b style="color:#16a34a">얻는 것</b><br>잦은 배포에서 리밸런싱 횟수 급감 → 중복 버스트와 소비 정지의 <b>빈도</b>가 줄어든다</div>
+  <div class="pane r" style="padding:10px 12px"><b style="color:#dc2626">잃는 것</b><br>진짜 장애의 <b>감지·복구가 세션 타임아웃만큼 늦어진다</b> → 그 파티션의 랙이 그만큼 쌓인다</div>
+</div>
+<b>판단 기준</b>: 배포가 잦고 장애가 드물면 정적 멤버십이 유리하고, 인스턴스가 자주 죽는(불안정한) 환경이라면 타임아웃을 무작정 늘리는 쪽이 손해다.
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 정상 종료와 리밸런스 리스너 — 리밸런싱당 <u>피해</u>를 줄인다</h2>
+
+<p>앞의 두 가지(정적 멤버십·cooperative)가 <b>"리밸런싱을 덜 나게 / 좁게 나게"</b> 하는 수단이라면, 이 장의 둘은 <b>"리밸런싱이 났을 때 피해를 줄이는"</b> 수단이다.</p>
+
+<div class="split">
+  <div class="pane b"><h4>① 정상 종료(graceful shutdown)</h4>
+    <p style="margin:0 0 6px;font-size:.94rem"><code>close()</code>는 코디네이터에게 <b>그룹 탈퇴를 즉시 통보</b>한다. 통보 없이 죽으면 코디네이터는 <b>세션 타임아웃(수십 초)이 지나야</b> 이탈을 알아채므로, <b>그동안 그 파티션은 아무도 읽지 않는 상태로 방치</b>된다.</p>
+    <p style="margin:0;font-size:.94rem"><code>wakeup()</code>은 <code>poll()</code>에서 대기 중인 스레드를 깨워 <b>루프를 빠져나오게</b> 한다. 종료 훅에서 이걸 호출하는 것이 표준 패턴이다.</p>
+  </div>
+  <div class="pane g"><h4>② <code>onPartitionsRevoked</code> 커밋</h4>
+    <p style="margin:0 0 6px;font-size:.94rem">이 콜백은 <b>"파티션을 곧 빼앗긴다"는 통보</b>다. 여기서 지금까지 <b>처리 완료한</b> 오프셋을 커밋하면, 새 주인이 <b>그 지점부터</b> 읽으므로 4장에서 본 <b>중복 구간이 그만큼 줄어든다.</b></p>
+    <p style="margin:0;font-size:.94rem"><b>반드시 <code>commitSync</code></b>여야 한다 — 비동기로 던지면 <b>커밋이 브로커에 닿기 전에 파티션이 넘어갈</b> 수 있다.</p>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>이 콜백에서 가장 위험한 실수</h4>
+  <div class="rule red">"처리 완료분"만 커밋해야 한다 — 처리 <u>중</u>인 것까지 커밋하면 중복이 <u>유실</u>로 바뀐다</div>
+  <p style="margin-bottom:0">중복을 줄이려다 유실을 만드는 것은 <b>최악의 교환</b>이다(5장의 규칙: 중복은 흡수 가능, 유실은 불가). 그래서 커밋 대상은 <b>"내가 끝냈다고 확신하는 오프셋 + 1"</b>만 담긴 맵이어야 한다.</p>
+</div>
+
+<h3>8-1. before / after — 배포할 때마다 알림이 두 번 가는 컨슈머 고치기</h3>
+
+<div class="codehead bad"><span class="tag">BEFORE</span> 리밸런싱을 전혀 고려하지 않은 컨슈머 — 배포마다 중복 알림이 나간다</div>
+<pre class="wide"><code><span class="nm">props</span>.put(<span class="st">"enable.auto.commit"</span>, <span class="st">"true"</span>);              <span class="cm">// ← 문제 ① 처리 전에 커밋이 앞서 나갈 수 있다</span>
+KafkaConsumer&lt;String, String&gt; consumer = <span class="kw">new</span> KafkaConsumer&lt;&gt;(props);
+
+<span class="ln-bad">consumer.<span class="fn">subscribe</span>(List.of(<span class="st">"orders"</span>));                    <span class="cm">// ← 문제 ② 리밸런스 리스너 없음</span></span>
+<span class="cm">//    파티션을 내려놓기 직전에 커밋할 기회를 통째로 버렸다</span>
+
+<span class="kw">while</span> (<span class="kw">true</span>) {                                            <span class="cm">// ← 문제 ③ 빠져나올 방법이 없는 무한 루프</span>
+    ConsumerRecords&lt;String, String&gt; records = consumer.<span class="fn">poll</span>(Duration.ofSeconds(<span class="nm">1</span>));
+    <span class="kw">for</span> (ConsumerRecord&lt;String, String&gt; r : records) {
+<span class="ln-bad">        <span class="fn">sendPushNotification</span>(r.value());                <span class="cm">// ← 문제 ④ 멱등하지 않다. 두 번 실행되면 알림도 두 번</span></span>
+    }
+}
+<span class="cm">// consumer.close() 가 호출되는 경로 자체가 없다</span>
+<span class="cm">//  → SIGTERM 이 오면 그냥 죽는다 → 코디네이터는 session.timeout.ms 가 지나야 이탈을 인지</span>
+<span class="cm">//  → 그동안 이 인스턴스가 맡던 파티션은 "주인은 없는데 재배정도 안 된" 상태로 방치된다</span>
+<span class="cm">//  → 게다가 커밋 안 된 구간은 새 주인이 전부 다시 읽는다 → 알림 중복 발송</span></code></pre>
+
+<div class="codehead good"><span class="tag">AFTER</span> 리밸런싱을 정상 상황으로 취급하는 컨슈머</div>
+<pre class="wide"><code><span class="nm">props</span>.put(<span class="st">"enable.auto.commit"</span>, <span class="st">"false"</span>);             <span class="cm">// 커밋 시점을 내가 통제한다 (처리 후 커밋)</span>
+<span class="kw">final</span> KafkaConsumer&lt;String, String&gt; consumer = <span class="kw">new</span> KafkaConsumer&lt;&gt;(props);
+<span class="cm">// "처리 완료" 오프셋만 담는 맵. 값은 항상 (마지막 처리 오프셋 + 1) = 다음에 읽을 위치</span>
+<span class="kw">final</span> Map&lt;TopicPartition, OffsetAndMetadata&gt; done = <span class="kw">new</span> HashMap&lt;&gt;();
+
+<span class="ln-good"><span class="cm">// (1) 정상 종료 — SIGTERM 에 poll() 을 깨워 루프를 빠져나오게 한다</span></span>
+<span class="ln-good">Runtime.getRuntime().<span class="fn">addShutdownHook</span>(<span class="kw">new</span> Thread(consumer::wakeup));</span>
+
+<span class="ln-good"><span class="cm">// (2) 파티션을 내려놓기 직전에 처리분을 커밋한다 — 중복 구간 최소화</span></span>
+consumer.<span class="fn">subscribe</span>(List.of(<span class="st">"orders"</span>), <span class="kw">new</span> ConsumerRebalanceListener() {
+
+    <span class="nm">@Override</span> <span class="kw">public void</span> <span class="fn">onPartitionsRevoked</span>(Collection&lt;TopicPartition&gt; parts) {
+<span class="ln-good">        consumer.<span class="fn">commitSync</span>(done);          <span class="cm">// 완료분만 · 동기로 (async 면 넘어가기 전에 못 닿는다)</span></span>
+        <span class="fn">flushLocalState</span>(parts);               <span class="cm">// 파티션 단위 버퍼·집계 중간값을 정리</span>
+        <span class="cm">// 주의: 이 안에서 오래 걸리는 작업을 하면 그룹 전체의 리밸런싱이 지연된다</span>
+        <span class="cm">//       (2장 ②단계에서 다른 멤버들이 이 컨슈머를 기다리고 있다)</span>
+    }
+
+    <span class="nm">@Override</span> <span class="kw">public void</span> <span class="fn">onPartitionsAssigned</span>(Collection&lt;TopicPartition&gt; parts) {
+        <span class="fn">initLocalCache</span>(parts);                <span class="cm">// 새로 받은 파티션에 대한 준비</span>
+    }
+
+    <span class="nm">@Override</span> <span class="kw">public void</span> <span class="fn">onPartitionsLost</span>(Collection&lt;TopicPartition&gt; parts) {
+<span class="ln-warn">        <span class="cm">// "정상 반납"이 아니라 "이미 빼앗김" — 커밋해 봐야 세대가 낡아 거절된다</span></span>
+        <span class="fn">discardLocalState</span>(parts);             <span class="cm">// 커밋 시도 대신 로컬 상태 폐기에 집중</span>
+    }
+});
+
+<span class="kw">try</span> {
+    <span class="kw">while</span> (<span class="kw">true</span>) {
+        <span class="kw">var</span> records = consumer.<span class="fn">poll</span>(Duration.ofSeconds(<span class="nm">1</span>));
+        <span class="kw">for</span> (<span class="kw">var</span> r : records) {
+<span class="ln-good">            <span class="fn">handleIdempotently</span>(r);           <span class="cm">// (3) 멱등 처리 — 중복이 0이 되지 않는다는 전제 위에 선다</span></span>
+            done.put(<span class="kw">new</span> TopicPartition(r.topic(), r.partition()),
+                     <span class="kw">new</span> OffsetAndMetadata(r.offset() + <span class="nm">1</span>));   <span class="cm">// +1 = 다음에 읽을 위치</span>
+        }
+        consumer.<span class="fn">commitSync</span>(done);                            <span class="cm">// 처리 후 커밋</span>
+    }
+} <span class="kw">catch</span> (WakeupException e) {
+    <span class="cm">// 정상 종료 경로 — 예외지만 에러가 아니다</span>
+} <span class="kw">catch</span> (CommitFailedException e) {
+    <span class="cm">// 세대가 낡음(5-2). 재시도해도 계속 거절된다 → 중복 재처리를 인정하고 정리만 한다</span>
+    log.warn(<span class="st">"rebalanced during processing; last batch will be reprocessed by the new owner"</span>);
+} <span class="kw">finally</span> {
+<span class="ln-good">    <span class="kw">try</span> { consumer.<span class="fn">commitSync</span>(done); } <span class="kw">catch</span> (Exception ignore) { }   <span class="cm">// 마지막 처리분 저장 시도</span></span>
+<span class="ln-good">    consumer.<span class="fn">close</span>();      <span class="cm">// 그룹 탈퇴를 즉시 통보 → 세션 타임아웃만큼 방치되는 일이 없다</span></span>
+}</code></pre>
+
+<div class="callout ok"><span class="t">Spring Kafka를 쓴다면</span>
+리스너 컨테이너가 <b>정상 종료 시 커밋과 그룹 탈퇴를 처리해 준다.</b> 다만 프레임워크가 대신해 주는 것은 <b>①정상 종료와 ②반납 직전 커밋</b>까지이고, <b>③멱등 처리</b>는 여전히 애플리케이션의 책임이다 — <b>중복이 0이 되지는 않기 때문</b>이다.
+</div>
+
+<div class="scroll">
+<table>
+  <caption><code>ConsumerRebalanceListener</code>의 세 콜백 — 언제 불리고 무엇을 해야 하는가</caption>
+  <thead><tr><th>콜백</th><th>불리는 시점</th><th>파티션 소유권</th><th>여기서 할 일</th><th>커밋 가능?</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><code>onPartitionsRevoked</code></td><td>반납 <b>직전</b> (정상 절차)</td><td>아직 <b>내 것</b></td><td><b>처리 완료분 동기 커밋</b> + 로컬 상태 플러시</td><td class="good">가능 — 여기가 유일한 기회</td></tr>
+    <tr><td><code>onPartitionsAssigned</code></td><td>새 배정을 받은 <b>직후</b></td><td>새로 <b>내 것</b></td><td>로컬 캐시 초기화, 필요 시 시작 오프셋 지정</td><td class="dash">해당 없음</td></tr>
+    <tr class="bad"><td><code>onPartitionsLost</code></td><td>이미 <b>빼앗긴 뒤</b> (그룹에서 제외 등)</td><td class="bad">이미 <b>남의 것</b></td><td>커밋 시도 대신 <b>로컬 상태 폐기</b>, 중복 발생을 전제로 정리</td><td class="bad">불가 — 세대가 낡아 거절</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>8-2. 그럼에도 중복을 완전히 막을 수 없는 이유</h3>
+
+<p><code>onPartitionsRevoked</code>가 있으니 중복이 사라진다고 생각하면 안 된다. 이 콜백이 <b>도움이 되지 않는 경우</b>가 실제로 셋 있다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="onPartitionsRevoked 콜백이 중복을 막지 못하는 세 가지 경우를 나란히 보여주는 도식. 첫째 콜백이 늦게 불리는 경우, 둘째 프로세스가 이미 죽어 콜백 자체가 없는 경우, 셋째 이미 그룹에서 쫓겨나 커밋이 거부되는 경우.">
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">완화책의 구멍 세 개 — <tspan fill="#dc2626">그래서 멱등성은 선택이 아니라 전제다</tspan></text>
+
+    <rect x="24" y="42" width="350" height="242" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="199" y="68" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">① 콜백이 늦게 불린다</text>
+    <text x="199" y="88" font-size="11" fill="#7f1d1d" text-anchor="middle">콜백은 <tspan class="mono" font-weight="700">poll()</tspan> 을 부를 때 실행된다</text>
+    <line x1="60" y1="150" x2="340" y2="150" stroke="#cbd5e1" stroke-width="2"/>
+    <rect x="60" y="130" width="52" height="40" rx="7" fill="#ffffff" stroke="#fca5a5"/><text x="86" y="155" font-size="10" fill="#7f1d1d" text-anchor="middle" class="mono">t2</text>
+    <rect x="120" y="130" width="130" height="40" rx="7" fill="#fee2e2" stroke="#dc2626"/><text x="185" y="147" font-size="10" fill="#7f1d1d" text-anchor="middle">처리 루프 안</text><text x="185" y="163" font-size="10" font-weight="800" fill="#b91c1c" text-anchor="middle">콜백 안 불림</text>
+    <rect x="258" y="130" width="82" height="40" rx="7" fill="#ffffff" stroke="#fca5a5"/><text x="299" y="147" font-size="10" fill="#7f1d1d" text-anchor="middle" class="mono">t7 poll()</text><text x="299" y="163" font-size="10" fill="#7f1d1d" text-anchor="middle">콜백 실행</text>
+    <path d="M299,176 L299,196" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="4 3"/>
+    <rect x="60" y="200" width="280" height="66" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <text x="200" y="222" font-size="11" fill="#7f1d1d" text-anchor="middle">4장 타임라인에서 A는 t2~t6 내내</text>
+    <text x="200" y="240" font-size="11" fill="#7f1d1d" text-anchor="middle">처리 루프 안이었다 →</text>
+    <text x="200" y="258" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">콜백이 불린 t7엔 B가 이미 중복 처리 중</text>
+
+    <rect x="386" y="42" width="350" height="242" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="561" y="68" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">② 프로세스가 이미 죽었다</text>
+    <text x="561" y="88" font-size="11" fill="#7f1d1d" text-anchor="middle">실행될 코드가 남아 있지 않다</text>
+    <rect x="420" y="104" width="282" height="52" rx="9" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="561" y="126" font-size="11" fill="#7f1d1d" text-anchor="middle">컨테이너 강제 종료 (<tspan class="mono">SIGKILL</tspan>)</text>
+    <text x="561" y="146" font-size="11" fill="#7f1d1d" text-anchor="middle">OOM Kill · 호스트 장애 · 프로세스 크래시</text>
+    <text x="561" y="180" font-size="22" fill="#dc2626" text-anchor="middle">&#10005;</text>
+    <rect x="420" y="196" width="282" height="70" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <text x="561" y="218" font-size="11" fill="#7f1d1d" text-anchor="middle">종료 훅도, 콜백도, <tspan class="mono">close()</tspan> 도</text>
+    <text x="561" y="236" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">전부 실행되지 않는다</text>
+    <text x="561" y="256" font-size="11" fill="#6b7280" text-anchor="middle">코디네이터는 세션 타임아웃으로만 알아챈다</text>
+
+    <rect x="748" y="42" width="348" height="242" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="922" y="68" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">③ 이미 쫓겨난 뒤다</text>
+    <text x="922" y="88" font-size="11" fill="#7f1d1d" text-anchor="middle">커밋을 시도해도 거부된다</text>
+    <rect x="782" y="104" width="280" height="52" rx="9" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="922" y="126" font-size="11" fill="#7f1d1d" text-anchor="middle"><tspan class="mono" font-weight="700">max.poll.interval.ms</tspan> 초과로</text>
+    <text x="922" y="146" font-size="11" fill="#7f1d1d" text-anchor="middle">그룹에서 <tspan font-weight="800">이미 제외됨</tspan></text>
+    <rect x="782" y="168" width="280" height="44" rx="9" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="922" y="196" font-size="11.5" font-weight="800" fill="#b91c1c" text-anchor="middle">세대 번호가 낡아 커밋 거절 (5-2)</text>
+    <rect x="782" y="222" width="280" height="44" rx="9" fill="#ffffff" stroke="#fecaca"/>
+    <text x="922" y="244" font-size="11" fill="#7f1d1d" text-anchor="middle">이 상황을 구분하려고 <tspan class="mono" font-weight="700">onPartitionsLost</tspan> 가 있다</text>
+    <text x="922" y="260" font-size="11" fill="#6b7280" text-anchor="middle">"반납"과 "박탈"은 해야 할 일이 다르다</text>
+  </svg>
+  <figcaption>그래서 결론은 하나로 수렴한다 — <b>어떤 완화책도 중복을 0으로 만들지는 못한다. 처리 로직이 멱등해야 한다는 요구는 사라지지 않는다.</b></figcaption>
+</figure>
+
+<div class="memo">
+  <h4>완화책 3축 — 무엇을 줄이는지로 외운다</h4>
+  <div class="rule">횟수는 <u>정적</u>으로, 범위는 <u>협력</u>으로, 피해는 <u>예의</u>로</div>
+  <div class="grid g3" style="margin-top:10px">
+    <div class="tile ok"><div class="k">횟수 ↓</div><div class="s">정적 멤버십</div><div class="d"><code>group.instance.id</code> — 재시작을 <b>멤버 교체가 아닌 복귀</b>로 인식시킨다. <b>전제</b>: 재시작 시간 &lt; 세션 타임아웃</div></div>
+    <div class="tile"><div class="k">범위 ↓</div><div class="s">cooperative</div><div class="d">이동 대상 파티션만 멈춘다. 리밸런싱을 <b>없애는 게 아니라 비용을 줄이는</b> 수단</div></div>
+    <div class="tile red"><div class="k">피해 ↓</div><div class="s">정상 종료 + 콜백</div><div class="d"><code>close()</code>로 <b>탈퇴를 즉시 통보</b>(= "나간다고 인사"), <code>onPartitionsRevoked</code>에서 <b>완료분 커밋</b></div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>면접 정리 문장</b> — "1·2번은 <b>리밸런싱의 횟수와 범위</b>를, 3번은 <b>리밸런싱당 피해</b>를 줄입니다. 그리고 셋을 다 해도 <b>중복은 0이 되지 않으므로</b> 멱등 컨슈머가 전제입니다."</p>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 잦은 리밸런싱의 세 겹 비용과 리밸런스 스톰 <span class="badge senior">시니어 변별</span></h2>
+
+<p>"리밸런싱이 잦으면 시스템에 어떤 비용이 생기나요?"라는 질문은 <b>운영 경험</b>을 묻는 것이다. <b>세 겹</b>으로 나눠 답하면 깊이가 드러난다.</p>
+
+<div class="split g3">
+  <div class="pane b"><h4>1. 소비 중단</h4>
+    <p style="margin:0;font-size:.94rem">그 시간만큼 <b>랙이 쌓인다.</b> 실시간성 요구가 있는 파이프라인(<b>알림, 정산</b>)에서는 그대로 <b>체감 지연</b>이 된다. eager라면 정지 범위가 그룹 전체라는 점이 곱해진다.</p>
+  </div>
+  <div class="pane w"><h4>2. 중복 버스트</h4>
+    <p style="margin:0;font-size:.94rem">리밸런싱마다 <b>커밋 안 된 구간이 재처리</b>되므로, 다운스트림(DB, 외부 API)에 <b>중복 쓰기 부하가 순간적으로 몰린다.</b> 평소 여유 있던 DB가 <b>리밸런싱 직후에만 커넥션 풀이 마르는</b> 식으로 나타난다.</p>
+  </div>
+  <div class="pane r"><h4>3. 연쇄 위험</h4>
+    <p style="margin:0;font-size:.94rem">밀린 랙을 따라잡느라 <b>한 번의 <code>poll()</code> 처리 시간이 길어지면</b> <code>max.poll.interval.ms</code>를 넘겨 <b>또 쫓겨나고</b>, 다시 리밸런싱이 나는 악순환 — <b>리밸런스 스톰</b>이다.</p>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 360" role="img" aria-label="리밸런스 스톰 악순환 도식. 리밸런싱 발생, 소비 정지, 랙 누적, 밀린 메시지 대량 처리, poll 처리 시간 증가, max.poll.interval.ms 초과로 그룹에서 제외를 거쳐 다시 리밸런싱으로 돌아오는 순환 구조를 보여준다.">
+    <defs>
+      <marker id="st1" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">리밸런스 스톰 — <tspan fill="#dc2626">리밸런싱이 다음 리밸런싱을 부른다</tspan></text>
+
+    <rect x="40" y="48" width="300" height="76" rx="11" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="190" y="76" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">① 리밸런싱 발생</text>
+    <text x="190" y="98" font-size="11" fill="#7f1d1d" text-anchor="middle">배포 · 스케일 · 사망 판정 무엇이든</text>
+    <text x="190" y="114" font-size="11" fill="#7f1d1d" text-anchor="middle">시작점은 중요하지 않다</text>
+    <path d="M348,86 L392,86" stroke="#dc2626" stroke-width="2.2" marker-end="url(#st1)"/>
+
+    <rect x="400" y="48" width="300" height="76" rx="11" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.6"/>
+    <text x="550" y="76" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">② 소비 정지</text>
+    <text x="550" y="98" font-size="11" fill="#7f1d1d" text-anchor="middle">JoinGroup 합류 대기 + 재배정 시간</text>
+    <text x="550" y="114" font-size="11" fill="#7f1d1d" text-anchor="middle">eager면 그룹 전체가 멈춘다</text>
+    <path d="M708,86 L752,86" stroke="#dc2626" stroke-width="2.2" marker-end="url(#st1)"/>
+
+    <rect x="760" y="48" width="300" height="76" rx="11" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.6"/>
+    <text x="910" y="76" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">③ 랙 누적</text>
+    <text x="910" y="98" font-size="11" fill="#7f1d1d" text-anchor="middle">멈춘 시간 × 유입 속도만큼</text>
+    <text x="910" y="114" font-size="11" fill="#7f1d1d" text-anchor="middle">밀린 메시지가 쌓인다</text>
+    <path d="M910,132 L910,178" stroke="#dc2626" stroke-width="2.2" marker-end="url(#st1)"/>
+
+    <rect x="760" y="186" width="300" height="76" rx="11" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.6"/>
+    <text x="910" y="214" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">④ 한꺼번에 몰아 처리</text>
+    <text x="910" y="236" font-size="11" fill="#7f1d1d" text-anchor="middle">밀린 랙을 따라잡으려 한 번의 <tspan class="mono">poll()</tspan> 이</text>
+    <text x="910" y="252" font-size="11" fill="#7f1d1d" text-anchor="middle">가득 찬 배치를 가져온다</text>
+    <path d="M752,224 L708,224" stroke="#dc2626" stroke-width="2.2" marker-end="url(#st1)"/>
+
+    <rect x="400" y="186" width="300" height="76" rx="11" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.6"/>
+    <text x="550" y="214" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">⑤ <tspan class="mono">poll()</tspan> 간격이 길어진다</text>
+    <text x="550" y="236" font-size="11" fill="#7f1d1d" text-anchor="middle">배치가 클수록 다음 <tspan class="mono">poll()</tspan> 까지</text>
+    <text x="550" y="252" font-size="11" fill="#7f1d1d" text-anchor="middle">걸리는 시간이 늘어난다</text>
+    <path d="M392,224 L348,224" stroke="#dc2626" stroke-width="2.2" marker-end="url(#st1)"/>
+
+    <rect x="40" y="186" width="300" height="76" rx="11" fill="#fee2e2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="190" y="214" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">⑥ 그룹에서 제외</text>
+    <text x="190" y="236" font-size="11" fill="#7f1d1d" text-anchor="middle"><tspan class="mono" font-weight="700">max.poll.interval.ms</tspan> 초과 →</text>
+    <text x="190" y="252" font-size="11" fill="#7f1d1d" text-anchor="middle">"살아 있지만 일을 진척 못 시킨다"고 판정</text>
+
+    <path d="M40,224 C16,224 16,86 32,86" fill="none" stroke="#dc2626" stroke-width="2.4" stroke-dasharray="7 4" marker-end="url(#st1)"/>
+    <rect x="360" y="288" width="400" height="48" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="560" y="308" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">⑥ → ① 로 되돌아간다 = 리밸런스 스톰</text>
+    <text x="560" y="326" font-size="11" fill="#7f1d1d" text-anchor="middle">한 바퀴 돌 때마다 랙이 더 쌓이므로 <tspan font-weight="800">스스로 강화되는 고리</tspan>다</text>
+    <text x="120" y="308" font-size="11.5" font-weight="800" fill="#dc2626">고리를 끊는 지점 →</text>
+    <text x="120" y="326" font-size="11" fill="#7f1d1d">⑤에서 배치 크기·처리 시간을 줄이거나 타임아웃을 늘린다</text>
+    <text x="860" y="308" font-size="11.5" font-weight="800" fill="#dc2626">← 또 하나의 지점</text>
+    <text x="860" y="326" font-size="11" fill="#7f1d1d">②의 정지 범위를 cooperative로 줄인다</text>
+  </svg>
+  <figcaption>이 고리에서 <b>원인과 증상을 헷갈리면 영원히 못 고친다.</b> "리밸런싱이 자꾸 나요"는 <b>⑥의 결과</b>일 뿐이고, 실제로 손대야 하는 곳은 <b>⑤(한 번의 <code>poll()</code>에서 처리하는 양과 시간)</b>인 경우가 많다.</figcaption>
+</figure>
+
+<div class="memo warn">
+  <h4>진단의 첫 걸음 — 두 갈래를 먼저 가른다</h4>
+  <div class="rule">잦은 리밸런싱은 <u>증상</u>이지 <u>원인</u>이 아니다</div>
+  <div class="split" style="margin-top:10px">
+    <div class="pane b" style="padding:12px 14px"><h4 style="margin-top:0">하트비트가 끊긴 것인가</h4>
+      <p style="margin:0;font-size:.93rem"><code>session.timeout.ms</code> 초과 계열. 원인은 <b>인프라·GC·네트워크</b> 쪽이다 — 프로세스 사망, 노드 장애, 모든 스레드를 멈추는 긴 GC, 브로커 연결 불안정.<br><b>확인 방법</b>: GC 로그의 stop-the-world 시간, 파드 재시작 이력, 네트워크 오류 지표.</p>
+    </div>
+    <div class="pane w" style="padding:12px 14px"><h4 style="margin-top:0"><code>poll()</code> 간격이 길어진 것인가</h4>
+      <p style="margin:0;font-size:.93rem"><code>max.poll.interval.ms</code> 초과 계열. 원인은 <b>처리 지연</b>이다 — 외부 API 지연, DB 락 대기, 배치가 너무 큼.<br><b>확인 방법</b>: 한 배치 처리 시간 분포(p99), <code>max.poll.records</code> 값, 다운스트림 지연 지표.</p>
+    </div>
+  </div>
+  <p style="margin:10px 0 0"><b>이 갈림길을 먼저 정하지 않으면 처방이 정반대가 된다</b> — 앞쪽은 인프라·GC를 손봐야 하고, 뒤쪽은 배치 크기나 처리 로직을 손봐야 한다. 두 타임아웃의 구분은 <code>35-max-poll-interval-vs-session-timeout.md</code>에서 다룬다.</p>
+</div>
+
+<div class="callout info"><span class="t">관측 — 무엇을 보고 있어야 하는가</span>
+<ul style="margin:6px 0 0;padding-left:18px">
+  <li><b>리밸런싱 발생 횟수/시각</b> — 배포 시각과 겹치는지부터 본다. 배포와 무관한 리밸런싱이 있다면 그게 진짜 문제다.</li>
+  <li><b>리밸런싱 소요 시간</b> — 길다면 2장의 ②(합류 대기)에서 <b>느린 멤버</b>를 의심한다.</li>
+  <li><b>파티션별 랙</b> — 리밸런싱 직후 튀었다가 회복되는지, 회복이 안 되는지로 <b>일시적 정지</b>와 <b>처리 능력 부족</b>을 구분한다.</li>
+  <li><b>중복 처리 카운터</b> — 멱등 로직에서 "이미 처리됨"으로 걸러낸 건수를 지표로 노출하면, <b>리밸런싱이 실제로 만든 중복량</b>이 눈에 보인다. 배포 때마다 이 값이 튀는 것이 정상이다.</li>
+</ul>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>10-1. 인출 카드 — 답을 가리고 먼저 말해 본다</h3>
+
+<div class="recall">
+  <div class="rc"><div class="qq">리밸런싱 발생 조건 3갈래는?</div><div class="aa">멤버가 <b>늘 때</b> / 멤버가 <b>줄 때</b>(정상 종료 통보 · 사망 판정 = 하트비트 끊김 또는 <code>poll()</code> 간격 초과) / <b>구독 대상이 바뀔 때</b>(파티션 증설, 패턴 구독 매칭)</div></div>
+  <div class="rc"><div class="qq">절차 5단계는?</div><div class="aa"><b>감</b>지 → <b>집</b>합(JoinGroup) → <b>계</b>산(리더) → <b>배</b>포(SyncGroup) → <b>재</b>개(커밋 오프셋부터). 시간이 드는 곳은 <b>집합</b>(전원 도착 대기)</div></div>
+  <div class="rc"><div class="qq">코디네이터와 리더의 차이는?</div><div class="aa">코디네이터 = <b>브로커</b>(그룹 이름 해시로 결정, 소집·배포·오프셋 저장) / 리더 = <b>컨슈머</b>(할당안 <b>계산</b>만). 계산을 컨슈머가 하는 이유는 <b>전략을 앱에서 갈아 끼우기 위해</b></div></div>
+  <div class="rc"><div class="qq">처리 중이던 메시지는 어떻게 되나?</div><div class="aa"><b>회수되지 않는다.</b> 옛 주인은 계속 처리하고, 새 주인은 <b>커밋 오프셋부터</b> 다시 읽는다 → <b>동시에 같은 메시지를 처리하는 구간</b>이 생긴다</div></div>
+  <div class="rc"><div class="qq">커밋하는 오프셋 값은?</div><div class="aa"><b>마지막 처리 오프셋 + 1</b> = "다음에 읽을 위치". 99까지 처리했으면 커밋 값은 <b>100</b></div></div>
+  <div class="rc"><div class="qq">중복과 유실을 가르는 변수는?</div><div class="aa"><b>커밋 시점</b> 하나. 처리 <b>후</b> 커밋 → 중복 / 처리 <b>전</b> 커밋 → 유실. <b>중복은 흡수 가능, 유실은 불가</b>라서 처리 후 커밋이 정석</div></div>
+  <div class="rc"><div class="qq">옛 주인의 커밋이 거부되는 이유는?</div><div class="aa"><b>세대 번호(generation)</b>가 낡아서. 성공했다면 <b>새 주인의 진행 상황을 덮어써 유실</b>이 났을 것 — 거부가 안전장치다</div></div>
+  <div class="rc"><div class="qq">eager와 cooperative의 차이 한 줄은?</div><div class="aa">eager는 <b>전원이 전부 반납</b>(정지 범위 = 그룹 전체), cooperative는 <b>주인이 바뀔 것만 반납</b>(정지 범위 = 이동 대상만). 개선하는 지표는 <b>소요 시간이 아니라 정지 범위</b></div></div>
+  <div class="rc"><div class="qq">완화책 3축과 각각이 줄이는 것은?</div><div class="aa">정적 멤버십 = <b>횟수</b> / cooperative = <b>범위</b> / 정상 종료 + <code>onPartitionsRevoked</code> = <b>피해</b></div></div>
+  <div class="rc"><div class="qq">그래서 최종 결론은?</div><div class="aa">어떤 완화책도 <b>중복을 0으로 만들지 못한다</b>(콜백 지연 · 프로세스 사망 · 이미 박탈됨). <b>멱등 컨슈머가 전제</b></div></div>
+</div>
+
+<div class="memo">
+  <h4>면접 답변 스크립트 — 30초 버전</h4>
+  <p style="margin:0">"리밸런싱은 <b>그룹의 멤버나 파티션 구성이 바뀔 때 파티션 소유권을 다시 나누는 절차</b>입니다. 코디네이터가 소집하고 그룹 리더가 할당안을 계산해 배포합니다. <b>배포는 종료와 기동이 각각 리밸런싱을 부르므로 일상적으로 일어납니다.</b><br>
+  처리 중이던 메시지는 <b>회수되지 않습니다.</b> Kafka는 메시지별 상태를 갖지 않고 <b>커밋 오프셋 하나만</b> 알기 때문에, 옛 주인은 계속 처리하고 새 주인은 커밋 지점부터 다시 읽습니다. 그래서 <b>같은 메시지를 두 컨슈머가 동시에 처리하는 구간</b>이 생기고, 이게 '배포할 때만 알림이 두 번 가는' 현상의 정체입니다.<br>
+  대가는 <b>유실이 아니라 중복</b>입니다(처리 후 커밋 기준). <b>정적 멤버십으로 횟수를, cooperative로 범위를, 정상 종료와 <code>onPartitionsRevoked</code>로 피해를</b> 줄일 수 있지만 <b>0으로는 못 만들기 때문에</b>, 컨슈머는 <b>멱등하게</b> 만드는 것을 전제로 설계합니다."</p>
+</div>
+
+<h3>10-2. 꼬리질문 — 먼저 답해 보고 펼친다</h3>
+
+<details class="q"><summary>리밸런싱 동안 메시지 소비는 완전히 멈추나요?<span class="hint">힌트: "네/아니오"가 아니라 조건부로 답한다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>프로토콜에 따라 다르다.</b></p>
+  <ul>
+    <li><b>eager</b>: 그룹 전원이 모든 파티션을 내려놓으므로 <b>재배정이 끝날 때까지 그룹 전체가 멈춘다.</b> 컨슈머 10대 중 1대가 빠져도 <b>30개 파티션 전부가 정지</b>한다.</li>
+    <li><b>cooperative</b>: 소유자가 바뀌는 파티션만 잠시 멈추고 나머지는 계속 소비한다. 같은 상황에서 정지 범위가 <b>3개로 줄어든다.</b></li>
+  </ul>
+  <p style="margin-bottom:0">여기에 <b>"그래서 리밸런싱 프로토콜 설정이 소비 중단 시간(availability)에 직접 영향을 준다"</b>까지 연결하면 좋다. 한 가지 더 덧붙이면 깊이가 산다 — <b>정지 시간은 "가장 느린 멤버"가 정한다.</b> JoinGroup은 전원이 도착해야 통과되는 관문이기 때문이다.</p>
+</div></details>
+
+<details class="q"><summary>배포할 때마다 생기는 리밸런싱을 줄이는 방법은?<span class="hint">힌트: 세 가지를 "무엇을 줄이는가"로 분류해서 말한다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>세 가지 축</b>으로 답한다.</p>
+  <ol>
+    <li><b>정적 멤버십</b>(<code>group.instance.id</code>)으로 재시작을 <b>멤버 교체가 아닌 복귀</b>로 인식시킨다. <b>재시작 시간이 세션 타임아웃보다 짧아야 한다</b>는 전제를 함께 말해야 한다.</li>
+    <li><b>cooperative 리밸런싱</b>으로 이동 범위를 최소화한다. <b>리밸런싱을 없애는 게 아니라 그 비용을 줄이는</b> 수단이다.</li>
+    <li><b>정상 종료</b>를 보장해, 죽은 것으로 판정될 때까지 기다리는 지연을 없앤다. 그리고 <code>onPartitionsRevoked</code>에서 처리분을 커밋해 <b>중복 구간을 줄인다.</b></li>
+  </ol>
+  <p style="margin-bottom:0"><b>1번과 2번은 "리밸런싱 횟수·범위"를, 3번은 "리밸런싱당 피해"를 줄인다</b>는 구분을 덧붙이면 정리가 깔끔하다. 반대로 <b>세 가지를 뭉뚱그려 나열하면</b> "들어본 것을 읊는다"는 인상을 준다.</p>
+</div></details>
+
+<details class="q"><summary>중복 처리를 아예 없앨 수는 없나요?<span class="hint">힌트: 왜 불가능한지를 "두 개의 쓰기"로 설명한다</span> <span class="badge trap">함정</span></summary><div class="a">
+  <p><b>컨슈머 배정과 커밋 메커니즘만으로는 불가능하다.</b></p>
+  <p>"처리"와 "커밋"이 <b>서로 다른 시스템(내 DB vs Kafka)에 대한 두 개의 쓰기</b>이기 때문에, 그 사이 어디서든 끊기면 <b>중복 또는 유실 중 하나</b>가 남는다. 두 쓰기를 <b>하나의 원자적 작업으로 묶는 방법이 없다.</b></p>
+  <p style="margin-bottom:0">실무 표준은 <b>at-least-once + 멱등 컨슈머</b>(처리 이력 기반 중복 제거)다. Kafka 트랜잭션 기반 exactly-once는 <b>Kafka 안에서 읽고 Kafka로 쓰는 파이프라인</b>(스트림 처리)으로 범위가 제한된다 — 외부 DB나 외부 API 호출은 그 보장 밖이다(<code>03-delivery-semantics-and-exactly-once-reality.md</code>).</p>
+</div></details>
+
+<details class="q"><summary><code>onPartitionsRevoked</code>에서는 무엇을 해야 하나요?<span class="hint">힌트: 커밋 + 로컬 상태 + 두 가지 주의</span></summary><div class="a">
+  <p><b>내려놓는 파티션에 대해 처리를 완료한 오프셋까지 동기 커밋하는 것</b>이 핵심이다. 처리 중인 것까지 커밋하면 <b>중복이 유실로 바뀌므로</b>, 반드시 <b>"완료분만"</b>이다.</p>
+  <p>그 외에 파티션 단위로 들고 있던 <b>로컬 상태(버퍼, 캐시, 집계 중간값)</b>가 있다면 플러시하거나 폐기한다. 그 파티션은 이제 내 것이 아니므로, 들고 있으면 <b>다음에 다시 배정받았을 때 낡은 값이 섞인다.</b></p>
+  <p>두 가지를 덧붙이면 깊이가 드러난다.</p>
+  <ul>
+    <li>이 콜백은 리밸런싱 절차 중에 호출되므로 <b>오래 걸리는 작업을 넣으면 그룹 전체의 리밸런싱을 지연시킨다.</b> 2장의 ②에서 다른 멤버들이 이 컨슈머를 기다리고 있다.</li>
+    <li><b>이 콜백이 항상 불린다는 보장은 없다</b> — 프로세스가 이미 죽었거나 이미 그룹에서 쫓겨난 경우다. 그래서 이건 <b>중복을 줄이는 장치이지 없애는 장치가 아니다.</b></li>
+  </ul>
+  <p style="margin-bottom:0">그리고 <b>비동기 커밋(<code>commitAsync</code>)을 쓰면 안 되는 이유</b>까지 말하면 좋다 — 던져만 놓고 콜백이 끝나면, <b>커밋이 브로커에 닿기 전에 파티션이 넘어갈</b> 수 있다.</p>
+</div></details>
+
+<details class="q"><summary>리밸런싱이 잦으면 시스템에 어떤 비용이 생기나요?<span class="hint">힌트: 세 겹으로 나누고, 마지막에 "증상 vs 원인"으로 닫는다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>세 겹의 비용</b>이다.</p>
+  <p><b>1. 소비 중단</b> — 그 시간만큼 랙이 쌓이고, 실시간성 요구가 있는 파이프라인(알림, 정산)은 <b>체감 지연</b>이 된다.</p>
+  <p><b>2. 중복 버스트</b> — 리밸런싱마다 커밋 안 된 구간이 재처리되므로, 다운스트림(DB, 외부 API)에 <b>중복 쓰기 부하가 순간적으로 몰린다.</b> 평소에 여유 있던 DB가 <b>리밸런싱 직후에만 커넥션 풀이 마르는</b> 식으로 나타난다.</p>
+  <p><b>3. 연쇄 위험</b> — 리밸런싱 후 밀린 랙을 따라잡느라 한 번의 <code>poll()</code> 처리 시간이 길어지면 <code>max.poll.interval.ms</code>를 넘겨 또 쫓겨나고, 다시 리밸런싱이 나는 악순환이 된다. 이것을 <b>리밸런스 스톰(rebalance storm)</b>이라고 부른다.</p>
+  <p style="margin-bottom:0">마무리는 이렇게 한다. <b>잦은 리밸런싱은 증상이지 원인이 아니다.</b> "왜 멤버가 자꾸 바뀌는가"를 타임아웃 설정과 처리 시간 관점에서 추적해야 한다 — <b>하트비트가 끊긴 것인지(인프라·GC 문제), <code>poll()</code> 간격이 길어진 것인지(처리 지연 문제)</b>를 먼저 가르는 것이 진단의 첫 걸음이다.</p>
+</div></details>
+
+<details class="q"><summary>그룹 코디네이터는 어떻게 정해지고, 그 브로커가 죽으면 어떻게 되나요?<span class="hint">힌트: 코디네이터는 "역할"이지 "고정 서버"가 아니다</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p><b>그룹 이름 하나로 결정된다.</b> 그룹 이름을 해시해 <code>__consumer_offsets</code> 토픽의 파티션 하나에 대응시키고, <b>그 파티션의 리더 브로커</b>가 그 그룹의 코디네이터가 된다. 컨슈머는 기동할 때 "내 그룹의 코디네이터가 누구냐"를 브로커에 물어 찾아간다.</p>
+  <p>코디네이터 브로커가 죽으면, <b><code>__consumer_offsets</code>의 해당 파티션 리더가 다른 브로커로 넘어가고 코디네이터 역할도 함께 이동한다.</b> 컨슈머는 기존 코디네이터와의 통신이 실패하면 <b>새 코디네이터를 다시 찾아 붙는다.</b></p>
+  <p style="margin-bottom:0"><b>커밋된 오프셋이 사라지지 않는 이유</b>도 여기서 나온다 — 오프셋은 코디네이터의 메모리가 아니라 <b>복제되는 내부 토픽</b>에 저장되기 때문이다. 그래서 코디네이터 교체는 <b>일시적인 지연</b>이지 <b>데이터 손실</b>이 아니다.</p>
+</div></details>
+
+<details class="q"><summary>옛 주인의 커밋이 <code>CommitFailedException</code>으로 실패했다면, 잡아서 재시도하면 되지 않나요?<span class="hint">힌트: 왜 실패했는지를 생각하면 재시도의 의미가 보인다</span> <span class="badge trap">함정</span></summary><div class="a">
+  <p><b>재시도해도 계속 실패한다.</b> 이 예외는 "일시적 오류"가 아니라 <b>"당신은 더 이상 이 파티션의 주인이 아니다"</b>라는 <b>상태 통보</b>이기 때문이다. 세대 번호가 이미 올라갔으므로 몇 번을 던져도 코디네이터는 같은 이유로 거절한다.</p>
+  <p><b>그리고 성공하면 오히려 큰일이다.</b> 옛 주인이 <code>106</code>을 커밋하는 순간, 아직 <code>102</code>를 처리 중이던 새 주인의 진행 상황이 덮어써진다. 새 주인이 그 뒤에 죽으면 <code>103~105</code>는 <b>아무도 처리하지 않은 채 건너뛰어진다</b> — 중복이 유실로 바뀐다.</p>
+  <p style="margin-bottom:0">그래서 올바른 처리는 <b>(ⅰ) 커밋 재시도가 아니라, (ⅱ) "내 마지막 배치는 새 주인이 다시 처리할 것"이라는 사실을 인정하고, (ⅲ) 로컬 상태를 정리한 뒤 루프를 정상 종료</b>하는 것이다. <b>경보를 울릴 예외가 아니다</b> — 리밸런싱마다 나올 수 있는 정상 예외다.</p>
+</div></details>
+
+<details class="q"><summary>옛 주인이 어디까지 처리했는지 새 주인에게 알려줄 방법은 정말 없나요?<span class="hint">힌트: 있다. 다만 그 방법의 이름이 이미 우리가 아는 것이다</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p>Kafka가 제공하는 <b>공유 채널은 커밋된 오프셋 하나뿐</b>이다. 그래서 "더 촘촘히 알려주는" 유일한 방법은 <b>더 자주 커밋하는 것</b>이다.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>커밋 주기</th><th>최악의 중복 구간</th><th>비용</th></tr></thead>
+    <tbody>
+      <tr><td>배치 처리 후 1회</td><td class="bad">배치 전체 (예: 500건)</td><td class="good">커밋 왕복 1회 — 처리량 유리</td></tr>
+      <tr class="hl"><td>N건마다</td><td>최대 N건</td><td>절충점. 실무에서 흔히 쓰는 형태</td></tr>
+      <tr><td>매 건마다</td><td class="good">최대 1건</td><td class="bad">메시지마다 브로커 왕복 — 처리량 급락</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="margin-bottom:0"><b>"처리 이력을 별도 저장소에 기록해 공유하면 되지 않나"</b>는 아이디어도 나올 수 있는데, 그건 사실 <b>멱등 컨슈머의 처리 이력 테이블과 같은 것</b>이다. 즉 이 방향으로 끝까지 밀고 가면 <b>결국 멱등 처리에 도달한다</b> — 그래서 처음부터 멱등하게 만드는 것이 정석이다.</p>
+</div></details>
+
+<details class="q"><summary>cooperative 리밸런싱을 쓰면 정적 멤버십은 필요 없지 않나요?<span class="hint">힌트: 두 수단이 손대는 축이 다르다</span></summary><div class="a">
+  <p><b>둘은 다른 축을 줄인다.</b> 서로 대체재가 아니라 <b>보완재</b>다.</p>
+  <div class="split">
+    <div class="pane b" style="padding:12px 14px"><b>정적 멤버십 = 횟수</b><br><span style="font-size:.93rem">재시작 시 <b>리밸런싱을 아예 일으키지 않는다.</b> 다만 효과 범위가 <b>"세션 타임아웃 안에 같은 ID로 복귀하는 경우"</b>로 한정된다 — 스케일 아웃, 파티션 증설, 진짜 장애에는 도움이 안 된다.</span></div>
+    <div class="pane g" style="padding:12px 14px"><b>cooperative = 범위</b><br><span style="font-size:.93rem">리밸런싱은 <b>일어나되</b> 정지 범위를 줄인다. 정적 멤버십이 커버하지 못하는 <b>모든 리밸런싱</b>(스케일 아웃, 증설, 장애)에 효과가 있다.</span></div>
+  </div>
+  <p style="margin-bottom:0">그래서 실무에서는 <b>둘 다 켠다.</b> 배포로 인한 리밸런싱은 정적 멤버십이 0으로 만들고, 그 외 사유로 발생하는 리밸런싱은 cooperative가 좁게 만든다.</p>
+</div></details>
+
+<details class="q"><summary><code>onPartitionsLost</code>는 언제 불리고, <code>onPartitionsRevoked</code>와 무엇이 다른가요?<span class="hint">힌트: "반납"과 "박탈"의 차이</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p><b><code>onPartitionsRevoked</code>는 "곧 반납한다"는 예고</b>이고, <b><code>onPartitionsLost</code>는 "이미 빼앗겼다"는 통보</b>다. 소유권이 아직 내게 있느냐 없느냐가 갈린다.</p>
+  <ul>
+    <li><b>Revoked</b>: 정상적인 리밸런싱 절차 안에서 호출된다. 아직 내 파티션이므로 <b>커밋이 유효하다</b> — 그래서 여기서 완료분을 커밋한다.</li>
+    <li><b>Lost</b>: <code>max.poll.interval.ms</code> 초과로 그룹에서 제외되는 등, <b>이미 다른 컨슈머에게 넘어간 뒤</b>에 호출된다. 세대 번호가 낡아 <b>커밋해도 거절된다.</b></li>
+  </ul>
+  <p style="margin-bottom:0">그래서 <code>onPartitionsLost</code>에서는 <b>커밋을 시도하는 대신 로컬 상태를 폐기하는 데 집중</b>한다. 두 콜백을 구분해 두지 않으면, <b>Lost 상황에서 커밋 실패 예외가 반복 발생</b>하며 로그만 어지럽히고 실제로는 아무것도 지키지 못한다.</p>
+</div></details>
+
+<details class="q"><summary>파티션을 늘렸을 뿐인데 왜 리밸런싱이 나나요? 그때도 중복이 생기나요?<span class="hint">힌트: 발생 조건 3번째 갈래</span></summary><div class="a">
+  <p><b>파티션 증설은 "구독 대상이 바뀐 것"</b>이라 발생 조건 3번에 해당한다. 컨슈머는 주기적으로 메타데이터를 갱신하다가 <b>새 파티션의 존재를 알게 되고</b>, 그 순간 "이 새 파티션은 누가 맡을 것인가"를 정하기 위해 리밸런싱이 시작된다. <b>컨슈머 인스턴스는 하나도 안 바뀌었는데도</b> 일어난다는 점이 포인트다.</p>
+  <p><b>중복은 똑같이 생긴다.</b> 리밸런싱의 사유가 무엇이든 <b>메커니즘은 동일</b>하기 때문이다 — 파티션의 주인이 바뀌면 새 주인은 커밋 지점부터 읽고, 옛 주인은 손에 든 것을 계속 처리한다.</p>
+  <p style="margin-bottom:0">파티션 증설에는 <b>이 문서 밖의 더 큰 부작용</b>이 하나 더 있다. 파티션 번호는 <code>hash(키) mod 파티션 수</code>로 정해지므로 <b>분모가 바뀌면 같은 키가 다른 파티션으로 간다</b> — <b>키 단위 순서 보장이 증설 시점을 경계로 깨진다</b>(<code>32-partition-increase-side-effects.md</code>).</p>
+</div></details>
+
+<details class="q"><summary>리밸런싱 중에 컨슈머가 <code>poll()</code>을 부르면 무슨 일이 일어나나요?<span class="hint">힌트: poll()은 메시지만 가져오는 함수가 아니다</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p><code>poll()</code>은 <b>"메시지를 가져오는 함수"가 아니라 "컨슈머의 심장 박동을 겸한 진행 함수"</b>다. 이 호출 안에서 <b>그룹 관련 절차가 진행되고 리밸런스 콜백이 실행</b>된다.</p>
+  <ul>
+    <li>리밸런싱이 진행 중이면, <code>poll()</code>은 <b>절차에 참여</b>한다(JoinGroup/SyncGroup 요청 등). 이 때문에 <b>레코드를 한 건도 반환하지 않고 돌아올 수 있다.</b></li>
+    <li><code>onPartitionsRevoked</code> / <code>onPartitionsAssigned</code> 콜백도 <b>이 호출 안에서</b> 실행된다.</li>
+  </ul>
+  <p style="margin-bottom:0">그래서 <b>"처리 루프가 길면 리밸런싱이 느려진다"</b>는 문장이 성립한다 — 처리 중에는 <code>poll()</code>을 부르지 않으므로 <b>그룹의 진행이 그 컨슈머에서 막힌다.</b> 4장 타임라인에서 A가 t2~t6 내내 리밸런싱을 인지하지 못한 것도, 8장에서 콜백이 늦게 불린 것도 <b>전부 같은 이유</b>다.</p>
+</div></details>
+
+<details class="q"><summary>"리밸런싱이 무서우니 컨슈머를 1대만 운영하겠다"는 제안에 어떻게 답하시겠습니까?<span class="hint">힌트: 그 제안이 실제로 무엇을 얻고 무엇을 잃는지 계산해 본다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>목적을 달성하지도 못하면서 대가만 치르는 선택</b>이라고 답한다.</p>
+  <ul>
+    <li><b>리밸런싱은 여전히 일어난다.</b> 컨슈머가 1대여도 <b>배포하면 종료(멤버 1→0)와 기동(0→1)</b>이 각각 리밸런싱이다. 파티션 증설도 마찬가지다. <b>"멤버 수"가 아니라 "멤버 변화"가 트리거</b>이기 때문이다.</li>
+    <li><b>중복도 여전히 생긴다.</b> 새로 뜬 인스턴스가 <b>커밋 지점부터</b> 읽는 구조는 그대로다. 오히려 종료 전 인스턴스와 새 인스턴스가 겹치는 구간에서 같은 일이 벌어진다.</li>
+    <li><b>잃는 것은 명확하다.</b> 처리량 상한이 1대로 묶이고, 그 1대가 죽으면 <b>전체 소비가 멈춘다.</b> 파티션을 여러 개 둔 의미도 사라진다.</li>
+  </ul>
+  <p style="margin-bottom:0">그래서 방향을 되돌린다 — <b>"리밸런싱을 피하는 설계"가 아니라 "리밸런싱을 견디는 설계"</b>다. 멱등 처리를 넣고, 정적 멤버십과 cooperative로 비용을 낮추고, 정상 종료를 보장하는 쪽이 <b>같은 노력으로 훨씬 많은 것을 얻는다.</b></p>
+</div></details>
+
+<details class="q"><summary>RabbitMQ에서는 컨슈머가 죽어도 이런 중복 구간 이야기를 안 하던데요?<span class="hint">힌트: 브로커가 무엇을 알고 있는지가 다르다</span></summary><div class="a">
+  <p><b>브로커가 가진 상태가 다르기 때문</b>이다. RabbitMQ는 <b>메시지 하나하나의 전달/ack 상태</b>를 브로커가 들고 있어서, ack가 안 온 메시지를 <b>회수(requeue)해 다른 컨슈머에게 재전달</b>할 수 있다. 소유권이 <b>메시지 단위</b>로 움직인다.</p>
+  <p>Kafka는 <b>커밋 오프셋이라는 숫자 하나</b>만 알고, 소유권도 <b>파티션 단위</b>로 움직인다. 그래서 "메시지를 되돌려 받는다"는 동작이 존재할 수 없고, 대신 <b>커밋 지점 이후를 통째로 재전달</b>하게 된다.</p>
+  <p style="margin-bottom:0">다만 <b>중복이 없다는 뜻은 아니다.</b> RabbitMQ에서도 <b>처리는 끝났는데 ack가 브로커에 닿기 전에 연결이 끊기면</b> 그 메시지는 재전달된다 — <b>at-least-once의 본질은 두 브로커에 공통</b>이고, 차이는 <b>중복이 발생하는 단위와 규모</b>다(Kafka는 <b>구간 단위</b>라 한 번에 여러 건이 몰린다).</p>
+</div></details>
+
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  리밸런싱은 <b>그룹 멤버·파티션 구성이 바뀔 때마다 코디네이터가 소집하고 그룹 리더가 계산해 재배정하는 소유권 이전 절차</b>이고(배포마다 반드시 일어난다), <b>처리 중이던 메시지는 회수되지 않는 대신 커밋 안 된 구간이 새 주인에게 재전달되어 옛 주인과 새 주인이 같은 메시지를 동시에 처리하는 중복 구간</b>이 생긴다 — <b>cooperative 리밸런싱(범위↓)</b>과 <b>정적 멤버십(횟수↓)</b>, <b>정상 종료와 <code>onPartitionsRevoked</code>(피해↓)</b>로 줄일 수는 있어도 <b>0으로는 만들 수 없으므로</b>, Kafka 컨슈머의 기본 소양은 리밸런싱 회피가 아니라 <b>멱등한 처리 로직</b>이다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/06-messaging/26-consumer-rebalancing-and-in-flight-messages.md</code> · 이어서 볼 문서: 전달 보장 시맨틱(03) · 멱등 컨슈머 구현(04) · Kafka 핵심 구성요소(21) · 파티션과 컨슈머 수(22) · 오프셋 커밋과 자동 커밋의 위험(23) · 재시도·DLQ 설계(25) · 컨슈머 랙 진단(31) · 파티션 증설 부작용(32) · <code>max.poll.interval.ms</code> vs <code>session.timeout.ms</code>(35)</p>
+</main>
+</body>
+</html>

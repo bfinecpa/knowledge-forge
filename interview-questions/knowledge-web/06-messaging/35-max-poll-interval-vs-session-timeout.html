@@ -1,0 +1,1658 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>max.poll.interval.ms vs session.timeout.ms — 컨슈머가 쫓겨나는 두 가지 이유의 구분</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo.warn{border-color:var(--warn)}.memo.warn::before{background:var(--warn);content:"진단"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+.formula{font-family:var(--mono);font-size:1.12rem;font-weight:700;text-align:center;padding:16px 12px;border-radius:12px;background:#1e293b;color:#e2e8f0;margin:12px 0;line-height:1.9}
+.formula .hi{color:#fcd34d}
+.formula .hi2{color:#86efac}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+tr.bad td{background:var(--danger-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.mono{font-family:var(--mono)}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.split.g3{grid-template-columns:1fr 1fr 1fr}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane.w{background:var(--warn-soft);border-color:var(--warn-line)}
+.pane.w h4{color:var(--warn)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+pre.wide{width:1120px;margin-left:calc(50% - 560px)}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.ln-warn{display:block;background:rgba(217,119,6,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--warn)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.nm{color:#fca5a5}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+<style>
+/* 32번 문서 전용 보강 */
+.cmp.g3{grid-template-columns:1fr 1fr 1fr}
+.formula.small{font-size:.95rem;line-height:1.85;text-align:left}
+.chk{list-style:none;padding:0;margin:8px 0}
+.chk li{padding-left:26px;position:relative;margin:6px 0;font-size:.95rem}
+.chk li::before{content:"\2713";position:absolute;left:4px;color:var(--ok);font-weight:800}
+.chk.x li::before{content:"\2715";color:var(--danger)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:.94rem;margin:8px 0}
+.kv dt{font-family:var(--mono);font-weight:700;color:var(--accent);white-space:nowrap}
+.kv dd{margin:0}
+.kv dt.r{color:var(--danger)}
+mark{background:#fde68a;padding:0 3px;border-radius:3px}
+.eq{font-family:var(--mono);font-weight:800;font-size:1.02rem;text-align:center;padding:10px;border-radius:10px;background:#fff;border:1px dashed var(--line);margin:8px 0}
+.calcbox{background:#0f172a;color:#e2e8f0;border-radius:12px;padding:16px 18px;margin:12px 0;font-family:var(--mono);font-size:.92rem;line-height:2}
+.calcbox .lbl{color:#94a3b8;font-size:.8rem;letter-spacing:.06em}
+.calcbox .res{color:#fcd34d;font-weight:800;font-size:1.1rem}
+.calcbox .ok{color:#86efac;font-weight:800}
+.numrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
+.numrow .n{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center}
+.numrow .n .v{font-size:1.5rem;font-weight:800;color:var(--accent);font-family:var(--mono)}
+.numrow .n .c{font-size:.82rem;color:var(--muted);margin-top:2px}
+.numrow .n.r .v{color:var(--danger)}
+.numrow .n.g .v{color:var(--ok)}
+.numrow .n.w .v{color:var(--warn)}
+.mnemo{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:10px 0}
+.mnemo .m{border:1px solid var(--accent-line);background:var(--accent-soft);border-radius:10px;padding:10px 12px}
+.mnemo .m .h{font-weight:800;color:var(--accent);font-size:.95rem;margin-bottom:2px}
+.mnemo .m .b{font-size:.9rem}
+.quiz{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin:12px 0}
+.quiz .qq{border:1px solid var(--line);border-radius:10px;background:#fafbfc;padding:10px 12px;font-size:.93rem}
+.quiz .qq b{display:block;color:var(--accent);margin-bottom:2px;font-size:.86rem}
+.bigword{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin:12px 0}
+.bigword .w{width:96px;text-align:center;border-radius:12px;padding:10px 6px;border:2px solid var(--accent);background:var(--accent-soft)}
+.bigword .w .c{font-size:1.7rem;font-weight:900;color:var(--accent);line-height:1.1}
+.bigword .w .t{font-size:.78rem;color:var(--muted);margin-top:3px}
+.bigword .w.r{border-color:var(--danger);background:var(--danger-soft)}
+.bigword .w.r .c{color:var(--danger)}
+</style>
+<style>
+/* 35번 문서 전용 보강 */
+.twoclock{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+.deck{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin:12px 0}
+.deck .d{border:1px solid var(--line);border-radius:12px;background:#fff;padding:12px 14px}
+.deck .d .h{font-weight:800;font-size:.95rem;margin-bottom:4px}
+.deck .d.b{border-color:var(--accent-line);background:var(--accent-soft)}.deck .d.b .h{color:var(--accent)}
+.deck .d.r{border-color:var(--danger-line);background:var(--danger-soft)}.deck .d.r .h{color:var(--danger)}
+.deck .d.g{border-color:var(--ok-line);background:var(--ok-soft)}.deck .d.g .h{color:var(--ok)}
+.deck .d.w{border-color:var(--warn-line);background:var(--warn-soft)}.deck .d.w .h{color:var(--warn)}
+.logline{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:.82rem;line-height:1.7;margin:8px 0;overflow-x:auto}
+.logline .lv-warn{color:#fbbf24;font-weight:700}
+.logline .lv-err{color:#fca5a5;font-weight:700}
+.logline .src{color:#94a3b8}
+.vs{display:grid;grid-template-columns:1fr 74px 1fr;align-items:center;gap:10px;margin:14px 0}
+.vs .mid{text-align:center;font-weight:900;color:var(--muted);font-size:1.05rem}
+.stack3{display:grid;gap:8px;margin:12px 0}
+.stack3 .lv{display:grid;grid-template-columns:200px 1fr;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff}
+.stack3 .lv .k{font-family:var(--mono);font-weight:800;font-size:.92rem}
+.stack3 .lv.l1{border-left:6px solid #6366f1}.stack3 .lv.l1 .k{color:#4338ca}
+.stack3 .lv.l2{border-left:6px solid var(--accent)}.stack3 .lv.l2 .k{color:var(--accent)}
+.stack3 .lv.l3{border-left:6px solid var(--danger)}.stack3 .lv.l3 .k{color:var(--danger)}
+.pill{display:inline-block;font-family:var(--mono);font-size:.8rem;font-weight:700;padding:1px 8px;border-radius:6px;background:#e8ebf0;color:#334155}
+.pill.b{background:var(--accent-soft);color:var(--accent)}
+.pill.r{background:var(--danger-soft);color:var(--danger)}
+.pill.g{background:var(--ok-soft);color:var(--ok)}
+.ratio{display:flex;gap:0;align-items:stretch;margin:10px 0;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.ratio div{padding:8px 6px;text-align:center;font-size:.85rem;font-weight:700;color:#fff}
+</style>
+</head>
+<body>
+<main>
+
+<header class="hero">
+  <span class="q">06 메시징 · 이벤트 &nbsp;|&nbsp; max.poll.interval.ms vs session.timeout.ms &nbsp;|&nbsp; 사전 학습용</span>
+  <h1><code style="font-size:.92em;background:none;color:#dc2626;padding:0">max.poll.interval.ms</code> vs <code style="font-size:.92em;background:none;color:#2563eb;padding:0">session.timeout.ms</code><br>— 컨슈머가 <b>쫓겨나는 두 가지 이유</b>의 구분<br><span class="sub"><b>"살아 있는가"</b>와 <b>"일이 나가는가"</b>는 다른 질문이다 — 그리고 그 구분이 곧 <b>진단 능력</b>이다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"<code>max.poll.interval.ms</code>와 <code>session.timeout.ms</code>의 차이는? 리밸런싱이 반복될 때 무엇부터 확인하나요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 컨슈머의 생존 판정은 <b>두 갈래</b>다. <code>session.timeout.ms</code>는 <b>백그라운드 하트비트 스레드</b>가 그룹 코디네이터에 보내는 심장박동이 끊겼는지 보는 값 — <b>"프로세스가 살아 있는가"</b>의 판정이고, <code>max.poll.interval.ms</code>는 <code>poll()</code> 호출 사이의 간격이 너무 벌어졌는지 보는 값 — <b>"살아는 있는데 일이 안 나가는 것 아닌가"</b>의 판정이다. 판정이 두 개인 이유는 <b>역사</b>에 있다 — 예전에는 하트비트를 <code>poll()</code> 안에서 함께 보냈기 때문에 처리가 길어지면 하트비트도 같이 끊겨 <b>"느린 것"과 "죽은 것"을 구별할 수 없었고</b>, 하트비트를 별도 스레드로 떼어내면서 비로소 두 판정이 갈라졌다. 그래서 리밸런싱이 반복될 때 가장 먼저 할 일은 설정을 만지는 것이 아니라 <b style="color:#dc2626">로그에서 어느 쪽에 걸려 쫓겨났는지를 가르는 것</b>이다 — poll 간격 초과면 <b>처리 지연 수사</b>(다운스트림 · 배치 크기 · poison pill), 하트비트 단절이면 <b>인프라 수사</b>(GC · OOM · CPU 스로틀 · 네트워크)로 방향이 완전히 갈린다. 그리고 처리가 원래 수 분씩 걸리는 작업이라면 값을 키우는 것이 아니라 <b>받자마자 DB 작업 큐에 넣고 즉시 커밋한 뒤 별도 워커가 처리하는 구조</b>로 <b>Kafka의 생존 판정과 작업 시간을 분리</b>하는 것이 근본 해법이다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>두 값이 재는 신호가 다르다는 것부터 말합니다.</b> <code>session.timeout.ms</code>는 <b>별도 하트비트 스레드</b>가 보내는 신호가 끊겼는지를 보는 <b style="color:#2563eb">"죽었는가"</b> 판정이고, <code>max.poll.interval.ms</code>는 <code>poll()</code> 호출 간격을 보는 <b style="color:#dc2626">"일이 멈췄는가"</b> 판정입니다. 앞은 <b>브로커(코디네이터)가 멤버를 제거</b>하고, 뒤는 <b>컨슈머가 스스로 탈퇴를 통보</b>한다는 점까지 다릅니다.</div></li>
+    <li><span class="n">2</span><div><b>왜 둘로 나뉘었는지를 덧붙입니다.</b> 옛 컨슈머는 하트비트를 <code>poll()</code> 안에서 같이 보냈기 때문에 <b>"오래 처리 중"과 "죽음"이 코디네이터 눈에 똑같이 보였고</b>, 다이얼이 하나뿐이라 <b>감지 속도</b>와 <b>긴 처리 허용</b>을 동시에 만족시킬 수 없었습니다. 하트비트를 <b>별도 스레드로 떼어내</b> 신호가 두 개가 되면서 판정도 둘로 갈라진 것입니다.</div></li>
+    <li><span class="n">3</span><div><b>진단은 "설정 조정"이 아니라 "갈래 가르기"로 시작한다고 답합니다.</b> 리밸런싱이 반복되면 <b>먼저 로그로 어느 쪽에 걸렸는지 가릅니다</b> — 컨슈머 앱 로그의 poll 간격 초과 경고면 <b>처리 지연 수사</b>, 브로커의 세션 만료 기록(+ 컨슈머 로그 단절)이면 <b>인프라 수사</b>입니다. 처리가 <b>원래</b> 긴 작업이라면 한도를 키워 감지를 포기하는 대신 <b>DB 작업 큐에 적재하고 즉시 커밋</b>해 <b>poll 루프를 항상 빠르게</b> 유지합니다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 이 문서가 겨냥하는 약점</a></li>
+    <li><a href="#s1">전제 — 누가 누구의 생존을 판정하는가</a></li>
+    <li><a href="#s2">역사 — 판정이 하나였던 시절의 딜레마</a></li>
+    <li><a href="#s3">스레드를 떼어내자 판정이 갈라졌다</a></li>
+    <li><a href="#s4">두 설정의 정의와 비유 — 심박 모니터 vs 작업 일지</a></li>
+    <li><a href="#s5">3층 구조 — 발신 주기 · 죽음 판정 · 게으름 판정</a></li>
+    <li><a href="#s6">왜 주기가 판정 시간의 1/3 이하여야 하는가</a></li>
+    <li><a href="#s7">스레드 분리가 만드는 사각지대 세 구멍</a></li>
+    <li><a href="#s8">poll 간격을 예측하는 산식과 계산표</a></li>
+    <li><a href="#s9">진단의 첫 갈래 — 어느 타임아웃에 걸렸는가</a></li>
+    <li><a href="#s10">갈래별 수사 — 처리 지연 vs 인프라</a></li>
+    <li><a href="#s11">rebalance storm — 스스로 도는 악순환 끊기</a></li>
+    <li><a href="#s12">원래 긴 작업 — 세 선택지와 근본 해법</a></li>
+    <li><a href="#s13">전체 한 장 · 인출 카드 · 꼬리질문 셀프 테스트</a></li>
+    <li><a href="#summary">한 줄 요약</a></li>
+  </ol>
+</nav>
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도 · 이 문서가 겨냥하는 약점</h2>
+
+<div class="card">
+  <p style="margin-top:0"><b>질문</b> — "<code>max.poll.interval.ms</code>와 <code>session.timeout.ms</code>의 차이는? 리밸런싱이 반복될 때 무엇부터 확인하나요?"</p>
+  <p><b>출제 의도</b> — <b>"컨슈머가 자꾸 쫓겨나며 리밸런싱이 반복되는"</b> 실무 단골 장애의 <b>원인 분기</b>(처리가 느림 vs 하트비트 끊김)를 할 수 있는지 본다. <b>두 타임아웃의 구분이 곧 진단 능력</b>이다 — 구분을 못 하면 엉뚱한 설정을 키우며 <b style="color:#dc2626">장애를 연장</b>하고, 구분하면 <b>로그 한 줄로 수사 방향을 잡는다.</b></p>
+  <p style="margin-bottom:0">질문이 <b>두 문장</b>인 데 주목하자 — 앞은 <b>"차이"</b>(개념), 뒤는 <b>"무엇부터"</b>(절차). 개념만 외워 답하면 뒤 문장에서 막히고, 절차만 나열하면 왜 그 순서인지 근거를 못 댄다. <b>개념이 절차의 근거가 되도록 이어 붙이는 것</b>이 이 질문의 정답 형태다.</p>
+</div>
+
+<div class="split">
+  <div class="pane r"><h4>이렇게 답하면 반쪽이다</h4>
+    <ul>
+      <li>"<b>세션 타임아웃은 하트비트, poll 인터벌은 폴링 주기입니다</b>" — 사전적 정의만 옮긴 답. <b>왜 둘로 나뉘었는지</b>와 <b>어느 쪽에 걸렸는지 어떻게 아는지</b>를 못 대면 외운 문장이다.</li>
+      <li>"<b>리밸런싱이 반복되면 <code>max.poll.interval.ms</code>를 늘립니다</b>" — <b style="color:#dc2626">가장 흔한 오진.</b> 원인이 GC였다면 값을 올려도 아무것도 나아지지 않는다.</li>
+      <li>"<b>하트비트는 poll 안에서 보냅니다</b>" — <b>옛 설계</b>다. 지금은 별도 스레드이고, <b>그 분리가 이 질문의 전부</b>다.</li>
+      <li>"<b>둘 다 크게 잡으면 안전합니다</b>" — 축출은 사라지지만 <b>교착에 빠진 컨슈머를 잡을 장치도 함께 사라진다.</b></li>
+      <li>"<b>수 분짜리 작업이면 <code>max.poll.interval.ms</code>를 30분으로 둡니다</b>" — 다이얼로 버티는 답. 면접관이 기대하는 것은 <b>구조 분리</b>다.</li>
+    </ul>
+  </div>
+  <div class="pane g"><h4>합격선 답변의 골격</h4>
+    <ul>
+      <li><b>신호가 다르다</b> — 하트비트(별도 스레드) vs <code>poll()</code> 호출 간격.</li>
+      <li><b>판정 주체가 다르다</b> — 코디네이터가 <b>제거</b> vs 컨슈머가 <b>자진 탈퇴</b>. 그래서 <b>로그 위치도 다르다.</b></li>
+      <li><b>이유가 있다</b> — 하트비트를 poll에서 <b>떼어낸 역사</b>. 다이얼이 하나면 감지와 허용을 동시에 못 잡는다.</li>
+      <li><b>절차</b> — 설정 조정이 아니라 <b>로그로 갈래 가르기</b>부터. 그다음 처리 지연 / 인프라 / 합류.</li>
+      <li><b>구조</b> — 원래 긴 작업은 <b>DB 작업 큐 + 즉시 커밋</b>으로 <b>생존 판정과 작업 시간을 분리</b>.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>이 문서가 겨냥하는 약점 세 가지</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">정의만 알고 갈래를 못 가름</div><div class="d">두 값의 뜻은 말하지만 <b>실제 장애에서 어느 쪽인지 판별하는 방법</b>을 모른다. 판별을 못 하면 <b>추측으로 설정을 만지게</b> 되고, 그게 장애를 늘린다.</div></div>
+    <div class="tile red"><div class="k">다이얼로만 대응</div><div class="d">모든 문제를 <b>"값을 키운다"</b>로 푼다. <b>키우면 무엇을 잃는지</b>(교착 감지 능력, 랙 방치 시간)를 말하지 못하면 트레이드오프를 모르는 답이 된다.</div></div>
+    <div class="tile red"><div class="k">축출 = 성능 문제로만 이해</div><div class="d">축출은 <b>정합성 사건</b>이기도 하다. 미커밋 구간이 <b>재배달되어 중복 처리</b>되고, 뒤늦은 커밋은 <b>거부</b>된다. 이 연결을 못 보면 멱등 설계까지 이어지지 못한다.</div></div>
+  </div>
+</div>
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 전제 — 누가 누구의 <span style="color:#2563eb">생존을 판정</span>하는가</h2>
+
+<p>두 설정을 비교하기 전에, <b>"쫓겨난다"</b>는 말이 정확히 무슨 일인지부터 맞춰 두자. 이 전제가 흐릿하면 뒤의 모든 구분이 말장난처럼 들린다.</p>
+
+<div class="deck">
+  <div class="d b"><div class="h">컨슈머 그룹</div>같은 <code>group.id</code>를 쓰는 컨슈머들의 묶음. 목적은 <b>토픽의 파티션을 멤버끼리 나눠 갖는 것</b>이다.</div>
+  <div class="d b"><div class="h">배타 할당</div>파티션 하나는 그룹 안에서 <b>최대 한 컨슈머에게만</b> 할당된다. 그래야 같은 메시지를 같은 그룹의 둘이 <b>중복 처리</b>하지 않는다.</div>
+  <div class="d b"><div class="h">그룹 코디네이터</div>브로커 중 한 대가 맡는 역할. <b>멤버 명단</b>을 들고 있다가 멤버가 들어오거나 나가면 파티션을 다시 나눠 준다.</div>
+  <div class="d w"><div class="h">리밸런싱</div>그 <b>재배분</b>. 도는 동안 <b>그룹의 소비가 멈추고</b>, 파티션 주인이 바뀌며 <b>커밋 안 된 구간이 다시 배달</b>된다.</div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="컨슈머 그룹 구조 도식. 토픽의 파티션 P0 P1 P2가 그룹 코디네이터의 할당표를 통해 컨슈머 C1 C2에 배타적으로 나뉘어 있고, 컨슈머는 코디네이터에게 생존 신호를 보낸다. 멤버가 사라지면 코디네이터가 재배분(리밸런싱)을 돌리며 그동안 소비가 멈추고 미커밋 구간이 중복 배달된다.">
+    <defs>
+      <marker id="a1" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+      <marker id="a1b" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="a1r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">컨슈머 그룹 — 파티션은 <tspan fill="#2563eb">한 멤버에게만</tspan>, 명단 관리는 <tspan fill="#2563eb">코디네이터</tspan>가</text>
+
+    <rect x="24" y="52" width="250" height="230" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="149" y="76" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">토픽 orders</text>
+    <rect x="44" y="90" width="210" height="52" rx="8" fill="#fff" stroke="#cbd5e1"/>
+    <text x="60" y="112" font-size="12" font-weight="800" fill="#334155" class="mono">P0</text>
+    <rect x="88" y="100" width="152" height="14" rx="3" fill="#dbeafe"/><rect x="88" y="120" width="100" height="14" rx="3" fill="#dbeafe"/>
+    <rect x="44" y="152" width="210" height="52" rx="8" fill="#fff" stroke="#cbd5e1"/>
+    <text x="60" y="174" font-size="12" font-weight="800" fill="#334155" class="mono">P1</text>
+    <rect x="88" y="162" width="120" height="14" rx="3" fill="#dbeafe"/><rect x="88" y="182" width="152" height="14" rx="3" fill="#dbeafe"/>
+    <rect x="44" y="214" width="210" height="52" rx="8" fill="#fff" stroke="#cbd5e1"/>
+    <text x="60" y="236" font-size="12" font-weight="800" fill="#334155" class="mono">P2</text>
+    <rect x="88" y="224" width="90" height="14" rx="3" fill="#dbeafe"/><rect x="88" y="244" width="140" height="14" rx="3" fill="#dbeafe"/>
+
+    <path d="M258,116 C320,116 330,140 392,140" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a1b)"/>
+    <path d="M258,178 C320,178 330,160 392,160" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a1b)"/>
+    <path d="M258,240 C330,240 340,236 392,236" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a1b)"/>
+
+    <rect x="396" y="52" width="290" height="230" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="541" y="76" font-size="12.5" font-weight="700" fill="#1e40af" text-anchor="middle">컨슈머 그룹 (group.id = billing)</text>
+
+    <rect x="418" y="92" width="246" height="76" rx="10" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="436" y="116" font-size="13" font-weight="800" fill="#1e40af" class="mono">C1</text>
+    <text x="436" y="138" font-size="11.5" fill="#334155">담당: <tspan class="mono" font-weight="700">P0, P1</tspan></text>
+    <text x="436" y="157" font-size="11" fill="#64748b">poll() → 처리 → poll() ...</text>
+
+    <rect x="418" y="186" width="246" height="76" rx="10" fill="#fff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="436" y="210" font-size="13" font-weight="800" fill="#1e40af" class="mono">C2</text>
+    <text x="436" y="232" font-size="11.5" fill="#334155">담당: <tspan class="mono" font-weight="700">P2</tspan></text>
+    <text x="436" y="251" font-size="11" fill="#64748b">poll() → 처리 → poll() ...</text>
+
+    <path d="M668,130 C720,130 730,150 782,150" stroke="#16a34a" stroke-width="2.2" fill="none" marker-end="url(#a1)"/>
+    <path d="M668,224 C720,224 730,186 782,186" stroke="#16a34a" stroke-width="2.2" fill="none" marker-end="url(#a1)"/>
+    <text x="726" y="120" font-size="11" fill="#16a34a" font-weight="700" text-anchor="middle">생존 신호</text>
+
+    <rect x="786" y="82" width="308" height="170" rx="12" fill="#fff" stroke="#334155" stroke-width="1.8"/>
+    <text x="940" y="106" font-size="13" font-weight="800" fill="#0f172a" text-anchor="middle">그룹 코디네이터 (브로커 1대)</text>
+    <line x1="806" y1="116" x2="1074" y2="116" stroke="#e2e8f0"/>
+    <text x="806" y="138" font-size="11.5" fill="#64748b">멤버 명단</text>
+    <rect x="806" y="146" width="126" height="30" rx="6" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="869" y="166" font-size="11.5" font-weight="700" fill="#334155" text-anchor="middle" class="mono">C1 → P0, P1</text>
+    <rect x="944" y="146" width="126" height="30" rx="6" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="1007" y="166" font-size="11.5" font-weight="700" fill="#334155" text-anchor="middle" class="mono">C2 → P2</text>
+    <text x="806" y="204" font-size="11.5" fill="#334155">멤버가 <tspan font-weight="800">들어오거나 나가면</tspan> 명단을 고치고</text>
+    <text x="806" y="224" font-size="11.5" fill="#dc2626" font-weight="800">파티션을 다시 나눠 준다 = 리밸런싱</text>
+
+    <rect x="396" y="300" width="698" height="80" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="416" y="324" font-size="12.5" font-weight="800" fill="#b91c1c">리밸런싱은 공짜가 아니다 — 이 문서의 출발점</text>
+    <text x="416" y="346" font-size="12" fill="#7f1d1d">① 재배분이 도는 동안 <tspan font-weight="800">그룹의 소비가 멈춘다</tspan>  ② 파티션 주인이 바뀌며 <tspan font-weight="800">커밋 안 된 구간이 다시 배달</tspan>돼 중복 처리가 튄다</text>
+    <text x="416" y="366" font-size="12" fill="#7f1d1d">→ 그래서 <tspan font-weight="800">"멤버가 살아 있는가"를 잘못 판정하면 그 대가를 곧바로 처리량과 정합성으로 치른다.</tspan></text>
+
+    <text x="24" y="324" font-size="11.5" fill="#64748b">파티션 하나는</text>
+    <text x="24" y="344" font-size="11.5" fill="#2563eb" font-weight="800">최대 한 컨슈머에게만</text>
+    <text x="24" y="364" font-size="11.5" fill="#64748b">→ 대신 처리해 줄 멤버가 없다</text>
+  </svg>
+  <figcaption>컨슈머 그룹의 기본 구조. 여기서 <b>질문 하나</b>가 생긴다 — <b>코디네이터는 멤버가 살아 있는지를 어떻게 아는가?</b> 답이 이 문서의 본론이고, 답이 <b>두 개</b>라는 것이 핵심이다.</figcaption>
+</figure>
+
+<div class="callout info"><span class="t">"대신 처리해 줄 사람이 없다"가 왜 중요한가</span>
+파티션이 <b>한 멤버에게만</b> 할당된다는 규칙 때문에, <b>어떤 컨슈머가 멈춰 있으면 그 파티션은 아무도 소비하지 않는다.</b> 다른 멤버가 눈치껏 대신 읽어 주는 일은 일어나지 않는다. 그래서 <b>"멈춘 멤버를 빨리 알아채고 자리를 빼앗는 것"</b>에 실제 가치가 있고, 동시에 <b>"멀쩡한데 오해로 빼앗는 것"</b>에는 실제 비용이 든다. <b>이 두 요구의 충돌이 다음 절의 역사를 만든다.</b>
+</div>
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 역사 — 판정이 <span style="color:#dc2626">하나였던 시절</span>의 딜레마</h2>
+
+<p>왜 굳이 설정이 두 개나 있어야 하는가. 이 질문에 <b>"원래 하나였고, 하나로는 안 되는 이유가 있었다"</b>고 답할 수 있으면 두 값을 헷갈릴 일이 없어진다. 정의를 외우는 대신 <b>왜 갈라졌는지</b>를 이해하면 되기 때문이다.</p>
+
+<h3>2-1. 옛 설계 — 하트비트를 <code>poll()</code> 안에서 함께 보냈다</h3>
+
+<p>옛날 Kafka 컨슈머는 하트비트(살아 있다는 신호)를 <b><code>poll()</code> 호출 안에서 함께 보냈다.</b> 컨슈머 코드가 <code>poll()</code>을 부르면 <b>그 김에</b> 코디네이터에게 "저 여기 있습니다"를 보내는 식이다. 구현은 단순하지만 <b>치명적인 결함</b>이 있었다.</p>
+
+<div class="rule red">처리가 오래 걸려 <code>poll()</code>을 못 부르면 — <b>하트비트도 같이 끊긴다</b></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="옛 설계에서 두 상황이 구별되지 않는 이유 도식. 상황 A는 프로세스가 죽어 poll이 멈춘 경우, 상황 B는 살아서 3분짜리 배치를 처리하느라 poll이 멈춘 경우인데, 하트비트가 poll 안에 실려 있으므로 코디네이터에게는 두 경우 모두 신호 끊김으로 똑같이 보인다.">
+    <defs>
+      <marker id="a2r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="a2g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">옛 설계 — 하트비트가 <tspan class="mono" fill="#dc2626">poll()</tspan>에 얹혀 있으면, <tspan fill="#dc2626">"느림"과 "죽음"이 같은 모양</tspan>이 된다</text>
+
+    <rect x="24" y="46" width="700" height="118" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="70" font-size="12.5" font-weight="800" fill="#b91c1c">[상황 A] 컨슈머 프로세스가 죽었다</text>
+    <line x1="44" y1="112" x2="660" y2="112" stroke="#cbd5e1" stroke-width="2"/>
+    <circle cx="90" cy="112" r="7" fill="#16a34a"/><text x="90" y="136" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">poll+hb</text>
+    <circle cx="170" cy="112" r="7" fill="#16a34a"/><text x="170" y="136" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">poll+hb</text>
+    <circle cx="250" cy="112" r="7" fill="#16a34a"/><text x="250" y="136" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">poll+hb</text>
+    <path d="M282,96 L308,128 M308,96 L282,128" stroke="#dc2626" stroke-width="3"/>
+    <text x="295" y="86" font-size="11" font-weight="800" fill="#dc2626" text-anchor="middle">프로세스 종료</text>
+    <line x1="316" y1="112" x2="660" y2="112" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 5"/>
+    <text x="490" y="136" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">신호 없음 (보낼 주체가 없다)</text>
+
+    <rect x="24" y="176" width="700" height="118" rx="12" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="44" y="200" font-size="12.5" font-weight="800" fill="#b45309">[상황 B] 멀쩡히 살아서 DB에 3분째 걸리는 배치를 처리 중</text>
+    <line x1="44" y1="242" x2="660" y2="242" stroke="#cbd5e1" stroke-width="2"/>
+    <circle cx="90" cy="242" r="7" fill="#16a34a"/><text x="90" y="266" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">poll+hb</text>
+    <circle cx="170" cy="242" r="7" fill="#16a34a"/><text x="170" y="266" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">poll+hb</text>
+    <circle cx="250" cy="242" r="7" fill="#16a34a"/><text x="250" y="266" font-size="10.5" fill="#166534" text-anchor="middle" class="mono">poll+hb</text>
+    <rect x="266" y="228" width="394" height="28" rx="6" fill="#fed7aa" stroke="#f59e0b"/>
+    <text x="463" y="247" font-size="11.5" font-weight="700" fill="#9a3412" text-anchor="middle">3분짜리 배치 처리 중 — 코드가 poll()로 못 돌아온다</text>
+    <text x="463" y="278" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">신호 없음 (보낼 코드가 실행되지 못한다)</text>
+
+    <path d="M672,105 C740,105 760,150 790,164" stroke="#dc2626" stroke-width="2.2" fill="none" marker-end="url(#a2r)"/>
+    <path d="M672,249 C740,249 760,190 790,176" stroke="#dc2626" stroke-width="2.2" fill="none" marker-end="url(#a2r)"/>
+
+    <rect x="796" y="112" width="298" height="116" rx="12" fill="#fff" stroke="#334155" stroke-width="1.8"/>
+    <text x="945" y="138" font-size="12.5" font-weight="800" fill="#0f172a" text-anchor="middle">코디네이터가 보는 화면</text>
+    <line x1="816" y1="148" x2="1074" y2="148" stroke="#e2e8f0"/>
+    <text x="945" y="174" font-size="13" font-weight="800" fill="#dc2626" text-anchor="middle" class="mono">"신호가 끊겼다"</text>
+    <text x="945" y="200" font-size="12" fill="#334155" text-anchor="middle">A인지 B인지 <tspan font-weight="800" fill="#dc2626">구별할 방법이 없다</tspan></text>
+    <text x="945" y="218" font-size="11.5" fill="#64748b" text-anchor="middle">신호가 하나뿐이므로 판정도 하나뿐</text>
+
+    <text x="24" y="322" font-size="12" fill="#64748b">※ 신호가 <tspan font-weight="800">하나</tspan>인데 물어야 할 질문은 <tspan font-weight="800">둘</tspan>("죽었나?" / "일이 나가나?")이라는 것이 결함의 본질이다.</text>
+  </svg>
+  <figcaption>같은 "신호 끊김"이지만 <b>필요한 대응은 정반대</b>다. A는 <b>즉시 자리를 빼앗아야</b> 하고, B는 <b>기다려 줘야</b> 한다. 구별할 수 없으니 하나의 값으로 두 요구를 동시에 감당해야 했다.</figcaption>
+</figure>
+
+<h3>2-2. 다이얼이 하나뿐이라는 것이 문제의 본질이었다</h3>
+
+<p>구별할 수 없으니 타임아웃 <b>하나</b>로 둘을 동시에 감당해야 하고, 그 순간 <b>서로 반대 방향으로 당기는 딜레마</b>가 생긴다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 260" role="img" aria-label="하나의 타임아웃 다이얼이 만드는 트레이드오프 도식. 다이얼을 짧게 잡으면 죽은 컨슈머를 빨리 감지하지만 느린 정상 컨슈머가 계속 쫓겨나고, 길게 잡으면 긴 처리는 살아남지만 진짜 죽은 컨슈머의 파티션이 오래 방치된다. 양쪽 요구가 반대 방향이라 하나의 다이얼로는 동시에 만족시킬 수 없다.">
+    <defs>
+      <marker id="a2d" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="20" y="26" font-size="14" font-weight="700" fill="#1f2937">다이얼이 하나 — 양쪽 요구가 <tspan fill="#dc2626">반대 방향</tspan>으로 당긴다</text>
+
+    <rect x="20" y="46" width="270" height="130" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="155" y="72" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">짧게 잡으면</text>
+    <text x="40" y="98" font-size="11.5" fill="#166534">✓ 죽은 컨슈머를 <tspan font-weight="800">빨리 감지</tspan></text>
+    <text x="40" y="122" font-size="11.5" fill="#b91c1c">✗ 조금 느린 <tspan font-weight="800">정상 컨슈머가 계속 축출</tspan></text>
+    <text x="40" y="146" font-size="11.5" fill="#b91c1c">✗ 리밸런싱이 반복 → 소비 중단·중복</text>
+    <text x="40" y="166" font-size="11" fill="#64748b">"멀쩡한 사람을 자꾸 자른다"</text>
+
+    <line x1="300" y1="112" x2="600" y2="112" stroke="#94a3b8" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="450" cy="112" r="16" fill="#2563eb" stroke="#fff" stroke-width="3"/>
+    <text x="450" y="88" font-size="12" font-weight="800" fill="#2563eb" text-anchor="middle">단 하나의 타임아웃</text>
+    <path d="M410,140 L330,140" stroke="#dc2626" stroke-width="2" marker-end="url(#a2d)"/>
+    <path d="M490,140 L570,140" stroke="#dc2626" stroke-width="2" marker-end="url(#a2d)"/>
+    <text x="450" y="166" font-size="11.5" fill="#64748b" text-anchor="middle">한쪽을 만족시키면</text>
+    <text x="450" y="184" font-size="11.5" font-weight="800" fill="#dc2626" text-anchor="middle">반드시 다른 쪽을 잃는다</text>
+
+    <rect x="610" y="46" width="270" height="130" rx="12" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="745" y="72" font-size="12.5" font-weight="800" fill="#b45309" text-anchor="middle">길게 잡으면</text>
+    <text x="630" y="98" font-size="11.5" fill="#166534">✓ 오래 걸리는 처리도 <tspan font-weight="800">살아남는다</tspan></text>
+    <text x="630" y="122" font-size="11.5" fill="#b91c1c">✗ 진짜 죽은 컨슈머의 파티션이</text>
+    <text x="630" y="140" font-size="11.5" fill="#b91c1c">&#160;&#160;&#160;<tspan font-weight="800">그 시간만큼 방치</tspan></text>
+    <text x="630" y="166" font-size="11" fill="#64748b">"죽은 사람 자리를 오래 비워 둔다"</text>
+
+    <rect x="20" y="196" width="860" height="46" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="450" y="224" font-size="13" font-weight="800" fill="#1e40af" text-anchor="middle">해결책은 다이얼을 잘 돌리는 것이 아니라 — 다이얼을 하나 더 만드는 것이었다</text>
+  </svg>
+  <figcaption>한 개의 다이얼로 서로 반대 방향의 요구를 동시에 만족시킬 수 없다. <b>다이얼이 하나뿐이라는 것이 문제의 본질</b>이었다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>이 역사를 외워 두면 두 값을 절대 헷갈리지 않는다</h4>
+  <div class="mnemo">
+    <div class="m"><div class="h">신호가 하나였다</div><div class="b">하트비트가 <code>poll()</code>에 얹혀 있었다 → "느림"과 "죽음"이 <b>같은 모양</b></div></div>
+    <div class="m"><div class="h">그래서 판정도 하나</div><div class="b">하나의 다이얼로 <b>감지 속도</b>와 <b>긴 처리 허용</b>을 동시에 못 잡았다</div></div>
+    <div class="m"><div class="h">신호를 둘로 쪼갰다</div><div class="b">하트비트를 <b>별도 스레드</b>로 분리 → 두 신호, 두 판정, 두 설정</div></div>
+  </div>
+  <p style="margin-bottom:0">면접에서 <b>"왜 설정이 두 개인가요?"</b>로 파고들 때, 이 세 줄을 그대로 말하면 정의를 외운 답과 <b>이해한 답</b>이 갈린다.</p>
+</div>
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 스레드를 떼어내자 <span style="color:#16a34a">판정이 갈라졌다</span></h2>
+
+<p>해법은 단순하다. <b>하트비트를 애플리케이션 코드와 무관하게 혼자 도는 별도 스레드로 분리한다.</b> 그러면 내 코드가 3분짜리 배치를 처리하는 동안에도 하트비트는 <b>자기 주기대로 계속 나간다.</b> 상황 A와 상황 B가 드디어 구별된다.</p>
+
+<div class="split">
+  <div class="pane r"><h4>[상황 A] 프로세스가 죽었다</h4>
+    <p style="margin:0">하트비트 스레드도 <b>함께 죽는다</b> → <b>하트비트 끊김</b><br><span class="sub">→ 세션 타임아웃에 걸린다</span></p>
+  </div>
+  <div class="pane w"><h4>[상황 B] 살아서 오래 처리 중</h4>
+    <p style="margin:0">하트비트 스레드는 <b>계속 뛴다</b> → <b>하트비트 정상, <code>poll()</code>만 안 옴</b><br><span class="sub">→ poll 간격 초과에 걸린다</span></p>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 470" role="img" aria-label="컨슈머 프로세스 내부의 두 스레드와 두 판정 경로 도식. 위쪽 하트비트 스레드는 heartbeat.interval.ms 주기로 코디네이터에 신호를 보내고, 그 신호가 session.timeout.ms 동안 끊기면 코디네이터가 멤버를 제거한다. 아래쪽 폴링 처리 스레드는 poll과 처리를 반복하는데 poll 사이 간격이 max.poll.interval.ms를 넘으면 컨슈머가 스스로 탈퇴를 통보한다.">
+    <defs>
+      <marker id="a3b" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="a3r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="a3g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">한 컨슈머 프로세스 안 — <tspan fill="#2563eb">두 스레드</tspan>가 <tspan fill="#2563eb">두 개의 다른 신호</tspan>를 만든다</text>
+
+    <rect x="24" y="46" width="640" height="400" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="7 5"/>
+    <text x="44" y="72" font-size="12.5" font-weight="800" fill="#334155">컨슈머 프로세스 하나 (JVM)</text>
+
+    <rect x="48" y="88" width="592" height="112" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="68" y="114" font-size="13" font-weight="800" fill="#1e40af">① 하트비트 스레드 <tspan font-size="11.5" font-weight="600" fill="#3b82f6">(백그라운드 · 내 코드와 무관하게 혼자 돈다)</tspan></text>
+    <line x1="70" y1="150" x2="470" y2="150" stroke="#bfdbfe" stroke-width="2"/>
+    <circle cx="100" cy="150" r="6" fill="#2563eb"/><circle cx="170" cy="150" r="6" fill="#2563eb"/><circle cx="240" cy="150" r="6" fill="#2563eb"/><circle cx="310" cy="150" r="6" fill="#2563eb"/><circle cx="380" cy="150" r="6" fill="#2563eb"/><circle cx="450" cy="150" r="6" fill="#2563eb"/>
+    <text x="135" y="142" font-size="10" fill="#3b82f6" text-anchor="middle" class="mono">◀ interval ▶</text>
+    <text x="68" y="182" font-size="11.5" fill="#1e3a8a"><tspan class="mono" font-weight="700">heartbeat.interval.ms</tspan> 주기로 "살아있음"을 보낸다 — 내 리스너가 무엇을 하든 상관없이</text>
+
+    <rect x="48" y="292" width="592" height="132" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="68" y="318" font-size="13" font-weight="800" fill="#b91c1c">② 폴링 · 처리 스레드 <tspan font-size="11.5" font-weight="600" fill="#ef4444">(내가 짠 리스너 코드가 도는 스레드)</tspan></text>
+    <rect x="70" y="332" width="66" height="26" rx="6" fill="#dc2626"/><text x="103" y="350" font-size="11" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll()</text>
+    <rect x="142" y="332" width="150" height="26" rx="6" fill="#fee2e2" stroke="#fca5a5"/><text x="217" y="350" font-size="11" fill="#991b1b" text-anchor="middle">가져온 레코드 처리</text>
+    <rect x="298" y="332" width="66" height="26" rx="6" fill="#dc2626"/><text x="331" y="350" font-size="11" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll()</text>
+    <rect x="370" y="332" width="150" height="26" rx="6" fill="#fee2e2" stroke="#fca5a5"/><text x="445" y="350" font-size="11" fill="#991b1b" text-anchor="middle">처리</text>
+    <text x="536" y="350" font-size="12" font-weight="800" fill="#991b1b">...</text>
+    <path d="M103,368 L103,382 L331,382 L331,368" stroke="#991b1b" stroke-width="1.6" fill="none"/>
+    <text x="217" y="400" font-size="11.5" font-weight="800" fill="#991b1b" text-anchor="middle">이 간격이 재는 대상</text>
+    <text x="68" y="416" font-size="11.5" fill="#7f1d1d">간격의 길이를 정하는 것은 설정이 아니라 <tspan font-weight="800">처리 로직과 다운스트림</tspan>이다</text>
+
+    <path d="M644,144 C700,144 720,190 758,204" stroke="#2563eb" stroke-width="2.4" fill="none" marker-end="url(#a3b)"/>
+    <text x="700" y="134" font-size="11.5" font-weight="700" fill="#2563eb">하트비트 신호</text>
+    <path d="M644,356 C700,356 720,290 758,268" stroke="#dc2626" stroke-width="2.4" fill="none" marker-end="url(#a3r)"/>
+    <text x="700" y="374" font-size="11.5" font-weight="700" fill="#dc2626">"저 빠지겠습니다" 통보</text>
+
+    <rect x="762" y="176" width="332" height="120" rx="12" fill="#fff" stroke="#334155" stroke-width="1.8"/>
+    <text x="928" y="204" font-size="13" font-weight="800" fill="#0f172a" text-anchor="middle">그룹 코디네이터 (브로커)</text>
+    <line x1="782" y1="214" x2="1074" y2="214" stroke="#e2e8f0"/>
+    <text x="928" y="238" font-size="11.5" fill="#334155" text-anchor="middle">이제 <tspan font-weight="800">두 종류의 사건</tspan>을 받는다</text>
+    <text x="928" y="262" font-size="11.5" fill="#2563eb" text-anchor="middle" font-weight="700">① 신호가 끊겼다 → 내가 제거한다</text>
+    <text x="928" y="282" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">② 나가겠다고 한다 → 명단에서 뺀다</text>
+
+    <rect x="762" y="46" width="332" height="112" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="782" y="72" font-size="12.5" font-weight="800" fill="#1e40af" class="mono">session.timeout.ms</text>
+    <text x="782" y="94" font-size="11.5" fill="#1e3a8a">하트비트가 이 시간 동안 안 오면</text>
+    <text x="782" y="114" font-size="11.5" fill="#1e3a8a"><tspan font-weight="800">코디네이터가 "죽었다"고 판정</tspan>하고</text>
+    <text x="782" y="134" font-size="11.5" fill="#1e3a8a">멤버를 제거 → 리밸런싱</text>
+    <text x="782" y="150" font-size="11" fill="#3b82f6">판정 주체 = <tspan font-weight="800">브로커</tspan></text>
+
+    <rect x="762" y="314" width="332" height="112" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="782" y="340" font-size="12.5" font-weight="800" fill="#b91c1c" class="mono">max.poll.interval.ms</text>
+    <text x="782" y="362" font-size="11.5" fill="#7f1d1d">poll() 사이 간격이 이 시간을 넘으면</text>
+    <text x="782" y="382" font-size="11.5" fill="#7f1d1d"><tspan font-weight="800">컨슈머가 스스로 탈퇴를 통보</tspan></text>
+    <text x="782" y="402" font-size="11.5" fill="#7f1d1d">→ 리밸런싱</text>
+    <text x="782" y="418" font-size="11" fill="#ef4444">판정 주체 = <tspan font-weight="800">컨슈머 자신</tspan></text>
+  </svg>
+  <figcaption>두 스레드 · 두 신호 · 두 판정. <b>위쪽 경로는 브로커가 판정</b>하고, <b>아래쪽 경로는 컨슈머가 스스로 판정</b>한다 — 자기가 poll을 못 부르고 있다는 사실은 <b>자기가 가장 먼저 알기 때문</b>이다. 이 차이가 뒤에서 <b>"로그가 어디에 남는가"</b>로 이어진다.</figcaption>
+</figure>
+
+<div class="callout info"><span class="t">왜 아래쪽은 컨슈머가 스스로 나가는가</span>
+<b>poll 간격이 벌어졌다는 사실을 가장 정확히 아는 것은 컨슈머 자신</b>이다. 브로커는 하트비트만 받고 있어서 <b>이 컨슈머가 실제로 소비를 진행하고 있는지 알 수 없다.</b> 그래서 이 판정은 <b>클라이언트 쪽에 구현</b>되어 있고, 한도를 넘긴 컨슈머는 다음 <code>poll()</code>에서 <b>"저는 빠지겠습니다"를 코디네이터에 통보</b>한다. 이 구조 때문에 <b>poll 초과의 증거는 컨슈머 애플리케이션 로그에 또렷하게 남는다</b>(9절).
+</div>
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 두 설정의 정의와 비유 — <span style="color:#2563eb">심박 모니터</span> vs <span style="color:#dc2626">작업 일지</span></h2>
+
+<p>앞 도식 위에 두 설정을 얹어 정의하면 이렇게 된다. <b>정의 문장에 "무엇을 재는가 / 누가 판정하는가 / 어떤 원인에 걸리는가" 세 가지를 함께 담는 것</b>이 요령이다.</p>
+
+<div class="split">
+  <div class="pane b"><h4><code>session.timeout.ms</code> — "심장이 뛰는가"</h4>
+    <p style="margin:0 0 6px">하트비트 스레드의 신호가 이 시간 동안 안 오면 <b>코디네이터가 죽었다고 판정</b>하고 그룹에서 빼낸 뒤 리밸런싱을 시작한다.</p>
+    <p style="margin:0 0 4px"><b>여기 걸리는 원인 = 프로세스 자체에 생긴 일</b></p>
+    <ul>
+      <li>프로세스 크래시</li>
+      <li>네트워크 단절</li>
+      <li><b>모든 애플리케이션 스레드를 멈추는 긴 GC</b>(stop-the-world)</li>
+      <li>컨테이너 강제 종료(OOM 킬)</li>
+    </ul>
+  </div>
+  <div class="pane r"><h4><code>max.poll.interval.ms</code> — "일이 진척되는가"</h4>
+    <p style="margin:0 0 6px">마지막 <code>poll()</code>로부터 이 시간이 지나도록 다음 <code>poll()</code>이 없으면 <b>"하트비트는 오는데 소비가 멈춘 상태"</b>로 간주해 <b>컨슈머가 스스로 그룹에서 나간다.</b></p>
+    <p style="margin:0 0 4px"><b>여기 걸리는 원인 = 처리에 생긴 일</b></p>
+    <ul>
+      <li>느린 다운스트림(DB, 외부 API)</li>
+      <li>너무 큰 배치</li>
+      <li>처리 스레드의 교착이나 무한 루프</li>
+      <li>리스너 안의 블로킹 재시도·<code>sleep</code></li>
+    </ul>
+  </div>
+</div>
+
+<h3>4-1. 비유 — 심박 모니터와 작업 일지</h3>
+
+<figure>
+  <svg viewBox="0 0 900 250" role="img" aria-label="두 판정의 비유 도식. 왼쪽은 심박 모니터로 살아 있는지만 보고, 오른쪽은 작업 일지로 일이 진행되는지를 본다. 가운데는 심박은 뛰는데 일지가 비어 있는 상태가 실제로 존재한다는 것을 보여주며, 그런 작업자에게서는 일을 회수해 다른 사람에게 넘기는 것이 맞다는 결론을 표시한다.">
+    <text x="20" y="26" font-size="14" font-weight="700" fill="#1f2937">두 검사는 <tspan fill="#dc2626">다른 질문</tspan>을 던진다 — 그리고 <tspan fill="#dc2626">대칭이 아니다</tspan></text>
+
+    <rect x="20" y="44" width="270" height="150" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="155" y="70" font-size="13" font-weight="800" fill="#1e40af" text-anchor="middle">심박 모니터</text>
+    <text x="155" y="90" font-size="11.5" fill="#3b82f6" text-anchor="middle" class="mono">session.timeout.ms</text>
+    <path d="M44,138 L74,138 L84,116 L96,160 L108,128 L120,138 L152,138 L162,118 L174,158 L186,130 L198,138 L266,138" stroke="#2563eb" stroke-width="2.4" fill="none"/>
+    <text x="155" y="180" font-size="11.5" fill="#1e3a8a" text-anchor="middle">"이 사람이 <tspan font-weight="800">살아 있는가</tspan>"</text>
+
+    <rect x="610" y="44" width="270" height="150" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="745" y="70" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">작업 일지 검사</text>
+    <text x="745" y="90" font-size="11.5" fill="#ef4444" text-anchor="middle" class="mono">max.poll.interval.ms</text>
+    <rect x="640" y="104" width="210" height="60" rx="6" fill="#fff" stroke="#fca5a5"/>
+    <line x1="652" y1="120" x2="838" y2="120" stroke="#fecaca"/><line x1="652" y1="136" x2="838" y2="136" stroke="#fecaca"/><line x1="652" y1="152" x2="838" y2="152" stroke="#fecaca"/>
+    <text x="745" y="134" font-size="12" font-weight="800" fill="#dc2626" text-anchor="middle">(몇 시간째 비어 있음)</text>
+    <text x="745" y="180" font-size="11.5" fill="#7f1d1d" text-anchor="middle">"이 사람이 <tspan font-weight="800">일을 하고 있는가</tspan>"</text>
+
+    <rect x="306" y="60" width="288" height="60" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="450" y="84" font-size="12" font-weight="800" fill="#b45309" text-anchor="middle">심박이 뛰는데도</text>
+    <text x="450" y="104" font-size="12" font-weight="800" fill="#b45309" text-anchor="middle">일지가 비어 있을 수 있다</text>
+    <path d="M300,90 L294,90 M296,90 L308,90" stroke="#f59e0b" stroke-width="2"/>
+    <path d="M290,84 L306,90 L290,96 Z" fill="#f59e0b"/>
+    <path d="M610,90 L596,90" stroke="#f59e0b" stroke-width="2"/>
+    <path d="M610,84 L594,90 L610,96 Z" fill="#f59e0b"/>
+
+    <rect x="306" y="132" width="288" height="62" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="450" y="156" font-size="11.5" fill="#166534" text-anchor="middle">그런 작업자에게서는</text>
+    <text x="450" y="176" font-size="12.5" font-weight="800" fill="#16a34a" text-anchor="middle">일을 회수해 다른 사람에게 넘긴다</text>
+
+    <rect x="20" y="208" width="860" height="34" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="450" y="230" font-size="12" fill="#334155" text-anchor="middle">반대로 <tspan font-weight="800">일지는 꼬박꼬박 적혀 있는데 심박이 멎을 수는 없으므로</tspan> — 두 검사는 대칭이 아니다</text>
+  </svg>
+  <figcaption>이 비대칭이 뒤의 <b>사각지대 구멍 1</b>로 이어진다. <b>"심박만으로는 절대 잡을 수 없는 상태"</b>가 존재하기 때문에 <code>max.poll.interval.ms</code>를 함부로 키우면 안 된다.</figcaption>
+</figure>
+
+<h3>4-2. 한 표로 정리</h3>
+
+<div class="scroll">
+<table class="wide">
+  <caption>두 타임아웃 비교 — 면접에서 이 표의 <b>행 이름들</b>을 순서대로 짚으며 답하면 빠짐없이 말할 수 있다</caption>
+  <thead><tr><th style="width:150px">구분</th><th style="width:400px"><code>session.timeout.ms</code></th><th style="width:400px"><code>max.poll.interval.ms</code></th><th>이 차이가 실무에서 의미하는 것</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>재는 신호</b></td><td>하트비트 (별도 백그라운드 스레드가 발신)</td><td><code>poll()</code> 호출 간격 (내 리스너 스레드가 만듦)</td><td>신호가 다르므로 <b>같이 움직이지 않는다</b></td></tr>
+    <tr><td><b>묻는 질문</b></td><td class="good">"프로세스가 살아 있는가"</td><td class="bad">"살아는 있는데 일이 안 나가는가"</td><td>둘 다 정상이어야 그룹에 남는다</td></tr>
+    <tr class="hl"><td><b>판정 주체</b></td><td>브로커(그룹 코디네이터)가 <b>멤버를 제거</b></td><td>컨슈머 클라이언트가 <b>스스로 탈퇴 통보</b></td><td><b>로그가 남는 위치가 갈린다</b></td></tr>
+    <tr><td><b>증거가 남는 곳</b></td><td>브로커/코디네이터 로그. 컨슈머 로그는 <b>끊겨 있는 것이 단서</b></td><td>컨슈머 앱 로그에 <b>또렷한 경고</b>(권고 문구까지 붙음)</td><td>진단의 첫 갈래를 가르는 근거</td></tr>
+    <tr class="hl"><td><b>시계를 리셋하는 것</b></td><td>하트비트 발신 — <code>heartbeat.interval.ms</code> 주기, <b>내가 정한다</b></td><td>한 배치의 처리 완료 — <b>일이 정한다</b>(들쭉날쭉)</td><td>왼쪽은 통제 가능, 오른쪽은 통제 밖</td></tr>
+    <tr><td><b>주 원인</b></td><td>크래시 · 긴 GC · OOM 킬 · CPU 스로틀 · 네트워크</td><td>느린 다운스트림 · 큰 배치 · 교착 · 블로킹 재시도</td><td><b>수사 방향이 완전히 갈린다</b></td></tr>
+    <tr class="hl"><td><b>대응 팀</b></td><td>런타임/인프라 — 힙·GC 튜닝, 리소스 한도, 노드 교체</td><td>애플리케이션 — 배치 크기, 타임아웃, 로직, 구조 분리</td><td>엉뚱한 팀이 붙으면 시간만 흐른다</td></tr>
+    <tr><td><b>값의 스케일</b></td><td>"네트워크가 <b>몇 초</b> 끊겼나"</td><td>"배치 하나 처리에 <b>몇 분</b> 걸리나"</td><td>실무에서 뒤가 앞보다 훨씬 크다</td></tr>
+    <tr class="hl"><td><b>기본값</b></td><td class="dash">버전에 따라 바뀌어 왔다 — 숫자보다 <b>1/3 관계</b>를 기억</td><td><code>300000</code> ms (5분)</td><td>클러스터 허용 범위 설정도 함께 확인</td></tr>
+    <tr><td><b>짝이 되는 값</b></td><td><code>heartbeat.interval.ms</code> (반드시 이보다 크게)</td><td><code>max.poll.records</code> (곱해서 예측)</td><td>혼자 조정하면 반드시 탈이 난다</td></tr>
+    <tr class="bad"><td><b>이 값만으로 못 잡는 것</b></td><td class="bad">처리 스레드 교착 — <b>하트비트는 계속 뛴다</b></td><td class="bad">프로세스 급사 — <b>poll 타이머가 만료될 때까지 모른다</b></td><td>그래서 <b>둘 다 필요하다</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>두 값을 헷갈리지 않게 하는 세 쌍</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">session = 심박</div><div class="s">별도 스레드 · 브로커가 제거</div><div class="d"><b>프로세스</b>의 문제 → <b>인프라</b> 수사</div></div>
+    <div class="tile red"><div class="k">max.poll = 일지</div><div class="s">리스너 스레드 · 스스로 탈퇴</div><div class="d"><b>처리</b>의 문제 → <b>애플리케이션</b> 수사</div></div>
+    <div class="tile ok"><div class="k">heartbeat = 발신 주기</div><div class="s">판정이 아니라 <b>발신</b></div><div class="d"><code>session</code>의 <b>1/3 이하</b>로</div></div>
+  </div>
+</div>
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 3층 구조 — <span style="color:#2563eb">발신 주기</span> · <span style="color:#2563eb">죽음 판정</span> · <span style="color:#dc2626">게으름 판정</span></h2>
+
+<p>여기서 <b>세 번째 값</b>이 등장한다. <code>heartbeat.interval.ms</code>는 하트비트 스레드가 신호를 <b>보내는 주기</b>다. <code>session.timeout.ms</code>는 그 신호가 끊겼다고 <b>판정하는 한도</b>다. 이름이 비슷해 헷갈리지만 역할이 전혀 다르다 — <b>하나는 발신 주기, 하나는 수신 측 인내심</b>이다.</p>
+
+<div class="stack3">
+  <div class="lv l1"><div class="k">① heartbeat.interval.ms</div><div>얼마나 <b>자주</b> "살아있음"을 보낼 것인가 — <b>발신 주기</b>. 판정하지 않는다, 그냥 보낸다.</div></div>
+  <div class="lv l2"><div class="k">② session.timeout.ms</div><div>그 신호가 <b>얼마나 안 와야</b> 죽었다고 볼까 — <b>죽음 판정</b>. 코디네이터의 인내심.</div></div>
+  <div class="lv l3"><div class="k">③ max.poll.interval.ms</div><div><code>poll()</code>이 <b>얼마나 안 와야</b> 멈췄다고 볼까 — <b>게으름 판정</b>. 컨슈머 자신의 자기 검사.</div></div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="세 값의 3층 구조와 두 개의 시계 도식. 왼쪽 시계는 하트비트 스레드가 heartbeat.interval.ms 주기로 규칙적으로 리셋하며 만료되면 코디네이터가 멤버를 제거한다. 오른쪽 시계는 한 배치의 처리가 끝날 때마다 리셋되는데 그 간격이 들쭉날쭉하며 만료되면 컨슈머가 스스로 탈퇴한다. 왼쪽은 설정으로 통제 가능하고 오른쪽은 처리 로직과 다운스트림이 통제한다.">
+    <defs>
+      <marker id="a5b" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="a5r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">그룹에 남으려면 <tspan fill="#2563eb">두 개의 시계</tspan>를 동시에 리셋해야 한다 — 그런데 <tspan fill="#dc2626">리셋하는 주체가 다르다</tspan></text>
+
+    <rect x="24" y="46" width="520" height="200" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="284" y="74" font-size="13" font-weight="800" fill="#1e40af" text-anchor="middle">하트비트 스레드가 리셋하는 시계</text>
+    <line x1="60" y1="120" x2="500" y2="120" stroke="#bfdbfe" stroke-width="3"/>
+    <circle cx="90" cy="120" r="8" fill="#2563eb"/><circle cx="158" cy="120" r="8" fill="#2563eb"/><circle cx="226" cy="120" r="8" fill="#2563eb"/><circle cx="294" cy="120" r="8" fill="#2563eb"/><circle cx="362" cy="120" r="8" fill="#2563eb"/><circle cx="430" cy="120" r="8" fill="#2563eb"/>
+    <path d="M90,140 L158,140" stroke="#3b82f6" stroke-width="1.4" marker-end="url(#a5b)"/>
+    <path d="M158,140 L226,140" stroke="#3b82f6" stroke-width="1.4" marker-end="url(#a5b)"/>
+    <path d="M226,140 L294,140" stroke="#3b82f6" stroke-width="1.4" marker-end="url(#a5b)"/>
+    <path d="M294,140 L362,140" stroke="#3b82f6" stroke-width="1.4" marker-end="url(#a5b)"/>
+    <path d="M362,140 L430,140" stroke="#3b82f6" stroke-width="1.4" marker-end="url(#a5b)"/>
+    <text x="284" y="162" font-size="11" fill="#3b82f6" text-anchor="middle" class="mono">일정한 간격 · heartbeat.interval.ms</text>
+    <text x="46" y="196" font-size="12" fill="#1e3a8a">마지막 하트비트로부터 <tspan class="mono" font-weight="800">session.timeout.ms</tspan> 경과하면</text>
+    <text x="46" y="216" font-size="12.5" font-weight="800" fill="#1e40af">→ 코디네이터가 멤버 제거</text>
+    <rect x="46" y="226" width="480" height="4" rx="2" fill="#bfdbfe"/>
+    <text x="46" y="242" font-size="11.5" fill="#2563eb">리셋 주기: <tspan font-weight="800">내가 정하는 값</tspan> — 짧고 규칙적, 설정으로 통제 가능</text>
+
+    <rect x="576" y="46" width="520" height="200" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="836" y="74" font-size="13" font-weight="800" fill="#b91c1c" text-anchor="middle">폴링 스레드가 리셋하는 시계</text>
+    <line x1="612" y1="120" x2="1052" y2="120" stroke="#fecaca" stroke-width="3"/>
+    <circle cx="640" cy="120" r="8" fill="#dc2626"/><circle cx="700" cy="120" r="8" fill="#dc2626"/><circle cx="878" cy="120" r="8" fill="#dc2626"/><circle cx="930" cy="120" r="8" fill="#dc2626"/><circle cx="1040" cy="120" r="8" fill="#dc2626"/>
+    <path d="M640,140 L700,140" stroke="#ef4444" stroke-width="1.4" marker-end="url(#a5r)"/>
+    <path d="M700,140 L878,140" stroke="#ef4444" stroke-width="1.4" marker-end="url(#a5r)"/>
+    <path d="M878,140 L930,140" stroke="#ef4444" stroke-width="1.4" marker-end="url(#a5r)"/>
+    <path d="M930,140 L1040,140" stroke="#ef4444" stroke-width="1.4" marker-end="url(#a5r)"/>
+    <text x="836" y="162" font-size="11" fill="#ef4444" text-anchor="middle">들쭉날쭉한 간격 · 한 배치의 처리 시간</text>
+    <text x="598" y="196" font-size="12" fill="#7f1d1d">마지막 <tspan class="mono">poll()</tspan>로부터 <tspan class="mono" font-weight="800">max.poll.interval.ms</tspan> 경과하면</text>
+    <text x="598" y="216" font-size="12.5" font-weight="800" fill="#b91c1c">→ 컨슈머가 스스로 그룹 탈퇴</text>
+    <rect x="598" y="226" width="480" height="4" rx="2" fill="#fecaca"/>
+    <text x="598" y="242" font-size="11.5" fill="#dc2626">리셋 주기: <tspan font-weight="800">일이 정하는 값</tspan> — 다운스트림 상태에 좌우, 통제 밖</text>
+
+    <rect x="24" y="258" width="1072" height="34" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="560" y="280" font-size="12.5" fill="#334155" text-anchor="middle">그래서 <tspan font-weight="800" fill="#2563eb">왼쪽에 걸리면 "인프라에 무슨 일이 생겼나"</tspan>를 묻고, <tspan font-weight="800" fill="#dc2626">오른쪽에 걸리면 "처리가 왜 느려졌나"</tspan>를 묻게 된다</text>
+  </svg>
+  <figcaption>두 시계의 성격 차이. <b>왼쪽 시계는 설정으로 통제할 수 있고, 오른쪽 시계는 처리 로직과 다운스트림 상태가 통제한다.</b> 이 한 문장이 9절 진단 절차의 근거다.</figcaption>
+</figure>
+
+<div class="callout warn"><span class="t">자주 나오는 혼동 — "하트비트를 자주 보내면 poll 초과도 막히나요?"</span>
+막히지 <b>않는다.</b> 하트비트를 아무리 자주 보내도 <b>오른쪽 시계는 전혀 리셋되지 않는다.</b> 오른쪽 시계를 리셋하는 유일한 행동은 <code>poll()</code> <b>호출</b>이다. 두 시계는 <b>서로 다른 사건</b>으로 리셋되며, <b>한쪽을 아무리 잘 관리해도 다른 쪽을 대신해 주지 못한다</b>는 것이 스레드 분리의 필연적 결과다.
+</div>
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 왜 발신 주기가 판정 시간의 <span style="color:#16a34a">1/3 이하</span>여야 하는가</h2>
+
+<p><code>heartbeat.interval.ms</code>와 <code>session.timeout.ms</code> 사이에는 반드시 지켜야 할 제약이 있다. <b>보내는 주기가 판정 시간보다 작아야 한다.</b> 당연한 말 같지만 <b>이유를 정확히 알아야</b> 면접에서 한 줄 더 나갈 수 있다.</p>
+
+<div class="callout trap"><span class="t">주기 ≥ 판정 시간이면 무슨 일이 벌어지나</span>
+정상적으로 신호를 보내고 있는 컨슈머조차 <b>다음 신호를 보내기 전에 판정 시간이 만료된다.</b> 아무 문제가 없어도 <b>무조건 쫓겨나는 설정</b>이 되는 것이다. 이건 튜닝 실패가 아니라 <b>산술적으로 성립하지 않는 설정</b>이다.
+</div>
+
+<p>그런데 <b>"작기만 하면 된다"로는 부족하다.</b> <b>충분히 작아야</b> 한다. 왜인지는 <b>판정 창 안에 하트비트가 몇 번 들어가는지</b>를 세어 보면 그대로 보인다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="하트비트 주기와 세션 타임아웃 비율에 따른 여유 비교 타임라인. 주기가 판정 시간의 3분의 1일 때 판정 창 안에 하트비트 기회가 세 번 들어가므로 한 번 유실돼도 나머지가 남지만, 주기가 판정 시간과 비슷하면 기회가 한 번뿐이라 한 번의 지연이나 유실로 곧바로 사망 판정이 난다.">
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">판정 창 안에 <tspan fill="#2563eb">하트비트가 몇 번</tspan> 들어가는가 — 그것이 <tspan fill="#2563eb">재시도 기회의 수</tspan>다</text>
+
+    <rect x="24" y="44" width="1072" height="120" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="44" y="70" font-size="12.5" font-weight="800" fill="#166534">[좋은 설정] 주기 = 판정 시간의 1/3 — 판정 창 안에 하트비트 기회 <tspan font-size="14">3번</tspan></text>
+    <rect x="120" y="86" width="720" height="30" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-dasharray="5 4"/>
+    <text x="480" y="106" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle" class="mono">판정 창 ◀────── session.timeout.ms ──────▶</text>
+    <line x1="120" y1="132" x2="980" y2="132" stroke="#cbd5e1" stroke-width="2"/>
+    <circle cx="240" cy="132" r="9" fill="#94a3b8" stroke="#dc2626" stroke-width="2.5"/>
+    <text x="240" y="156" font-size="11" fill="#dc2626" text-anchor="middle" font-weight="700">① 유실</text>
+    <circle cx="480" cy="132" r="9" fill="#16a34a"/><text x="480" y="156" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">② 도착</text>
+    <circle cx="720" cy="132" r="9" fill="#16a34a"/><text x="720" y="156" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">③ 도착</text>
+    <text x="880" y="112" font-size="12" font-weight="800" fill="#16a34a">①이 유실돼도 ②·③이 남는다</text>
+    <text x="880" y="134" font-size="11.5" fill="#166534">한 번의 딸꾹질로는</text>
+    <text x="880" y="152" font-size="11.5" font-weight="800" fill="#166534">사망 판정이 나지 않는다</text>
+
+    <rect x="24" y="178" width="1072" height="120" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="204" font-size="12.5" font-weight="800" fill="#b91c1c">[나쁜 설정] 주기 ≒ 판정 시간 — 판정 창 안에 하트비트 기회 <tspan font-size="14">1번</tspan></text>
+    <rect x="120" y="220" width="720" height="30" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-dasharray="5 4"/>
+    <text x="480" y="240" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle" class="mono">판정 창 ◀────── session.timeout.ms ──────▶</text>
+    <line x1="120" y1="266" x2="980" y2="266" stroke="#cbd5e1" stroke-width="2"/>
+    <circle cx="700" cy="266" r="9" fill="#94a3b8" stroke="#dc2626" stroke-width="2.5"/>
+    <text x="700" y="290" font-size="11" fill="#dc2626" text-anchor="middle" font-weight="700">① 조금 늦음</text>
+    <text x="880" y="246" font-size="12" font-weight="800" fill="#dc2626">①이 한 번 늦거나 유실되면</text>
+    <text x="880" y="268" font-size="11.5" fill="#b91c1c">곧바로 사망 판정 →</text>
+    <text x="880" y="286" font-size="11.5" font-weight="800" fill="#b91c1c">불필요한 리밸런싱이 터진다</text>
+  </svg>
+  <figcaption>원리는 이것이다 — <b>일시적인 지연이나 유실 한 번으로 사망 판정이 나지 않으려면, 판정 창 안에 하트비트가 여러 번 들어갈 수 있어야 한다.</b> Kafka 공식 문서가 권하는 관례가 <b><code>session.timeout.ms</code>의 1/3 이하</b>인 이유가 여기 있다 — 재시도 기회를 두세 번 확보하는 값이다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>외울 것은 숫자가 아니라 관계다</h4>
+  <div class="rule ok"><code>heartbeat.interval.ms</code> &#8804; <code>session.timeout.ms</code> ÷ 3</div>
+  <div class="ratio">
+    <div style="flex:1;background:#2563eb">hb</div><div style="flex:1;background:#60a5fa">hb</div><div style="flex:1;background:#93c5fd;color:#1e3a8a">hb</div>
+  </div>
+  <p style="margin-bottom:0">판정 창 하나에 <b>하트비트 세 칸</b>. 이 그림만 기억하면 <b>"세션 타임아웃을 줄일 땐 하트비트 주기도 같이 줄인다"</b>가 자동으로 따라온다 — <b>둘 중 하나만 만지면 비율이 깨진다</b>는 것이 실무에서 가장 자주 나는 실수다.</p>
+</div>
+
+<h3>6-1. 그런데 <code>max.poll.interval.ms</code>에는 왜 이런 비율 규칙이 없나</h3>
+
+<p><b>신호의 종류가 아예 다르기 때문</b>이다. 하트비트끼리는 <b>"몇 번 보내는 동안 몇 번 놓쳤나"</b>를 셀 수 있어서 비율이 의미를 갖는다. 하지만 poll 간격은 <b>처리 시간이라는 별개의 축</b>에서 정해지므로 하트비트와 비교할 공통 단위가 없다.</p>
+
+<div class="vs">
+  <div class="pane b" style="margin:0"><h4>같은 신호를 재는 짝</h4><p style="margin:0;font-size:.94rem"><code>heartbeat.interval.ms</code> ↔ <code>session.timeout.ms</code><br><b>발신</b>과 <b>판정</b>이라 <b>비율 규칙이 성립</b>한다</p></div>
+  <div class="mid">vs</div>
+  <div class="pane r" style="margin:0"><h4>다른 신호를 재는 값</h4><p style="margin:0;font-size:.94rem"><code>max.poll.interval.ms</code><br>비교 대상이 <b>하트비트가 아니라 처리 시간</b>이라 <b>산술 제약이 없다</b></p></div>
+</div>
+
+<p>실무에서 <code>max.poll.interval.ms</code>가 <code>session.timeout.ms</code>보다 훨씬 큰 값이 되는 것도 그래서다 — <b>하나는 "네트워크가 몇 초 끊겼나"의 스케일이고, 하나는 "배치 하나를 처리하는 데 몇 분 걸리나"의 스케일이다.</b> 스케일이 다른 두 값을 같은 기준으로 맞추려 하면 어느 한쪽이 반드시 어긋난다.</p>
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 스레드 분리가 만드는 <span style="color:#dc2626">사각지대 세 구멍</span></h2>
+
+<p>두 스레드가 분리돼 있다는 사실은 편리함만 주지 않는다. <b>각 판정이 못 잡는 구멍</b>도 같이 만든다. 이걸 알아야 진단이 정확해지고, <b>"값을 키우면 되지 않나요"에 제대로 반박</b>할 수 있다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 430" role="img" aria-label="스레드 분리가 만드는 세 가지 사각지대 도식. 구멍 1은 하트비트는 뛰는데 처리 스레드가 교착에 빠진 경우로 세션 타임아웃으로는 잡히지 않고 오직 poll 간격 초과로만 잡힌다. 구멍 2는 긴 stop-the-world GC가 두 스레드를 함께 멈추는 경우로 보통 세션 타임아웃에 먼저 걸린다. 구멍 3은 리스너 코드의 Thread.sleep으로 세션은 정상인데 poll 간격만 늘어나는 경우다.">
+    <defs>
+      <marker id="a7r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">각 판정이 <tspan fill="#dc2626">못 잡는 것</tspan>이 있다 — 세 구멍의 모양을 외워 두면 진단이 빨라진다</text>
+
+    <rect x="24" y="44" width="348" height="370" rx="12" fill="#fff" stroke="#dc2626" stroke-width="1.8"/>
+    <rect x="24" y="44" width="348" height="34" rx="12" fill="#dc2626"/>
+    <text x="198" y="67" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">구멍 1 — 하트비트만 살아 있는 시체</text>
+    <text x="44" y="102" font-size="11.5" fill="#334155">처리 스레드가 <tspan font-weight="800">교착(deadlock)</tspan>에 빠지거나</text>
+    <text x="44" y="120" font-size="11.5" fill="#334155">응답 없는 API를 <tspan font-weight="800">타임아웃 없이</tspan> 기다리는 중</text>
+    <rect x="44" y="134" width="308" height="52" rx="8" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="60" y="156" font-size="11.5" font-weight="700" fill="#1e40af">하트비트 스레드</text>
+    <circle cx="200" cy="168" r="5" fill="#2563eb"/><circle cx="230" cy="168" r="5" fill="#2563eb"/><circle cx="260" cy="168" r="5" fill="#2563eb"/><circle cx="290" cy="168" r="5" fill="#2563eb"/><circle cx="320" cy="168" r="5" fill="#2563eb"/>
+    <text x="60" y="176" font-size="11" fill="#3b82f6">정상 · 계속 뜀</text>
+    <rect x="44" y="194" width="308" height="52" rx="8" fill="#fef2f2" stroke="#fca5a5"/>
+    <text x="60" y="216" font-size="11.5" font-weight="700" fill="#b91c1c">폴링 스레드</text>
+    <line x1="196" y1="228" x2="336" y2="228" stroke="#dc2626" stroke-width="2" stroke-dasharray="4 4"/>
+    <text x="60" y="236" font-size="11" fill="#ef4444">완전 정지 · poll() 없음</text>
+    <rect x="44" y="256" width="308" height="60" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="198" y="278" font-size="12" fill="#334155" text-anchor="middle">코디네이터 눈에는</text>
+    <text x="198" y="300" font-size="13" font-weight="800" fill="#dc2626" text-anchor="middle">완벽하게 건강한 멤버</text>
+    <rect x="44" y="328" width="308" height="70" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="198" y="352" font-size="12" font-weight="800" fill="#b45309" text-anchor="middle">이 상태를 잡는 것은</text>
+    <text x="198" y="374" font-size="13" font-weight="800" fill="#b45309" text-anchor="middle" class="mono">오직 max.poll.interval.ms</text>
+    <text x="198" y="392" font-size="11" fill="#92400e" text-anchor="middle">→ 이 값을 무한대로 키우면 안 되는 이유</text>
+
+    <rect x="386" y="44" width="348" height="370" rx="12" fill="#fff" stroke="#d97706" stroke-width="1.8"/>
+    <rect x="386" y="44" width="348" height="34" rx="12" fill="#d97706"/>
+    <text x="560" y="67" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">구멍 2 — 긴 GC는 두 스레드를 함께 멈춘다</text>
+    <text x="406" y="102" font-size="11.5" fill="#334155"><tspan font-weight="800">stop-the-world GC</tspan>는 이름 그대로</text>
+    <text x="406" y="120" font-size="11.5" fill="#334155">애플리케이션 스레드 <tspan font-weight="800">전부</tspan>를 정지시킨다</text>
+    <rect x="406" y="134" width="308" height="52" rx="8" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="422" y="156" font-size="11.5" font-weight="700" fill="#1e40af">하트비트 스레드</text>
+    <circle cx="562" cy="168" r="5" fill="#2563eb"/><circle cx="592" cy="168" r="5" fill="#2563eb"/>
+    <rect x="610" y="160" width="94" height="16" rx="4" fill="#fed7aa" stroke="#d97706"/>
+    <text x="657" y="172" font-size="9.5" font-weight="700" fill="#9a3412" text-anchor="middle">GC로 정지</text>
+    <text x="422" y="176" font-size="11" fill="#ef4444">예외가 아니다 — 함께 멈춘다</text>
+    <rect x="406" y="194" width="308" height="52" rx="8" fill="#fef2f2" stroke="#fca5a5"/>
+    <text x="422" y="216" font-size="11.5" font-weight="700" fill="#b91c1c">폴링 스레드</text>
+    <rect x="562" y="220" width="142" height="16" rx="4" fill="#fed7aa" stroke="#d97706"/>
+    <text x="633" y="232" font-size="9.5" font-weight="700" fill="#9a3412" text-anchor="middle">GC로 정지</text>
+    <text x="422" y="236" font-size="11" fill="#ef4444">역시 정지</text>
+    <rect x="406" y="256" width="308" height="60" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="560" y="278" font-size="12" fill="#334155" text-anchor="middle">스케일이 작은 쪽이 먼저 만료되므로</text>
+    <text x="560" y="300" font-size="13" font-weight="800" fill="#2563eb" text-anchor="middle" class="mono">보통 session.timeout.ms에 먼저</text>
+    <rect x="406" y="328" width="308" height="70" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="560" y="352" font-size="12" font-weight="800" fill="#b45309" text-anchor="middle">"하트비트 스레드가 별도"라고 해서</text>
+    <text x="560" y="374" font-size="13" font-weight="800" fill="#b45309" text-anchor="middle">GC로부터 안전한 것은 아니다</text>
+    <text x="560" y="392" font-size="11" fill="#92400e" text-anchor="middle">별도 = 내 코드와 독립, JVM과 독립은 아님</text>
+
+    <rect x="748" y="44" width="348" height="370" rx="12" fill="#fff" stroke="#dc2626" stroke-width="1.8"/>
+    <rect x="748" y="44" width="348" height="34" rx="12" fill="#991b1b"/>
+    <text x="922" y="67" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">구멍 3 — 리스너 안의 sleep (자주 밟는 지뢰)</text>
+    <text x="768" y="102" font-size="11.5" fill="#334155">재시도 대기를 <tspan class="mono" font-weight="800">Thread.sleep</tspan>으로 걸면</text>
+    <text x="768" y="120" font-size="11.5" fill="#334155">잠드는 것은 <tspan font-weight="800">처리 스레드뿐</tspan>이다</text>
+    <rect x="768" y="134" width="308" height="52" rx="8" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="784" y="156" font-size="11.5" font-weight="700" fill="#1e40af">하트비트 스레드</text>
+    <circle cx="924" cy="168" r="5" fill="#2563eb"/><circle cx="954" cy="168" r="5" fill="#2563eb"/><circle cx="984" cy="168" r="5" fill="#2563eb"/><circle cx="1014" cy="168" r="5" fill="#2563eb"/><circle cx="1044" cy="168" r="5" fill="#2563eb"/>
+    <text x="784" y="176" font-size="11" fill="#16a34a" font-weight="700">세션은 완벽하게 정상</text>
+    <rect x="768" y="194" width="308" height="52" rx="8" fill="#fef2f2" stroke="#fca5a5"/>
+    <text x="784" y="216" font-size="11.5" font-weight="700" fill="#b91c1c">폴링 스레드</text>
+    <rect x="900" y="220" width="176" height="16" rx="4" fill="#fecaca" stroke="#dc2626"/>
+    <text x="988" y="232" font-size="9.5" font-weight="700" fill="#991b1b" text-anchor="middle">sleep(1s) × 재시도 3회</text>
+    <text x="784" y="236" font-size="11" fill="#ef4444">poll 간격만 조용히 늘어난다</text>
+    <rect x="768" y="256" width="308" height="60" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="922" y="278" font-size="12" fill="#334155" text-anchor="middle">평소에는 멀쩡하다가</text>
+    <text x="922" y="300" font-size="12.5" font-weight="800" fill="#dc2626" text-anchor="middle">다운스트림 장애 때 한꺼번에 터진다</text>
+    <rect x="768" y="328" width="308" height="70" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="922" y="350" font-size="11.5" font-weight="800" fill="#b45309" text-anchor="middle">모든 레코드가 재시도 경로를 타는 순간</text>
+    <text x="922" y="372" font-size="11.5" fill="#92400e" text-anchor="middle">한 사이클 = 배치 × 재시도 × 백오프</text>
+    <text x="922" y="392" font-size="11.5" font-weight="800" fill="#b45309" text-anchor="middle">→ 축출이 장애와 겹쳐서 온다</text>
+  </svg>
+  <figcaption>세 구멍의 공통 교훈 — <b>두 판정은 서로를 대신해 주지 못한다.</b> 구멍 1은 세션이 절대 못 잡고, 구멍 2는 poll 간격이 먼저 알아채지 못하며, 구멍 3은 <b>세션만 보고 있으면 영원히 안 보인다.</b></figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>사각지대 3구멍 — 두문자로 <span class="mono">교 · GC · 슬립</span></h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">교착</div><div class="d">하트비트만 뜀 → <b>오직 poll 간격</b>으로만 잡힘. <b>값을 키우면 잡을 장치가 사라진다.</b></div></div>
+    <div class="tile red"><div class="k">GC</div><div class="d">두 스레드 <b>동시 정지</b> → 보통 <b>세션</b>에 먼저 걸림. 수사 대상은 <b>Kafka 밖</b>.</div></div>
+    <div class="tile red"><div class="k">슬립</div><div class="d">세션 정상 + poll 간격만 증가 → <b>블로킹 재시도</b>가 대표 사례. 재시도 예산을 계산에 포함해야 한다.</div></div>
+  </div>
+  <p style="margin-bottom:0">면접에서 <b>"두 값의 차이"</b>를 물었을 때 이 세 구멍 중 하나만 곁들여도 <b>정의를 외운 답과 확실히 구분</b>된다. 특히 <b>구멍 1</b>은 <b>"값을 크게 잡으면 되지 않나"</b>에 대한 정면 반박이라 활용도가 높다.</p>
+</div>
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. poll 간격을 <span style="color:#16a34a">예측하는 산식</span> — 사고가 나기 전에 계산으로 안다</h2>
+
+<p><code>max.poll.interval.ms</code>를 넘길지 안 넘길지는 <b>사고가 난 뒤가 아니라 설정할 때 계산으로 알 수 있다.</b> 이 계산을 할 줄 아는지가 <b>"설정을 외운 사람"과 "설정을 정하는 사람"</b>을 가른다.</p>
+
+<p>한 번의 <code>poll()</code>은 메시지를 <b>한 건씩</b> 가져오지 않는다. <b>최대 <code>max.poll.records</code>개까지 한꺼번에 가져오고</b>, <b>그 전부를 처리한 뒤에야</b> 다음 <code>poll()</code>을 부른다. 그러므로 한 사이클의 최대 처리 시간은 이렇게 예측된다.</p>
+
+<div class="formula">한 사이클 ≒ <span class="hi">max.poll.records</span> × 레코드당 처리 시간 &#160;&#160;<span style="color:#94a3b8">&lt;</span>&#160;&#160; <span class="hi2">max.poll.interval.ms</span></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="한 poll 사이클의 시간 구성 타임라인. poll 한 번에 max.poll.records 만큼의 레코드를 받아 순차 처리하며, 레코드당 1초에 500건이면 500초가 걸려 기본 한도 300초를 200초 초과해 축출된다. 아래에는 배치를 100건으로 줄였을 때 100초로 한도 안에 들어오는 모습을 보여준다.">
+    <defs>
+      <marker id="a8r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="a8g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">같은 처리 속도, <tspan fill="#2563eb">다른 배치 크기</tspan> — 한도를 넘는지가 갈린다 (레코드당 1초 가정)</text>
+
+    <line x1="640" y1="44" x2="640" y2="272" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+    <rect x="556" y="46" width="168" height="24" rx="6" fill="#dc2626"/>
+    <text x="640" y="63" font-size="11.5" font-weight="800" fill="#fff" text-anchor="middle" class="mono">한도 300초 (기본값)</text>
+
+    <text x="24" y="106" font-size="12.5" font-weight="800" fill="#b91c1c">Before · max.poll.records = 500</text>
+    <rect x="24" y="118" width="30" height="30" rx="6" fill="#334155"/>
+    <text x="39" y="138" font-size="9.5" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll</text>
+    <rect x="58" y="118" width="582" height="30" rx="0" fill="#fecaca" stroke="#dc2626"/>
+    <rect x="640" y="118" width="374" height="30" rx="0" fill="#fca5a5" stroke="#dc2626" stroke-dasharray="4 3"/>
+    <text x="330" y="138" font-size="11.5" font-weight="700" fill="#7f1d1d" text-anchor="middle">레코드 500건 순차 처리</text>
+    <text x="827" y="138" font-size="11.5" font-weight="800" fill="#7f1d1d" text-anchor="middle">한도 초과 구간 200초</text>
+    <path d="M1014,133 L1050,133" stroke="#dc2626" stroke-width="2" marker-end="url(#a8r)"/>
+    <text x="1058" y="129" font-size="11" font-weight="800" fill="#dc2626">축출</text>
+    <text x="1058" y="145" font-size="11" fill="#dc2626">되기 전에</text>
+    <text x="24" y="170" font-size="11.5" fill="#7f1d1d">한 사이클 <tspan font-weight="800" class="mono">500 × 1초 = 500초</tspan> — 다음 poll()이 오기 전에 <tspan font-weight="800">이미 한도가 만료된다</tspan> → <tspan font-weight="800">매 사이클 축출</tspan></text>
+
+    <text x="24" y="216" font-size="12.5" font-weight="800" fill="#166534">After · max.poll.records = 100</text>
+    <rect x="24" y="228" width="30" height="30" rx="6" fill="#334155"/>
+    <text x="39" y="248" font-size="9.5" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll</text>
+    <rect x="58" y="228" width="116" height="30" fill="#bbf7d0" stroke="#16a34a"/>
+    <text x="116" y="248" font-size="10.5" fill="#166534" text-anchor="middle">100건</text>
+    <rect x="178" y="228" width="30" height="30" rx="6" fill="#334155"/>
+    <text x="193" y="248" font-size="9.5" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll</text>
+    <rect x="212" y="228" width="116" height="30" fill="#bbf7d0" stroke="#16a34a"/>
+    <text x="270" y="248" font-size="10.5" fill="#166534" text-anchor="middle">100건</text>
+    <rect x="332" y="228" width="30" height="30" rx="6" fill="#334155"/>
+    <text x="347" y="248" font-size="9.5" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll</text>
+    <rect x="366" y="228" width="116" height="30" fill="#bbf7d0" stroke="#16a34a"/>
+    <text x="424" y="248" font-size="10.5" fill="#166534" text-anchor="middle">100건</text>
+    <rect x="486" y="228" width="30" height="30" rx="6" fill="#334155"/>
+    <text x="501" y="248" font-size="9.5" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll</text>
+    <rect x="520" y="228" width="116" height="30" fill="#bbf7d0" stroke="#16a34a"/>
+    <text x="578" y="248" font-size="10.5" fill="#166534" text-anchor="middle">100건</text>
+    <rect x="644" y="228" width="30" height="30" rx="6" fill="#334155"/>
+    <text x="659" y="248" font-size="9.5" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll</text>
+    <rect x="678" y="228" width="116" height="30" fill="#bbf7d0" stroke="#16a34a"/>
+    <text x="736" y="248" font-size="10.5" fill="#166534" text-anchor="middle">100건</text>
+    <text x="810" y="248" font-size="11.5" font-weight="800" fill="#16a34a">사이클마다 타이머 리셋 ✓</text>
+    <text x="24" y="280" font-size="11.5" fill="#166534">한 사이클 <tspan font-weight="800" class="mono">100 × 1초 = 100초</tspan> — <tspan font-weight="800">총 처리량은 같지만</tspan> 여러 바퀴로 나눠 돌므로 <tspan font-weight="800">poll 간격이 짧아진다</tspan></text>
+  </svg>
+  <figcaption>핵심은 <b>"총 처리량은 그대로인데 poll 간격만 짧아진다"</b>는 점이다. 500건을 한 바퀴에 처리하든 100건씩 다섯 바퀴로 처리하든 <b>같은 시간에 같은 양</b>을 처리하지만, <b>타이머는 바퀴마다 리셋된다.</b> 그래서 <code>max.poll.records</code> 축소가 <b>부작용이 작은 1순위 대응</b>인 것이다.</figcaption>
+</figure>
+
+<h3>8-1. 숫자를 넣어 보면 여유가 생각보다 없다</h3>
+
+<p><code>max.poll.records</code> 기본값은 <b>500</b>, <code>max.poll.interval.ms</code> 기본값은 <b>300000ms(5분)</b>다.</p>
+
+<div class="scroll">
+<table>
+  <caption>배치 크기 × 레코드당 처리 시간 → 한 사이클 시간 (기본 한도 300초와 비교)</caption>
+  <thead><tr><th style="width:170px">max.poll.records</th><th style="width:180px">레코드당 처리 시간</th><th style="width:150px">한 사이클</th><th style="width:200px">5분(300초) 대비</th><th>해석</th></tr></thead>
+  <tbody>
+    <tr class="bad"><td class="mono">500 (기본)</td><td class="mono">1초</td><td class="mono">500초</td><td class="bad">초과 — 축출</td><td>외부 API 한 번이면 나오는 시간이다. <b>기본 설정 그대로 쓰다 터지는 대표 케이스</b></td></tr>
+    <tr><td class="mono">500 (기본)</td><td class="mono">0.5초</td><td class="mono">250초</td><td>통과하지만 <b>여유 50초뿐</b></td><td>다운스트림이 20%만 느려져도 넘어간다. <b>사실상 위험 구간</b></td></tr>
+    <tr><td class="mono">100</td><td class="mono">1초</td><td class="mono">100초</td><td class="good">통과</td><td>같은 처리량을 다섯 바퀴로 나눈 형태. <b>1순위 대응의 결과</b></td></tr>
+    <tr class="bad"><td class="mono">200</td><td class="mono">2초</td><td class="mono">400초</td><td class="bad">초과 — 축출</td><td>배치를 줄여도 <b>레코드당 시간이 크면</b> 여전히 넘는다</td></tr>
+    <tr><td class="mono">500 (기본)</td><td class="mono">50ms</td><td class="mono">25초</td><td class="good">넉넉히 통과</td><td>인메모리 변환 수준의 가벼운 처리라면 기본값으로 충분</td></tr>
+    <tr><td class="mono">1</td><td class="mono">2분</td><td class="mono">120초</td><td>통과 (여유 180초)</td><td>수 분짜리 작업의 <b>선택지 1</b> — 대신 <b>한 컨슈머 처리량에 상한</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="calcbox">
+  <div class="lbl">WORKED EXAMPLE — 기본 설정 + 레코드당 1초</div>
+  max.poll.records &#160;&#160;= 500 (기본값)<br>
+  레코드당 처리 시간 = 1.0 s &#160;<span class="lbl">← DB 2회 + 외부 API 1회면 흔한 값</span><br>
+  한 사이클 &#160;&#160;&#160;&#160;&#160;&#160;&#160;= 500 × 1.0 = <span class="res">500 s</span><br>
+  max.poll.interval.ms = 300 s (기본값)<br>
+  <span class="lbl">판정 →</span> 500 s &gt; 300 s &#160;&#160;<span class="res">200초 초과 · 매 사이클 축출</span>
+</div>
+
+<div class="callout trap"><span class="t">여기서 진짜 중요한 것</span>
+<b>레코드당 1초가 이상한 값이 아니라는 점</b>이다. 외부 API를 한 번 부르거나 DB에 몇 번 쓰면 <b>쉽게 나오는 시간</b>이다. 즉 <b style="color:#dc2626">평범한 처리 로직 + 기본 설정 조합만으로도 축출은 일어난다.</b> "특이한 워크로드에서만 생기는 문제"가 아니라 <b>기본값을 안 건드린 채 배포한 서비스에서 가장 흔하게 나는 사고</b>다.
+</div>
+
+<div class="memo warn">
+  <h4>배치 크기를 올릴 때 반드시 같이 하는 계산</h4>
+  <p style="margin-top:0"><b>처리량을 올리려고 <code>max.poll.records</code>를 늘리는 것</b>은 흔한 튜닝이다. 그런데 <b>이 값을 늘리면 한 사이클 시간도 그만큼 늘어난다.</b> 배치를 2배로 키우면 <b>한 사이클도 2배</b>가 되고, 그 순간 한도를 넘어 <b>리밸런싱이 반복되기 시작</b>한다.</p>
+  <div class="eq">배치 크기를 바꿀 때 = poll 간격을 바꾸는 것 → <b>두 값은 항상 세트로 검토</b></div>
+  <p style="margin-bottom:0">특히 <b>레코드당 처리 시간이 다운스트림에 좌우된다</b>는 점을 잊으면 안 된다. 계산이 통과였어도 <b>DB가 느려지는 날</b> 곱해진 값이 한도를 넘는다 — 그래서 여유를 <b>2~3배</b>로 잡는다.</p>
+</div>
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 진단의 첫 갈래 — <span style="color:#dc2626">어느 타임아웃</span>에 걸렸는가</h2>
+
+<p>"컨슈머가 자꾸 쫓겨나고 리밸런싱이 반복된다"는 신고가 오면, <b>설정을 만지기 전에 어느 타임아웃에 걸렸는지부터 가른다.</b></p>
+
+<div class="rule red">이 갈래를 세우지 않고 <code>max.poll.interval.ms</code>부터 올리는 것이 <b>가장 흔한 오진</b>이다</div>
+
+<p>원인이 GC였다면 값을 올려도 <b>아무것도 나아지지 않고 장애만 길어진다.</b> 반대로 원인이 처리 지연인데 힙만 들여다보고 있어도 마찬가지다. <b>가르는 근거는 로그 메시지</b>이고, 두 경우는 <b>메시지가 다를 뿐 아니라 메시지가 남는 위치도 다르다.</b></p>
+
+<h3>9-1. 두 갈래의 증거는 서로 다른 곳에 남는다</h3>
+
+<div class="split">
+  <div class="pane r"><h4>poll 간격 초과 — 컨슈머 앱 로그</h4>
+    <p style="margin:0 0 6px">컨슈머 애플리케이션 로그에 <b>"이 컨슈머가 <code>max.poll.interval.ms</code> 안에 <code>poll()</code>을 다시 부르지 않아 그룹에서 나간다"</b>는 취지의 경고가 남는다.</p>
+    <p style="margin:0 0 6px">컨슈머가 <b>스스로 판단해 탈퇴하는 것</b>이므로 <b>로그가 컨슈머 쪽에 또렷하게 남는다</b>는 점이 특징이다.</p>
+    <p style="margin:0">메시지에 보통 <b>처리 시간을 줄이거나 <code>max.poll.records</code>를 낮추라는 권고</b>까지 함께 붙는다 — <b>권고 문구가 붙어 있다는 것 자체가 이 갈래라는 표식</b>이다.</p>
+  </div>
+  <div class="pane b"><h4>하트비트 단절 — 브로커 로그 + 컨슈머 로그의 공백</h4>
+    <p style="margin:0 0 6px">브로커(그룹 코디네이터) 쪽에 <b>세션 만료로 멤버를 제거했다</b>는 취지의 기록이 남는다.</p>
+    <p style="margin:0 0 6px">컨슈머 쪽은 <b>로그가 없거나 중간에 뚝 끊겨 있는 것이 오히려 단서</b>다 — 프로세스가 죽었거나 GC로 정지해 있었으니 <b>로그를 남길 주체가 없었다</b>는 뜻이기 때문이다.</p>
+    <p style="margin:0"><b>"아무 로그도 없다"를 정보로 읽는 것</b>이 이 갈래의 요령이다.</p>
+  </div>
+</div>
+
+<div class="codehead bad"><span class="tag">갈래 A</span> 컨슈머 앱 로그 — poll 간격 초과의 전형적인 모양</div>
+<div class="logline">
+<span class="lv-warn">WARN</span> <span class="src">o.a.k.c.c.i.ConsumerCoordinator</span> — consumer poll timeout has expired.<br>
+&#160;&#160;This means the time between subsequent calls to poll() was longer than the<br>
+&#160;&#160;configured <span style="color:#fcd34d">max.poll.interval.ms</span>, which typically implies that the poll loop<br>
+&#160;&#160;is spending too much time processing messages.<br>
+&#160;&#160;You can address this either by increasing <span style="color:#fcd34d">max.poll.interval.ms</span><br>
+&#160;&#160;or by reducing the maximum size of batches returned in poll() with <span style="color:#fcd34d">max.poll.records</span>.<br>
+<span class="src">→ 읽는 법: "poll 사이 시간이 한도보다 길었다" + "처리에 시간을 너무 쓴다"는 진단 + 두 가지 권고</span><br>
+<span class="src">→ 이 문구가 보이면 수사 방향은 확정이다 — 처리 지연 쪽(10-1)</span>
+</div>
+
+<div class="codehead plain"><span class="tag">갈래 B</span> 브로커/코디네이터 로그 — 세션 만료의 전형적인 모양</div>
+<div class="logline">
+<span class="lv-err">INFO</span> <span class="src">kafka.coordinator.group.GroupCoordinator</span> — Member consumer-billing-3-...<br>
+&#160;&#160;in group <span style="color:#fcd34d">billing</span> has failed, removing it from the group<br>
+&#160;&#160;(reason: <span style="color:#fca5a5">removing member ... on heartbeat expiration</span>)<br>
+<span class="src">→ 읽는 법: 컨슈머가 나가겠다고 한 것이 아니라 "코디네이터가 제거했다"</span><br>
+<span class="src">→ 같은 시각 컨슈머 로그를 보면 <b>아무것도 없거나 갑자기 끊겨 있다</b> — 그 공백이 증거다</span><br>
+<span class="src">→ 수사 방향: GC 로그 · OOM 킬 이력 · CPU 스로틀 · 네트워크(10-2)</span>
+</div>
+
+<div class="callout warn"><span class="t">로그 문구는 버전·클라이언트마다 조금씩 다르다</span>
+위 두 블록은 <b>모양을 익히기 위한 예시</b>다. 문구를 통째로 외우기보다 <b>세 가지 표식</b>을 기억하는 편이 실전에 강하다 — <b>①</b> <code>max.poll.interval.ms</code>라는 <b>설정 이름이 로그에 직접 등장하는가</b>, <b>②</b> <b>권고 문구</b>가 붙어 있는가(붙어 있으면 poll 갈래), <b>③</b> 그 시각 <b>컨슈머 로그가 비어 있는가</b>(비어 있으면 세션 갈래).
+</div>
+
+<h3>9-2. 절차로 세우면 — 세 갈래 결정 트리</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 470" role="img" aria-label="리밸런싱 반복 장애의 진단 결정 트리. 먼저 컨슈머 앱 로그에 poll 간격 초과 경고가 있는지 확인하고, 있으면 처리 지연 수사로 간다. 없으면 브로커 로그에 세션 만료로 멤버를 제거했다는 기록이 있는지 확인하고, 있으면 프로세스와 인프라 수사로 간다. 둘 다 아니면 축출이 아니라 새 멤버 합류 문제이므로 오토스케일러 증감, 크래시 루프 파드, 잦은 배포를 확인한다.">
+    <defs>
+      <marker id="a9" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="14" font-weight="700" fill="#1f2937">어느 쪽 메시지를 봤느냐에 따라 <tspan fill="#dc2626">수사 방향이 완전히 갈린다</tspan> — 이 문서의 실무적 핵심</text>
+
+    <rect x="404" y="44" width="312" height="42" rx="10" fill="#334155"/>
+    <text x="560" y="70" font-size="13" font-weight="800" fill="#fff" text-anchor="middle">"리밸런싱이 반복된다" 신고 접수</text>
+    <path d="M560,88 L560,112" stroke="#64748b" stroke-width="2" marker-end="url(#a9)"/>
+
+    <rect x="330" y="116" width="460" height="60" rx="10" fill="#fff" stroke="#334155" stroke-width="1.8"/>
+    <text x="560" y="140" font-size="12" fill="#0f172a" text-anchor="middle">컨슈머 앱 로그에 <tspan font-weight="800" class="mono">"max.poll.interval.ms 안에 poll을 부르지</tspan></text>
+    <text x="560" y="160" font-size="12" fill="#0f172a" text-anchor="middle"><tspan font-weight="800" class="mono">않아 그룹에서 나간다"</tspan>는 취지의 경고가 있는가?</text>
+
+    <path d="M330,146 L232,146 L232,232" stroke="#dc2626" stroke-width="2" fill="none" marker-end="url(#a9)"/>
+    <text x="272" y="138" font-size="12" font-weight="800" fill="#dc2626">예</text>
+    <path d="M790,146 L888,146 L888,196" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#a9)"/>
+    <text x="838" y="138" font-size="12" font-weight="800" fill="#64748b">아니오</text>
+
+    <rect x="640" y="200" width="496" height="60" rx="10" fill="#fff" stroke="#334155" stroke-width="1.8"/>
+    <text x="888" y="224" font-size="12" fill="#0f172a" text-anchor="middle">브로커/코디네이터 로그에 <tspan font-weight="800">"세션 만료로 멤버 제거"</tspan></text>
+    <text x="888" y="244" font-size="12" fill="#0f172a" text-anchor="middle">취지의 기록이 있는가? <tspan fill="#64748b">(컨슈머 로그는 끊겨 있을 수 있다)</tspan></text>
+
+    <path d="M640,230 L560,230 L560,300" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a9)"/>
+    <text x="596" y="222" font-size="12" font-weight="800" fill="#2563eb">예</text>
+    <path d="M1000,260 L1000,300" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#a9)"/>
+    <text x="1024" y="284" font-size="12" font-weight="800" fill="#16a34a">아니오</text>
+
+    <rect x="24" y="304" width="380" height="146" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="214" y="330" font-size="13.5" font-weight="800" fill="#b91c1c" text-anchor="middle">[처리 지연 수사]</text>
+    <line x1="44" y1="340" x2="384" y2="340" stroke="#fecaca"/>
+    <text x="44" y="362" font-size="12" fill="#7f1d1d">· 산식 확인 — <tspan class="mono">records × 레코드당 시간</tspan></text>
+    <text x="44" y="384" font-size="12" fill="#7f1d1d">· 다운스트림 지연 (DB · 외부 API · 풀 고갈)</text>
+    <text x="44" y="406" font-size="12" fill="#7f1d1d">· 배치 크기 · 블로킹 재시도 예산</text>
+    <text x="44" y="428" font-size="12" fill="#7f1d1d">· poison pill (특정 오프셋에서만 멈춤)</text>
+    <text x="214" y="446" font-size="11" fill="#ef4444" text-anchor="middle">담당: 애플리케이션 — 10-1절</text>
+
+    <rect x="416" y="304" width="380" height="146" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="606" y="330" font-size="13.5" font-weight="800" fill="#1e40af" text-anchor="middle">[프로세스 · 인프라 수사]</text>
+    <line x1="436" y1="340" x2="776" y2="340" stroke="#bfdbfe"/>
+    <text x="436" y="362" font-size="12" fill="#1e3a8a">· GC 로그의 긴 stop-the-world</text>
+    <text x="436" y="384" font-size="12" fill="#1e3a8a">· OOM 킬 · 파드 재시작 이력</text>
+    <text x="436" y="406" font-size="12" fill="#1e3a8a">· CPU 스로틀링 (컨테이너 한도)</text>
+    <text x="436" y="428" font-size="12" fill="#1e3a8a">· 네트워크 단절 · 브로커 연결 불안정</text>
+    <text x="606" y="446" font-size="11" fill="#3b82f6" text-anchor="middle">담당: 런타임/인프라 — 10-2절</text>
+
+    <rect x="808" y="304" width="288" height="146" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="952" y="330" font-size="13.5" font-weight="800" fill="#166534" text-anchor="middle">[축출이 아니라 합류 문제]</text>
+    <line x1="828" y1="340" x2="1076" y2="340" stroke="#bbf7d0"/>
+    <text x="828" y="362" font-size="12" fill="#166534">· 오토스케일러의 증감</text>
+    <text x="828" y="384" font-size="12" fill="#166534">· 크래시 루프 파드의 재합류</text>
+    <text x="828" y="406" font-size="12" fill="#166534">· 잦은 배포 파이프라인</text>
+    <text x="828" y="428" font-size="12" fill="#166534">· 정적 멤버십 미사용</text>
+    <text x="952" y="446" font-size="11" fill="#16a34a" text-anchor="middle">"누가 자꾸 들어오나" — 13-3 꼬리질문</text>
+  </svg>
+  <figcaption>세 갈래 결정 트리. <b>세 번째 갈래</b>를 잊지 않는 것이 중요하다 — <b>리밸런싱을 부르는 사건은 축출만이 아니다.</b> 새 멤버의 <b>합류</b>도 트리거이므로, 두 타임아웃이 모두 정상인데 리밸런싱이 도는 경우가 실제로 존재한다.</figcaption>
+</figure>
+
+<div class="memo warn">
+  <h4>신고를 받으면 순서대로 던지는 세 질문</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">Q1</div><div class="s">컨슈머 앱 로그</div><div class="d">poll 간격 초과 경고가 <b>있는가</b> → 있으면 <b>처리 지연 수사</b>로 확정</div></div>
+    <div class="tile"><div class="k">Q2</div><div class="s">브로커 로그 + 컨슈머 로그 공백</div><div class="d">세션 만료 기록이 <b>있는가</b> → 있으면 <b>인프라 수사</b>. 컨슈머 로그의 <b>공백도 증거</b></div></div>
+    <div class="tile ok"><div class="k">Q3</div><div class="s">멤버 목록 변화 이력</div><div class="d">둘 다 없으면 <b>누가 들어오는가</b>를 본다 — 배포·스케일 이벤트와 시간축을 겹쳐 본다</div></div>
+  </div>
+  <p style="margin-bottom:0"><b>세 질문에 답하기 전에는 어떤 설정값도 바꾸지 않는다</b>는 규율이 진단의 절반이다.</p>
+</div>
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 갈래별 수사 — <span style="color:#dc2626">"무엇이 느려졌나"</span> vs <span style="color:#2563eb">"프로세스에 무슨 일이"</span></h2>
+
+<h3>10-1. poll 간격 초과라면 — "무엇이 느려졌나"</h3>
+
+<p>이쪽으로 갈렸다면 질문은 하나다. <b>한 사이클이 왜 한도를 넘길 만큼 길어졌나.</b> 순서대로 좁혀 나간다.</p>
+
+<div class="step"><div class="n">1</div><div class="body"><b>먼저 산식으로 확인한다.</b> <code>max.poll.records × 레코드당 처리 시간</code>을 계산해 한도와 비교한다. <b>계산부터 이미 초과</b>라면 설정 조합 자체가 잘못된 것이고, <b>계산상으로는 여유가 있는데 터졌다면</b> 레코드당 처리 시간이 <b>최근에 늘어난 것</b>이다. 이 분기 하나로 "설정 문제"와 "환경 변화"가 갈린다.</div></div>
+<div class="step"><div class="n">2</div><div class="body"><b>최근에 느려진 것이라면 다운스트림부터 본다.</b> 컨슈머 코드는 그대로인데 어제까지 멀쩡하던 것이 오늘 터졌다면, 원인은 대체로 <b>컨슈머 밖</b>에 있다 — DB 슬로우 쿼리, 외부 API 응답 지연, 커넥션 풀 고갈. <b>컨슈머의 처리 시간은 다운스트림 응답 시간의 함수</b>라는 점을 기억하면 수사 순서가 자연스럽게 잡힌다.</div></div>
+<div class="step"><div class="n">3</div><div class="body"><b>특정 메시지에서만 멈춘다면 poison pill을 의심한다.</b> poison pill은 <b>처리가 끝내 불가능해서 파티션 진행을 막아 버리는 메시지</b>를 말한다(독이 든 알약이 목에 걸려 뒤의 모든 것을 막는다는 비유다). 파티션은 <b>오프셋 하나로만 진행 상태를 표현하는 한 줄 대기열</b>이라, <b>한 건이 막히면 뒤가 전부 멈춘다.</b></div></div>
+
+<div class="memo">
+  <h4>대응의 우선순위 — 위에서부터 쓴다</h4>
+  <div class="deck">
+    <div class="d g"><div class="h">1순위 · <code>max.poll.records</code> 축소</div>한 바퀴를 가볍게 만든다. <b>총 처리량은 그대로</b>지만 여러 바퀴로 나눠 돌게 되므로 poll 간격이 짧아진다. <b>되돌리기 쉽고 부작용이 작아 1순위.</b></div>
+    <div class="d b"><div class="h">2순위 · 외부 호출에 타임아웃</div>응답 없는 호출이 <b>무한정 기다리며 poll 간격을 잡아먹지 않게</b> 상한을 건다. 이건 튜닝이 아니라 <b>기본기</b>에 가깝다.</div>
+    <div class="d b"><div class="h">3순위 · 처리 로직 최적화</div>건별 I/O를 <b>배치로 묶는</b> 등. 효과는 크지만 코드 변경과 검증이 필요해 지금 당장의 지혈은 안 된다.</div>
+    <div class="d w"><div class="h">4순위 · <code>max.poll.interval.ms</code> 증가</div><b style="color:#dc2626">근본 원인을 못 고칠 때의 완충이지 1순위가 아니다.</b> 키우는 만큼 <b>교착 감지 능력을 잃는다</b>(7절 구멍 1).</div>
+  </div>
+  <p style="margin-bottom:0">면접에서 <b>순서 자체가 답의 일부</b>다. "값을 늘립니다"로 시작하면 4순위부터 말한 셈이 되고, <b>"먼저 배치를 줄여 한 바퀴를 짧게 만들고, 외부 호출에 타임아웃을 걸고, 그래도 안 되면 한도를 현실화합니다"</b>라고 말하면 <b>트레이드오프를 아는 답</b>이 된다.</p>
+</div>
+
+<h4>타임아웃 없는 외부 호출 — before / after</h4>
+
+<div class="cmp wide">
+<div>
+<div class="codehead bad"><span class="tag">Before</span> 상한이 없는 호출 — 한 건이 사이클 전체를 인질로 잡는다</div>
+<pre><code><span class="cm">// 상대가 응답하지 않으면 이 호출은 "언젠가"까지 기다린다.
+// 그 사이 poll()은 절대 다시 불리지 않는다.</span>
+<span class="kw">@KafkaListener</span>(topics = <span class="st">"orders"</span>)
+<span class="kw">public void</span> <span class="fn">onMessage</span>(List&lt;Order&gt; orders) {
+    <span class="kw">for</span> (Order o : orders) {          <span class="cm">// 최대 500건</span>
+<span class="ln-bad">        var res = httpClient.<span class="fn">send</span>(req(o), handler);  <span class="note">타임아웃 미설정</span></span>
+        repository.<span class="fn">save</span>(res);
+    }
+}
+<span class="cm">// 상대 API가 죽어 응답이 30초씩 늦어지는 순간
+// 한 사이클 = 500 × 30초 → 한도를 압도적으로 초과 → 매 사이클 축출
+// 게다가 축출 후 재배달 → 같은 호출을 또 시도 → 악순환</span></code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">After</span> 상한 + 배치 축소 — 최악의 사이클 시간을 계산 가능하게</div>
+<pre><code><span class="cm">// 모든 외부 호출에 상한을 걸면 "최악의 한 사이클"이 계산 가능해진다.</span>
+<span class="kw">@KafkaListener</span>(topics = <span class="st">"orders"</span>)
+<span class="kw">public void</span> <span class="fn">onMessage</span>(List&lt;Order&gt; orders) {  <span class="cm">// max.poll.records=100</span>
+    <span class="kw">for</span> (Order o : orders) {
+<span class="ln-good">        var req = req(o).<span class="fn">timeout</span>(Duration.<span class="fn">ofSeconds</span>(2));  <span class="note">상한 2초</span></span>
+        <span class="kw">try</span> {
+            repository.<span class="fn">save</span>(httpClient.<span class="fn">send</span>(req, handler));
+        } <span class="kw">catch</span> (HttpTimeoutException e) {
+<span class="ln-good">            deadLetter.<span class="fn">send</span>(o);   <span class="note">막지 말고 흘려보낸다</span></span>
+        }
+    }
+}
+<span class="cm">// 최악의 한 사이클 = 100 × 2초 = 200초 &lt; 300초 → 상한이 보장된다</span></code></pre>
+</div>
+</div>
+
+<div class="callout ok"><span class="t">타임아웃을 거는 진짜 이유</span>
+지연을 줄이려는 것이 아니라 <b>"최악의 한 사이클 시간"을 계산 가능하게 만들려는 것</b>이다. 상한이 없으면 <code>max.poll.records × 레코드당 시간</code> 산식의 <b>오른쪽 항이 무한대</b>가 되어 <b>어떤 <code>max.poll.interval.ms</code>를 잡아도 안전을 보장할 수 없다.</b> 반대로 모든 외부 호출에 상한이 있으면 <b>산식이 다시 성립</b>하고, 그때부터 설정을 근거 있게 정할 수 있다.
+</div>
+
+<h3>10-2. 하트비트 단절이라면 — "프로세스에 무슨 일이"</h3>
+
+<p>이쪽은 <b>Kafka 설정 문제가 아니라 런타임과 인프라 문제</b>다. 수사 대상이 <b>Kafka 밖</b>에 있다는 것이 이 갈래의 특징이고, 그래서 <b>Kafka 설정만 들여다보면 영원히 못 찾는다.</b></p>
+
+<div class="deck">
+  <div class="d b"><div class="h">GC 로그의 긴 stop-the-world</div>7절의 구멍 2 그대로 — <b>하트비트 스레드도 GC 중에는 멈춘다.</b> 최대 정지 시간이 세션 타임아웃에 근접하는지 본다.</div>
+  <div class="d b"><div class="h">OOM 킬과 파드 재시작 이력</div>컨테이너가 <b>메모리 한도를 넘겨 강제 종료</b>됐다면 하트비트는 당연히 끊긴다. 재시작 시각과 리밸런싱 시각을 겹쳐 본다.</div>
+  <div class="d b"><div class="h">CPU 스로틀링</div>컨테이너 CPU 한도에 계속 부딪히면 <b>스레드 스케줄링이 지연되어</b> 하트비트 전송 자체가 밀린다. <b>스레드가 살아 있어도 CPU를 못 받으면 신호를 못 보낸다.</b></div>
+  <div class="d b"><div class="h">네트워크 이슈</div>브로커와의 연결 불안정. 특정 노드·AZ에서만 나는지 확인하면 범위가 좁혀진다.</div>
+</div>
+
+<p><b>대응</b>은 <b>힙과 GC 튜닝</b>, <b>리소스 한도 조정</b>, <b>불안정한 인프라 교체</b>다. 그리고 <b>재시작이 잦은 환경</b>이라면 <b>정적 멤버십(<code>group.instance.id</code>)</b>을 검토한다 — 멤버에게 <b>고정된 ID</b>를 부여해, 짧은 재시작 동안에는 코디네이터가 <b>그 자리를 비워 두고 기다리게</b> 하는 기능이다. 같은 ID로 돌아오면 이전에 갖고 있던 파티션을 그대로 다시 받으므로 <b>재시작마다 리밸런싱이 도는 것을 피할 수 있다.</b></p>
+
+<div class="callout warn"><span class="t">정적 멤버십은 만능이 아니다</span>
+자리를 비워 두고 기다린다는 것은 <b>진짜로 죽었을 때도 그만큼 기다린다</b>는 뜻이다. 그동안 <b>그 파티션은 아무도 소비하지 않는다.</b> <b>"재배분을 미루는 대가로 감지를 늦춘다"</b>는 트레이드오프를 알고 써야 하고, 무엇보다 <b>poll 간격 초과에는 아무 도움이 되지 않는다.</b>
+</div>
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. rebalance storm — <span style="color:#dc2626">스스로 도는 악순환</span>을 먼저 끊는다</h2>
+
+<p>원인을 찾았다고 끝이 아니다. 리밸런싱 반복 장애에는 <b>자기 자신을 먹여 살리는 고리</b>가 있다. 이 고리를 모르면 <b>"원인을 고쳤는데 왜 아직도 터지지?"</b>에서 시간을 다 쓴다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 400" role="img" aria-label="리밸런스 스톰의 순환 고리 도식. 리밸런싱이 발생하면 소비가 멈춘 동안 랙이 쌓이고, 재개된 컨슈머가 밀린 랙을 따라잡느라 매 poll마다 가득 찬 배치를 받아 한 사이클 처리 시간이 늘어나 max.poll.interval.ms를 다시 초과하고, 또 축출되어 리밸런싱이 반복된다. 원인을 고쳐도 이미 쌓인 랙이 고리를 계속 돌린다.">
+    <defs>
+      <marker id="a11" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto"><path d="M0,0 L11,5.5 L0,11 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="20" y="26" font-size="14" font-weight="700" fill="#1f2937">고리는 <tspan fill="#dc2626">원인과 무관하게</tspan> 스스로 돈다</text>
+
+    <rect x="330" y="44" width="240" height="52" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="450" y="68" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">① 리밸런싱 발생</text>
+    <text x="450" y="86" font-size="11" fill="#7f1d1d" text-anchor="middle">그룹 전체의 소비가 멈춘다</text>
+
+    <path d="M570,70 C700,70 760,110 760,150" stroke="#dc2626" stroke-width="2.4" fill="none" marker-end="url(#a11)"/>
+
+    <rect x="620" y="156" width="264" height="60" rx="10" fill="#fff7ed" stroke="#f59e0b" stroke-width="1.6"/>
+    <text x="752" y="180" font-size="12.5" font-weight="800" fill="#b45309" text-anchor="middle">② 랙이 쌓인다</text>
+    <text x="752" y="200" font-size="11" fill="#92400e" text-anchor="middle">소비가 멈춘 동안 아직 못 읽은</text>
+    <text x="752" y="212" font-size="11" fill="#92400e" text-anchor="middle">메시지가 계속 누적</text>
+
+    <path d="M752,220 C752,270 700,300 600,308" stroke="#dc2626" stroke-width="2.4" fill="none" marker-end="url(#a11)"/>
+
+    <rect x="300" y="288" width="300" height="70" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="450" y="312" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">③ 매 poll마다 가득 찬 배치</text>
+    <text x="450" y="332" font-size="11" fill="#7f1d1d" text-anchor="middle">밀린 랙을 따라잡느라 항상</text>
+    <text x="450" y="348" font-size="11" fill="#7f1d1d" text-anchor="middle" class="mono">max.poll.records 만큼 꽉 채워 받는다</text>
+
+    <path d="M300,322 C200,318 148,290 148,240" stroke="#dc2626" stroke-width="2.4" fill="none" marker-end="url(#a11)"/>
+
+    <rect x="16" y="156" width="264" height="72" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="148" y="180" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">④ 사이클 시간 증가</text>
+    <text x="148" y="200" font-size="11" fill="#7f1d1d" text-anchor="middle" class="mono">max.poll.interval.ms 재초과</text>
+    <text x="148" y="218" font-size="11" font-weight="800" fill="#b91c1c" text-anchor="middle">→ 또 축출</text>
+
+    <path d="M148,150 C148,100 220,70 326,70" stroke="#dc2626" stroke-width="2.4" fill="none" marker-end="url(#a11)"/>
+
+    <rect x="330" y="150" width="240" height="86" rx="12" fill="#fff" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="450" y="176" font-size="12.5" font-weight="800" fill="#334155" text-anchor="middle">무서운 점</text>
+    <text x="450" y="198" font-size="11.5" fill="#334155" text-anchor="middle"><tspan font-weight="800" fill="#dc2626">원인을 고쳐도</tspan></text>
+    <text x="450" y="216" font-size="11.5" fill="#334155" text-anchor="middle">이미 쌓인 랙이 고리를 돌린다</text>
+
+    <rect x="16" y="368" width="868" height="26" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="450" y="386" font-size="12" font-weight="700" fill="#166534" text-anchor="middle">그래서 원인 수리와 별개로 — 배치를 줄여 ③을 강제로 가볍게 만들어 고리부터 끊는다</text>
+  </svg>
+  <figcaption>이 소용돌이의 무서운 점은 <b>원인을 고쳐도 고리가 스스로 돈다</b>는 것이다. 애초에 장애를 유발한 다운스트림 지연이 해소돼도, <b>이미 쌓인 랙이 배치를 가득 채우기 때문에</b> 계속 초과한다.</figcaption>
+</figure>
+
+<div class="callout trap"><span class="t">"원인을 고쳤는데 왜 계속 터지죠?"의 정체</span>
+평소에는 배치가 <b>가득 차지 않는다</b>는 점이 열쇠다. 랙이 0에 가까우면 <code>poll()</code>은 <b>있는 만큼만</b> 가져오므로 한 사이클이 짧다. 그런데 랙이 쌓이면 <b>매번 <code>max.poll.records</code>만큼 꽉 채워</b> 가져온다 — <b>같은 코드, 같은 다운스트림인데 사이클 시간이 몇 배가 되는 것</b>이다. <b>랙 자체가 부하가 되어 축출을 유지시킨다.</b>
+</div>
+
+<p>그래서 원인 수리와 <b>별개로 고리를 먼저 끊는다.</b> <code>max.poll.records</code>를 줄여 <b>한 바퀴를 강제로 짧게</b> 만들거나, 문제 컨슈머를 <b>잠시 내리고 안정화된 뒤 재투입</b>한다.</p>
+
+<div class="codehead bad"><span class="tag">Before</span> 무거운 배치 + 빠듯한 한도 — 처리 시간이 조금만 늘어도 축출 반복</div>
+<pre><code><span class="cm"># 기본값 그대로 둔 상태. 평상시엔 통과하지만 랙이 쌓이는 순간 무너진다.</span>
+<span class="ln-bad">max.poll.records=500          <span class="note">한 바퀴가 무겁다</span></span>
+<span class="ln-bad">max.poll.interval.ms=300000   <span class="note">5분 (기본값) — 여유 없음</span></span>
+<span class="cm"># 외부 호출 타임아웃 없음 → 최악의 사이클 시간이 계산 불가</span></code></pre>
+
+<div class="codehead good"><span class="tag">After</span> 한 바퀴를 가볍게 — 같은 처리량을 여러 바퀴로 나눠 poll 간격을 줄인다</div>
+<pre><code><span class="cm"># 총 처리량은 그대로 두고 "한 바퀴의 길이"만 줄인다.</span>
+<span class="ln-good">max.poll.records=100          <span class="note">폴링당 처리량 축소 → 사이클 단축</span></span>
+<span class="ln-good">max.poll.interval.ms=600000   <span class="note">정당하게 긴 작업이면 한도도 현실화</span></span>
+<span class="cm"># + 외부 호출에 타임아웃: 다운스트림 지연이 poll 간격을 무한정 잡아먹지 않게
+# + 하트비트 쪽은 건드리지 않았다 — 이 문제는 세션 갈래가 아니기 때문</span></code></pre>
+
+<div class="callout info"><span class="t">After에서 한도도 함께 올린 이유</span>
+<b>배치 축소만으로 부족할 수 있기 때문</b>이다. 다만 순서가 중요하다 — <b>먼저 배치를 줄여 사이클을 짧게 만들고</b>, 그래도 <b>정당하게</b> 긴 작업이라면 그때 한도를 현실화한다. <b>한도부터 올리면 배치는 여전히 무거운 채로 감지 능력만 잃는다.</b> 그리고 이 설정 변경은 <b>지혈</b>이지 치료가 아니다 — 처리가 <b>원래</b> 긴 작업이라면 12절의 구조 분리로 가야 한다.
+</div>
+
+<div class="memo red">
+  <h4>스톰에 들어갔는지 판별하는 신호</h4>
+  <ul class="chk x">
+    <li>리밸런싱이 <b>거의 일정한 주기</b>로 반복된다 — 주기가 <code>max.poll.interval.ms</code>와 비슷하면 poll 갈래가 거의 확정</li>
+    <li><b>랙이 계속 우상향</b>하는데 컨슈머는 살아 있다 — 소비가 되는 시간보다 멈춰 있는 시간이 길다</li>
+    <li>중복 처리 알림·멱등 스킵 카운터가 <b>주기적으로 튄다</b> — 미커밋 구간 재배달의 흔적</li>
+    <li>컨슈머 수를 늘렸는데 <b>오히려 더 나빠졌다</b> — 멤버가 늘면 리밸런싱 비용도 커진다</li>
+  </ul>
+  <p style="margin-bottom:0"><b>지혈 순서</b>: ① <code>max.poll.records</code> 축소 → ② 필요하면 컨슈머를 일부 내려 <b>리밸런싱 자체를 멈추고</b> 남은 멤버가 랙을 소화하게 → ③ 랙이 줄어든 뒤 <b>천천히</b> 재투입.</p>
+</div>
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 처리가 <span style="color:#2563eb">원래</span> 수 분씩 걸리는 작업 — 다이얼이 아니라 <span style="color:#16a34a">구조</span>로 답한다</h2>
+
+<p>지금까지는 <b>"원래 빨라야 하는데 느려진"</b> 경우였다. 그런데 <b>처리가 원래 오래 걸리는 것이 정상인</b> 작업도 있다 — 영상 인코딩, 대용량 리포트 생성, 외부 시스템과의 긴 동기화 같은 것들이다. <b>이건 고장이 아니므로 "느린 원인을 찾아 고친다"가 성립하지 않는다.</b></p>
+
+<div class="split g3">
+  <div class="pane w"><h4>선택지 1 — <code>max.poll.records</code>를 줄인다</h4>
+    <p style="margin:0 0 6px">한 번에 가져오는 양을 줄여 한 사이클을 한도 안으로 밀어 넣는다. 레코드당 2분 걸리는 작업이라면 <code>max.poll.records=1</code>까지 내려야 할 수도 있다.</p>
+    <p style="margin:0"><b>설정 한 줄</b>로 끝나는 가장 단순한 방법. 대신 <b style="color:#dc2626">한 컨슈머가 낼 수 있는 처리량에 상한이 생긴다.</b></p>
+  </div>
+  <div class="pane w"><h4>선택지 2 — <code>max.poll.interval.ms</code>를 늘린다</h4>
+    <p style="margin:0 0 6px">한도를 작업 시간에 맞춰 현실화한다. 이것도 설정 한 줄이지만 <b>대가가 분명하다.</b></p>
+    <p style="margin:0"><b style="color:#dc2626">진짜로 죽은(교착에 빠진) 컨슈머를 감지하는 시간이 그만큼 늘어난다.</b> 30분으로 잡으면 교착 컨슈머가 30분 동안 파티션을 움켜쥔 채 아무것도 소비하지 않고, 그동안 랙은 계속 쌓인다.</p>
+  </div>
+  <div class="pane g"><h4>선택지 3 — 받자마자 작업 큐에 넣고 즉시 커밋</h4>
+    <p style="margin:0 0 6px">컨슈머는 메시지를 받아 <b>DB의 작업 큐 테이블에 한 줄 INSERT</b>하고 곧바로 오프셋을 커밋한 뒤 다음 <code>poll()</code>로 돌아간다. 실제 처리는 <b>별도 워커 프로세스</b>가 그 테이블을 읽어 수행하고, <b>진행 상태도 그 테이블에서 관리</b>한다.</p>
+    <p style="margin:0"><b>근본 해법</b> — 이유는 아래에서.</p>
+  </div>
+</div>
+
+<div class="rule">세 번째가 근본 해법인 이유 — <b>Kafka의 생존 판정과 작업의 실제 소요 시간을 분리</b>하기 때문이다</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 380" role="img" aria-label="긴 작업 처리 구조의 before after 비교 도식. Before에서는 리스너가 3분짜리 인코딩을 끝까지 수행하므로 그 3분 내내 Kafka 생존 시계가 돌아 작업 시간이 곧 poll 간격이 되고 축출 위험이 있다. After에서는 리스너가 job 테이블에 INSERT하고 수 밀리초 만에 커밋한 뒤 다음 poll로 돌아가므로 poll 간격이 항상 밀리초 단위이고, 실제 인코딩은 별도 워커가 job 테이블을 폴링해 수행하므로 작업이 3시간 걸려도 Kafka와 무관하다.">
+    <defs>
+      <marker id="a12r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="a12g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+      <marker id="a12s" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+    </defs>
+
+    <rect x="24" y="40" width="1072" height="140" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="66" font-size="13" font-weight="800" fill="#b91c1c">[Before] Kafka가 작업 완료까지 책임진다</text>
+    <rect x="44" y="82" width="70" height="34" rx="7" fill="#334155"/>
+    <text x="79" y="104" font-size="11" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll()</text>
+    <path d="M118,99 L146,99" stroke="#dc2626" stroke-width="2" marker-end="url(#a12r)"/>
+    <rect x="150" y="82" width="560" height="34" rx="7" fill="#fecaca" stroke="#dc2626"/>
+    <text x="430" y="104" font-size="12" font-weight="700" fill="#7f1d1d" text-anchor="middle">3분짜리 인코딩 — 리스너 안에서 끝까지 처리</text>
+    <path d="M714,99 L742,99" stroke="#dc2626" stroke-width="2" marker-end="url(#a12r)"/>
+    <rect x="746" y="82" width="70" height="34" rx="7" fill="#334155"/>
+    <text x="781" y="104" font-size="11" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll()</text>
+    <path d="M150,126 L150,140 L710,140 L710,126" stroke="#dc2626" stroke-width="1.6" fill="none"/>
+    <text x="430" y="158" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">이 3분 내내 Kafka의 생존 시계가 돌고 있다</text>
+    <rect x="836" y="82" width="240" height="76" rx="10" fill="#fff" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="956" y="106" font-size="12" fill="#7f1d1d" text-anchor="middle">작업 시간 = poll 간격</text>
+    <text x="956" y="130" font-size="13" font-weight="800" fill="#dc2626" text-anchor="middle">= 축출 위험</text>
+    <text x="956" y="150" font-size="11" fill="#ef4444" text-anchor="middle">records가 10이면 30분 → 확정</text>
+
+    <rect x="24" y="196" width="1072" height="170" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="44" y="222" font-size="13" font-weight="800" fill="#166534">[After] Kafka는 전달만, 진행 상태는 DB가</text>
+    <rect x="44" y="238" width="70" height="34" rx="7" fill="#334155"/>
+    <text x="79" y="260" font-size="11" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll()</text>
+    <path d="M118,255 L146,255" stroke="#16a34a" stroke-width="2" marker-end="url(#a12g)"/>
+    <rect x="150" y="238" width="150" height="34" rx="7" fill="#bbf7d0" stroke="#16a34a"/>
+    <text x="225" y="260" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">job INSERT (수 ms)</text>
+    <path d="M304,255 L330,255" stroke="#16a34a" stroke-width="2" marker-end="url(#a12g)"/>
+    <rect x="334" y="238" width="80" height="34" rx="7" fill="#16a34a"/>
+    <text x="374" y="260" font-size="11" font-weight="800" fill="#fff" text-anchor="middle">커밋</text>
+    <path d="M418,255 L444,255" stroke="#16a34a" stroke-width="2" marker-end="url(#a12g)"/>
+    <rect x="448" y="238" width="70" height="34" rx="7" fill="#334155"/>
+    <text x="483" y="260" font-size="11" font-weight="800" fill="#fff" text-anchor="middle" class="mono">poll()</text>
+    <text x="540" y="260" font-size="12" font-weight="800" fill="#166534">poll 간격은 항상 밀리초 단위 — 축출 위험 자체가 사라진다</text>
+
+    <path d="M225,278 L225,300" stroke="#64748b" stroke-width="2" marker-end="url(#a12s)"/>
+    <rect x="120" y="304" width="210" height="46" rx="8" fill="#fff" stroke="#334155" stroke-width="1.6"/>
+    <text x="225" y="324" font-size="12" font-weight="800" fill="#0f172a" text-anchor="middle" class="mono">encoding_job 테이블</text>
+    <text x="225" y="342" font-size="10.5" fill="#64748b" text-anchor="middle">PENDING / RUNNING / DONE / FAILED</text>
+    <path d="M334,327 L390,327" stroke="#64748b" stroke-width="2" marker-end="url(#a12s)"/>
+    <text x="362" y="318" font-size="10" fill="#64748b" text-anchor="middle">폴링</text>
+
+    <rect x="394" y="304" width="130" height="46" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="459" y="332" font-size="12" font-weight="800" fill="#1e40af" text-anchor="middle">워커 프로세스</text>
+    <path d="M528,327 L560,327" stroke="#64748b" stroke-width="2" marker-end="url(#a12s)"/>
+    <rect x="564" y="304" width="300" height="46" rx="8" fill="#e0e7ff" stroke="#6366f1" stroke-width="1.6"/>
+    <text x="714" y="332" font-size="12" font-weight="700" fill="#4338ca" text-anchor="middle">3분짜리 인코딩 → 상태 갱신</text>
+    <rect x="880" y="296" width="196" height="62" rx="10" fill="#fff" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="978" y="320" font-size="12" fill="#166534" text-anchor="middle">작업이 3시간 걸려도</text>
+    <text x="978" y="342" font-size="13" font-weight="800" fill="#16a34a" text-anchor="middle">Kafka와 무관하다</text>
+  </svg>
+  <figcaption>구조를 바꾸면 <b>설정을 다시 만질 필요가 없어진다.</b> 작업 시간이 3분에서 3시간으로 늘어나도 <b>poll 간격은 그대로 밀리초</b>다 — 이것이 선택지 1·2와 <b>격이 다른 이유</b>다.</figcaption>
+</figure>
+
+<div class="callout trap"><span class="t">반드시 짚어야 할 점 — "즉시 커밋"이 안전한 이유</span>
+<b>작업이 DB에 영속화됐기 때문</b>이지, <b>그냥 빨리 커밋해도 된다는 뜻이 아니다.</b> 메모리의 스레드 풀에 던져 놓고 커밋하면 <b>프로세스가 죽는 순간 그 작업은 사라지고</b>, Kafka는 이미 커밋됐으므로 <b>다시 주지 않는다</b> — <b style="color:#dc2626">유실</b>이다. <b>내구성의 책임을 Kafka에서 DB 테이블로 옮긴 것이지 없앤 것이 아니다.</b>
+</div>
+
+<h3>12-1. 작업 큐 테이블</h3>
+
+<div class="codehead plain"><span class="tag">SQL</span> 작업 큐 테이블 (PostgreSQL)</div>
+<pre><code><span class="cm">-- 작업 큐 테이블</span>
+<span class="kw">CREATE TABLE</span> encoding_job (
+    job_id       <span class="kw">bigserial</span>   <span class="kw">PRIMARY KEY</span>,
+<span class="ln-good">    message_key  <span class="kw">text</span>        <span class="kw">NOT NULL UNIQUE</span>,  <span class="cm">-- 재배달 시 중복 적재를 DB가 막는다</span></span>
+    payload      <span class="kw">jsonb</span>       <span class="kw">NOT NULL</span>,
+    status       <span class="kw">varchar</span>(20) <span class="kw">NOT NULL DEFAULT</span> <span class="st">'PENDING'</span>,
+    <span class="cm">-- PENDING -&gt; RUNNING -&gt; DONE | FAILED</span>
+    attempts     <span class="kw">int</span>         <span class="kw">NOT NULL DEFAULT</span> <span class="st">0</span>,
+    created_at   <span class="kw">timestamptz</span> <span class="kw">NOT NULL DEFAULT</span> <span class="fn">now</span>(),
+    updated_at   <span class="kw">timestamptz</span> <span class="kw">NOT NULL DEFAULT</span> <span class="fn">now</span>()
+);
+<span class="cm">-- 워커가 "처리할 일감"을 찾는 조회를 위한 인덱스</span>
+<span class="kw">CREATE INDEX</span> idx_job_pickup <span class="kw">ON</span> encoding_job (status, created_at);</code></pre>
+
+<h3>12-2. 리스너 — before / after</h3>
+
+<div class="cmp wide">
+<div>
+<div class="codehead bad"><span class="tag">Before</span> 리스너 안에서 끝까지 처리 — 처리 시간이 곧 poll 간격</div>
+<pre><code><span class="kw">@KafkaListener</span>(topics = <span class="st">"encoding-requests"</span>)
+<span class="kw">public void</span> <span class="fn">onMessage</span>(EncodingRequest req) {
+<span class="ln-bad">    encoder.<span class="fn">encode</span>(req);  <span class="note">3분 · poll()이 안 불린다</span></span>
+    <span class="cm">// max.poll.records가 10이면 30분 → 축출 확정
+    // 축출 뒤 커밋은 거부되고(CommitFailedException)
+    // 같은 요청이 새 주인에게 재배달 → 인코딩 중복 수행</span>
+}</code></pre>
+<ul class="chk x" style="font-size:.9rem">
+  <li>작업 시간이 <b>그대로 poll 간격</b>이 된다</li>
+  <li>배치가 조금만 커져도 <b>선형으로 악화</b></li>
+  <li>축출 → 재배달 → <b>같은 무거운 작업을 또</b></li>
+</ul>
+</div>
+<div>
+<div class="codehead good"><span class="tag">After</span> 접수만 하고 즉시 반환 — poll 루프는 항상 빠르게 돈다</div>
+<pre><code><span class="kw">@KafkaListener</span>(topics = <span class="st">"encoding-requests"</span>)
+<span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">onMessage</span>(EncodingRequest req,
+        <span class="kw">@Header</span>(KafkaHeaders.RECEIVED_KEY) String key) {
+    <span class="cm">// 재배달로 같은 메시지가 두 번 와도 job이 두 개 생기지 않게 한다.
+    // 애플리케이션에서 "이미 있나?" 조회로 막으면 동시 요청 둘이
+    // 나란히 통과할 수 있으므로, UNIQUE 제약과 ON CONFLICT로
+    // DB가 판정하게 한다.</span>
+<span class="ln-good">    jobRepository.<span class="fn">insertIfAbsent</span>(key, req.<span class="fn">payload</span>());  <span class="note">수 ms</span></span>
+    <span class="cm">// 리스너가 여기서 끝난다. 커밋은 밀리초 안에 일어나고
+    // 다음 poll()이 곧바로 돌므로 두 타임아웃 어느 쪽에도 걸리지 않는다.</span>
+}</code></pre>
+<ul class="chk" style="font-size:.9rem">
+  <li>poll 간격이 <b>작업 시간과 무관</b>해진다</li>
+  <li>중복 적재는 <b>DB의 UNIQUE</b>가 막는다</li>
+  <li>축출 위험이 사라져 <b>설정 튜닝이 불필요</b></li>
+</ul>
+</div>
+</div>
+
+<h3>12-3. 워커 — Kafka와 완전히 분리된 별도 프로세스</h3>
+
+<div class="codehead good"><span class="tag">Worker</span> 작업 큐를 폴링해 실제 처리를 수행한다</div>
+<pre><code><span class="kw">@Scheduled</span>(fixedDelay = <span class="st">1000</span>)
+<span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">runNextJob</span>() {
+    <span class="cm">// FOR UPDATE SKIP LOCKED: 이미 다른 워커가 잠근 행은 건너뛰고
+    // 다음 일감을 집는다. 워커를 여러 대로 늘려도 같은 job을
+    // 두 대가 잡는 일이 없고, 앞 워커를 기다리며 멈추지도 않는다.</span>
+<span class="ln-good">    Job job = jobRepository.<span class="fn">pickOnePendingForUpdateSkipLocked</span>();</span>
+    <span class="kw">if</span> (job == <span class="kw">null</span>) <span class="kw">return</span>;
+
+    job.<span class="fn">markRunning</span>();
+<span class="ln-good">    encoder.<span class="fn">encode</span>(job.<span class="fn">payload</span>());  <span class="note">3분이든 3시간이든 Kafka와 무관</span></span>
+    job.<span class="fn">markDone</span>();
+}</code></pre>
+
+<div class="memo green">
+  <h4>세 선택지를 관통하는 원칙</h4>
+  <div class="rule ok">poll 루프는 언제나 <b>빠르게</b> 유지한다</div>
+  <div class="grid g3">
+    <div class="tile"><div class="k">선택지 1</div><div class="s">배치 축소</div><div class="d">원칙을 <b>설정으로</b> 지킨다 — 간단하지만 <b>처리량 상한</b></div></div>
+    <div class="tile"><div class="k">선택지 2</div><div class="s">한도 확대</div><div class="d">원칙을 <b>포기하고 버틴다</b> — <b>감지 능력</b>을 대가로 지불</div></div>
+    <div class="tile ok"><div class="k">선택지 3</div><div class="s">작업 큐 분리</div><div class="d">원칙을 <b>설계로 보장</b>한다 — 작업 시간이 늘어도 <b>설정을 다시 안 만진다</b></div></div>
+  </div>
+  <p style="margin-bottom:0">Kafka를 <b>작업 전달용</b>으로만 쓰고 <b>진행 상태는 DB로</b> 관리하는 이 구조는, 작업 시간이 얼마로 늘어나든 <b>Kafka 설정을 다시 만지지 않아도 된다</b>는 점에서 앞의 두 선택지와 <b>격이 다르다.</b> 면접에서 이 문장으로 마무리하면 <b>"다이얼을 아는 사람"이 아니라 "구조를 설계하는 사람"</b>으로 읽힌다.</p>
+</div>
+<!-- ===================== 13 ===================== -->
+<h2 id="s13">13. 전체 한 장 · 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>13-1. 이 문서 전체를 한 장으로</h3>
+
+<div class="card">
+  <div class="chain">
+    <span class="chip b">하트비트 스레드</span><span class="arrow">→</span>
+    <span class="chip b">session.timeout.ms</span><span class="arrow">=</span>
+    <span class="chip b">"죽었는가" · 코디네이터가 제거</span>
+  </div>
+  <div class="chain">
+    <span class="chip r">폴링 스레드</span><span class="arrow">→</span>
+    <span class="chip r">max.poll.interval.ms</span><span class="arrow">=</span>
+    <span class="chip r">"일이 멈췄는가" · 컨슈머가 스스로 탈퇴</span>
+  </div>
+  <div class="chain">
+    <span class="chip w">리밸런싱 반복 신고</span><span class="arrow">→</span>
+    <span class="chip w">먼저 로그로 갈래 가르기</span><span class="arrow">→</span>
+    <span class="chip r">poll 초과 = 처리 지연 수사</span><span class="arrow">/</span>
+    <span class="chip b">세션 만료 = 인프라 수사</span><span class="arrow">/</span>
+    <span class="chip g">둘 다 아님 = 합류 쪽 수사</span>
+  </div>
+  <p style="margin-bottom:0">그리고 처리가 <b>원래</b> 긴 작업이라면 다이얼을 돌리는 대신 <b>구조를 바꾼다</b> — <b>받자마자 DB 작업 큐에 적재하고 즉시 커밋</b>해서 <b>poll 루프는 언제나 밀리초 단위로</b> 유지한다.</p>
+</div>
+
+<h3>13-2. 인출 카드 <span class="sub" style="font-weight:400">— 답을 가리고 먼저 떠올려 본다</span></h3>
+
+<div class="quiz">
+  <div class="qq"><b>Q. 두 값이 재는 신호는?</b><span class="mono">session</span>은 <b>하트비트</b>(별도 스레드가 보냄), <span class="mono">max.poll</span>은 <b>poll() 호출 간격</b>(내 코드가 도는 스레드가 만듦).</div>
+  <div class="qq"><b>Q. 누가 그룹에서 빼는가?</b>세션 만료는 <b>코디네이터가 멤버를 제거</b>, poll 간격 초과는 <b>컨슈머가 스스로 탈퇴를 통보</b>. 그래서 로그가 남는 위치도 다르다.</div>
+  <div class="qq"><b>Q. 왜 판정이 두 개인가?</b>옛날엔 하트비트를 <b>poll() 안에서</b> 보내 <b>"느림"과 "죽음"이 구별 불가</b>였다. 하트비트를 별도 스레드로 떼면서 <b>다이얼이 두 개</b>가 됐다.</div>
+  <div class="qq"><b>Q. 하트비트 주기 규칙은?</b><b>주기 &lt; 판정</b>은 필수, 관례는 <b>세션 타임아웃의 1/3 이하</b> — 판정 창 안에 <b>재시도 기회 2~3번</b>을 확보하려고.</div>
+  <div class="qq"><b>Q. poll 간격 산식은?</b><span class="mono">max.poll.records × 레코드당 처리 시간</span> &lt; <span class="mono">max.poll.interval.ms</span>. 500 × 1초 = <b>500초</b> &gt; 기본 300초 → 매 사이클 축출.</div>
+  <div class="qq"><b>Q. 기본값 두 개는?</b><span class="mono">max.poll.records = 500</span>, <span class="mono">max.poll.interval.ms = 300000</span>(5분). <b>평범한 로직 + 기본값 조합만으로도 축출이 난다.</b></div>
+  <div class="qq"><b>Q. 리밸런싱 반복, 첫 행동은?</b>설정 조정이 아니라 <b>로그로 갈래 가르기</b>. 원인이 GC인데 <span class="mono">max.poll.interval.ms</span>를 올리면 <b>장애만 길어진다</b>.</div>
+  <div class="qq"><b>Q. 사각지대 세 구멍은?</b><b>①</b> 처리 스레드 교착(하트비트만 뜀) <b>②</b> 긴 GC(두 스레드 함께 정지) <b>③</b> 리스너 안 <span class="mono">Thread.sleep</span>(세션은 멀쩡, poll 간격만 늘어남).</div>
+  <div class="qq"><b>Q. 교착에 빠진 컨슈머를 잡는 장치는?</b>오직 <span class="mono">max.poll.interval.ms</span>. 하트비트는 계속 뛰므로 <b>세션 타임아웃으로는 절대 못 잡는다</b> — 이 값을 무한대로 키우면 안 되는 이유.</div>
+  <div class="qq"><b>Q. poll 초과 대응 우선순위는?</b><b>①</b> <span class="mono">max.poll.records</span> 축소(되돌리기 쉬움) <b>②</b> 외부 호출 타임아웃 <b>③</b> 로직 최적화 <b>④</b> <span class="mono">max.poll.interval.ms</span> 증가(<b>완충이지 1순위 아님</b>).</div>
+  <div class="qq"><b>Q. 악순환의 고리는?</b>리밸런싱 → 랙 축적 → 재개 후 <b>가득 찬 배치</b> → 사이클 시간 증가 → 또 초과. <b>원인을 고쳐도 고리는 스스로 돈다</b> → 배치를 줄여 고리를 끊는다.</div>
+  <div class="qq"><b>Q. 원래 긴 작업의 근본 해법은?</b><b>DB 작업 큐에 INSERT하고 즉시 커밋</b>, 처리는 별도 워커. <b>"즉시 커밋"이 안전한 이유는 DB에 영속화됐기 때문</b>이지 빨라서가 아니다.</div>
+</div>
+
+<div class="memo">
+  <h4>한 문장으로 외우는 구분</h4>
+  <div class="rule"><code>session</code>은 <b>심박</b>을 재고, <code>max.poll</code>은 <b>작업 일지</b>를 본다 — 심박이 뛰어도 일지가 비어 있을 수 있다</div>
+  <p style="margin-bottom:0">이 한 문장에서 <b>"별도 스레드"</b>(심박은 내 코드와 무관하게 뛴다), <b>"두 판정은 대칭이 아니다"</b>(일지가 채워지는데 심박이 멎을 수는 없다), <b>"교착은 오직 일지 검사로만 잡힌다"</b>가 모두 파생된다.</p>
+</div>
+
+<h3>13-3. 꼬리질문 셀프 테스트 <span class="sub" style="font-weight:400">— 질문만 보고 스스로 답한 뒤 펼쳐서 확인</span></h3>
+
+<details class="q"><summary><code>heartbeat.interval.ms</code>는 두 설정과 어떤 관계인가요?<span class="hint">힌트: 발신 주기 / 판정 한도 / 게으름 판정의 3층</span></summary><div class="a">
+  <p>하트비트를 <b>보내는 주기</b>다. <code>session.timeout.ms</code>는 그 신호가 끊겼다고 <b>판정하는 한도</b>이므로 항상 <b>주기 &lt; 한도</b>여야 하고, 관례상 <b>한도의 1/3 이하</b>로 잡는다 — 한 번의 유실이나 지연으로 바로 사망 판정이 나지 않고 <b>몇 번의 재시도 기회</b>가 생기게 하기 위해서다.</p>
+  <p>정리하면 <b>보내는 주기(<code>heartbeat.interval.ms</code>) → 죽음 판정(<code>session.timeout.ms</code>) → 게으름 판정(<code>max.poll.interval.ms</code>)</b>의 3층 구조다.</p>
+  <p style="margin-bottom:0">한 걸음 더 나가면 좋다. 앞의 두 값은 <b>같은 신호(하트비트)</b>를 두고 짝을 이루므로 산술적 제약이 있지만, <code>max.poll.interval.ms</code>는 <b>다른 신호(poll 호출)</b>를 재는 값이라 그런 제약이 없다. 그래서 <b>스케일 자체가 다르다</b> — 앞의 둘은 <b>"네트워크가 몇 초 끊겼나"</b>의 스케일, 마지막 하나는 <b>"배치 하나 처리에 몇 분 걸리나"</b>의 스케일이다.</p>
+</div></details>
+
+<details class="q"><summary><code>max.poll.interval.ms</code>를 아주 크게 잡으면 문제가 없어지지 않나요?<span class="badge senior">시니어 변별</span><span class="hint">힌트: 축출이 사라지면 같이 사라지는 것이 있다</span></summary><div class="a">
+  <p><b>축출은 없어지지만 감지도 없어진다.</b> 이 값은 문제를 해결하는 스위치가 아니라 <b>"장애 감지 속도 vs 정상적인 긴 처리의 허용" 사이의 다이얼</b>이다.</p>
+  <p>구체적으로 무엇을 잃는지 짚어야 한다. 처리 스레드가 <b>교착이나 무한 루프</b>에 빠져도 <b>하트비트 스레드는 멀쩡히 뛰므로 세션 타임아웃에는 안 걸린다</b>(사각지대 구멍 1). 즉 그 컨슈머를 잡아낼 수 있는 <b>유일한 장치</b>가 <code>max.poll.interval.ms</code>인데, 그것을 30분으로 잡아 두면 다음 일이 벌어진다.</p>
+  <ul>
+    <li>멈춘 컨슈머가 <b>30분 동안 파티션을 움켜쥔 채</b> 아무것도 소비하지 않는다.</li>
+    <li>그동안 그 파티션의 <b>랙이 계속 쌓인다.</b> 다른 컨슈머가 대신 처리해 줄 수도 없다 — 파티션은 그룹 안에서 <b>한 컨슈머에게만</b> 할당되기 때문이다.</li>
+    <li>30분 뒤 마침내 리밸런싱이 돌면, 그때는 쌓인 랙을 따라잡아야 하므로 <b>악순환(rebalance storm)에 들어갈 위험</b>까지 생긴다.</li>
+  </ul>
+  <p style="margin-bottom:0">그래서 정당하게 긴 작업이라면 값을 키우기보다 <b>배치를 줄이거나(선택지 1)</b>, <b>무거운 작업을 별도 워커로 넘기고 컨슈머는 빠르게 poll 루프를 도는 구조(선택지 3)</b>가 낫다.</p>
+</div></details>
+
+<details class="q"><summary>처리 시간이 원래 긴 메시지(수 분짜리 작업)는 어떻게 다루나요?<span class="hint">힌트: 세 가지인데, 셋의 "격"이 다르다</span></summary><div class="a">
+  <p>세 가지 접근이 있고, <b>셋의 성격이 다르다는 것까지</b> 말해야 한다.</p>
+  <p><b>① <code>max.poll.records</code>를 극단적으로 줄이고 <code>max.poll.interval.ms</code>를 현실적인 값으로 맞춘다.</b> 가장 단순하지만 <b>한 컨슈머의 처리량에 한계</b>가 생긴다.</p>
+  <p><b>② 컨슈머는 메시지를 받아 작업 큐/워커에 넘기고 즉시 poll 루프로 복귀한다.</b> 처리량은 좋아지지만 함정이 하나 있다 — <b style="color:#dc2626">오프셋 커밋을 워커의 완료와 동기화하지 않으면 유실이 생긴다.</b> 메모리 스레드 풀에 던져 놓고 커밋하면, 프로세스가 죽는 순간 그 작업은 사라지고 Kafka는 이미 커밋됐으니 다시 주지 않는다. 그래서 <b>작업을 DB 테이블에 영속화한 뒤 커밋</b>하는 형태여야 한다. <b>내구성의 책임을 Kafka에서 DB로 옮기는 것이지 없애는 것이 아니다.</b></p>
+  <p><b>③ 긴 작업은 아예 별도 시스템(배치, 작업 큐)으로 위임하고 Kafka에는 트리거만 흘린다.</b> 설계 차원의 회피다.</p>
+  <p style="margin-bottom:0">"<b>poll 루프는 빠르게 유지한다</b>"가 셋을 관통하는 공통 원칙이고, ②·③은 그 원칙을 <b>설계 차원에서 보장</b>한 형태다.</p>
+</div></details>
+
+<details class="q"><summary><code>session.timeout.ms</code>를 줄이면 장애 감지가 빨라지니 좋은 것 아닌가요?<span class="hint">힌트: 빠른 감지의 반대편에 무엇이 있는가</span></summary><div class="a">
+  <p><b>빠른 감지와 오탐은 트레이드오프</b>다.</p>
+  <p><b>너무 짧으면</b>: 일시적 네트워크 지연이나 짧은 GC에도 사망 판정이 나서 <b>불필요한 리밸런싱이 늘어난다.</b> 잦은 리밸런싱의 비용 — <b>재배분 동안의 소비 중단</b>, <b>재할당 뒤의 중복 처리 버스트</b> — 이 빠른 감지의 이득을 넘어설 수 있다.</p>
+  <p><b>너무 길면</b>: 진짜로 죽은 컨슈머의 파티션이 그 시간 동안 방치된다.</p>
+  <p style="margin-bottom:0">즉 <b>배포·재시작 소요 시간, GC 특성, 네트워크 품질을 근거로 정하는 값이지 무조건 줄이는 값이 아니다.</b> <b>근거를 대며 정한다</b>는 태도가 답변의 핵심이다. (줄일 때는 <code>heartbeat.interval.ms</code>도 함께 줄여 <b>1/3 이하 관계</b>를 유지해야 한다는 점도 잊지 말자.)</p>
+</div></details>
+
+<details class="q"><summary>두 타임아웃 모두 정상인데도 리밸런싱이 반복된다면?<span class="badge bonus">가산점</span><span class="hint">힌트: 리밸런싱을 부르는 사건이 축출뿐인가</span></summary><div class="a">
+  <p><b>멤버 축출만 리밸런싱을 부르는 것이 아니다.</b> <b>새 멤버의 합류</b>도 리밸런싱 트리거다. 진단 도식의 <b>세 번째 갈래</b>가 이 경우다.</p>
+  <ul>
+    <li>오토스케일러가 컨슈머 수를 계속 <b>늘렸다 줄였다</b> 한다.</li>
+    <li><b>크래시 루프</b>에 빠진 파드가 재시작하며 <b>매번 새 멤버로 합류</b>한다(정적 멤버십 <code>group.instance.id</code>가 없으면 재시작할 때마다 새 멤버 ID를 받는다).</li>
+    <li><b>배포 파이프라인</b>이 잦게 돈다.</li>
+  </ul>
+  <p style="margin-bottom:0">즉 <b>"누가 쫓겨났나"뿐 아니라 "누가 자꾸 들어오나"도 봐야 한다.</b> 그룹의 <b>멤버 목록 변화 이력</b>과 <b>배포·스케일 이벤트 이력</b>을 시간축에 겹쳐 보면 답이 나온다.</p>
+</div></details>
+
+<details class="q"><summary>리스너 안에서 <code>Thread.sleep</code>으로 재시도 대기를 걸면 어느 쪽에 먼저 걸리나요?<span class="badge trap">함정</span><span class="hint">힌트: 잠든 것은 어느 스레드인가</span></summary><div class="a">
+  <p><b><code>max.poll.interval.ms</code> 쪽에만 걸린다.</b> 잠든 것은 <b>처리 스레드</b>이고, <b>하트비트 스레드는 계속 뛰기 때문</b>이다. 그래서 세션은 완벽하게 정상으로 보이고 <b>poll 간격만 조용히 늘어난다.</b></p>
+  <p>이게 위험한 이유는 <b>계산에 잘 안 잡히기 때문</b>이다. 블로킹 재시도를 3회, 각 1초 백오프로 걸었다면 <b>실패한 레코드 한 건이 최소 3초를 더 먹는다.</b> 한 배치에 그런 레코드가 여러 건이면 늘어난 시간이 곱으로 붙는다.</p>
+  <div class="eq">한 사이클 ≒ (정상 레코드 × 처리시간) + (실패 레코드 × 재시도 횟수 × 백오프)</div>
+  <p style="margin-bottom:0">그래서 <b>블로킹 재시도를 쓰는 컨슈머는 재시도 예산까지 포함해 poll 간격을 계산</b>해야 하고, 계산이 안 맞으면 <b>논블로킹 재시도(재시도 토픽으로 넘기고 즉시 진행)</b>로 바꾸는 것이 정석이다. 다운스트림이 통째로 죽어 <b>모든 레코드가 재시도 경로를 타는 순간</b>이 가장 위험하다 — 평소엔 멀쩡하다가 장애 때만 축출이 겹쳐 터진다.</p>
+</div></details>
+
+<details class="q"><summary>poll 간격 초과로 쫓겨난 뒤, 처리 중이던 배치의 오프셋 커밋은 어떻게 되나요?<span class="badge senior">시니어 변별</span><span class="hint">힌트: 커밋하려는 순간 이미 내 파티션이 아니다</span></summary><div class="a">
+  <p><b>커밋이 거부된다.</b> 컨슈머는 이미 그룹을 떠났고 그 파티션은 다른 멤버에게 재할당된 상태이므로, 뒤늦게 처리를 마치고 커밋을 시도하면 <b>커밋 실패 예외(<code>CommitFailedException</code>)</b>가 난다. Kafka 입장에서는 <b>더 이상 그 파티션의 주인이 아닌 컨슈머의 커밋을 받아 주면 안 되기 때문</b>이다.</p>
+  <p>여기서 나오는 결과가 실무적으로 중요하다.</p>
+  <ul>
+    <li>그 배치는 <b>커밋되지 않았으므로 새 주인이 같은 구간을 다시 읽는다</b> → <b style="color:#dc2626">중복 처리</b>.</li>
+    <li>쫓겨난 컨슈머가 <b>이미 그 레코드들을 처리해 놓았다면</b> 부작용(DB 쓰기, 외부 호출)은 <b>두 번 일어난다.</b></li>
+    <li>그래서 <b>축출 = 중복 처리 사건</b>이고, 리밸런싱이 반복되는 환경에서는 <b>멱등 처리(idempotent consumer)</b>가 선택이 아니라 필수가 된다.</li>
+  </ul>
+  <p style="margin-bottom:0">면접에서 <b>"성능 문제"로만 답하면 절반</b>이다. 축출은 <b>처리량 문제이자 정합성 문제</b>다 — 이 연결을 말하면 깊이가 드러난다.</p>
+</div></details>
+
+<details class="q"><summary><code>pause()</code>를 쓰면 <code>max.poll.interval.ms</code>를 피할 수 있나요?<span class="hint">힌트: pause는 "poll을 안 부르는 것"이 아니다</span></summary><div class="a">
+  <p><b>피할 수 있다 — 다만 원리를 정확히 알아야 한다.</b> <code>pause()</code>는 <b>poll() 호출을 멈추는 것이 아니라</b>, poll()은 계속 부르되 <b>지정한 파티션에서 새 레코드를 받지 않게</b> 하는 기능이다. 즉 <b>poll() 호출 자체는 계속 일어나므로 poll 간격 타이머가 계속 리셋된다.</b></p>
+  <p>그래서 이런 패턴이 성립한다.</p>
+  <ol>
+    <li>레코드를 받아 <b>워커 스레드에 넘긴다.</b></li>
+    <li>해당 파티션을 <b>pause</b>한다 — 새 레코드가 더 안 들어온다.</li>
+    <li>워커가 처리하는 동안 리스너 스레드는 <b>빈 poll()을 계속 돈다</b> → 두 타임아웃 어느 쪽에도 안 걸린다.</li>
+    <li>워커가 끝나면 <b>resume</b>하고 그 지점까지 커밋한다.</li>
+  </ol>
+  <p style="margin-bottom:0"><b>주의할 점</b>: 이 패턴은 <b>커밋 시점을 직접 관리</b>해야 한다. 워커가 끝나기 전에 커밋하면 프로세스 종료 시 <b>유실</b>이고, 워커가 실패했는데 커밋하면 <b>메시지가 사라진다</b>. 그리고 이 구조는 결국 "메모리에 들고 있는 작업 큐"이므로, <b>수 분짜리 작업이라면 DB 작업 큐로 영속화하는 쪽(선택지 3)이 더 안전하다.</b></p>
+</div></details>
+
+<details class="q"><summary>정적 멤버십(<code>group.instance.id</code>)을 쓰면 poll 간격 초과 축출도 막아 주나요?<span class="hint">힌트: 정적 멤버십이 해결하는 문제는 무엇인가</span></summary><div class="a">
+  <p><b>아니다. 다른 문제를 푸는 기능이다.</b> 정적 멤버십은 멤버에게 <b>고정된 ID</b>를 부여해서, <b>짧은 재시작(배포, 롤링 업데이트) 동안 코디네이터가 그 자리를 비워 두고 기다리게</b> 하는 기능이다. 같은 ID로 돌아오면 이전 파티션을 그대로 다시 받으므로 <b>재시작마다 리밸런싱이 도는 것을 피할 수 있다.</b></p>
+  <div class="split">
+    <div class="pane g"><h4>정적 멤버십이 해결하는 것</h4>
+      <ul>
+        <li><b>계획된 재시작</b>(배포, 파드 교체)마다 도는 리밸런싱</li>
+        <li>재시작할 때마다 <b>새 멤버 ID</b>를 받아 "합류 → 리밸런싱"이 반복되는 문제</li>
+      </ul>
+    </div>
+    <div class="pane r"><h4>정적 멤버십이 해결하지 못하는 것</h4>
+      <ul>
+        <li><b>poll 간격 초과</b> — 처리가 느린 문제는 그대로다</li>
+        <li><b>교착에 빠진 컨슈머</b> — 오히려 자리를 더 오래 잡고 있는다</li>
+        <li>느린 처리·GC 등 <b>원인 자체</b></li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-bottom:0">그리고 대가가 있다. 정적 멤버가 <b>진짜로 죽었을 때</b>도 코디네이터는 그 자리를 <b>세션 타임아웃만큼 비워 두고 기다리므로</b>, 그동안 그 파티션은 아무도 소비하지 않는다. <b>"재배분을 미루는 대가로 감지를 늦춘다"</b>는 트레이드오프를 알고 써야 한다.</p>
+</div></details>
+
+<details class="q"><summary>하트비트 스레드가 별도라면서, 왜 긴 GC로 세션이 끊기나요?<span class="hint">힌트: stop-the-world의 "world"에 무엇이 포함되는가</span></summary><div class="a">
+  <p><b>stop-the-world GC는 이름 그대로 애플리케이션 스레드 전부를 정지시키기 때문</b>이다. 하트비트 스레드도 <b>같은 JVM 안의 애플리케이션 스레드</b>이므로 예외가 아니다. "별도 스레드"는 <b>내 리스너 코드로부터 독립</b>이라는 뜻이지, <b>JVM 이벤트로부터 독립</b>이라는 뜻이 아니다.</p>
+  <p>그래서 <b>10초짜리 full GC가 돌면 하트비트도 10초간 안 나간다.</b> 세션 타임아웃보다 길면 그 자리에서 사망 판정이다. 같은 이유로 <b>CPU 스로틀링</b>(컨테이너 CPU 한도에 계속 부딪히는 상태)도 하트비트를 밀리게 만든다 — 스레드가 살아 있어도 <b>CPU를 못 받으면 신호를 못 보낸다.</b></p>
+  <p style="margin-bottom:0">진단에서 이 사실이 갖는 의미는 이렇다. <b>세션 만료가 났다면 Kafka 설정이 아니라 JVM·컨테이너를 본다.</b> GC 로그의 최대 정지 시간, 힙 사용 추이, OOM 킬 이력, CPU 스로틀 카운터 — <b>수사 대상이 Kafka 밖에 있다는 것</b>이 이 갈래의 핵심이다.</p>
+</div></details>
+
+<details class="q"><summary>두 값 사이에 지켜야 할 대소 관계가 있나요?<span class="hint">힌트: 강제되는 관계와 관례적인 관계를 구분하라</span></summary><div class="a">
+  <p><b>강제되는 관계는 하나뿐</b>이다 — <code>heartbeat.interval.ms</code> <b>&lt;</b> <code>session.timeout.ms</code>. 이걸 어기면 <b>정상 컨슈머도 무조건 쫓겨나는 설정</b>이 된다(다음 하트비트를 보내기 전에 판정 창이 만료되므로). 관례는 <b>1/3 이하</b>다.</p>
+  <p><b><code>max.poll.interval.ms</code>와 나머지 둘 사이에는 산술적 제약이 없다.</b> <b>재는 신호의 종류가 아예 다르기 때문</b>이다 — 하트비트끼리는 "몇 번 보내는 동안 몇 번 놓쳤나"를 셀 수 있지만, poll 간격은 <b>처리 시간이라는 별개의 축</b>에서 정해진다.</p>
+  <p style="margin-bottom:0">다만 <b>실무에서는 거의 항상 <code>max.poll.interval.ms</code> ≫ <code>session.timeout.ms</code></b>가 된다. 스케일이 다르기 때문이다 — 앞은 <b>"배치 하나 처리에 몇 분"</b>, 뒤는 <b>"네트워크가 몇 초 끊겼나"</b>. 참고로 <b><code>session.timeout.ms</code>의 기본값은 Kafka 버전에 따라 바뀌어 왔으므로</b> 숫자를 외우기보다 <b>1/3 관계와 스케일 차이</b>를 외우는 편이 안전하다(그리고 브로커의 허용 범위 설정에 걸려 클라이언트 값이 거부될 수 있으므로 실제 운영값은 클러스터 설정과 함께 확인한다).</p>
+</div></details>
+
+<details class="q"><summary>축출된 컨슈머는 알아서 복귀하나요? 그동안 그룹은 어떻게 되나요?<span class="hint">힌트: 복귀 자체가 또 하나의 리밸런싱 트리거다</span></summary><div class="a">
+  <p><b>복귀한다 — 그리고 그 복귀가 또 리밸런싱을 부른다.</b> poll 간격 초과로 탈퇴한 컨슈머는 처리를 마치고 다음 <code>poll()</code>을 부르는 순간 <b>"다시 그룹에 넣어 달라"고 재합류를 요청</b>하고, 코디네이터는 <b>또 한 번 리밸런싱</b>을 돌린다.</p>
+  <div class="chain">
+    <span class="chip r">축출</span><span class="arrow">→</span>
+    <span class="chip w">리밸런싱 ①</span><span class="arrow">→</span>
+    <span class="chip b">처리 종료 후 재합류</span><span class="arrow">→</span>
+    <span class="chip w">리밸런싱 ②</span><span class="arrow">→</span>
+    <span class="chip r">원인 그대로 → 또 축출</span>
+  </div>
+  <p><b>축출 한 번에 리밸런싱이 두 번</b> 도는 셈이고, 원인을 고치지 않으면 이 사이클이 계속 반복된다. 모니터링에서 <b>"리밸런싱이 규칙적인 주기로 반복되는 톱니 패턴"</b>이 보인다면 거의 이 상태다 — 주기가 <code>max.poll.interval.ms</code>와 비슷하다면 <b>범인은 poll 간격 초과</b>라고 거의 확정할 수 있다.</p>
+  <p style="margin-bottom:0">그래서 <b>"컨슈머가 알아서 돌아오니 괜찮다"는 착각이 위험하다.</b> 돌아오는 동안 그룹 전체 소비가 멈추고, 미커밋 구간이 중복 처리되고, 랙이 쌓여 다음 사이클을 더 무겁게 만든다.</p>
+</div></details>
+
+<details class="q"><summary><code>max.poll.records</code>를 1로 줄였는데도 여전히 초과합니다. 무엇을 봐야 하나요?<span class="hint">힌트: 배치가 아니라 "한 건"이 이미 한도를 넘는 경우</span></summary><div class="a">
+  <p>배치 크기 다이얼을 끝까지 내렸는데도 초과라면, <b>원인이 배치 크기가 아니라는 뜻</b>이다. 볼 곳은 네 군데다.</p>
+  <ol>
+    <li><b>레코드 한 건의 처리 시간 자체가 한도를 넘는다.</b> 애초에 "긴 작업"이므로 다이얼이 아니라 <b>구조(작업 큐 분리)</b>로 가야 한다.</li>
+    <li><b>리스너 안의 블로킹 재시도/백오프.</b> 실패 한 건이 재시도 × 백오프만큼 시간을 먹는다.</li>
+    <li><b>타임아웃 없는 외부 호출.</b> 응답 없는 상대를 무한정 기다리면 한 건이 영원히 안 끝난다 — <b>모든 외부 호출에 상한을 거는 것이 기본</b>이다.</li>
+    <li><b>poison pill.</b> 특정 레코드에서만 매번 멈춘다면, 그 레코드의 오프셋과 키를 로그에서 확보해 <b>DLQ로 보내거나 건너뛰는</b> 경로를 만든다.</li>
+  </ol>
+  <p style="margin-bottom:0">감별법은 간단하다. <b>축출이 항상 같은 오프셋 근처에서 나면 poison pill</b>, <b>전 구간에서 고르게 나면 처리 시간 문제</b>, <b>특정 시간대에만 나면 다운스트림 부하</b>다. <b>"언제 나는가"를 세 갈래로 갈라 보는 것</b>이 다음 수를 정한다.</p>
+</div></details>
+
+<h3>13-4. 답변 대본 — 30초 버전과 2분 버전</h3>
+
+<div class="split">
+  <div class="pane b"><h4>30초 — 첫 답변으로 그대로</h4>
+    <p style="margin:0;font-size:.95rem">"두 값은 <b>재는 신호가 다릅니다</b>. <code>session.timeout.ms</code>는 <b>별도 하트비트 스레드</b>의 신호가 끊겼는지를 보는 <b>'죽었는가'</b> 판정이고, 코디네이터가 멤버를 제거합니다. <code>max.poll.interval.ms</code>는 <code>poll()</code> 간격을 보는 <b>'일이 멈췄는가'</b> 판정이고, 컨슈머가 <b>스스로 탈퇴</b>합니다. 예전엔 하트비트를 poll 안에서 보내 <b>'느림'과 '죽음'을 구별할 수 없었는데</b>, 스레드를 떼어내면서 판정이 둘로 갈라진 겁니다. 그래서 리밸런싱이 반복되면 <b>설정을 만지기 전에 로그로 어느 쪽인지부터 가릅니다</b> — poll 초과면 처리 지연 수사, 세션 만료면 GC·OOM 같은 인프라 수사입니다."</p>
+  </div>
+  <div class="pane g"><h4>2분 — 꼬리질문을 미리 막는 확장</h4>
+    <ul>
+      <li><b>(구분)</b> 신호 / 판정 주체 / 로그 위치 세 가지가 다르다.</li>
+      <li><b>(역사)</b> 하나의 다이얼로는 <b>감지 속도 vs 긴 처리 허용</b>을 동시에 못 잡는다 → 스레드 분리.</li>
+      <li><b>(3층)</b> <code>heartbeat.interval.ms</code> → <code>session.timeout.ms</code>(1/3 관계) → <code>max.poll.interval.ms</code>.</li>
+      <li><b>(정량화)</b> <code>max.poll.records × 레코드당 시간</code>. "500 × 1초 = 500초 &gt; 기본 300초"를 <b>숫자로</b>.</li>
+      <li><b>(사각지대)</b> 교착은 <b>오직</b> poll 간격으로만 잡힌다 / 긴 GC는 <b>두 스레드를 함께</b> 멈춘다.</li>
+      <li><b>(진단)</b> 로그 갈래 → 처리 지연 / 인프라 / <b>합류 쪽</b>(오토스케일·크래시 루프).</li>
+      <li><b>(악순환)</b> 원인을 고쳐도 <b>랙이 고리를 돌린다</b> → 배치를 줄여 고리부터 끊는다.</li>
+      <li><b>(구조)</b> 마무리 — <b>"긴 작업은 다이얼이 아니라 구조로 답합니다. DB 작업 큐에 적재하고 즉시 커밋해 Kafka의 생존 판정과 작업 시간을 분리합니다."</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout ok"><span class="t">마지막 점검 — 이 문서에서 반드시 인출되어야 할 것</span>
+<b>①</b> 두 값이 재는 <b>신호</b>가 다르다(하트비트 / poll 간격) · <b>②</b> <b>축출 주체</b>가 다르다(코디네이터 제거 / 컨슈머 자진 탈퇴) · <b>③</b> 판정이 둘인 이유는 <b>하트비트 스레드 분리</b>라는 역사 · <b>④</b> <code>heartbeat</code> ≤ <code>session</code>/3 · <b>⑤</b> <code>max.poll.records × 레코드당 시간 &lt; max.poll.interval.ms</code> (기본 500 / 300000ms) · <b>⑥</b> 사각지대 3구멍(교착 · 긴 GC · sleep) · <b>⑦</b> 진단은 <b>로그 갈래 가르기부터</b> · <b>⑧</b> 대응 우선순위(records 축소 → 타임아웃 → 최적화 → interval 증가) · <b>⑨</b> 악순환은 <b>원인을 고쳐도 돈다</b> · <b>⑩</b> 근본 해법은 <b>DB 작업 큐 + 즉시 커밋</b>(영속화가 안전의 근거).
+</div>
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  <code>session.timeout.ms</code>는 <b>별도 하트비트 스레드의 심장박동</b>으로 <b>"죽었는가"</b>를, <code>max.poll.interval.ms</code>는 <code>poll()</code> <b>간격</b>으로 <b>"일이 멈췄는가"</b>를 판정하는 <b>서로 다른 생존 검사</b>이며(하트비트를 poll에서 떼어낸 덕에 비로소 둘이 갈라졌다), 리밸런싱이 반복되면 <b>로그에서 어느 쪽에 걸려 쫓겨났는지부터 갈라야</b> 처리 지연 수사(다운스트림 · 배치 크기 · poison pill)로 갈지 인프라 수사(GC · OOM · CPU 스로틀 · 네트워크)로 갈지가 정해진다 — 그리고 처리가 원래 긴 작업이라면 한도를 키워 감지를 포기하는 대신, 받자마자 <b>DB 작업 큐에 넣고 즉시 커밋</b>해 <b>Kafka의 생존 판정과 작업 시간을 분리</b>하는 것이 근본 해법이다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/06-messaging/35-max-poll-interval-vs-session-timeout.md</code> · 이어서 볼 문서: 컨슈머 리밸런싱과 처리 중 메시지(26) · 컨슈머 재시도와 DLQ 설계(25) · 단일 컨슈머 처리량과 오프셋 커밋(30) · 컨슈머 랙 진단(31) · 오프셋 커밋과 auto-commit 위험(23)</p>
+
+</main>
+</body>
+</html>
