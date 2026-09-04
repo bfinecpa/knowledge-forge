@@ -1,0 +1,1637 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PG 연동의 기본기 — 외부사는 느려지고, 중복 응답하고, 스펙과 다르게 동작한다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.split.g3{grid-template-columns:1fr 1fr 1fr}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane.w{background:var(--warn-soft);border-color:var(--warn-line)}
+.pane.w h4{color:var(--warn)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">10 결제 정합성 &nbsp;|&nbsp; 기본⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>PG 연동의 기본기<br><span class="sub">외부사는 느려지고, 중복 응답하고, 스펙과 다르게 동작한다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"PG사 연동 시 기본적으로 고려해야 할 것들은? (타임아웃, 중복 방지, 검증)"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — PG 연동 코드의 품질은 <b>"승인 성공" 경로가 아니라 그 바깥에서 갈린다.</b> 외부사는 언젠가 반드시 느려지므로 <b>연결 타임아웃과 읽기 타임아웃을 분리해 명시</b>하고(무제한 대기는 스레드 풀 고갈로 전체 서비스를 죽인다), 승인처럼 <b>멱등하지 않은 요청은 절대 자동 재시도하지 않으며</b>(타임아웃 시 거래 조회로 확인 후 판단), PG 응답은 신뢰하지 말고 <b>우리 DB의 주문 금액·주문번호와 대조</b>해서 승인 확정한다. <b>가맹점 주문번호에 유니크 제약</b>을 걸어 같은 주문의 이중 승인을 DB 수준에서 막고, <b>요청/응답 원문을 민감정보 마스킹 후 전량 로깅</b>해 분쟁·대사의 증거를 남긴다. PG 장애 시 <b>서킷 브레이커로 빠르게 실패</b>시키고, <b>정기 점검 시간</b>은 미리 알고 대응한다. 이 목록이 곧 <b>"행복 경로만 구현한 연동"과 "방어적 연동"의 차이</b>이고, 그 차이는 <b>CS 건수와 월말 정산 차액</b>으로 드러난다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>전제부터 말한다</b> — PG는 우리 팀이 아니라 <b>옆 건물의 다른 회사</b>이고, 그 뒤에 VAN·카드사가 더 붙어 있습니다. 그래서 외부 호출의 결과는 성공·실패 둘이 아니라 <b>성공·실패·"모름" 셋</b>이고, PG 연동 설계는 이 <b>세 번째 상태를 최대한 적게 만들고, 만들어졌을 때 악화시키지 않는 일</b>입니다.</div></li>
+    <li><span class="n">2</span><div><b>방어선은 층이 달라 서로를 대체하지 못한다</b> — <b>타임아웃 분리</b>(무한 대기 차단) · <b>멱등한 호출만 재시도</b>(이중 승인 차단) · <b>응답 대조 검증</b>(금액 변조 차단) · <b>DB 유니크 제약</b>(중복 기록 차단) · <b>마스킹 원문 로깅</b>(증거 확보) · <b>서킷 브레이커</b>(죽은 상대 호출 차단) · <b>점검 시간 대응</b>(예고된 실패 관리). 하나로 나머지를 대신할 수 없습니다.</div></li>
+    <li><span class="n">3</span><div><b>가장 중요한 한 줄</b> — <b>승인 타임아웃은 "실패"가 아니라 "모름"</b>이므로 <b>자동 재시도가 아니라 거래 조회 후 판단</b>입니다. 그리고 <b>타임아웃은 결제를 성공시키는 장치가 아니라 결제 외의 것을 살리는 장치</b>입니다 — 이 두 문장이 행복 경로 연동과 방어적 연동을 가릅니다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">등장인물 — 우리 호출 뒤에 회사가 셋 더 있다</a></li>
+    <li><a href="#s2">세 번째 결과 — 성공·실패·<b>모름</b></a></li>
+    <li><a href="#s3">타임아웃은 하나가 아니다 — HTTP 호출의 해부</a></li>
+    <li><a href="#s4">스레드 풀 고갈 — 숫자로 따라가는 연쇄 장애</a></li>
+    <li><a href="#s5">방어선 일곱 개 — 층이 다르다</a></li>
+    <li><a href="#s6">① 연결/읽기 타임아웃 분리</a></li>
+    <li><a href="#s7">② 멱등한 호출만 재시도 — 승인은 조회 후 판단</a></li>
+    <li><a href="#s8">③ 응답 대조 검증 — PG는 자기가 받은 요청에만 정직하다</a></li>
+    <li><a href="#s9">④ 유니크 제약 — 중복의 최후 방어선</a></li>
+    <li><a href="#s10">⑤ 마스킹 원문 로깅 — 유출 표면이 가장 넓은 사본</a></li>
+    <li><a href="#s11">⑥ 서킷 브레이커와 벌크헤드</a></li>
+    <li><a href="#s12">⑦ 점검 시간 — 예고된 장애는 장애가 아니다</a></li>
+    <li><a href="#s13">실무 사례 셋 — 방어선이 없던 자리마다</a></li>
+    <li><a href="#s14">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "PG사 연동 시 기본적으로 고려해야 할 것들은? (타임아웃, 중복 방지, 검증)"</p>
+  <p><b>출제 의도</b>: <b>외부사는 느려지고, 중복 응답하고, 스펙 문서와 다르게 동작한다</b>는 전제를 갖고 있는지 본다. "행복 경로만 구현한 연동"과 "방어적 연동"의 차이는 <b>코드 리뷰에서는 잘 안 보이지만</b>, 운영에 들어가면 <b>CS 건수와 정산 차액으로 반드시 드러난다.</b></p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>타임아웃을 "하나"로 알고 있는 것</b> → 3절에서 HTTP 호출을 단계로 해부해, <b>연결 구간과 읽기 구간의 실패가 뜻이 완전히 다르다</b>는 것과 <b>"③ 요청 전송 이후의 타임아웃은 결과 불명"</b>이라는 결론을 도식에서 유도한다.<br>
+    ② <b>"타임아웃 안 걸면 위험하다"를 문장으로만 외우는 것</b> → 4절에서 <b>초당 20건 × 30초 = 600건 vs 스레드 200개</b>라는 계산으로 <b>10초 만에 전면 장애</b>가 되는 경로를 따라가고, 그 경로의 어디를 <b>타임아웃·서킷·벌크헤드가 각각 끊는지</b>를 도식으로 나눈다.<br>
+    ③ <b>일곱 가지 방어 장치를 나열만 하는 것</b> → 5절에서 장치들을 <b>요청의 생애주기 위에</b> 배치해 "어느 층을 막는가"로 재구성하고, <b>다섯 리듬의 암기 문장</b>으로 압축한다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 등장인물 — 우리 호출 뒤에 회사가 셋 더 있다</h2>
+
+<p>용어부터 정리하고 시작한다. 이 문서에 나오는 나머지 이야기가 전부 <b>"우리 서버 밖에 회사가 몇 개 더 있다"</b>는 사실에서 파생되기 때문이다.</p>
+
+<div class="grid g4">
+  <div class="tile"><div class="k" style="font-family:inherit">가맹점 merchant</div><div class="d">물건·서비스를 파는 쪽, 즉 <b>우리 서비스</b>. 결제 업계 문서의 "가맹점"은 <b>우리</b>라고 읽으면 된다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">PG 결제대행사</div><div class="d">우리 대신 여러 카드사·은행과 개별 계약을 맺어 두고 <b>우리에게는 API 하나만</b> 제공하는 중계 회사. 토스페이먼츠·KG이니시스·NHN KCP 등.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">VAN 부가가치통신망</div><div class="d">카드 단말기와 카드사 사이의 <b>승인 중계망</b>을 운영하는 회사. 뒤에 나오는 <b>"망취소"</b>라는 용어가 이 망(網)에서 나왔다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">발급사 issuer</div><div class="d">고객에게 카드를 발급한 카드사. <b>한도를 확인하고 최종 승인/거절을 결정</b>하는 주체가 여기다.</div></div>
+</div>
+
+<p>돈이 움직이는 단계에도 이름이 셋 있다. <b>이 셋을 뭉뚱그리면 뒤의 설명이 헷갈린다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 366" role="img" aria-label="위쪽은 고객 브라우저에서 우리 서버로, 우리 서버에서 PG로, PG에서 VAN 매입사로, 다시 카드 발급사로 이어지는 승인 요청 흐름도이며 PG부터는 우리가 코드를 고칠 수 없는 영역이라는 점선 경계로 묶여 있다. 아래쪽은 승인 매입 정산이라는 돈의 세 단계를 시간 순으로 늘어놓은 띠다">
+    <defs>
+      <marker id="p1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="p1b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">승인 요청 한 번의 사슬 — 우리 코드가 아무리 빨라도 응답 시간은 우리 손을 떠나 있다</text>
+
+    <rect x="24" y="60" width="150" height="62" rx="10" fill="#fff" stroke="#94a3b8"/>
+    <text x="99" y="86" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">고객 브라우저</text>
+    <text x="99" y="106" font-size="11" fill="#94a3b8" text-anchor="middle">① 결제 진행</text>
+
+    <line x1="176" y1="91" x2="204" y2="91" stroke="#475569" stroke-width="1.8" marker-end="url(#p1a)"/>
+
+    <rect x="208" y="60" width="176" height="62" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="296" y="86" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">우리 서버 = 가맹점</text>
+    <text x="296" y="106" font-size="11" fill="#60a5fa" text-anchor="middle">② 승인 요청 (HTTP 1회)</text>
+
+    <line x1="386" y1="91" x2="418" y2="91" stroke="#2563eb" stroke-width="2" marker-end="url(#p1b)"/>
+
+    <rect x="422" y="44" width="674" height="112" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-dasharray="7 5"/>
+    <text x="442" y="66" font-size="12" fill="#b91c1c" font-weight="700">여기서부터는 우리가 코드를 고칠 수 없는 영역 — 느려져도 우리는 기다리는 것 말고 할 게 없다</text>
+
+    <rect x="442" y="78" width="180" height="60" rx="9" fill="#fff" stroke="#dc2626"/>
+    <text x="532" y="102" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">PG (결제대행사)</text>
+    <text x="532" y="122" font-size="10.5" fill="#7f1d1d" text-anchor="middle">카드사 계약을 대신 들고 있다</text>
+
+    <line x1="624" y1="108" x2="656" y2="108" stroke="#dc2626" stroke-width="1.8" marker-end="url(#p1a)"/>
+    <text x="640" y="98" font-size="10" fill="#7f1d1d" text-anchor="middle">③</text>
+
+    <rect x="660" y="78" width="180" height="60" rx="9" fill="#fff" stroke="#dc2626"/>
+    <text x="750" y="102" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">VAN / 매입사</text>
+    <text x="750" y="122" font-size="10.5" fill="#7f1d1d" text-anchor="middle">승인 중계망</text>
+
+    <line x1="842" y1="108" x2="874" y2="108" stroke="#dc2626" stroke-width="1.8" marker-end="url(#p1a)"/>
+    <text x="858" y="98" font-size="10" fill="#7f1d1d" text-anchor="middle">④</text>
+
+    <rect x="878" y="78" width="196" height="60" rx="9" fill="#fff" stroke="#dc2626"/>
+    <text x="976" y="102" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">카드 발급사</text>
+    <text x="976" y="122" font-size="10.5" fill="#7f1d1d" text-anchor="middle">한도·유효성 확인 → 승인/거절</text>
+
+    <rect x="24" y="170" width="1072" height="34" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="560" y="192" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">우리가 보낸 HTTP 호출 하나 뒤에 회사가 셋 더 붙어 있다 — 그중 어느 하나만 느려져도 우리 서버의 워커 스레드가 그만큼 오래 묶인다</text>
+
+    <rect x="24" y="220" width="1072" height="132" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="44" y="244" font-size="13.5" fill="#1f2937" font-weight="700">돈이 움직이는 단계도 셋 — 뭉뚱그리면 "정산 차액"이라는 말이 무슨 뜻인지 알 수 없다</text>
+
+    <rect x="44" y="258" width="318" height="76" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="203" y="280" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">승인 authorization</text>
+    <text x="203" y="300" font-size="11.5" fill="#1e40af" text-anchor="middle">"이 카드로 32,000원 쓸 수 있나" 확인 후</text>
+    <text x="203" y="316" font-size="11.5" fill="#1e40af" text-anchor="middle">한도에서 잡아둔다 · 고객에게 승인 문자</text>
+    <text x="203" y="330" font-size="10.5" fill="#93c5fd" text-anchor="middle">아직 돈이 이동한 것은 아니다</text>
+
+    <line x1="366" y1="296" x2="392" y2="296" stroke="#475569" stroke-width="1.8" marker-end="url(#p1a)"/>
+
+    <rect x="396" y="258" width="318" height="76" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="555" y="280" font-size="13" fill="#334155" text-anchor="middle" font-weight="700">매입 capture</text>
+    <text x="555" y="300" font-size="11.5" fill="#475569" text-anchor="middle">잡아둔 금액을 실제로 청구하겠다고</text>
+    <text x="555" y="316" font-size="11.5" fill="#475569" text-anchor="middle">카드사에 올리는 절차</text>
+    <text x="555" y="330" font-size="10.5" fill="#94a3b8" text-anchor="middle">국내 카드 결제는 승인에 자동으로 이어지는 경우가 많다</text>
+
+    <line x1="718" y1="296" x2="744" y2="296" stroke="#475569" stroke-width="1.8" marker-end="url(#p1a)"/>
+
+    <rect x="748" y="258" width="326" height="76" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="911" y="280" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">정산 settlement · D+2~D+7</text>
+    <text x="911" y="300" font-size="11.5" fill="#166534" text-anchor="middle">PG가 수수료를 떼고 우리 계좌로 송금</text>
+    <text x="911" y="318" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">"정산 차액" = 여기 들어온 돈 ≠ 우리 DB의 매출</text>
+  </svg>
+  <figcaption>이 그림에서 얻어야 할 감각은 하나다 — <b>우리 코드는 사슬의 첫 칸일 뿐이다.</b> 그리고 아래 띠의 <b>정산</b>이 이 문서 곳곳에 나오는 "월말 정산 차액"의 정체다. <b>PG가 실제로 보내준 돈</b>과 <b>우리 DB가 주장하는 매출</b>이 안 맞는 상황을 말한다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>이 문서에서 "사고"가 측정되는 두 개의 눈금</h4>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">즉시 드러나는 것 — CS 건수</div><div class="d">이중 승인, 결제 실패, "돈은 나갔는데 주문이 없다". <b>고객이 알려준다.</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">한 달 뒤 드러나는 것 — 정산 차액</div><div class="d">PG 정산금 ≠ 우리 매출 장부. <b>아무도 알려주지 않고</b> 월말에 숫자로만 나타난다 — 그래서 건별 원인 추적이 며칠씩 걸린다.</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">면접에서 <b>"방어선의 유무가 무엇으로 증명되냐"</b>는 질문을 받으면 이 둘을 대면 된다. 코드 리뷰에서는 안 보이지만 <b>운영에서는 반드시 숫자로 나온다</b>는 것이 이 문서의 전제다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 세 번째 결과 — 성공·실패·<span style="color:#dc2626">모름</span></h2>
+
+<p>평소에 짜는 코드에서 메서드를 하나 호출하면 결과는 둘 중 하나다. <b>값이 돌아오거나(성공), 예외가 던져지거나(실패).</b> 이 이분법에 익숙해져 있기 때문에 대부분의 코드가 <code>try-catch</code>로 충분하다.</p>
+
+<div class="rule red">네트워크 호출에는 <b>세 번째 결과</b>가 있다 — 응답이 안 왔다는 것은 "상대가 일을 안 했다"가 아니라 <b>"상대가 일을 했는지 우리가 알 수 없다"</b>는 뜻이다</div>
+
+<p>결제 도메인에서 이 세 번째 상태가 특별히 위험한 이유는, <b>그 상태에서 잘못 추측하면 고객의 실제 돈이 잘못된 방향으로 움직이기 때문</b>이다. 다른 도메인이라면 "다시 부르면 되지"로 끝날 일이 여기서는 <b>고객 카드에 찍히는 두 번째 승인</b>이 된다.</p>
+
+<div class="callout info">
+  <span class="t">비유 — PG 연동은 옆 건물의 다른 회사와 전화로 거래하는 것이다</span>
+  계약서(연동 스펙 문서)는 있지만, <b>상대는 우리 사정을 모르고 우리는 상대 사무실 안을 볼 수 없다.</b> 이 비유 하나에서 세 가지 사고 유형이 자연히 따라 나온다.
+</div>
+
+<div class="grid g3">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">① 전화를 받는 데 오래 걸린다 — 지연</div>
+    <div class="d">상대 회사에 사람이 몰렸거나, 상대가 <b>또 다른 곳에 전화를 걸어 확인하는 중</b>이거나(카드사 구간), 아예 점검 중일 수 있다. <b>우리가 할 수 있는 일은 "언제까지 기다릴지"를 정하는 것뿐이다.</b><div style="margin-top:6px"><b>→ 3·4·6·11절</b></div></div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">② 같은 질문에 두 번 답한다 — 중복</div>
+    <div class="d">결제 결과 통지(웹훅)는 <b>가맹점이 못 받았을 경우를 대비해 재전송하는 것이 표준 동작</b>이다. 즉 중복 수신은 버그가 아니라 <b>정상 동작의 결과</b>다.<div style="margin-top:6px"><b>→ 7·9절</b></div></div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">③ 계약서에 없는 방식으로 답한다 — 스펙 불일치</div>
+    <div class="d">문서에 없던 상태 코드가 내려오고, 어제까지 없던 필드가 추가되고, 에러 문구가 바뀐다. <b>PG도 계속 배포하는 서비스이기 때문</b>이다.<div style="margin-top:6px"><b>→ 8절 화이트리스트 판정</b></div></div>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>여기서 가장 자주 놓치는 지점 — 웹훅 중복은 "PG의 버그"가 아니다</h4>
+  <p>PG가 같은 통지를 두 번 보내는 것은 <b>스펙에 적힌 정상 동작</b>이다(가맹점이 못 받았을 수 있으니 재전송한다). 우리 쪽에서 <b>같은 통지를 두 번 처리해도 결과가 같도록</b> 만들어 두지 않으면, <b>PG가 스펙대로 동작한 것 때문에 우리가 사고를 낸다.</b></p>
+  <div class="rule red">"중복이 오면 어떡하죠?"가 아니라 <b>"중복은 온다. 두 번 처리돼도 같은 결과가 나오게 만들었나?"</b>가 올바른 질문이다</div>
+  <p style="margin-bottom:0" class="sub">웹훅 수신 처리 자체는 별도 문항(<code>03-webhook-reception-handling.md</code>)의 주제이고, 이 문서에서는 그 중복을 <b>DB 유니크 제약이 최종적으로 어떻게 흡수하는지</b>(9절)까지를 다룬다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 타임아웃은 하나가 아니다 — HTTP 호출 한 번의 해부</h2>
+
+<p>타임아웃을 <b>"하나"</b>로 알고 있으면 뒤의 설명이 전부 안 통한다. HTTP 호출 한 번은 <b>성격이 다른 여러 단계로 나뉘고, 각 단계마다 실패의 의미가 다르기 때문</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="우리 서버와 PG 서버 사이의 시퀀스 다이어그램. DNS 조회 후 TCP 3-way handshake 구간이 연결 타임아웃의 대상이고, 요청 전송 후 응답 첫 바이트가 올 때까지가 읽기 타임아웃의 대상이다. 오른쪽 패널은 요청 전송 이후 타임아웃이 나면 요청 유실, 처리 중, 응답 유실 세 가지를 구분할 수 없다는 결과 불명 설명이다">
+    <defs>
+      <marker id="p3a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="p3r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">두 구간은 나란한 설정값이 아니라, 실패했을 때의 "의미"가 완전히 다른 두 개의 세계다</text>
+
+    <rect x="152" y="46" width="156" height="34" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="230" y="68" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">우리 서버</text>
+    <rect x="562" y="46" width="156" height="34" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="640" y="68" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">PG 서버</text>
+
+    <line x1="230" y1="80" x2="230" y2="344" stroke="#cbd5e1" stroke-width="1.5"/>
+    <line x1="640" y1="80" x2="640" y2="344" stroke="#cbd5e1" stroke-width="1.5"/>
+
+    <text x="244" y="104" font-size="11.5" fill="#64748b">① DNS 조회 <tspan class="mono">api.pg.example → 203.0.113.9</tspan></text>
+
+    <line x1="230" y1="136" x2="634" y2="136" stroke="#475569" stroke-width="1.8" marker-end="url(#p3a)"/>
+    <text x="432" y="128" font-size="11.5" fill="#334155" text-anchor="middle">② TCP 연결 수립 (3-way handshake)</text>
+    <line x1="640" y1="164" x2="236" y2="164" stroke="#475569" stroke-width="1.8" marker-end="url(#p3a)"/>
+
+    <path d="M212 128 L200 128 L200 172 L212 172" fill="none" stroke="#2563eb" stroke-width="2"/>
+    <rect x="24" y="126" width="168" height="50" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="108" y="145" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">연결 타임아웃 2~3초</text>
+    <text x="108" y="161" font-size="10" fill="#1e40af" text-anchor="middle">정상이면 같은 지역 내 수십 ms</text>
+    <text x="108" y="172" font-size="10" fill="#1e40af" text-anchor="middle">3초 안 되면 30초도 안 된다</text>
+
+    <line x1="230" y1="212" x2="634" y2="212" stroke="#dc2626" stroke-width="2.2" marker-end="url(#p3r)"/>
+    <text x="432" y="204" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">③ 요청 전송 — 승인 요청 본문</text>
+
+    <rect x="566" y="230" width="150" height="60" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="641" y="252" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">PG 내부 처리</text>
+    <text x="641" y="270" font-size="11" fill="#7f1d1d" text-anchor="middle">+ VAN·카드사 왕복</text>
+    <text x="641" y="284" font-size="10" fill="#f87171" text-anchor="middle">원래 오래 걸리는 구간</text>
+
+    <text x="300" y="256" font-size="11.5" fill="#94a3b8">④ 응답 대기 · · · · · · · · · · · ·</text>
+
+    <line x1="640" y1="312" x2="236" y2="312" stroke="#475569" stroke-width="1.8" marker-end="url(#p3a)"/>
+    <text x="432" y="304" font-size="11.5" fill="#334155" text-anchor="middle">응답 첫 바이트 도착</text>
+
+    <path d="M212 204 L200 204 L200 320 L212 320" fill="none" stroke="#d97706" stroke-width="2"/>
+    <rect x="24" y="228" width="168" height="66" rx="8" fill="#fffbeb" stroke="#d97706"/>
+    <text x="108" y="248" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">읽기 타임아웃</text>
+    <text x="108" y="264" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">승인 20~30초</text>
+    <text x="108" y="280" font-size="10" fill="#92400e" text-anchor="middle">여기서 시간이 흐른다 =</text>
+    <text x="108" y="291" font-size="10" fill="#92400e" text-anchor="middle">상대가 일하는 중일 수 있다</text>
+
+    <rect x="752" y="98" width="344" height="250" rx="11" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="924" y="122" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">③ 이후에 타임아웃이 나면</text>
+    <text x="924" y="142" font-size="12" fill="#7f1d1d" text-anchor="middle">우리는 아래 셋을 구분할 방법이 없다</text>
+
+    <rect x="772" y="156" width="304" height="42" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="788" y="174" font-size="11.5" fill="#b91c1c" font-weight="700">ⓐ 요청이 가는 길에 유실됐다</text>
+    <text x="788" y="190" font-size="10.5" fill="#6b7280">→ PG는 아무것도 모른다. 승인 없음</text>
+
+    <rect x="772" y="206" width="304" height="42" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="788" y="224" font-size="11.5" fill="#b91c1c" font-weight="700">ⓑ PG가 지금도 처리 중이다</text>
+    <text x="788" y="240" font-size="10.5" fill="#6b7280">→ 1초 뒤 승인될 수도 있다</text>
+
+    <rect x="772" y="256" width="304" height="42" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="788" y="274" font-size="11.5" fill="#b91c1c" font-weight="700">ⓒ 처리는 끝났는데 응답이 유실됐다</text>
+    <text x="788" y="290" font-size="10.5" fill="#6b7280">→ <tspan font-weight="700">이미 승인이 나 있다</tspan></text>
+
+    <rect x="772" y="306" width="304" height="30" rx="8" fill="#7f1d1d"/>
+    <text x="924" y="326" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">= 성공도 실패도 아닌 "결과 불명"</text>
+  </svg>
+  <figcaption>왼쪽의 두 대괄호가 <b>서로 다른 타임아웃</b>이다. 오른쪽 패널이 이 문서 전체의 가장 중요한 결론 — <b>③번 이후의 타임아웃은 "승인 안 됨"이 아니라 "모름"</b>이므로, 그 위에서 <b>자동 재시도라는 추측</b>을 하면 안 된다(7절).</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>같은 "시간 초과"인데 뜻이 정반대다</caption>
+  <thead><tr><th>구간</th><th>무엇을 기다리는가</th><th>정상 소요</th><th>시간이 흐른다는 것의 뜻</th><th>그래서 값은</th></tr></thead>
+  <tbody>
+    <tr><td><b>연결(connect)</b></td><td>TCP 연결 수립까지</td><td>같은 지역 내 <b>수십 ms</b></td><td class="bad">상대 서버에 연결 자체가 안 되고 있다 — 더 기다려도 대개 안 된다</td><td><b>짧게 2~3초</b></td></tr>
+    <tr><td><b>읽기(read)</b></td><td>요청 전송 후 응답 도착까지</td><td>승인 <b>평균 1초대</b>, 꼬리는 훨씬 길다</td><td class="good">상대가 <b>살아 있고 지금 일하는 중일 수도</b> 있다 — 끊으면 정상 거래를 우리가 망친다</td><td><b>길게, 성격별로</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>여기서 갈리는 지점 — "짧을수록 안전하다"는 착각</h4>
+  <p>연결 타임아웃은 짧게 잡아도 잃을 게 없지만, <b>읽기 타임아웃을 짧게 잡으면 정상 처리 중인 거래를 우리가 먼저 끊어버린다.</b> 그리고 그렇게 끊긴 거래는 실패가 아니라 <b>"결과 불명"</b>으로 남는다.</p>
+  <div class="rule red">타임아웃은 <b>양쪽에 비용이 있는 선택</b>이다 — 길면 스레드가 묶이고, 짧으면 <b>결과 불명 거래를 우리 손으로 만들어낸다</b></div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 스레드 풀 고갈 — 숫자로 따라가는 연쇄 장애</h2>
+
+<p>"타임아웃을 안 걸면 서비스가 죽는다"는 문장을 그냥 외우면 응용이 안 된다. <b>죽는 경로를 숫자로 따라가 보자.</b></p>
+
+<div class="step">
+  <span class="n">1</span>
+  <div class="body">Spring Boot의 기본 구성(내장 톰캣, 블로킹 I/O)에서는 <b>HTTP 요청 하나를 워커 스레드 하나가 끝까지 붙잡는다.</b> 컨트롤러가 PG 호출을 기다리는 동안에도 그 스레드는 다른 요청을 처리하러 가지 못한다. <b>CPU는 놀고 있지만 스레드는 점유된 상태</b>다. 톰캣의 최대 워커 스레드 수(<code>server.tomcat.threads.max</code>)는 기본값이 <b>200</b>이다.</div>
+</div>
+<div class="step red">
+  <span class="n">2</span>
+  <div class="body">결제 요청이 <b>초당 20건</b> 들어오고 PG가 <b>30초</b> 동안 응답하지 않는다면, 30초 뒤에는 <b>20 × 30 = 600개의 요청이 동시에 대기 중</b>이어야 한다. 그런데 스레드는 200개뿐이다 → <b>10초 만에</b> 워커 스레드가 전부 소진된다.</div>
+</div>
+<div class="step red">
+  <span class="n">3</span>
+  <div class="body">결제만 막히고 끝나면 그나마 낫다. 문제는 그 스레드 풀을 <b>상품 조회·로그인·장바구니·헬스체크가 전부 공유한다</b>는 점이다. 결제와 아무 상관 없는 API도 스레드를 못 받아 큐에서 대기하고, 큐마저 차면 연결이 거부된다. 로드밸런서의 <b>헬스체크까지 실패</b>하면 그 인스턴스는 비정상으로 판정돼 트래픽이 남은 인스턴스로 몰리고, <b>남은 인스턴스도 같은 이유로 넘어간다.</b></div>
+</div>
+
+<div class="rule red">한 의존성의 장애가 시스템 전체로 번지는 것 = <b>연쇄 장애(cascading failure)</b></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="왼쪽은 초당 20건에 30초 무응답이면 600건이 동시에 대기해야 하는데 스레드는 200개뿐이라 10초 만에 소진된다는 계산, 가운데는 PG 지연에서 전면 장애까지 다섯 단계로 내려가는 연쇄 장애 흐름, 오른쪽은 읽기 타임아웃 서킷 브레이커 벌크헤드가 각각 그 흐름의 어느 지점을 끊는지 보여주는 패널">
+    <defs>
+      <marker id="p4d" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="p4c" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">한 줄의 설정 누락이 전면 장애가 되는 경로 — 그리고 그 경로를 끊는 세 장치는 서로 다른 지점을 막는다</text>
+
+    <rect x="24" y="42" width="1072" height="52" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="62" font-size="12" fill="#b91c1c" font-weight="700">계산</text>
+    <text x="44" y="82" font-size="13" fill="#7f1d1d">초당 <tspan font-weight="700">20건</tspan>  ×  무응답 <tspan font-weight="700">30초</tspan>  =  동시 대기 <tspan font-weight="700" font-size="15">600건</tspan>     그런데 워커 스레드는  <tspan font-weight="700" font-size="15">200개</tspan>     →  <tspan font-weight="700" font-size="15" fill="#b91c1c">10초 만에 전부 소진</tspan></text>
+
+    <rect x="24" y="110" width="540" height="42" rx="9" fill="#fff" stroke="#fca5a5"/>
+    <text x="44" y="136" font-size="12.5" fill="#b91c1c" font-weight="700">T+0초 &nbsp; PG 응답 지연 시작 (평균 1.2초 → 무응답)</text>
+    <line x1="294" y1="152" x2="294" y2="164" stroke="#dc2626" stroke-width="2" marker-end="url(#p4d)"/>
+
+    <rect x="24" y="168" width="540" height="42" rx="9" fill="#fff5f5" stroke="#fca5a5"/>
+    <text x="44" y="194" font-size="12.5" fill="#b91c1c" font-weight="700">T+10초 &nbsp; 워커 스레드 200개가 거의 전부 PG 응답 대기</text>
+    <line x1="294" y1="210" x2="294" y2="222" stroke="#dc2626" stroke-width="2" marker-end="url(#p4d)"/>
+
+    <rect x="24" y="226" width="540" height="42" rx="9" fill="#fee2e2" stroke="#f87171"/>
+    <text x="44" y="252" font-size="12.5" fill="#b91c1c" font-weight="700">T+3분 &nbsp; 상품 조회·로그인도 스레드를 못 받음 → 요청 큐 포화 → 503</text>
+    <line x1="294" y1="268" x2="294" y2="280" stroke="#dc2626" stroke-width="2" marker-end="url(#p4d)"/>
+
+    <rect x="24" y="284" width="540" height="42" rx="9" fill="#fecaca" stroke="#ef4444"/>
+    <text x="44" y="310" font-size="12.5" fill="#991b1b" font-weight="700">T+5분 &nbsp; 헬스체크 실패 → LB에서 인스턴스 제외 → 남은 노드로 집중</text>
+    <line x1="294" y1="326" x2="294" y2="338" stroke="#dc2626" stroke-width="2" marker-end="url(#p4d)"/>
+
+    <rect x="24" y="342" width="540" height="26" rx="9" fill="#7f1d1d"/>
+    <text x="294" y="361" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">전면 장애 — 결제만 막혔어야 할 사고가 서비스 전체로</text>
+
+    <rect x="596" y="110" width="500" height="72" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="616" y="132" font-size="12.5" fill="#166534" font-weight="700">읽기 타임아웃 — "대기 시간"을 줄여 스레드 회전율을 지킨다</text>
+    <text x="616" y="152" font-size="11.5" fill="#166534">30초마다 스레드가 회수되므로 <tspan font-weight="700">2단계에서 포화가 늦춰진다</tspan></text>
+    <text x="616" y="170" font-size="11" fill="#4d7c0f">한계: PG가 완전히 죽어도 <tspan font-weight="700">요청마다 30초를 꽉 채우고 실패</tspan>한다</text>
+    <line x1="590" y1="146" x2="572" y2="180" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#p4c)"/>
+
+    <rect x="596" y="196" width="500" height="72" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="616" y="218" font-size="12.5" fill="#166534" font-weight="700">서킷 브레이커 — "대기 자체"를 없앤다</text>
+    <text x="616" y="238" font-size="11.5" fill="#166534">실패율이 임계치를 넘으면 <tspan font-weight="700">호출하지 않고 즉시 실패</tspan> → 30초가 1ms</text>
+    <text x="616" y="256" font-size="11" fill="#4d7c0f">1단계와 2단계 사이를 끊는다 — 스레드가 애초에 묶이지 않는다</text>
+    <line x1="590" y1="232" x2="572" y2="196" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#p4c)"/>
+
+    <rect x="596" y="282" width="500" height="76" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="616" y="304" font-size="12.5" fill="#166534" font-weight="700">벌크헤드 — "번지는 것"을 막는다</text>
+    <text x="616" y="324" font-size="11.5" fill="#166534">PG 호출에 쓸 동시 호출 수를 50개로 제한 → PG가 죽어도</text>
+    <text x="616" y="342" font-size="11.5" fill="#166534"><tspan font-weight="700">50개만 묶이고 나머지 150개는 상품 조회·로그인을 계속 처리</tspan></text>
+    <text x="616" y="356" font-size="11" fill="#4d7c0f">3단계로 넘어가는 것 자체를 막는다</text>
+    <line x1="590" y1="318" x2="572" y2="252" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#p4c)"/>
+  </svg>
+  <figcaption>세 장치는 <b>서로 다른 지점을 막으므로 하나로 나머지를 대체할 수 없다.</b> 타임아웃은 <b>회전율</b>, 서킷은 <b>대기 자체</b>, 벌크헤드는 <b>전파 범위</b>를 다룬다. 면접에서 "서킷을 걸었으니 타임아웃은 없어도 되지 않나요"라는 되물음이 오면 이 그림의 화살표 위치로 답하면 된다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>이 절의 결론을 한 문장으로 — 사례 1(13절)에서 그대로 반복된다</h4>
+  <div class="rule">타임아웃은 <b>"결제를 성공시키는 장치"가 아니라 "결제 외의 것을 살리는 장치"</b>다</div>
+  <p style="margin-bottom:0">읽기 타임아웃을 걸어도 <b>PG가 느리면 결제는 여전히 실패한다.</b> 달라지는 것은 <b>상품 조회와 로그인이 살아 있느냐</b>이다. 이 구분을 못 하면 "타임아웃 걸어도 어차피 결제 안 되잖아요"라는 잘못된 결론에 도달한다.</p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 방어선 일곱 개 — 층이 다르다</h2>
+
+<p>일곱 개를 나열하기 전에, 각각이 <b>서로 다른 층</b>을 막는다는 것을 먼저 보는 것이 좋다. <b>하나로 나머지를 대신할 수 없다</b>는 것이 요점이다.</p>
+
+<table class="wide">
+  <caption>일곱 장치 — "없을 때 벌어지는 일"이 곧 그 장치의 존재 이유다</caption>
+  <thead><tr><th>#</th><th>장치</th><th>막는 것</th><th>없을 때 벌어지는 일</th><th>어느 절</th></tr></thead>
+  <tbody>
+    <tr><td>①</td><td><b>연결/읽기 타임아웃 분리</b></td><td>무한 대기</td><td class="bad">스레드 풀 고갈 → 전면 장애</td><td><a href="#s6">6절</a></td></tr>
+    <tr><td>②</td><td><b>멱등한 호출만 재시도</b></td><td>이중 승인</td><td class="bad">고객 카드에 두 번 청구</td><td><a href="#s7">7절</a></td></tr>
+    <tr><td>③</td><td><b>응답 대조 검증</b></td><td>금액 변조 · 응답 오매핑</td><td class="bad">100원에 5만원 상품 출고</td><td><a href="#s8">8절</a></td></tr>
+    <tr><td>④</td><td><b>DB 유니크 제약</b></td><td>중복 승인 기록</td><td class="bad">주문 1건에 승인 2건</td><td><a href="#s9">9절</a></td></tr>
+    <tr><td>⑤</td><td><b>마스킹 원문 로깅</b></td><td>분쟁 시 증거 부재</td><td class="bad">PG와 책임 공방, 대사 불가</td><td><a href="#s10">10절</a></td></tr>
+    <tr><td>⑥</td><td><b>서킷 브레이커</b></td><td>죽은 상대를 계속 호출</td><td class="bad">장애 시간 내내 스레드 점유</td><td><a href="#s11">11절</a></td></tr>
+    <tr><td>⑦</td><td><b>점검 시간 대응</b></td><td>예고된 실패의 소음</td><td class="bad">알림 마비, 결과 불명 건 양산</td><td><a href="#s12">12절</a></td></tr>
+  </tbody>
+</table>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 306" role="img" aria-label="승인 요청 한 건의 생애주기를 나갈 때 안 올 때 올 때 남길 때 상시 다섯 구간으로 나누고, 각 구간에 일곱 개의 방어 장치를 배치한 도식. 나갈 때는 타임아웃과 서킷 브레이커, 안 올 때는 재시도 금지와 거래 조회, 올 때는 대조 검증, 남길 때는 유니크 제약과 마스킹 로깅, 상시에는 점검 시간 대응이 놓인다">
+    <defs>
+      <marker id="p5a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">일곱 개를 목록으로 외우지 말고 "승인 요청 한 건의 생애주기" 위에 올려놓는다</text>
+
+    <line x1="40" y1="60" x2="1080" y2="60" stroke="#2563eb" stroke-width="2" marker-end="url(#p5a)"/>
+    <text x="1030" y="50" font-size="11" fill="#2563eb" font-weight="700">시간</text>
+
+    <rect x="24" y="74" width="248" height="120" rx="11" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="148" y="96" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">나갈 땐 끊는다</text>
+    <rect x="40" y="106" width="216" height="36" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <text x="148" y="123" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">① 연결 2~3초 / 읽기 성격별</text>
+    <text x="148" y="137" font-size="10" fill="#60a5fa" text-anchor="middle">무한 대기를 만들지 않는다</text>
+    <rect x="40" y="148" width="216" height="36" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <text x="148" y="165" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">⑥ 서킷 브레이커 · 벌크헤드</text>
+    <text x="148" y="179" font-size="10" fill="#60a5fa" text-anchor="middle">죽은 상대는 아예 부르지 않는다</text>
+
+    <rect x="280" y="74" width="248" height="120" rx="11" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="404" y="96" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">안 오면 묻는다</text>
+    <rect x="296" y="106" width="216" height="36" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="404" y="123" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">② 승인 자동 재시도 금지</text>
+    <text x="404" y="137" font-size="10" fill="#f87171" text-anchor="middle">타임아웃 = 실패가 아니라 모름</text>
+    <rect x="296" y="148" width="216" height="36" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="404" y="165" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">거래 조회 → 결과 확인 후 판단</text>
+    <text x="404" y="179" font-size="10" fill="#f87171" text-anchor="middle">조회·망취소는 멱등이라 재시도 가능</text>
+
+    <rect x="536" y="74" width="200" height="120" rx="11" fill="#fffbeb" stroke="#d97706"/>
+    <text x="636" y="96" font-size="13" fill="#b45309" text-anchor="middle" font-weight="700">오면 대조한다</text>
+    <rect x="552" y="106" width="168" height="78" rx="8" fill="#fff" stroke="#fde68a"/>
+    <text x="636" y="126" font-size="11.5" fill="#92400e" text-anchor="middle" font-weight="700">③ 금액 · 주문번호 · 통화</text>
+    <text x="636" y="144" font-size="10.5" fill="#92400e" text-anchor="middle">우리 DB와 대조한 뒤에야 확정</text>
+    <text x="636" y="162" font-size="10.5" fill="#92400e" text-anchor="middle">성공 판정은 <tspan font-weight="700">화이트리스트</tspan></text>
+    <text x="636" y="178" font-size="10" fill="#d97706" text-anchor="middle">모르는 코드는 보류로 뺀다</text>
+
+    <rect x="744" y="74" width="200" height="120" rx="11" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="844" y="96" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">남길 땐 잠그고 가린다</text>
+    <rect x="760" y="106" width="168" height="36" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="844" y="123" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">④ 유니크 제약</text>
+    <text x="844" y="137" font-size="10" fill="#4ade80" text-anchor="middle">코드가 틀려도 DB가 거부</text>
+    <rect x="760" y="148" width="168" height="36" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="844" y="165" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">⑤ 마스킹 원문 로깅</text>
+    <text x="844" y="179" font-size="10" fill="#4ade80" text-anchor="middle">분쟁·대사의 증거</text>
+
+    <rect x="952" y="74" width="144" height="120" rx="11" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="1024" y="96" font-size="13" fill="#334155" text-anchor="middle" font-weight="700">예고된 건 피한다</text>
+    <rect x="964" y="106" width="120" height="78" rx="8" fill="#fff" stroke="#cbd5e1"/>
+    <text x="1024" y="126" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">⑦ 점검 시간</text>
+    <text x="1024" y="144" font-size="10.5" fill="#475569" text-anchor="middle">결제수단을</text>
+    <text x="1024" y="158" font-size="10.5" fill="#475569" text-anchor="middle">미리 숨기고</text>
+    <text x="1024" y="176" font-size="10.5" fill="#475569" text-anchor="middle">끝나면 자동 복구</text>
+
+    <rect x="24" y="210" width="1072" height="82" rx="11" fill="#1e293b"/>
+    <text x="560" y="240" font-size="16" fill="#fff" text-anchor="middle" font-weight="700">나갈 땐 끊고 · 안 오면 묻고 · 오면 대조하고 · 남길 땐 잠그고 가리고 · 예고된 건 피한다</text>
+    <text x="560" y="266" font-size="12" fill="#94a3b8" text-anchor="middle">다섯 리듬으로 외우면 일곱 개가 순서대로 인출된다 — 그리고 이 순서가 곧 요청 한 건이 지나가는 시간 순서다</text>
+    <text x="560" y="284" font-size="11.5" fill="#fbbf24" text-anchor="middle">①⑥ 나갈 때 &nbsp;·&nbsp; ② 안 올 때 &nbsp;·&nbsp; ③ 올 때 &nbsp;·&nbsp; ④⑤ 남길 때 &nbsp;·&nbsp; ⑦ 상시</text>
+  </svg>
+  <figcaption>암기의 요령은 <b>목록이 아니라 순서</b>다. 면접에서 "기본적으로 고려할 것들은?"이라는 열린 질문을 받으면 <b>이 다섯 리듬을 순서대로 말하면서 각 칸의 장치를 꺼내는 것</b>이 가장 안정적이다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>인출용 문장 — 이것 하나만 외우면 일곱 개가 따라 나온다</h4>
+  <div class="rule ok">나갈 땐 <b>끊고</b> · 안 오면 <b>묻고</b> · 오면 <b>대조하고</b> · 남길 땐 <b>잠그고 가리고</b> · 예고된 건 <b>피한다</b></div>
+  <div class="grid g3" style="margin-top:10px">
+    <div class="tile"><div class="k" style="font-family:inherit">끊고</div><div class="d">타임아웃(연결/읽기 분리) + 서킷 브레이커 + 벌크헤드</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">묻고</div><div class="d">승인은 자동 재시도 금지 → <b>거래 조회</b>로 확인 후 판단</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">대조하고</div><div class="d">금액 · 주문번호 · 통화 + 화이트리스트 성공 판정</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">잠그고 가리고</div><div class="d">가맹점 주문번호 유니크 제약 + 마스킹된 원문 로깅</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">피한다</div><div class="d">점검 시간에는 결제수단을 미리 숨기고 끝나면 자동 복구</div></div>
+  </div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. ① 연결 타임아웃과 읽기 타임아웃을 분리해서 건다</h2>
+
+<p>3절에서 봤듯 타임아웃은 하나가 아니라 최소 둘이다. 전화에 비유하면 <b>"상대가 전화를 받기까지 기다리는 시간"</b>과 <b>"받은 뒤 답을 찾아주기까지 기다리는 시간"</b>은 성격이 다르다. <b>앞의 것은 짧게 끊어도 잃을 게 없고, 뒤의 것은 짧게 끊으면 정상 거래를 우리가 망친다.</b></p>
+
+<h3>6-1. 왜 평균이 아니라 p99를 보는가</h3>
+
+<p><b>p99(99번째 백분위수)</b>는 "응답 시간을 빠른 순으로 줄 세웠을 때 <b>100건 중 99건이 이 시간 안에 끝난다</b>"는 값이다. 평균을 쓰지 않는 이유는, <b>평균이 1.2초여도 100건 중 1건이 8초 걸리는 시스템</b>에서 타임아웃을 2초로 잡으면 <b>그 1건을 매번 "결과 불명"으로 만들기 때문</b>이다.</p>
+
+<div class="callout warn">
+  <span class="t">비유 — "평균 수심 1m인 강"에 빠져 죽는다</span>
+  강의 평균 깊이가 1m라도 <b>가운데가 3m면 건너다 빠진다.</b> 타임아웃은 <b>정상 거래를 자르지 않는 선</b>에서 잡아야 하므로 평균이 아니라 <b>꼬리값</b>을 봐야 한다. 결제에서 그 "빠짐"의 대가는 <b>결과 불명 거래 1%</b>다 — 하루 10만 건이면 <b>매일 1,000건을 우리 손으로 만들어내는 것</b>이다.
+</div>
+
+<div class="memo">
+  <h4>호출 성격별 타임아웃 — 이 표는 그대로 인출 대상이다</h4>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>API</th><th>연결</th><th>읽기</th><th>근거</th></tr></thead>
+    <tbody>
+      <tr class="hl"><td><b>승인</b></td><td>2~3초</td><td><b>20~30초</b></td><td><b>카드사 왕복 포함.</b> PG 권고치 + 실측 p99</td></tr>
+      <tr><td><b>거래 조회</b></td><td>2~3초</td><td><b>3~5초</b></td><td>PG 내부 DB 조회. <b>카드사 구간이 없다</b></td></tr>
+      <tr><td><b>취소</b></td><td>2~3초</td><td><b>10~20초</b></td><td>카드사 구간은 있으나 승인보다 가볍다</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="rule">연결은 <b>어느 API든 2~3초로 고정</b>, 읽기는 <b>카드사 구간이 끼어 있는가</b>로 갈린다</div>
+  <p style="margin-bottom:0">값 산정의 <b>근거를 말할 수 있어야 한다.</b> "승인 30초"는 <b>카드사 구간의 최악 지연을 포함한 PG 권고치</b>이고, 그보다 길게 잡으면 <b>사용자는 이미 이탈했고 스레드만 묶인다.</b> 그보다 짧게 잡으면 <b>정상 승인을 타임아웃으로 오판해 결과 불명 거래를 스스로 늘린다.</b></p>
+</div>
+
+<h3>6-2. 코드 — 클라이언트를 API 성격별로 나눈다</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 타임아웃 미설정 — 한 줄이 빠진 게 아니라 방어선이 통째로 없다</div>
+<pre><code><span class="ln-bad">RestClient pgClient = RestClient.create(<span class="st">"https://api.pg.example"</span>);</span>
+
+<span class="cm">// 문제는 "기본값이 없다"가 아니라
+// <span style="color:#fca5a5">"기본값이 사실상 무제한"</span>인 것이다.
+//
+// PG가 응답을 안 주면 이 호출은 리턴하지 않고,
+// 이 호출을 하고 있는 워커 스레드도 영원히 반납되지 않는다.
+//   → 4절의 시나리오가 여기서 시작된다.
+//
+// 그리고 이 코드는 <span style="color:#fca5a5">테스트에서 절대 잡히지 않는다</span>.
+// 테스트용 PG는 늘 빠르게 응답하기 때문이다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 연결/읽기 분리 + API 성격별 클라이언트</div>
+<pre><code>ClientHttpRequestFactorySettings approveSettings =
+    ClientHttpRequestFactorySettings.defaults()
+<span class="ln-good">        .withConnectTimeout(Duration.ofSeconds(3))</span>
+<span class="ln-good">        .withReadTimeout(Duration.ofSeconds(30));</span>
+<span class="cm">        // 연결은 짧게 — 3초 안에 안 붙으면 더 기다려도 안 붙는다
+        // 승인은 카드사 왕복이 포함되므로 길게 준다</span>
+
+ClientHttpRequestFactorySettings inquirySettings =
+    ClientHttpRequestFactorySettings.defaults()
+        .withConnectTimeout(Duration.ofSeconds(3))
+<span class="ln-good">        .withReadTimeout(Duration.ofSeconds(5));</span>
+<span class="cm">        // 조회는 PG 내부 DB만 보는 호출이라
+        // 5초를 넘기면 이미 비정상 → 짧게 끊고 재시도가 낫다</span>
+
+RestClient approveClient = RestClient.builder()
+        .baseUrl(<span class="st">"https://api.pg.example"</span>)
+        .requestFactory(ClientHttpRequestFactories.get(approveSettings))
+        .build();</code></pre>
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">클라이언트를 왜 나누는가</span>
+  <b><code>RestClient</code> 하나에는 타임아웃 한 벌만 걸 수 있다.</b> 승인과 조회가 같은 클라이언트를 쓰면 <b>둘 중 하나는 반드시 잘못된 값을 갖게 된다</b> — 30초로 맞추면 조회가 비정상 상태에서도 30초를 버티고, 5초로 맞추면 정상 승인이 잘려나간다. <b>"설정값 하나를 고민하는 문제"가 아니라 "빈을 몇 개 만들 것인가의 문제"</b>다.
+</div>
+
+<div class="memo red">
+  <h4>한 칸 더 파고드는 함정 — 읽기 타임아웃은 "응답 완료까지"가 아니다</h4>
+  <p>많은 HTTP 클라이언트에서 읽기 타임아웃은 "응답이 <b>완전히</b> 도착할 때까지"가 아니라 <b>"다음 바이트가 도착할 때까지"</b>의 시간이다. 그래서 상대가 <b>1초에 한 바이트씩 찔끔찔끔</b> 보내면 <b>읽기 타임아웃은 영원히 발동하지 않는다.</b></p>
+  <div class="rule red">이런 경우까지 막으려면 호출 <b>전체</b>에 걸리는 <b>전체 요청 타임아웃</b>을 별도로 건다 (라이브러리에 따라 <code>responseTimeout</code>, <code>requestTimeout</code> 등의 이름)</div>
+  <p style="margin-bottom:0">면접에서 이 구분까지 말하면 <b>"타임아웃을 걸어봤다"와 "타임아웃을 이해한다"가 갈린다.</b></p>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. ② 재시도는 "멱등한 호출"에만 — 승인은 조회 후 판단</h2>
+
+<p><b>멱등성(idempotency)</b>부터 정의하고 간다. 어떤 요청이 멱등하다는 것은 <b>같은 요청을 1번 보내든 5번 보내든 서버의 최종 상태가 같다</b>는 뜻이다. 수학에서 <code>f(f(x)) = f(x)</code>인 연산을 멱등이라 부른 데서 온 말이다. <b>"조회"는 몇 번 해도 아무것도 안 바뀌니 멱등</b>하고, <b>"잔액에서 3만원 차감"은 부를 때마다 상태가 달라지니 멱등하지 않다.</b></p>
+
+<div class="rule">재시도 정책의 기준은 결국 하나 — <b>그 호출이 멱등한가</b></div>
+
+<div class="scroll">
+<table>
+  <caption>호출별 멱등 판정 — 이 표가 곧 재시도 정책이다</caption>
+  <thead><tr><th>호출</th><th>멱등한가</th><th>왜</th><th>타임아웃 시</th></tr></thead>
+  <tbody>
+    <tr><td><b>거래 조회</b></td><td class="good">예</td><td>아무것도 바꾸지 않는다</td><td class="good">지수 백오프로 자동 재시도해도 안전</td></tr>
+    <tr><td><b>망취소</b></td><td class="good">예 (소거 연산)</td><td>목표 상태가 <b>"그 승인이 없음"</b> 하나뿐. 이미 없으면 아무 일도 안 일어난다</td><td class="good">자동 재시도해도 안전</td></tr>
+    <tr class="hl"><td><b>승인</b></td><td class="bad">아니오</td><td>부를 때마다 <b>새 승인이 하나씩 더 생긴다</b></td><td class="bad"><b>자동 재시도 금지</b> → 조회로 결과 확인 후 판단</td></tr>
+    <tr><td><b>취소</b></td><td>조건부</td><td><b>거래번호 기반이면 대개 멱등</b>(그 거래를 취소 상태로 만들라). 금액 기반 부분취소는 누적될 수 있다</td><td>스펙 확인 필수</td></tr>
+  </tbody>
+</table>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="승인 요청 타임아웃 이후의 분기 도식. 위쪽 붉은 경로는 즉시 자동 재시도가 이중 승인으로 이어지는 금지 경로이고, 아래쪽 파란 경로는 거래 조회 API를 호출해 승인됨이면 그 결과를 채택, 미승인 확인이면 재요청, 조회도 불명이면 UNKNOWN 상태로 유지해 확인 배치와 망취소로 이관하는 올바른 경로다">
+    <defs>
+      <marker id="p7r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="p7b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="p7g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">승인 타임아웃 이후의 갈림길 — 위쪽은 절대 가면 안 되는 길이다</text>
+
+    <rect x="24" y="140" width="188" height="66" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="118" y="166" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">승인 요청 타임아웃</text>
+    <text x="118" y="186" font-size="11" fill="#7f1d1d" text-anchor="middle">= 실패가 아니라 <tspan font-weight="700">모름</tspan></text>
+    <text x="118" y="200" font-size="10" fill="#f87171" text-anchor="middle">3절 ⓐⓑⓒ를 구분할 수 없는 상태</text>
+
+    <path d="M212 158 C 250 158, 250 84, 288 84" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#p7r)"/>
+    <text x="206" y="108" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">✕ 금지</text>
+
+    <rect x="292" y="58" width="212" height="52" rx="9" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="398" y="80" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">즉시 자동 재시도</text>
+    <text x="398" y="98" font-size="10.5" fill="#7f1d1d" text-anchor="middle">라이브러리 기본 옵션으로 켜져 있기도 하다</text>
+
+    <line x1="506" y1="84" x2="546" y2="84" stroke="#dc2626" stroke-width="2" marker-end="url(#p7r)"/>
+
+    <rect x="550" y="58" width="240" height="52" rx="9" fill="#7f1d1d"/>
+    <text x="670" y="80" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">이중 승인</text>
+    <text x="670" y="98" font-size="10.5" fill="#fca5a5" text-anchor="middle">첫 요청이 이미 승인됐다면 = 두 번째 청구</text>
+
+    <line x1="792" y1="84" x2="832" y2="84" stroke="#dc2626" stroke-width="2" marker-end="url(#p7r)"/>
+    <rect x="836" y="58" width="260" height="52" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="966" y="80" font-size="12" fill="#b91c1c" text-anchor="middle">고객 CS 1건 + <tspan font-weight="700">월말 정산 차액</tspan></text>
+    <text x="966" y="98" font-size="10.5" fill="#7f1d1d" text-anchor="middle">나머지 건은 한 달 뒤에야 드러난다 (사례 2)</text>
+
+    <path d="M212 188 C 250 188, 250 214, 288 214" fill="none" stroke="#2563eb" stroke-width="2.4" marker-end="url(#p7b)"/>
+    <text x="206" y="252" font-size="11" fill="#2563eb" text-anchor="middle" font-weight="700">○ 올바른 길</text>
+
+    <rect x="292" y="188" width="212" height="52" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="398" y="210" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">거래 조회 API 호출</text>
+    <text x="398" y="228" font-size="10.5" fill="#1e40af" text-anchor="middle">"아까 그 주문번호, 승인됐나요?"</text>
+
+    <path d="M506 202 C 534 202, 534 172, 562 172" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#p7g)"/>
+    <path d="M506 214 L 556 214" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#p7b)"/>
+    <path d="M506 226 C 534 226, 534 274, 562 274" fill="none" stroke="#d97706" stroke-width="2" marker-end="url(#p7b)"/>
+
+    <rect x="566" y="150" width="530" height="44" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="586" y="168" font-size="12.5" fill="#166534" font-weight="700">승인됨 → 그 결과를 채택한다</text>
+    <text x="586" y="185" font-size="11" fill="#166534">재요청하지 않는다. 이미 고객 카드에 찍혀 있으므로 우리 DB를 그 사실에 맞추는 것이 전부다</text>
+
+    <rect x="566" y="202" width="530" height="44" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="586" y="220" font-size="12.5" fill="#1d4ed8" font-weight="700">미승인 확인 → 그때 비로소 재요청할 수 있다</text>
+    <text x="586" y="237" font-size="11" fill="#1e40af">"승인이 없다"가 <tspan font-weight="700">확인된</tspan> 상태이므로 재요청이 추측이 아니게 된다 — 주문번호는 그대로 유지</text>
+
+    <rect x="566" y="254" width="530" height="60" rx="9" fill="#fffbeb" stroke="#d97706"/>
+    <text x="586" y="272" font-size="12.5" fill="#b45309" font-weight="700">조회도 불명 → UNKNOWN 유지 → 확인 배치 · 망취소로 이관</text>
+    <text x="586" y="289" font-size="11" fill="#92400e">여기서 <tspan font-weight="700">억지로 결론 내리지 않는 것</tspan>이 실력이다. "모름"을 모름인 채로 보관하고 후속 절차에 넘긴다</text>
+    <text x="586" y="306" font-size="10.5" fill="#d97706">이 분기의 상세는 별도 문항 — PG 타임아웃과 결과 불명 상태(04) · 망취소(14)</text>
+  </svg>
+  <figcaption>이 그림의 요점은 <b>"재시도 대신 조회"</b>가 아니라 <b>"추측 대신 확인"</b>이다. 재시도는 <b>"아마 실패했겠지"라는 추측 위에서 돈을 움직이는 행위</b>이고, 조회는 <b>사실을 확인한 뒤 움직이는 행위</b>다.</figcaption>
+</figure>
+
+<h3>7-1. 코드 — 자동 재시도를 끄고, 재시도가 필요한 곳에만 우리가 붙인다</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 라이브러리 기본값에 승인을 맡긴 상태</div>
+<pre><code><span class="cm">// 아무도 재시도를 "켠" 적이 없다. 기본값이었을 뿐이다.
+// 일부 클라이언트는 연결 단계 실패를 기본으로 재시도하는데,
+// 설정이나 버전에 따라 <span style="color:#fca5a5">"요청 전송 후 실패"까지</span>
+// 재시도 범위에 들어가는 경우가 있다.</span>
+
+<span class="ln-bad">PgApproveResponse res = approveClient.approve(request);</span>
+<span class="cm">// ↑ 이 한 줄 안에서 조용히 두 번 나갈 수 있다.
+//   승인 API에서 이건 그대로 사고다.</span>
+
+<span class="cm">// 게다가 재시도 시 주문번호를 새로 채번하는 코드가
+// 어딘가에 있으면 9절의 유니크 제약마저 우회한다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 승인은 명시적으로 재시도 없음 + 타임아웃 시 조회로 분기</div>
+<pre><code><span class="cm">// ① 연동 초기에 클라이언트의 재시도 설정을 명시적으로 꺼둔다.</span>
+<span class="ln-good">// (라이브러리별 옵션명은 다르지만 "끈다"는 선언을 코드에 남긴다)</span>
+
+<span class="kw">try</span> {
+    <span class="kw">return</span> approveClient.approve(request);   <span class="cm">// 재시도 없음</span>
+
+} <span class="kw">catch</span> (ResourceAccessException timeout) {
+<span class="ln-good">    // ② 여기서 재요청하지 않는다. 결과를 "확인"한다.</span>
+    PgInquiryResult r = inquiryClient.inquire(request.merchantOrderNo());
+
+    <span class="kw">return</span> <span class="kw">switch</span> (r.status()) {
+<span class="ln-good">        case APPROVED -&gt; adopt(r);          // 그 결과를 채택</span>
+<span class="ln-good">        case NOT_FOUND -&gt; reapprove(request); // 미승인 "확인" 후에만</span>
+<span class="ln-good">        default -&gt; markUnknown(request);    // 모름은 모름으로 보관</span>
+    };
+}
+<span class="cm">// 조회 호출은 멱등하므로 그 안에서는
+// 지수 백오프 + 지터로 재시도해도 안전하다.</span></code></pre>
+  </div>
+</div>
+
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">지수 백오프 exponential backoff</div><div class="d">재시도 간격을 <b>1초 → 2초 → 4초 → 8초</b>처럼 곱절로 늘린다. 상대가 <b>과부하라서</b> 실패한 경우 같은 간격으로 계속 두드리면 <b>회복할 틈을 안 주기 때문</b>이다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">지터 jitter — 간격에 ±20% 난수</div><div class="d">지터가 없으면 <b>동시에 실패한 수백 개의 요청이 정확히 같은 시각에 재시도</b>해 상대를 다시 쓰러뜨린다. 이 현상이 <b>떼거리 문제(thundering herd)</b>다.</div></div>
+</div>
+
+<div class="callout trap">
+  <span class="t">반드시 확인해야 할 함정 — HTTP 클라이언트의 기본 재시도 옵션 <span class="badge trap">사고 단골</span></span>
+  일부 클라이언트는 <b>연결 단계 실패를 기본으로 재시도</b>하는데, 설정이나 버전에 따라 <b>"요청 전송 후 실패"까지 재시도 범위에 들어가는 경우</b>가 있다. 승인 API에서 이건 그대로 사고다. <b>연동 초기에 클라이언트의 재시도 설정을 명시적으로 꺼두고, 재시도가 필요한 조회 계열에만 우리가 직접 붙이는 것</b>이 안전하다. (사례 2가 정확히 이 사고다)
+</div>
+
+<div class="memo">
+  <h4>예외 하나 — PG가 멱등성 키를 지원하는 경우</h4>
+  <p>우리가 요청마다 고유한 키를 헤더에 실어 보내면, PG는 <b>같은 키로 두 번째 요청이 왔을 때 새 승인을 만들지 않고 첫 요청의 결과를 그대로 돌려준다.</b> 이 경우 <b>승인도 사실상 멱등해지므로 안전하게 재시도할 수 있다.</b></p>
+  <div class="rule">다만 이건 <b>PG가 제공해야 성립하는 기능</b>이다 — 연동 스펙에서 <b>지원 여부와 키의 유효 기간</b>을 확인하는 것이 먼저이고, 지원하지 않으면 기본 원칙 그대로 <b>"조회 후 판단"</b></div>
+  <p style="margin-bottom:0" class="sub">멱등성 키를 쓸 때 확인할 세 가지(키 유효 기간 · 키가 보장하는 범위 · 첫 요청이 처리 중일 때의 동작)는 <a href="#s14">14절 꼬리질문</a>에서 다룬다.</p>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. ③ PG 응답을 신뢰하지 말고 우리 데이터와 대조한다</h2>
+
+<p>승인 응답이 왔다고 끝이 아니다. <b>응답의 금액·주문번호·통화를 우리 DB의 주문과 대조</b>한 뒤에야 승인을 확정한다. <b>왜 이 대조가 우리 책임인지</b>가 핵심이다.</p>
+
+<div class="rule">PG는 거짓말을 하지 않는다. 다만 <b>자기가 받은 요청에만 정직하다</b></div>
+
+<p>결제창을 띄울 때 금액이 클라이언트를 거쳐 전달되는 연동 방식에서는, <b>사용자가 브라우저 개발자 도구로 그 값을 고칠 수 있다.</b> PG 입장에서는 <b>"가맹점이 100원 결제를 요청했다"</b>로 보이므로 100원 승인을 정상적으로 성공시킨다. <b>PG는 자기 일을 정확히 한 것이다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 316" role="img" aria-label="위쪽은 정상 흐름으로 우리 서버의 주문 5만원이 결제창을 거쳐 PG에서 5만원 승인되고 응답 금액과 주문 금액이 일치해 확정되는 그림, 아래쪽은 변조 흐름으로 결제창에서 100원으로 수정되어 PG가 100원을 정상 승인하고 우리 서버에서만 불일치를 잡을 수 있다는 그림이다">
+    <defs>
+      <marker id="p8g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="p8r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">같은 PG, 같은 코드, 같은 "승인 성공" — 다른 것은 우리가 대조했는가 하나뿐이다</text>
+
+    <rect x="24" y="42" width="1072" height="112" rx="11" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="44" y="64" font-size="12.5" fill="#166534" font-weight="700">정상</text>
+
+    <rect x="44" y="76" width="196" height="58" rx="9" fill="#fff" stroke="#16a34a"/>
+    <text x="142" y="98" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">우리 서버</text>
+    <text x="142" y="118" font-size="12" fill="#166534" text-anchor="middle" class="mono">주문 A = 50,000원</text>
+
+    <line x1="242" y1="105" x2="282" y2="105" stroke="#16a34a" stroke-width="1.8" marker-end="url(#p8g)"/>
+
+    <rect x="286" y="76" width="196" height="58" rx="9" fill="#fff" stroke="#16a34a"/>
+    <text x="384" y="98" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">결제창 (브라우저)</text>
+    <text x="384" y="118" font-size="12" fill="#166534" text-anchor="middle" class="mono">50,000원</text>
+
+    <line x1="484" y1="105" x2="524" y2="105" stroke="#16a34a" stroke-width="1.8" marker-end="url(#p8g)"/>
+
+    <rect x="528" y="76" width="196" height="58" rx="9" fill="#fff" stroke="#16a34a"/>
+    <text x="626" y="98" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">PG</text>
+    <text x="626" y="118" font-size="12" fill="#166534" text-anchor="middle" class="mono">50,000원 승인</text>
+
+    <line x1="726" y1="105" x2="766" y2="105" stroke="#16a34a" stroke-width="1.8" marker-end="url(#p8g)"/>
+
+    <rect x="770" y="76" width="306" height="58" rx="9" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="923" y="98" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">응답 50,000원 == 주문 50,000원</text>
+    <text x="923" y="118" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">→ 승인 확정</text>
+
+    <rect x="24" y="166" width="1072" height="136" rx="11" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="188" font-size="12.5" fill="#b91c1c" font-weight="700">변조</text>
+
+    <rect x="44" y="200" width="196" height="58" rx="9" fill="#fff" stroke="#dc2626"/>
+    <text x="142" y="222" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">우리 서버</text>
+    <text x="142" y="242" font-size="12" fill="#b91c1c" text-anchor="middle" class="mono">주문 A = 50,000원</text>
+
+    <line x1="242" y1="229" x2="282" y2="229" stroke="#dc2626" stroke-width="1.8" marker-end="url(#p8r)"/>
+
+    <rect x="286" y="200" width="196" height="58" rx="9" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="384" y="220" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">결제창 (브라우저)</text>
+    <text x="384" y="240" font-size="12" fill="#b91c1c" text-anchor="middle" class="mono">50,000 → 100원 수정</text>
+    <text x="384" y="272" font-size="10.5" fill="#7f1d1d" text-anchor="middle">개발자 도구로 파라미터 변경</text>
+
+    <line x1="484" y1="229" x2="524" y2="229" stroke="#dc2626" stroke-width="1.8" marker-end="url(#p8r)"/>
+
+    <rect x="528" y="200" width="196" height="58" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="626" y="220" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">PG</text>
+    <text x="626" y="240" font-size="12" fill="#334155" text-anchor="middle" class="mono">100원 승인</text>
+    <text x="626" y="272" font-size="10.5" fill="#64748b" text-anchor="middle">PG는 <tspan font-weight="700">정상 동작</tspan>했다 — 받은 대로 승인</text>
+
+    <line x1="726" y1="229" x2="766" y2="229" stroke="#dc2626" stroke-width="1.8" marker-end="url(#p8r)"/>
+
+    <rect x="770" y="200" width="306" height="58" rx="9" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="923" y="222" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">응답 100원 != 주문 50,000원</text>
+    <text x="923" y="242" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 여기서만 잡을 수 있다</text>
+    <text x="923" y="274" font-size="10.5" fill="#7f1d1d" text-anchor="middle"><tspan font-weight="700">PG는 우리 주문 테이블을 볼 수 없다</tspan> — 구조적으로 우리만 가능한 검증</text>
+  </svg>
+  <figcaption>두 줄의 차이는 <b>PG의 동작이 아니라 마지막 칸</b>이다. 그래서 이 검증을 <b>"PG를 못 믿어서 하는 일"</b>이 아니라 <b>"우리만 알 수 있는 사실이 있어서 하는 일"</b>로 설명해야 정확하다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>대조할 항목은 최소 셋 — 하나씩 이유가 다르다</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">금액</div><div class="d">위의 <b>변조 시나리오</b>를 막는다. 결제창을 거쳐 금액이 전달되는 연동에서는 필수.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">주문번호</div><div class="d">다른 거래의 응답을 우리 주문에 <b>잘못 매핑</b>하는 사고를 막는다. <b>동시성 버그나 응답 뒤섞임이 실제로 일어난다.</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">통화</div><div class="d"><b>KRW 100과 USD 100은 1,400배 차이</b>다. 해외 결제를 붙이는 순간 통화 대조 누락은 <b>금액 대조 누락과 같은 무게</b>가 된다.</div></div>
+  </div>
+  <div class="rule">"금액만 보면 되는 거 아닌가요?"에 <b>주문번호(오매핑)와 통화(단위)</b>를 덧붙일 수 있어야 한다</div>
+</div>
+
+<h3>8-1. 성공 판정은 화이트리스트로 — 모르는 코드는 성공이 아니다</h3>
+
+<div class="split">
+  <div class="pane g">
+    <h4>화이트리스트(허용 목록) — 출입증 방식</h4>
+    <ul>
+      <li><b>"문서에 명시된 성공 코드일 때만 성공으로 본다"</b></li>
+      <li>출입증이 있는 사람만 들여보낸다 → <b>모르는 사람은 못 들어온다</b></li>
+      <li>PG가 새 상태 코드를 추가해도 <b>그 코드는 성공으로 새지 않는다</b></li>
+      <li>미지의 코드는 성공도 실패도 아닌 <b>보류</b>로 빠뜨리고 <b>알림</b>을 띄운다</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>블랙리스트(차단 목록) — 수배 전단 방식</h4>
+    <ul>
+      <li><b>"알려진 실패 코드가 아니면 성공"</b></li>
+      <li>수배 전단에 없는 사람은 다 들여보낸다 → <b>모르는 사람이 통과한다</b></li>
+      <li>PG가 새 상태 코드를 추가하는 순간 그 미지의 코드를 <b>성공으로 오인</b>한다</li>
+      <li>2절 ③ <b>"스펙 불일치"</b>가 정확히 이 지점에서 사고가 된다</li>
+    </ul>
+  </div>
+</div>
+
+<h3>8-2. 코드 — 확정 전에 대조하고, 불일치면 그 승인을 되돌린다</h3>
+
+<div class="codehead good"><span class="tag">after</span> 승인 확정 전 대조 검증 — 세 단계로 나뉜다</div>
+<pre><code>PgApproveResponse res = approveClient.approve(request);
+
+<span class="cm">// 1) 응답이 가리키는 주문이 실제로 우리 DB에 있는지부터 확인한다.
+//    없다면 응답을 잘못 매핑했거나 위조된 응답이므로 확정하면 안 된다.</span>
+<span class="ln-good">Order order = orderRepository.findByOrderNo(res.merchantOrderNo())</span>
+        .orElseThrow(() -&gt; <span class="kw">new</span> PgMismatchException(<span class="st">"주문 없음: "</span> + res));
+
+<span class="cm">// 2) 금액과 통화를 대조한다. BigDecimal은 스케일이 다르면
+//    (50000 vs 50000.00) equals가 false가 되므로 compareTo로 비교한다.</span><span class="note">함정</span>
+<span class="ln-good">if (order.amount().compareTo(res.approvedAmount()) != 0</span>
+<span class="ln-good">        || !order.currency().equals(res.currency())) {</span>
+
+    <span class="cm">// 3) 불일치 시 "주문 완료를 막는 것"만으로는 부족하다. PG에는
+    //    승인이 살아 있어 고객 돈이 묶인 상태이므로, 즉시 취소
+    //    대상으로 격리해 그 승인을 되돌려야 한다.</span>
+<span class="ln-good">    paymentService.markForCancel(order, res);</span>
+    <span class="kw">throw new</span> PgAmountMismatchException(
+            <span class="st">"주문 %s 금액 %s != 승인 %s"</span>.formatted(
+                    order.orderNo(), order.amount(), res.approvedAmount()));
+}
+paymentService.confirmApproval(order, res);</code></pre>
+
+<div class="callout trap">
+  <span class="t">3)번이 이 코드의 진짜 핵심 — 사례 3의 수습에서 드러난 것 <span class="badge trap">놓치기 쉬움</span></span>
+  뒤늦게 검증을 붙였을 때 처음 구현은 <b>"금액이 다르면 주문 완료를 막는다"</b>였는데, 그것만으로는 부족했다. <b>PG에는 100원 승인이 그대로 살아 있어서</b> 고객은 <b>돈을 냈는데 물건도 못 받고 환불도 안 되는 상태</b>가 됐다. 불일치를 발견하면 <b>주문 완료를 막는 것에서 그치지 않고 해당 승인을 즉시 취소까지</b> 해야 고객 돈이 붕 뜨지 않는다.
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. ④ 가맹점 주문번호 유니크 — 중복의 최후 방어선은 DB 제약</h2>
+
+<p>먼저 용어를 구분한다. <b>주문(order)</b>과 <b>결제 시도(payment attempt)</b>는 1:1이 아니다. 고객이 A카드로 결제했다가 <b>한도 초과로 거절</b>당하고 B카드로 다시 시도하면, <b>주문은 하나인데 결제 시도는 둘</b>이다.</p>
+
+<div class="callout warn">
+  <span class="t">이름에 속기 쉬운 지점</span>
+  우리가 PG에 넘기는 <b>가맹점 주문번호(merchant order no)</b>는 이 중 <b>"결제 시도 1건"의 식별자</b>다. 이름 때문에 <b>주문 1건당 하나</b>라고 오해하기 쉬운데, 실제로는 <b>시도마다 새로 채번하는 값</b>이다. <b>그래서 유니크 제약도 두 개가 필요하다.</b>
+</div>
+
+<div class="codehead plain"><span class="tag">DDL</span> 층이 다른 두 개의 유니크 — 하나로는 부족하다</div>
+<pre><code><span class="cm">-- ① 같은 결제 시도가 두 줄 들어가는 것을 막는다.
+--    더블 클릭, 재시도 버그, 웹훅 중복 수신이 전부 여기서 걸린다.</span>
+<span class="ln-good">CREATE UNIQUE INDEX uk_payment_merchant_order_no
+    ON payment (merchant_order_no);</span>
+
+<span class="cm">-- ② 한 주문에 승인이 두 건 존재하는 것을 막는다.
+--    ①만으로는 부족하다 — 재시도로 새 merchant_order_no를 채번하면
+--    ①은 그대로 통과하기 때문이다. "다른 시도끼리의 중복"을 막는 층이다.</span>
+<span class="ln-good">CREATE UNIQUE INDEX uk_payment_order_approved
+    ON payment (order_id) WHERE status = 'APPROVED';</span>
+<span class="cm">                          ↑ 부분 유니크 인덱스 (PostgreSQL)</span></code></pre>
+
+<p>②번에 쓴 것을 <b>부분 유니크 인덱스(partial unique index)</b>라고 한다. <code>WHERE</code> 조건을 만족하는 행들 사이에서만 유일성을 강제하는 PostgreSQL의 기능이다. 이게 없으면 <b>"승인은 1건만, 실패는 여러 건 허용"</b>이라는 요구를 <b>DB 제약으로 표현할 수 없어서</b> 애플리케이션 코드로 검사하게 된다.</p>
+
+<div class="memo red">
+  <h4>왜 애플리케이션 검사는 방어선이 되지 못하는가</h4>
+  <div class="split">
+    <div class="pane r">
+      <h4>애플리케이션 검사 — "둘이 동시에 문 앞에 서면 둘 다 들어간다"</h4>
+      <ul>
+        <li>스레드 A: <code>SELECT ... WHERE status='APPROVED'</code> → <b>없음</b></li>
+        <li>스레드 B: 같은 순간 같은 조회 → <b>없음</b></li>
+        <li>A INSERT ✓ &nbsp; B INSERT ✓ → <b>승인 2건</b></li>
+        <li><b>동시에 들어온 요청 두 개가 같은 순간에 조회를 통과할 수 있다</b></li>
+      </ul>
+    </div>
+    <div class="pane g">
+      <h4>DB 유니크 제약 — "회전문은 한 번에 한 명"</h4>
+      <ul>
+        <li>그 경합에서도 <b>반드시 하나만 통과시킨다</b></li>
+        <li>진 쪽은 <code>DuplicateKeyException</code>을 받는다 — 이건 <b>버그가 아니라 방어선이 작동한 신호</b>이므로 <b>정상 흐름으로 처리</b>한다(기존 건 조회해서 반환)</li>
+        <li>우리 코드에 <b>어떤 버그가 있어도</b> 뚫리지 않는다</li>
+      </ul>
+    </div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">"조회해서 없으면 INSERT"는 <b>동시성 앞에서 검사가 아니다</b> — 중복 방지의 최종 판정은 <b>DB에 맡긴다</b></div>
+</div>
+
+<h3>9-1. 중복 방지는 한 층으로 끝내지 않는다 — 각 층이 막는 것이 다르다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 316" role="img" aria-label="중복 방지의 네 층을 왼쪽부터 UI 더블클릭 방지, API 멱등성 키, DB 유니크 제약, PG 중복 주문번호 거부 옵션 순으로 벽처럼 늘어놓고, 각 벽 아래에 그 층이 뚫리는 경우를 적어 다음 층으로 화살표가 이어지는 도식">
+    <defs>
+      <marker id="p9r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">네 층은 "겹쳐서 두껍게" 막는 게 아니라 "서로 다른 유형"을 막는다 — 어느 하나를 믿고 생략하면 그 유형이 그대로 통과한다</text>
+
+    <rect x="24" y="48" width="248" height="96" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="148" y="72" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">1층 &nbsp;UI</text>
+    <text x="148" y="94" font-size="12" fill="#1e40af" text-anchor="middle">결제 버튼 더블클릭 방지</text>
+    <text x="148" y="112" font-size="11" fill="#1e40af" text-anchor="middle">(누른 즉시 비활성화)</text>
+    <text x="148" y="132" font-size="10.5" fill="#60a5fa" text-anchor="middle">막는 것: <tspan font-weight="700">사람의 손</tspan></text>
+
+    <rect x="284" y="48" width="248" height="96" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="408" y="72" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">2층 &nbsp;API</text>
+    <text x="408" y="94" font-size="12" fill="#1e40af" text-anchor="middle">멱등성 키</text>
+    <text x="408" y="112" font-size="11" fill="#1e40af" text-anchor="middle">"같은 시도"의 재전송을 한 건으로 흡수</text>
+    <text x="408" y="132" font-size="10.5" fill="#60a5fa" text-anchor="middle">막는 것: <tspan font-weight="700">같은 시도의 재전송</tspan></text>
+
+    <rect x="544" y="48" width="248" height="96" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="668" y="72" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">3층 &nbsp;DB</text>
+    <text x="668" y="94" font-size="12" fill="#166534" text-anchor="middle">유니크 제약</text>
+    <text x="668" y="112" font-size="11" fill="#166534" text-anchor="middle">위 두 층이 다 뚫려도 INSERT를 거부</text>
+    <text x="668" y="132" font-size="10.5" fill="#4ade80" text-anchor="middle">막는 것: <tspan font-weight="700">우리 코드의 어떤 버그도</tspan></text>
+
+    <rect x="804" y="48" width="272" height="96" rx="10" fill="#fffbeb" stroke="#d97706"/>
+    <text x="940" y="72" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">4층 &nbsp;PG</text>
+    <text x="940" y="94" font-size="12" fill="#92400e" text-anchor="middle">중복 주문번호 거부 옵션</text>
+    <text x="940" y="112" font-size="11" fill="#92400e" text-anchor="middle">우리 서버 밖에서 한 번 더</text>
+    <text x="940" y="132" font-size="10.5" fill="#d97706" text-anchor="middle">막는 것: <tspan font-weight="700">우리 시스템 전체가 잘못됐을 때</tspan></text>
+
+    <line x1="148" y1="150" x2="148" y2="176" stroke="#dc2626" stroke-width="1.8" marker-end="url(#p9r)"/>
+    <line x1="408" y1="150" x2="408" y2="176" stroke="#dc2626" stroke-width="1.8" marker-end="url(#p9r)"/>
+    <line x1="668" y1="150" x2="668" y2="176" stroke="#dc2626" stroke-width="1.8" marker-end="url(#p9r)"/>
+    <line x1="940" y1="150" x2="940" y2="176" stroke="#dc2626" stroke-width="1.8" marker-end="url(#p9r)"/>
+
+    <rect x="24" y="180" width="248" height="60" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="148" y="200" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">뚫리는 경우</text>
+    <text x="148" y="220" font-size="11" fill="#7f1d1d" text-anchor="middle">새로고침 · 뒤로가기</text>
+    <text x="148" y="234" font-size="11" fill="#7f1d1d" text-anchor="middle">앱 재진입</text>
+
+    <rect x="284" y="180" width="248" height="60" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="408" y="200" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">뚫리는 경우</text>
+    <text x="408" y="220" font-size="11" fill="#7f1d1d" text-anchor="middle">키를 새로 채번하는</text>
+    <text x="408" y="234" font-size="11" fill="#7f1d1d" text-anchor="middle">재시도 버그</text>
+
+    <rect x="544" y="180" width="248" height="60" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="668" y="200" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">뚫리는 경우</text>
+    <text x="668" y="220" font-size="11" fill="#7f1d1d" text-anchor="middle">다른 트랜잭션 · 다른 테이블 경로</text>
+    <text x="668" y="234" font-size="11" fill="#7f1d1d" text-anchor="middle">(주문번호를 새로 채번하면 ①은 통과)</text>
+
+    <rect x="804" y="180" width="272" height="60" rx="9" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="940" y="200" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">한계</text>
+    <text x="940" y="220" font-size="11" fill="#475569" text-anchor="middle">PG마다 지원 여부가 다르고</text>
+    <text x="940" y="234" font-size="11" fill="#475569" text-anchor="middle">주문번호가 바뀌면 이 층도 소용없다</text>
+
+    <rect x="24" y="256" width="1052" height="46" rx="10" fill="#7f1d1d"/>
+    <text x="550" y="277" font-size="13.5" fill="#fff" text-anchor="middle" font-weight="700">네 층을 동시에 무력화하는 단 하나의 실수 — 재시도할 때 가맹점 주문번호를 새로 채번하는 것</text>
+    <text x="550" y="294" font-size="11.5" fill="#fca5a5" text-anchor="middle">"같은 시도의 재전송"임을 알려주는 유일한 단서가 주문번호이므로, 그것이 바뀌면 2·3·4층이 전부 "다른 요청"으로 본다 (사례 2)</text>
+  </svg>
+  <figcaption>각 층이 <b>막는 것</b>과 <b>뚫리는 경우</b>를 짝지어 보면, 왜 하나로 생략할 수 없는지가 드러난다. 그리고 <b>맨 아래 붉은 띠</b>가 이 절에서 가장 비싼 한 줄이다 — 실무 사고의 대부분은 <b>층이 없어서</b>가 아니라 <b>층을 이어주는 키가 바뀌어서</b> 일어난다.</figcaption>
+</figure>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. ⑤ 요청/응답 원문 로깅 — 단, 민감정보는 마스킹</h2>
+
+<p>PG와의 분쟁(<b>"우리는 취소 요청 보냈는데요" / "받은 적 없는데요"</b>), 대사 불일치 추적, 스펙과 다른 응답의 증거 확보 — 전부 <b>원문 로그</b>가 있어야 가능하다.</p>
+
+<div class="rule">여기서 "원문"이란 우리가 파싱해서 만든 객체가 아니라 <b>실제로 오간 요청/응답 본문 그대로</b>다</div>
+
+<p>파싱된 객체만 남기면 <b>"우리가 모르는 필드가 왔다"는 사실 자체가 로그에서 사라진다.</b> 2절 ③의 스펙 불일치를 나중에 증명할 수 없게 되는 것이다. 승인·취소·조회의 요청/응답 전문을 <b>거래 식별자와 함께</b> 저장하되, <b>저장 전에 반드시 마스킹</b>한다.</p>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k" style="font-family:inherit">카드번호 PAN</div><div class="d">Primary Account Number. <b>앞 6자리</b>(카드사 식별 구간)와 <b>뒤 4자리</b>만 남기고 가운데를 가린다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">CVC / CVV</div><div class="d">카드 뒷면의 보안 코드. 승인이 끝난 뒤에는 <b>어떤 형태로도 저장이 금지</b>된다 — <b>암호화 저장도 안 된다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">유효기간 · 생년월일 · 비밀번호 앞 두 자리</div><div class="d">단독으로는 덜 위험해 보여도 <b>카드번호와 조합되면 그대로 재사용 가능한 정보</b>가 된다.</div></div>
+</div>
+
+<div class="split">
+  <div class="pane b">
+    <h4>규정 층위 — PCI DSS</h4>
+    <ul>
+      <li><b>PCI DSS</b>(Payment Card Industry Data Security Standard) = 국제 카드 브랜드들이 만든 <b>카드 정보 보안 표준</b></li>
+      <li>카드 데이터를 다루는 <b>모든 시스템이 지켜야 하는 규칙 모음</b></li>
+      <li>로그에 카드 원문을 남기는 것은 <b>이 표준의 명시적 위반</b></li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>기술 층위 — 로그는 유출 표면이 가장 넓은 사본</h4>
+    <ul>
+      <li>DB는 계정과 권한이 관리되지만, 로그는 <b>수집기로 흘러가고 · 검색 시스템에 색인되고 · 백업으로 복제되고 · 때로는 개발자 로컬로 다운로드</b>된다</li>
+      <li><b>DB 한 곳을 잠그는 것보다 로그가 흘러간 모든 경로를 잠그는 것이 훨씬 어렵다</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>그래서 마스킹은 "적재 후 삭제"가 아니라 "직렬화 이전 단계에서 강제"다</h4>
+  <div class="codehead good"><span class="tag">after</span> 민감 필드는 구조적으로 원문이 나갈 수 없게 만든다</div>
+<pre><code><span class="cm">// 로깅용 직렬화 시점에 마스킹된 값만 나가도록 만든다.
+// 이렇게 해두면 "이번에 로그 남기는 걸 깜빡했다"가 아니라
+// <span style="color:#86efac">"이 필드는 구조적으로 원문이 나갈 수 없다"</span>가 된다.</span>
+<span class="kw">public record</span> CardInfo(
+<span class="ln-good">        @JsonSerialize(using = PanMaskingSerializer.class) String pan,</span>
+<span class="ln-good">        @JsonIgnore String cvc,      </span><span class="cm">// 로그에 아예 실리지 않게 한다</span>
+<span class="ln-good">        @JsonIgnore String expiry</span>
+) {}</code></pre>
+  <div class="rule">개인의 주의력에 기대는 방어는 <b>반드시 뚫린다</b> — "사람이 실수해도 원문이 나갈 수 없는 구조"로 바꾼다</div>
+  <p style="margin-bottom:0">여기에 더해, 마스킹 누락을 잡는 <b>로그 스캔</b>(카드번호 형식의 문자열 패턴을 정기적으로 검색)을 돌리는 것까지가 실무다. <b>사람이 새 필드를 추가하면서 마스킹을 빠뜨리는 일은 반드시 생기기 때문</b>이다.</p>
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. ⑥ 서킷 브레이커 — 죽은 PG를 계속 두드리지 않는다</h2>
+
+<p><b>서킷 브레이커(circuit breaker)</b>는 전기의 <b>두꺼비집(누전 차단기)</b>에서 온 이름이다. 집 안에 과전류가 흐르면 차단기가 회로를 <b>열어서</b> 전기를 끊는다. <b>회로를 끊는 게 손해 같지만, 안 끊으면 집이 탄다.</b> 소프트웨어도 똑같다 — 어떤 의존성의 실패율이 임계치를 넘으면 그 의존성으로 나가는 호출을 <b>아예 시도하지 않고 즉시 실패</b>시킨다.</p>
+
+<div class="callout warn">
+  <span class="t">타임아웃만으로는 왜 부족한가 — 6절과 이 절이 다른 지점</span>
+  PG가 <b>완전히 죽은 상태</b>에서도 타임아웃만 있으면 <b>모든 요청이 30초를 꽉 채우고 실패한다.</b> 어차피 실패할 요청 하나하나가 <b>스레드를 30초씩 점유</b>하는 것이다. <b>서킷이 열려 있으면 그 30초가 1밀리초가 된다.</b>
+</div>
+
+<div class="memo red">
+  <h4>이름이 직관과 반대다 — <span style="color:#dc2626">CLOSED(닫힘)가 정상</span></h4>
+  <div class="rule red">전기 회로는 <b>닫혀 있어야 전류가 흐른다</b> — 그래서 <b>CLOSED = 정상 통행, OPEN = 차단</b></div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 316" role="img" aria-label="서킷 브레이커의 세 상태 전이도. CLOSED 정상 상태에서 실패율이 임계치를 넘으면 OPEN으로 가고, OPEN에서 대기 시간이 지나면 HALF_OPEN으로 가서 소수의 시험 호출만 흘려보내며, 성공하면 CLOSED로 복귀하고 실패하면 다시 OPEN으로 돌아간다. 오른쪽에는 각 상태에서 사용자와 스레드 풀에 무슨 일이 일어나는지 정리한 패널이 있다">
+    <defs>
+      <marker id="p11a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="p11g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="p11r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">세 상태 — HALF_OPEN이 있어서 사람이 새벽에 수동 복구하지 않아도 된다</text>
+
+    <rect x="40" y="66" width="196" height="72" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="138" y="94" font-size="15" fill="#166534" text-anchor="middle" font-weight="700" class="mono">CLOSED</text>
+    <text x="138" y="114" font-size="11.5" fill="#166534" text-anchor="middle">정상 — 요청이 그대로 PG로</text>
+    <text x="138" y="130" font-size="10.5" fill="#4ade80" text-anchor="middle">동시에 최근 호출의 실패율을 집계</text>
+
+    <path d="M240 88 L 424 88" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#p11r)"/>
+    <text x="332" y="54" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">최근 호출 실패율 &gt; 임계치 (예: 50%)</text>
+
+    <rect x="428" y="66" width="196" height="72" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="526" y="94" font-size="15" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">OPEN</text>
+    <text x="526" y="114" font-size="11.5" fill="#b91c1c" text-anchor="middle">차단 — 호출하지 않고 즉시 실패</text>
+    <text x="526" y="130" font-size="10.5" fill="#f87171" text-anchor="middle">30초 대기 → 1ms 실패</text>
+
+    <path d="M526 142 L 526 190 L 380 190" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#p11a)"/>
+    <text x="470" y="182" font-size="11.5" fill="#334155" text-anchor="middle">대기 시간 경과 (예: 30초)</text>
+
+    <rect x="180" y="164" width="196" height="72" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="278" y="192" font-size="15" fill="#b45309" text-anchor="middle" font-weight="700" class="mono">HALF_OPEN</text>
+    <text x="278" y="212" font-size="11.5" fill="#92400e" text-anchor="middle">소수의 시험 호출만 흘려보냄</text>
+    <text x="278" y="228" font-size="10.5" fill="#d97706" text-anchor="middle">"이제 살아났나?"를 확인하는 상태</text>
+
+    <path d="M180 186 L 120 186 L 120 142" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#p11g)"/>
+    <text x="106" y="168" font-size="11" fill="#166534" text-anchor="end" font-weight="700">시험 성공</text>
+    <text x="106" y="182" font-size="10.5" fill="#166534" text-anchor="end">→ CLOSED 복귀</text>
+
+    <path d="M376 212 L 470 212 L 470 142" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#p11r)"/>
+    <text x="486" y="222" font-size="11" fill="#b91c1c" font-weight="700">시험 실패 → OPEN 복귀</text>
+
+    <rect x="660" y="60" width="436" height="80" rx="10" fill="#fff" stroke="#bbf7d0"/>
+    <text x="680" y="82" font-size="12.5" fill="#166534" font-weight="700">CLOSED에서 잃는 것 · 얻는 것</text>
+    <text x="680" y="102" font-size="11.5" fill="#374151">평소 상태. PG가 정상이면 아무 비용이 없다</text>
+    <text x="680" y="122" font-size="11.5" fill="#374151">집계 자체는 최근 N건의 슬라이딩 윈도우로만 유지된다</text>
+
+    <rect x="660" y="152" width="436" height="80" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="680" y="174" font-size="12.5" fill="#b91c1c" font-weight="700">OPEN일 때 실제로 사용자에게 보이는 것</text>
+    <text x="680" y="194" font-size="11.5" fill="#374151">30초 흰 화면 대신 <tspan font-weight="700">1초 만에 "결제 수단 점검 중" 안내</tspan></text>
+    <text x="680" y="214" font-size="11.5" fill="#374151">그리고 <tspan font-weight="700">우리 스레드 풀이 살아남는다</tspan> — 상품 조회·로그인은 정상</text>
+
+    <rect x="660" y="244" width="436" height="60" rx="10" fill="#fff" stroke="#fde68a"/>
+    <text x="680" y="266" font-size="12.5" fill="#b45309" font-weight="700">HALF_OPEN이 없으면 무슨 일이 생기나</text>
+    <text x="680" y="286" font-size="11.5" fill="#374151">전부 흘려보내면 <tspan font-weight="700">아직 죽어 있을 때 다시 무너지고</tspan>, 사람이 수동 복구해야 한다</text>
+
+    <rect x="40" y="256" width="584" height="48" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="60" y="276" font-size="12" fill="#1d4ed8" font-weight="700">면접에서 자주 나오는 확인 질문: "그럼 서킷이 열리면 결제가 다 막히잖아요?"</text>
+    <text x="60" y="294" font-size="11.5" fill="#1e40af">답: 선택지는 <tspan font-weight="700">"결제를 살릴까 말까"가 아니라 "결제만 잃을까, 서비스 전체를 잃을까"</tspan>다 → 14절</text>
+  </svg>
+  <figcaption>상태 셋 중 <b>HALF_OPEN이 이 장치의 진짜 값어치</b>다. OPEN만 있으면 <b>사람이 새벽에 일어나 수동으로 되돌려야</b> 하고, 그러면 복구가 늦는다.</figcaption>
+</figure>
+
+<div class="codehead plain"><span class="tag">config</span> Resilience4j — 자바에서 널리 쓰는 장애 대응 라이브러리</div>
+<pre><code>resilience4j.circuitbreaker:
+  instances:
+    pgCardApprove:
+      <span class="cm"># 최근 20건을 기준으로 실패율을 센다. 표본이 너무 작으면 우연한
+      # 실패 2건으로 서킷이 열리므로 최소 호출 수를 함께 둔다.</span>
+      slidingWindowSize: 20
+      minimumNumberOfCalls: 10
+      failureRateThreshold: 50          <span class="cm"># 50% 실패하면 OPEN</span>
+      <span class="cm"># 승인은 원래 오래 걸리므로, "느린 호출"도 실패로 세는 기준을
+      # 타임아웃(30초)보다 낮게 잡아 다 묶이기 전에 반응하게 한다.</span>
+<span class="ln-good">      slowCallDurationThreshold: 10s</span>
+<span class="ln-good">      slowCallRateThreshold: 80</span>
+      waitDurationInOpenState: 30s      <span class="cm"># OPEN을 유지할 시간</span>
+      permittedNumberOfCallsInHalfOpenState: 3</code></pre>
+
+<div class="callout info">
+  <span class="t">이 설정에서 놓치기 쉬운 두 줄 — <code>slowCall*</code></span>
+  서킷은 보통 <b>"실패"</b>만 세지만, PG 장애의 초기 증상은 <b>실패가 아니라 "느려짐"</b>이다. 타임아웃(30초)이 발동해야만 실패로 집계된다면 <b>서킷이 열릴 때쯤 이미 스레드가 다 묶여 있다.</b> 그래서 <b>느린 호출(10초 초과)의 비율</b>로도 서킷이 열리게 해서 <b>타임아웃보다 먼저 반응</b>하게 만든다.
+</div>
+
+<h3>11-1. 짝을 이루는 장치 — 벌크헤드</h3>
+
+<p><b>벌크헤드(bulkhead)</b>는 <b>배의 격벽</b>에서 온 이름이다. 배 밑바닥을 여러 칸으로 나눠 두면 <b>한 칸에 구멍이 나도 그 칸만 물이 차고 배는 뜬다.</b> 소프트웨어에서는 <b>의존성별로 스레드 풀이나 동시 호출 수를 따로 할당</b>하는 것을 말한다.</p>
+
+<div class="scroll">
+<table>
+  <caption>셋을 헷갈리지 않게 — "무엇을 정하는 장치인가"로 구분한다</caption>
+  <thead><tr><th>장치</th><th>정하는 것</th><th>PG가 죽었을 때</th><th>이것만으로 부족한 이유</th></tr></thead>
+  <tbody>
+    <tr><td><b>타임아웃</b></td><td><b>얼마나 기다릴지</b></td><td>요청마다 30초를 꽉 채우고 실패</td><td class="bad">어차피 실패할 요청이 스레드를 30초씩 점유한다</td></tr>
+    <tr><td><b>서킷 브레이커</b></td><td><b>언제 포기할지</b></td><td>호출조차 하지 않고 1ms 실패</td><td class="bad">서킷이 열리기 전 구간(집계 중)에는 여전히 묶인다</td></tr>
+    <tr><td><b>벌크헤드</b></td><td><b>최악의 경우에도 얼마나만 잃을지</b></td><td>워커 200개 중 <b>50개만</b> 묶이고 <b>150개는 상품 조회·로그인을 계속 처리</b></td><td class="bad">결제 자체를 살려주지는 않는다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout ok">
+  <span class="t">멀티 PG 구성이라면 한 걸음 더 <span class="badge bonus">가산점</span></span>
+  <b>열린 서킷을 신호로 삼아 예비 PG로 라우팅하는 폴백(fallback)</b>이다. 다만 이건 <b>두 PG에 모두 가맹점 계약과 정산 체계가 있어야 성립</b>하는 이야기라, <b>기술보다 계약이 먼저인 선택지</b>다 — 면접에서 이 단서를 붙이면 실무 감각이 드러난다.
+</div>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. ⑦ PG 점검 시간 — 예고된 장애는 장애가 아니다</h2>
+
+<p>PG와 은행·카드사는 <b>정기 점검</b>이 있다. 심야 시간대에 수십 분 정도이고, <b>은행 이체는 23:30~00:30 전후</b>가 흔하다. 이 시간에는 해당 결제수단이 <b>정상적으로 실패</b>한다.</p>
+
+<div class="rule red">문제는 이 <b>"정상적인 실패"</b>를 시스템이 <b>장애와 구분하지 못한다</b>는 것이다</div>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k" style="font-family:inherit">잃는 것 ① 고객</div><div class="d">"결제 실패"만 뜨면 고객은 <b>카드 문제인지 우리 문제인지 알 수 없어</b> CS를 넣는다. <b>원인 모를 실패</b>가 가장 비싼 실패다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">잃는 것 ② 알림 — 가장 비싼 손실</div><div class="d">점검 시간마다 타임아웃 알림이 쏟아지고, 반복되면 팀은 알림을 무시하게 된다(<b>알림 피로 alert fatigue</b>). <b>진짜 장애 알림이 그 소음에 묻히는 것</b>이 실제 위험이다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">잃는 것 ③ 결과 불명 건</div><div class="d">점검 직전에 들어간 요청들이 <b>결과 불명 상태로 남아</b> 다음 날 대사 대상이 된다. <b>예고된 시간에 예고된 방식으로 결과 불명 건을 스스로 만들어내는 셈</b>이다.</div></div>
+</div>
+
+<div class="memo green">
+  <h4>운영 장치로 만든다 — "알고 있다"에서 "시스템이 알고 있다"로</h4>
+  <div class="step">
+    <span class="n">1</span>
+    <div class="body"><b>점검 공지를 수신하는 채널을 운영에 연결</b>한다 — PG의 공지 메일, 관리자 페이지, <b>일부 PG가 제공하는 점검 일정 API</b>.</div>
+  </div>
+  <div class="step">
+    <span class="n">2</span>
+    <div class="body">점검 시간대에는 <b>해당 결제수단을 결제창에서 미리 숨기거나</b> <b>"점검 중" 안내</b>를 띄운다. 고객이 <b>실패를 겪기 전에</b> 다른 수단을 고르게 한다.</div>
+  </div>
+  <div class="step ok">
+    <span class="n">3</span>
+    <div class="body"><b>점검 종료 시각에 자동으로 되돌린다.</b> 사람이 아침에 수동으로 켜는 구조면 <b>점검이 끝났는데도 결제수단이 꺼져 있는 시간</b>이 생긴다 — 이건 장애가 아닌데 매출만 잃는 상태다.</div>
+  </div>
+  <div class="rule ok" style="margin-bottom:0">"예고된 실패"를 <b>실패로 처리하지 말고 계획으로 처리</b>한다 — 그래야 알림이 <b>진짜 장애만</b> 가리킨다</div>
+</div>
+
+<!-- ===================== 13 ===================== -->
+<h2 id="s13">13. 실무 사례 셋 — 방어선이 없던 자리마다 사고가 난다</h2>
+
+<h3>사례 1 — 읽기 타임아웃 미설정 → PG 지연이 전면 장애로</h3>
+
+<p>평소 <b>평균 1.2초</b>에 응답하던 PG 승인 API가 카드사 이슈로 <b>30초 이상 지연</b>되기 시작했다. 타임아웃이 없던 승인 호출은 전부 <b>무기한 대기</b>에 들어갔다.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>실제 진행</h4>
+    <ul>
+      <li><b>T+0초</b> — PG 응답 지연 시작 (평균 1.2초 → 무응답)</li>
+      <li><b>T+10초</b> — 워커 스레드 200개가 거의 전부 PG 응답 대기</li>
+      <li><b>T+3분</b> — 상품 조회·로그인 API도 스레드를 못 받아 대기 → <b>서비스 전체 응답 불가</b></li>
+      <li><b>T+5분</b> — 헬스체크 실패로 인스턴스가 LB에서 제외 → 남은 인스턴스로 트래픽 집중 → <b>같은 방식으로 전이</b></li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>방어선이 있었다면</h4>
+    <ul>
+      <li><b>읽기 타임아웃 30초만 있었어도</b> — 스레드가 30초마다 회수되며 <b>다른 API는 살았다</b></li>
+      <li><b>서킷 브레이커까지 있었다면</b> — 결제 요청조차 즉시 실패로 끊겨 <b>"결제 수단 점검 중" 안내로 국지화</b></li>
+      <li><b>벌크헤드가 있었다면</b> — 애초에 200개 중 50개만 묶였다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout warn" style="margin-top:14px">
+  <span class="t">이 사례가 증명하는 한 문장</span>
+  타임아웃은 <b>"결제를 성공시키는 장치"가 아니라 "결제 외의 것을 살리는 장치"</b>다. <b>결제만 막혔어야 할 장애가 전면 장애가 된 것</b>이 이 사고의 전부다.
+</div>
+
+<h3>사례 2 — 승인 자동 재시도 → 49,900원 이중 승인과 정산 차액</h3>
+
+<p>HTTP 클라이언트의 <b>재시도 옵션이 켜진 채로</b> 승인 API를 호출했다. <b>아무도 그 옵션을 켠 적이 없고, 라이브러리 기본값이었다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 920 260" role="img" aria-label="사례 2의 타임라인. 0초에 승인 요청을 보내고 29.8초에 PG가 승인을 완료해 응답을 보내기 시작했는데 30.0초에 우리 쪽 읽기 타임아웃이 발동해 응답을 못 받고, 같은 순간 HTTP 클라이언트가 자동 재전송하면서 주문번호 채번 버그로 새 번호가 발급되어 31.5초에 두 번째 승인까지 정상 처리되는 흐름">
+    <defs>
+      <marker id="p13r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="20" y="24" font-size="14" font-weight="700" fill="#1f2937">0.2초 차이로 갈린 사고 — 승인은 이미 나 있었다</text>
+
+    <line x1="96" y1="52" x2="96" y2="228" stroke="#cbd5e1" stroke-width="2"/>
+
+    <circle cx="96" cy="66" r="6" fill="#2563eb"/>
+    <text x="118" y="62" font-size="12" fill="#1f2937" font-weight="700" class="mono">T+0초</text>
+    <text x="118" y="80" font-size="11.5" fill="#374151">승인 요청 전송 (주문번호 <tspan class="mono" font-weight="700">ORD-1001</tspan>)</text>
+
+    <circle cx="96" cy="106" r="6" fill="#16a34a"/>
+    <text x="118" y="102" font-size="12" fill="#166534" font-weight="700" class="mono">T+29.8초</text>
+    <text x="118" y="120" font-size="11.5" fill="#166534"><tspan font-weight="700">PG가 승인 완료</tspan> → 응답 전송 시작 &nbsp;·&nbsp; 이 시점에 고객 카드에는 이미 찍혔다</text>
+
+    <circle cx="96" cy="146" r="6" fill="#dc2626"/>
+    <text x="118" y="142" font-size="12" fill="#b91c1c" font-weight="700" class="mono">T+30.0초</text>
+    <text x="118" y="160" font-size="11.5" fill="#b91c1c">우리 쪽 <tspan font-weight="700">읽기 타임아웃 발동</tspan> (응답을 못 받음) → 우리가 아는 것은 "모름"뿐</text>
+
+    <circle cx="96" cy="186" r="6" fill="#dc2626"/>
+    <text x="118" y="182" font-size="12" fill="#b91c1c" font-weight="700" class="mono">T+30.0초</text>
+    <text x="118" y="200" font-size="11.5" fill="#b91c1c">HTTP 클라이언트가 <tspan font-weight="700">자동 재전송</tspan> + 주문번호 채번 버그로 <tspan class="mono" font-weight="700">ORD-1002</tspan> 새 발급</text>
+
+    <circle cx="96" cy="226" r="6" fill="#7f1d1d"/>
+    <text x="118" y="222" font-size="12" fill="#7f1d1d" font-weight="700" class="mono">T+31.5초</text>
+    <text x="118" y="240" font-size="11.5" fill="#7f1d1d">PG가 두 번째 요청도 정상 승인 → <tspan font-weight="700">고객 카드에 49,900원이 두 번</tspan></text>
+
+    <rect x="620" y="56" width="284" height="188" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="640" y="78" font-size="12.5" fill="#b91c1c" font-weight="700">겹친 두 개의 실수</text>
+    <text x="640" y="100" font-size="11.5" fill="#7f1d1d">① 승인에 <tspan font-weight="700">자동 재시도</tspan>가 걸려 있었다</text>
+    <text x="640" y="118" font-size="11" fill="#9ca3af">(7절 — 켠 적이 없고 기본값이었다)</text>
+    <text x="640" y="142" font-size="11.5" fill="#7f1d1d">② 재시도가 <tspan font-weight="700">새 주문번호를 채번</tspan>해</text>
+    <text x="640" y="158" font-size="11.5" fill="#7f1d1d">&nbsp;&nbsp;&nbsp;9절의 유니크 제약마저 우회했다</text>
+    <text x="640" y="186" font-size="11.5" fill="#b91c1c" font-weight="700">올바른 처리</text>
+    <text x="640" y="204" font-size="11" fill="#7f1d1d">승인은 재시도가 아니라 <tspan font-weight="700">"조회 후 판단"</tspan></text>
+    <text x="640" y="222" font-size="11" fill="#7f1d1d">설령 재요청하더라도 <tspan font-weight="700">주문번호는 유지</tspan></text>
+  </svg>
+  <figcaption>고객 CS로 <b>1건</b>이 잡혔지만, 같은 패턴의 나머지 건들은 <b>월말 정산에서 PG 정산금과 우리 매출 장부의 차액</b>으로야 드러났고, <b>건별 원인 추적과 환불 처리에 며칠</b>이 들었다.</figcaption>
+</figure>
+
+<h3>사례 3 — 응답 금액 미검증 → 100원으로 산 50,000원 상품</h3>
+
+<p>결제창 호출 금액이 <b>클라이언트 파라미터로 노출</b>되는 연동 방식에서, 사용자가 브라우저 개발자 도구로 <b>50,000원을 100원으로</b> 고쳐 결제했다. PG는 <b>100원 승인을 정상 처리</b>했고(PG 입장에서는 가맹점이 100원을 요청한 것이다), 서버는 <b>"승인 성공" 코드만 보고</b> 주문을 완료시켰다.</p>
+
+<p>승인 응답의 <code>approvedAmount</code>를 주문 금액과 대조하는 <b>몇 줄</b>이 없어서 생긴 일이다. 그리고 이 사고의 <b>수습에서 한 가지가 더 드러났다.</b></p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>1차 수습 — 부족했던 구현</h4>
+    <ul>
+      <li>"금액이 다르면 <b>주문 완료를 막는다</b>"</li>
+      <li>그런데 <b>PG에는 100원 승인이 그대로 살아 있다</b></li>
+      <li>고객은 <b>돈을 냈는데 물건도 못 받고 환불도 안 되는 상태</b></li>
+      <li>→ 검증을 붙였는데 <b>CS가 오히려 늘었다</b></li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>올바른 수습</h4>
+    <ul>
+      <li>불일치를 발견하면 주문 완료를 막는 것에서 그치지 않고 <b>해당 승인을 즉시 취소</b>까지 한다</li>
+      <li>그래야 <b>고객 돈이 붕 뜨지 않는다</b></li>
+      <li>8절 코드의 <code>markForCancel(order, res)</code>가 이 줄이다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>세 사례를 한 줄로 관통하는 것</h4>
+  <div class="rule red">셋 다 <b>"승인 성공" 경로에서는 아무 문제가 없던 코드</b>다 — 사고는 전부 <b>그 바깥</b>에서 났다</div>
+  <p style="margin-bottom:0">그래서 이 문항의 출제 의도가 <b>"행복 경로만 구현한 연동"과 "방어적 연동"의 차이</b>인 것이다. 그 차이는 <b>코드 리뷰에서는 잘 안 보이고</b>, 운영에서 <b>CS 건수와 정산 차액</b>으로 드러난다.</p>
+</div>
+
+<!-- ===================== 14 ===================== -->
+<h2 id="s14">14. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>14-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">일곱 장치를 순서대로?</div><div class="d"><b>나갈 땐 끊고(타임아웃·서킷·벌크헤드) · 안 오면 묻고(조회) · 오면 대조하고(금액·주문번호·통화) · 남길 땐 잠그고 가리고(유니크·마스킹 로깅) · 예고된 건 피한다(점검 시간).</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">네트워크 호출의 결과는 몇 가지?</div><div class="d"><b>셋 — 성공·실패·모름.</b> 응답이 안 왔다 = "상대가 일을 안 했다"가 아니라 <b>"했는지 알 수 없다"</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">타임아웃 값 세 벌?</div><div class="d">연결은 <b>전부 2~3초</b>. 읽기는 <b>승인 20~30초 / 조회 3~5초 / 취소 10~20초</b>. 갈리는 기준은 <b>카드사 구간이 끼어 있는가</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">읽기 타임아웃의 함정?</div><div class="d">많은 클라이언트에서 <b>"다음 바이트까지"</b>의 시간이다 → 찔끔찔끔 보내면 <b>영원히 발동 안 함</b>. 그래서 <b>전체 요청 타임아웃</b>을 따로 건다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">스레드 고갈 계산?</div><div class="d"><b>초당 20건 × 30초 = 600</b> vs 워커 <b>200개</b> → <b>10초 만에 소진</b>. 그 풀을 <b>상품 조회·로그인·헬스체크가 공유</b>해서 전면 장애가 된다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">멱등 판정 네 줄?</div><div class="d"><b>조회 O · 망취소 O(소거 연산) · 승인 X · 취소 조건부</b>(거래번호 기반이면 대개 멱등, 스펙 확인).</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">승인 타임아웃 시 절차?</div><div class="d"><b>재시도가 아니라 거래 조회.</b> 승인됨 → 채택 / 미승인 확인 → 그때 재요청 / 조회도 불명 → <b>UNKNOWN 유지</b> 후 확인 배치·망취소로 이관.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">대조할 항목 셋과 이유?</div><div class="d"><b>금액</b>(변조) · <b>주문번호</b>(오매핑) · <b>통화</b>(KRW 100 vs USD 100 = 1,400배). 판정은 <b>화이트리스트</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">화이트리스트를 쓰는 이유?</div><div class="d">블랙리스트("알려진 실패가 아니면 성공")는 <b>PG가 새 코드를 추가하는 순간 미지의 코드를 성공으로 오인</b>한다. 모르는 코드는 <b>보류 + 알림</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">유니크 제약이 왜 두 개?</div><div class="d">① <code>merchant_order_no</code> = <b>같은 시도의 중복</b>. ② <code>(order_id) WHERE status='APPROVED'</code> = <b>다른 시도끼리의 중복</b>. ①만으로는 <b>주문번호를 새로 채번하면 통과</b>한다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">중복 방지 4층?</div><div class="d"><b>UI(사람의 손) → 멱등성 키(같은 시도 재전송) → DB 제약(우리 코드의 어떤 버그도) → PG 옵션(우리 시스템 전체가 잘못됐을 때).</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">4층을 한 번에 무력화하는 실수?</div><div class="d"><b>재시도할 때 주문번호를 새로 채번하는 것.</b> "같은 시도"임을 알려주는 유일한 단서가 사라진다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">마스킹 대상 셋?</div><div class="d"><b>PAN</b>(앞 6·뒤 4만) · <b>CVC</b>(승인 후 어떤 형태로도 저장 금지, 암호화도 안 됨) · <b>유효기간/생년월일/비번 앞 2자리</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">로그가 DB보다 위험한 이유?</div><div class="d">수집기·검색 색인·백업·개발자 로컬로 <b>계속 복제</b>된다 → <b>유출 표면이 가장 넓은 사본</b>. 그래서 <b>직렬화 이전에 강제</b>.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">서킷 세 상태와 함정?</div><div class="d"><b>CLOSED(정상) → OPEN(차단) → HALF_OPEN(시험) → CLOSED.</b> 이름이 직관과 반대 — <b>회로가 닫혀야 전류가 흐른다</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">타임아웃·서킷·벌크헤드 구분?</div><div class="d"><b>얼마나 기다릴지 / 언제 포기할지 / 최악에도 얼마나만 잃을지.</b> 서로 다른 지점을 막아 <b>대체 불가</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">점검 시간에 잃는 것 셋?</div><div class="d"><b>고객</b>(원인 모를 실패 → CS) · <b>알림</b>(alert fatigue, 가장 비쌈) · <b>결과 불명 건</b>(다음 날 대사 대상).</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">마지막에 반드시 붙일 한 문장?</div><div class="d">"타임아웃은 <b>결제를 성공시키는 장치가 아니라 결제 외의 것을 살리는 장치</b>이고, 방어선의 유무는 <b>CS 건수와 정산 차액</b>으로 증명됩니다."</div></div>
+</div>
+
+<h3>14-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>타임아웃 값은 어떻게 정하나요? 감으로 30초인가요? <span class="badge core">필수</span><span class="hint">힌트: 근거 세 개를 조합한다고 답한 뒤, "짧을수록 안전한 값이 아니다"로 마무리한다</span></summary><div class="a">
+  <p><b>세 가지 근거를 조합한다</b>고 답한다.</p>
+  <div class="step">
+    <span class="n">1</span>
+    <div class="body"><b>PG 연동 가이드의 권고치.</b> 승인은 카드사 구간 최악 지연을 반영해 통상 <b>20~30초</b>를 제시한다. 이 값은 <b>PG가 자기 시스템의 꼬리 지연을 알고 정한 값</b>이므로 출발점으로 삼는다.</div>
+  </div>
+  <div class="step">
+    <span class="n">2</span>
+    <div class="body"><b>실측 응답 시간 분포.</b> 우리 트래픽에서의 <b>p99를 넘는 값</b>으로 잡아 정상 승인을 타임아웃으로 오판하지 않게 한다. 평균이 아니라 <b>꼬리값</b>을 보는 이유는, 평균 1.2초여도 <b>100건 중 1건이 8초</b>인 시스템에서 2초로 자르면 그 1건을 매번 결과 불명으로 만들기 때문이다.</div>
+  </div>
+  <div class="step">
+    <span class="n">3</span>
+    <div class="body"><b>호출 성격별 분리.</b> 조회·취소는 승인보다 훨씬 짧게. <b>조회는 PG 내부 DB만 보는 호출이므로 5초를 넘기면 이미 비정상</b>이다.</div>
+  </div>
+  <div class="rule red">덧붙일 핵심 — 타임아웃은 <b>짧을수록 안전한 값이 아니다.</b> 너무 짧게 잡으면 <b>"결과 불명" 거래를 우리 손으로 만들어내는 셈</b>이다</div>
+  <p style="margin-bottom:0">그리고 <b>연결 타임아웃은 이와 별개로 2~3초로 짧게 고정</b>한다는 것, 응답이 <b>찔끔찔끔 오는 경우를 대비해 전체 요청 타임아웃도 함께 건다</b>는 것까지 말하면 <b>타임아웃을 구조로 이해하고 있다는 신호</b>가 된다.</p>
+</div></details>
+
+<details class="q"><summary>승인 요청이 타임아웃 나면 왜 바로 재시도하면 안 되나요? <span class="badge core">필수</span><span class="hint">힌트: 타임아웃이 "무엇을 알려주는가"부터 정확히 말한다</span></summary><div class="a">
+  <p>타임아웃은 <b>실패 확정이 아니라 결과 불명</b>이기 때문이다. 우리가 본 것은 <b>"응답이 안 왔다"</b>뿐이고, 그 원인이 <b>요청 유실인지 · 처리 지연인지 · 응답 유실인지</b>는 우리 쪽에서 구분할 수 없다(3절 ⓐⓑⓒ). <b>첫 요청이 이미 승인됐다면 재시도는 고객 카드에 찍히는 두 번째 결제</b>다.</p>
+  <div class="rule">올바른 절차는 <b>추측이 아니라 확인</b> — 거래 조회 API로 첫 요청의 결과를 확인한 뒤 움직인다</div>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k" style="font-family:inherit">승인이면</div><div class="d">그 결과를 <b>채택</b>. 재요청하지 않는다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">미승인이 확인되면</div><div class="d">그때 <b>비로소 재요청</b>. 주문번호는 그대로 유지한다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">조회로도 확정이 안 되면</div><div class="d">결제 건을 <b>보류(UNKNOWN)</b>로 두고 후속 확인이나 <b>망취소</b>로 넘긴다.</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">이 분기의 상세는 별도 문항으로 이어진다 — <code>04-pg-timeout-unknown-state.md</code>, <code>14-net-cancellation.md</code>.</p>
+</div></details>
+
+<details class="q"><summary>재시도할 때 가맹점 주문번호는 새로 채번하나요? <span class="badge trap">함정</span><span class="hint">힌트: 사례 2가 왜 유니크 제약을 뚫었는지 떠올린다</span></summary><div class="a">
+  <div class="rule red">절대 아니다 — <b>같은 시도의 재전송이면 주문번호는 반드시 유지</b>한다</div>
+  <p>가맹점 주문번호는 <b>"이 요청이 어느 시도의 것인가"를 알려주는 유일한 단서</b>다. 재시도가 새 번호를 채번하는 순간, <b>2층(멱등성 키)·3층(DB 유니크)·4층(PG 중복 거부)이 전부 이 요청을 "다른 요청"으로 본다.</b> 네 층의 방어를 <b>한 줄의 채번 코드가 동시에 무력화</b>하는 것이다.</p>
+  <p><b>주문번호를 새로 채번해야 하는 경우</b>는 따로 있다 — <b>고객이 A카드로 실패한 뒤 B카드로 다시 시도하는 것처럼 "다른 결제 시도"일 때</b>다. 이때는 <b>주문(order)은 그대로이고 결제 시도(payment attempt)만 새로 생기므로</b> 새 번호가 맞다.</p>
+  <div class="split">
+    <div class="pane r">
+      <h4>새로 채번하면 안 되는 것 — 같은 시도의 재전송</h4>
+      <ul>
+        <li>타임아웃 후 재요청</li>
+        <li>네트워크 오류 후 재전송</li>
+        <li>웹훅 중복 수신 처리</li>
+      </ul>
+    </div>
+    <div class="pane g">
+      <h4>새로 채번해야 하는 것 — 다른 결제 시도</h4>
+      <ul>
+        <li>한도 초과로 거절된 뒤 다른 카드로 재시도</li>
+        <li>결제수단을 바꿔서 다시 시도</li>
+        <li>→ 이때는 <b>②번 부분 유니크 인덱스</b>가 "그 주문의 승인은 결국 1건"을 보장한다</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-bottom:0"><b>면접에서 값이 나가는 마무리</b>: "재시도인지 새 시도인지를 <b>코드가 구분하고 있느냐</b>가 이 문제의 본질입니다. 구분이 없으면 채번 규칙이 사람의 기억에 의존하게 됩니다."</p>
+</div></details>
+
+<details class="q"><summary>PG가 멱등성 키를 지원하면 승인도 재시도해도 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "원리적으로는 맞다"로 시작해, 확인할 조건 셋을 붙이고, 마지막에 "그래도 조회는 필요하다"로 닫는다</span></summary><div class="a">
+  <p><b>원리적으로는 맞고, 조건을 붙여야 정확한 답</b>이 된다. 멱등성 키는 <b>"같은 키로 온 두 번째 요청에 대해 새 승인을 만들지 않고 첫 요청의 결과를 돌려준다"는 PG 측 보장</b>이므로, 그 보장이 있으면 <b>승인도 멱등해져 자동 재시도가 안전해진다.</b></p>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">① 키의 유효 기간</div><div class="d">보통 <b>24시간 같은 제한</b>이 있고, <b>기간이 지난 뒤 같은 키로 요청하면 새 승인이 만들어질 수 있다.</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 키가 보장하는 범위</div><div class="d"><b>같은 키인데 요청 본문이 다르면 어떻게 되는지.</b> 대개 오류로 거절하지만 <b>PG마다 다르다.</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">③ 첫 요청이 아직 처리 중일 때</div><div class="d"><b>"처리 중"을 응답하는 PG</b>도 있고 <b>대기시키는 PG</b>도 있어서, <b>우리 쪽 타임아웃 설계가 달라진다.</b></div></div>
+  </div>
+  <div class="rule">그리고 멱등성 키가 있어도 <b>거래 조회는 여전히 필요하다</b></div>
+  <p style="margin-bottom:0">멱등성 키는 <b>"같은 시도의 재전송"을 안전하게 만들 뿐</b>, <b>"PG가 지금 그 거래를 어떤 상태로 갖고 있는지"를 알려주지는 않기 때문</b>이다. 예를 들어 <b>재시도조차 못 하고 프로세스가 죽은 경우</b>, 다음 날 그 건의 진짜 상태를 아는 방법은 조회뿐이다.</p>
+</div></details>
+
+<details class="q"><summary>PG 응답을 검증하라는 건 PG를 못 믿는다는 건가요? <span class="badge core">필수</span><span class="hint">힌트: "못 믿는다"가 아니라 "우리만 알 수 있는 사실이 있다"로 바꿔 말한다</span></summary><div class="a">
+  <div class="rule">PG가 거짓말을 한다기보다, <b>PG는 자기가 받은 요청에만 정직하다</b></div>
+  <p>결제창 금액이 변조되면 <b>PG는 변조된 금액을 정직하게 승인</b>한다. <b>PG는 우리 주문 테이블을 볼 수 없으므로</b>, "PG가 승인한 금액"과 "우리가 팔기로 한 금액"의 대조는 <b>구조적으로 우리만 할 수 있는 검증</b>이다.</p>
+  <p>여기에 더해 <b>스펙 문서와 다른 응답</b>(신규 상태 코드, 필드 누락)이 실제로 오기 때문에, <b>성공 판정을 화이트리스트로 하고 미지의 코드는 성공이 아니라 보류로 빠뜨리는 방어</b>도 응답 검증의 일부다.</p>
+  <p style="margin-bottom:0"><b>"PG를 못 믿는다"가 아니라 <span style="color:#2563eb">"우리만 알 수 있는 사실이 있다"</span>로 답하면 더 정확하다.</b> 전자는 상대에 대한 불신처럼 들리고, 후자는 <b>책임 경계에 대한 이해</b>로 들린다.</p>
+</div></details>
+
+<details class="q"><summary>PG 응답에 문서에 없는 상태 코드가 왔습니다. 성공인가요 실패인가요? <span class="badge trap">함정</span><span class="hint">힌트: 답은 셋 중 하나가 아니다</span></summary><div class="a">
+  <div class="rule red">둘 다 아니다 — <b>보류(미확정)로 빼고 알림을 띄운 뒤, 거래 조회로 확인</b>한다</div>
+  <p><b>성공으로 처리하면</b> 돈을 안 받고 물건이 나간다. <b>실패로 처리하면</b> PG에 승인이 살아 있는데 우리는 실패로 알고 있어서 <b>고객 돈이 묶인다.</b> 즉 <b>둘 다 손실이 나는 방향</b>이므로, 유일하게 안전한 선택은 <b>확정하지 않는 것</b>이다.</p>
+  <p>이것이 8절에서 <b>화이트리스트 판정</b>을 고집한 이유다. 블랙리스트 방식은 <b>모르는 코드를 자동으로 성공 쪽에 넣어버려서</b>, 이 질문 자체가 성립하지 않게 된다 — <b>사고가 조용히 지나간다.</b></p>
+  <p style="margin-bottom:0"><b>운영 관점 한 줄</b>: 이런 코드는 <b>반드시 알림을 띄워야 한다.</b> PG의 배포로 새 코드가 추가된 경우 <b>그 코드가 처음 나타난 시점</b>을 아는 것이 대응의 출발점이고, 그래서 <b>10절의 원문 로깅</b>이 이 시나리오에서 결정적이다 — 파싱된 객체만 남겼다면 <b>"모르는 코드가 왔다"는 사실 자체가 사라진다.</b></p>
+</div></details>
+
+<details class="q"><summary>서킷 브레이커가 열리면 결제가 다 막히는데, 그래도 걸어야 하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 선택지를 다시 정의하는 것으로 시작한다</span></summary><div class="a">
+  <p><b>트레이드오프를 정면으로 다뤄야 하는 질문</b>이다. 서킷이 열려서 잃는 것은 <b>"어차피 대부분 실패할 요청들"</b>이고, 얻는 것은 <b>스레드 풀 보호(장애 국지화)와 빠른 실패로 인한 사용자 경험</b>이다.</p>
+  <div class="rule red">선택지는 <b>"결제를 살릴까 말까"가 아니라 "결제만 잃을까, 서비스 전체를 잃을까"</b>다</div>
+  <p>PG가 죽은 상태에서 서킷 없이 버티면 <b>결제도 안 되면서 서비스 전체가 함께 죽는다</b>(사례 1). 다만 결제 도메인의 특수성을 반영해 세 가지를 덧붙이면 <b>운영 경험이 드러난다.</b></p>
+  <div class="step">
+    <span class="n">1</span>
+    <div class="body"><b>결제수단·PG별로 서킷을 분리한다.</b> 카드 장애가 계좌이체까지 막으면 <b>잃지 않아도 될 매출을 잃는다.</b></div>
+  </div>
+  <div class="step">
+    <span class="n">2</span>
+    <div class="body"><b>half-open으로 회복을 자동 감지한다.</b> 사람이 수동으로 되돌리는 구조면 <b>새벽 장애에서 복구가 늦는다.</b></div>
+  </div>
+  <div class="step ok">
+    <span class="n">3</span>
+    <div class="body">가능하다면 <b>열린 서킷을 예비 PG 라우팅의 트리거</b>로 쓴다. (단, 두 PG 모두에 <b>가맹점 계약과 정산 체계</b>가 있어야 성립한다)</div>
+  </div>
+  <p style="margin-bottom:0"><b>"매출이 걸렸으니 서킷을 안 건다"는 답은 장애 전파를 이해하지 못한 답</b>이다. <b>서킷을 안 걸어서 지키는 매출보다 전면 장애로 잃는 매출이 크다</b>는 것이 사례 1의 교훈이다.</p>
+</div></details>
+
+<details class="q"><summary>서킷이 열려 있는 동안 들어온 결제 요청을 큐에 쌓아뒀다가 나중에 자동으로 승인하면 안 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 결제는 "나중에 해도 되는 작업"이 아니다</span></summary><div class="a">
+  <p><b>대부분의 경우 하면 안 된다.</b> 이유는 기술이 아니라 <b>결제의 성질</b>에 있다.</p>
+  <div class="split">
+    <div class="pane r">
+      <h4>큐에 쌓아 나중에 승인할 때의 문제</h4>
+      <ul>
+        <li><b>고객은 이미 화면을 떠났다.</b> 5분 뒤 승인 문자가 오면 고객 입장에서는 <b>"결제 안 했는데 돈이 나갔다"</b>이다 → 분쟁</li>
+        <li>그사이 <b>재고가 없어졌거나 쿠폰이 만료</b>됐을 수 있다 — 승인은 됐는데 주문은 못 만든다</li>
+        <li>고객이 <b>다른 결제수단으로 이미 결제</b>했다면 <b>이중 결제</b>가 된다</li>
+        <li>큐가 밀리면 <b>PG 회복 직후에 지연된 요청이 한꺼번에 쏟아져</b> 상대를 다시 쓰러뜨린다(떼거리 문제)</li>
+      </ul>
+    </div>
+    <div class="pane g">
+      <h4>대신 하는 것</h4>
+      <ul>
+        <li><b>즉시 실패시키고 사용자에게 알린다</b> — "다른 결제수단을 이용해 주세요"</li>
+        <li>재시도의 주체를 <b>서버가 아니라 사용자</b>로 둔다. 사용자가 다시 누르는 순간은 <b>그가 여전히 결제할 의사가 있다는 증거</b>다</li>
+        <li>서킷이 닫히면 <b>자연스럽게 다음 사용자의 요청부터 통과</b>한다</li>
+      </ul>
+    </div>
+  </div>
+  <div class="rule">결제에서 <b>"나중에 대신 해주기"는 친절이 아니라 위험</b>이다 — <b>고객의 의사가 그 시점에도 유효한지</b>를 우리가 알 수 없기 때문이다</div>
+  <p style="margin-bottom:0" class="sub">예외는 <b>가상계좌 입금·정기결제처럼 애초에 비동기가 전제된 결제수단</b>이다. 이 경우는 큐가 아니라 <b>도메인이 원래 그렇게 설계된 것</b>이며, 별도 문항(<code>15-async-approval-payment-methods.md</code>)의 주제다.</p>
+</div></details>
+
+<details class="q"><summary>MySQL처럼 부분 유니크 인덱스가 없는 DB에서는 "승인은 1건만"을 어떻게 강제하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 유니크 인덱스가 NULL을 어떻게 다루는지 떠올린다</span></summary><div class="a">
+  <p>PostgreSQL의 <code>CREATE UNIQUE INDEX ... WHERE status = 'APPROVED'</code>를 그대로 쓸 수 없으므로, <b>"제약을 걸 대상 자체를 좁히는"</b> 방향으로 바꾼다. 실무에서 쓰이는 방법은 둘이다.</p>
+  <div class="step">
+    <span class="n">1</span>
+    <div class="body"><b>NULL을 이용한다.</b> MySQL(InnoDB)의 유니크 인덱스는 <b>NULL 값끼리는 중복을 허용</b>한다. 그래서 <code>approved_order_id</code> 같은 컬럼을 두고 <b>승인 확정 건에만 <code>order_id</code>를 채우고 나머지는 NULL로 둔 뒤</b>, 그 컬럼에 유니크를 건다. 실패·취소 건은 NULL이라 <b>몇 건이든 공존</b>하고, 승인 건은 <b>주문당 하나만</b> 들어간다.</div>
+  </div>
+  <div class="step">
+    <span class="n">2</span>
+    <div class="body"><b>승인 확정 건만 담는 별도 테이블</b>을 둔다(예: <code>approved_payment</code>). 그 테이블의 <code>order_id</code>에 유니크를 걸면 조건 없는 평범한 유니크로 같은 보장을 얻는다. <b>대사·정산 배치가 읽을 테이블이 명확해진다</b>는 부수 효과도 있다.</div>
+  </div>
+  <div class="rule">공통 원리 — <b>"조건부 유일성"을 DB가 표현 못 하면, 조건을 만족하는 행만 모아 무조건 유일하게 만든다</b></div>
+  <p style="margin-bottom:0">이 질문에서 <b>피해야 할 답은 "그럼 애플리케이션에서 검사하죠"</b>다. 9절에서 봤듯 <b>동시에 들어온 두 요청은 같은 순간에 조회를 통과</b>하므로, 애플리케이션 검사는 방어선이 아니다.</p>
+</div></details>
+
+<details class="q"><summary>로그에 카드번호가 남으면 구체적으로 뭐가 문제인가요? <span class="badge core">필수</span><span class="hint">힌트: 규정과 기술, 두 층위로 나눠 답한다</span></summary><div class="a">
+  <div class="split">
+    <div class="pane b">
+      <h4>규정 층위 — PCI DSS 위반</h4>
+      <ul>
+        <li>카드번호(PAN)는 저장 시 <b>마스킹</b>(통상 앞 6자리와 뒤 4자리만 노출)하거나 <b>암호화</b>해야 한다</li>
+        <li><b>CVC는 승인 후 어떤 형태로도 저장이 금지</b>된다 — <b>암호화해서 저장하는 것도 안 된다</b></li>
+      </ul>
+    </div>
+    <div class="pane r">
+      <h4>기술 층위 — 유출 표면이 가장 넓은 사본</h4>
+      <ul>
+        <li>로그는 DB보다 <b>접근 통제가 느슨</b>하고, <b>수집기·검색 시스템·백업</b>으로 계속 복제된다</li>
+        <li><b>DB 한 곳을 잠그는 것보다 로그가 흘러간 모든 경로를 잠그는 것이 훨씬 어렵다</b></li>
+      </ul>
+    </div>
+  </div>
+  <div class="rule">그래서 마스킹은 <b>로그 적재 후에 지우는 방식이 아니라 로깅 프레임워크 단계(직렬화 전)에서 강제</b>한다</div>
+  <p style="margin-bottom:0">여기에 <b>새 필드 추가 시 마스킹 누락을 잡는 로그 스캔을 정기적으로 돌리는 것</b>까지가 실무다 — <b>사람이 빠뜨리는 일은 반드시 생긴다</b>는 전제 위에서 설계한다는 점을 덧붙이면 좋다.</p>
+</div></details>
+
+<details class="q"><summary>요청/응답 원문을 전부 저장하면 저장 비용이 너무 크지 않나요?<span class="hint">힌트: "전부"의 범위와 보관 기간을 나눠서 답한다</span></summary><div class="a">
+  <p><b>"모든 로그를 영원히"가 아니라 "무엇을 얼마나"를 정하는 문제</b>로 바꿔서 답한다.</p>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">길게 보관 — 승인 · 취소</div><div class="d"><b>돈이 움직인 요청</b>이다. 분쟁·대사·환불 추적의 대상이므로 <b>분쟁 대응 기간을 커버하는 기간</b>을 잡는다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">짧게 보관 — 조회</div><div class="d">건수는 가장 많지만 <b>상태를 바꾸지 않는다.</b> 장애 분석 목적이므로 <b>훨씬 짧게</b> 잡아도 된다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">계층 분리 — 핫/콜드</div><div class="d">최근 것은 <b>검색 가능한 저장소</b>에, 오래된 것은 <b>압축해 값싼 저장소</b>로 내린다. 대사는 배치라 <b>즉시 검색이 필요 없다.</b></div></div>
+  </div>
+  <div class="rule">저장 비용과 비교할 것은 <b>"분쟁 한 건을 증명하지 못했을 때의 비용"</b>이다 — 대개 후자가 훨씬 크다</div>
+  <p style="margin-bottom:0">덧붙이면 좋은 한 줄: <b>"원문 로그는 관측(observability)이 아니라 회계 증빙에 가깝습니다."</b> 관측 로그는 지워도 되지만, <b>돈이 움직인 기록은 지우면 나중에 재구성할 방법이 없다.</b></p>
+</div></details>
+
+<details class="q"><summary>망취소는 왜 멱등한가요? 취소는 상태를 바꾸는 요청 아닌가요? <span class="badge bonus">가산점</span><span class="hint">힌트: "몇 번 하는가"가 아니라 "목표 상태가 몇 개인가"를 본다</span></summary><div class="a">
+  <p>멱등성의 기준은 <b>"상태를 바꾸느냐"가 아니라 "N번 보낸 뒤의 최종 상태가 1번 보낸 뒤와 같으냐"</b>다. 취소는 상태를 바꾸지만, <b>목표 상태가 "그 승인이 없음" 하나뿐</b>이다.</p>
+  <div class="rule">이런 연산을 <b>소거 연산</b>이라 부른다 — <b>이미 지워진 것을 또 지워도 결과는 "지워짐" 그대로</b></div>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">망취소 (멱등)</div><div class="d">"그 거래번호의 승인을 없애라" → 이미 없으면 <b>아무 일도 안 일어나고 성공 응답</b>. 열 번 보내도 승인은 <b>여전히 없음</b>.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">승인 (멱등 아님)</div><div class="d">"이 금액을 승인하라" → 부를 때마다 <b>새 승인이 하나씩 더 생긴다</b>. 열 번 보내면 <b>승인 열 건</b>.</div></div>
+  </div>
+  <p><b>단, 스펙 확인이 필요한 지점이 있다.</b> <b>부분취소를 금액 기반으로 받는 API</b>라면 "3,000원 취소"를 두 번 보내면 <b>6,000원이 취소될 수 있다</b> — 이건 멱등이 아니다. <b>거래번호(취소 요청 식별자) 기반이면 대개 멱등</b>이지만, <b>연동 스펙에서 확인하는 것이 원칙</b>이다.</p>
+  <p style="margin-bottom:0" class="sub">망취소의 개념과 사용 시점 자체는 별도 문항(<code>14-net-cancellation.md</code>)에서 다룬다.</p>
+</div></details>
+
+<details class="q"><summary>PG 점검 시간엔 그냥 에러 나게 두면 안 되나요? <span class="badge core">필수</span><span class="hint">힌트: 잃는 것 셋 중 "가장 비싼 것"을 지목한다</span></summary><div class="a">
+  <p><b>두면 세 가지를 잃는다.</b></p>
+  <div class="step red">
+    <span class="n">1</span>
+    <div class="body"><b>고객이 원인 모를 실패를 겪는다.</b> "결제 실패"만 뜨면 고객은 <b>카드 문제인지 우리 문제인지 알 수 없어</b> CS를 넣는다.</div>
+  </div>
+  <div class="step red">
+    <span class="n">2</span>
+    <div class="body"><b>점검 시간대 타임아웃 알림이 매일 쏟아져 알림 피로가 생기고, 진짜 장애 탐지가 무뎌진다. — 이게 가장 비싼 손실이다.</b> 알림을 무시하는 습관이 한번 생기면, <b>진짜 장애가 왔을 때도 똑같이 무시된다.</b></div>
+  </div>
+  <div class="step red">
+    <span class="n">3</span>
+    <div class="body"><b>점검 직전에 들어간 요청들이 결과 불명 상태로 남아</b> 다음 날 대사 대상이 된다. <b>예고된 시간에 예고된 방식으로 결과 불명 건을 스스로 만들어내는 셈</b>이다.</div>
+  </div>
+  <div class="rule ok">정답은 — <b>점검 공지를 받아 해당 시간대에 결제수단을 미리 숨기고, 점검 종료 후 자동 복구하는 운영 장치</b>를 만드는 것</div>
+  <p style="margin-bottom:0">면접에서 <b>"예고된 실패는 장애가 아니라 계획으로 처리한다"</b>는 한 문장을 덧붙이면, 이 항목이 <b>기술 설정이 아니라 운영 설계</b>라는 것을 이해하고 있다는 신호가 된다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  PG 연동은 <b>"외부사는 느려지고, 중복 응답하고, 스펙과 다르게 동작한다"</b>는 전제 위에서 — <b>연결/읽기 타임아웃 분리</b>, <b>멱등한 조회만 자동 재시도</b>(승인은 조회 후 판단), <b>응답 금액·주문번호 대조</b>, <b>가맹점 주문번호 유니크 제약</b>, <b>마스킹된 원문 로깅</b>, <b>서킷 브레이커</b>, <b>점검 시간 대응</b>까지 — 방어선을 <b>겹겹이</b> 세우는 일이며, 이 방어선의 유무가 <b>CS 건수와 정산 차액</b>으로 증명된다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/10-payment-consistency/02-pg-integration-basics.md</code> · 이어서 볼 문서: 결제 상태 관리(01) · 웹훅 수신 처리(03) · <b>PG 타임아웃과 결과 불명 상태(04)</b> · 이중 결제 다층 방어(07) · 대사 배치 설계(08) · 망취소(14) · 비동기 승인 결제수단(15)</p>
+</main>
+</body>
+</html>

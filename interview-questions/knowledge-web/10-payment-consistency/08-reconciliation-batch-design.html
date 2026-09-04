@@ -1,0 +1,1490 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>대사(Reconciliation) 배치 설계 — 두 장부는 반드시 어긋난다, 문제는 그걸 언제 아느냐다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">10 결제 / 정합성 &nbsp;|&nbsp; 심화⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>대사(Reconciliation) 배치 설계<br><span class="sub">두 장부는 반드시 어긋난다 — 문제는 그걸 언제 아느냐다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"정산/대사(reconciliation) 배치는 왜 필요하고 어떻게 설계하나요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>우리 서버의 DB와 PG사의 DB는 서로 다른 두 개의 장부다.</b> 인터넷 너머에 있는 <b>남의 회사 DB를 우리 트랜잭션에 묶을 방법은 없으므로</b>, 멱등성 키·상태 머신·웹훅 검증을 아무리 잘 갖춰도 두 기록은 <b>반드시 어긋난다</b> — 웹훅은 유실되고, 타임아웃 뒤에 승인이 도착하고, 취소 호출은 한쪽에서만 성공하기 때문이다. 대사(reconciliation)는 이 현실을 인정하고 두 장부를 <b>건 단위로 대조하는 최후의 안전망</b>이다. 설계의 뼈대는 <b>[PG 대사 파일 수령 → 정규화(스테이징 적재) → 키 매칭(거래ID 기준) → 차이 분류(우리에만 있음 / PG에만 있음 / 금액 불일치) → 자동 보정 또는 수동 처리 큐 → 리포트·알림]</b>의 파이프라인이고, 실무 디테일은 <b>마감(cut-off) 기준 통일, 부분 취소를 흡수하는 순액 비교, 보정 작업 자체의 멱등성, 그리고 "대사 배치가 정상인지"를 검증하는 메타 모니터링</b>이다. <b>대사가 없는 결제 시스템은 어긋난 채로 몇 달을 모르고 지나가는 시스템이다.</b>
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>두 장부는 구조적으로 어긋난다</b> — 우리 DB와 PG DB는 <b>하나의 트랜잭션으로 묶을 수 없는 별개 원장</b>이라, <b>웹훅 유실 · 타임아웃 뒤 뒤늦은 승인 · 취소 누락 · 마감 경계</b> 네 경로로 반드시 벌어진다. 실시간 정합성 장치는 <b>요청 하나를 올바로 처리</b>할 뿐, <b>기록 전체 집합이 같음</b>은 보장하지 않는다.</div></li>
+    <li><span class="n">2</span><div><b>대사는 5단계 파이프라인이다</b> — <b>수령(컨트롤 토탈 검증) → 정규화(스테이징에 원본 적재) → 매칭(PG 거래ID 기준) → 분류(<code>OURS_ONLY</code> / <code>PG_ONLY</code> / <code>AMOUNT_MISMATCH</code>) → 처리(멱등한 자동 보정 + 수동 큐) → 리포트.</b> 매칭은 어느 한쪽 기준이 아니라 <b>FULL OUTER JOIN, 즉 합집합 기준</b>이어야 한다.</div></li>
+    <li><span class="n">3</span><div><b>안전망 자체를 감시해야 안전망이다</b> — 자동 보정은 <b>정규 상태 전이 경로</b>를 타고 <b>(대사일자, 거래ID, 차이유형) 유니크</b>로 멱등해야 하며, <b>파일 도착·컨트롤 토탈·완료 SLA·차이 0건 리포트·수동 큐 에이징</b>까지 감시해야 한다. <b>무소식이 희소식이 되는 시스템은 만들면 안 된다.</b></div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">등장인물 — 대사 문장의 여덟 단어</a></li>
+    <li><a href="#s2">두 장부는 왜 반드시 어긋나는가</a></li>
+    <li><a href="#s3">대사 ≠ 정산 — 용어부터 가른다</a></li>
+    <li><a href="#s4">어긋남을 만드는 네 가지 경로</a></li>
+    <li><a href="#s5">파이프라인 전체 그림 — 수·정·매·분·처</a></li>
+    <li><a href="#s6">수령과 마감 — D+1, 기준 축 통일</a></li>
+    <li><a href="#s7">정규화 — 스테이징에 원본 그대로</a></li>
+    <li><a href="#s8">매칭과 분류 — FULL OUTER JOIN 한 방</a></li>
+    <li><a href="#s9">처리 — 자동 보정 vs 수동 큐</a></li>
+    <li><a href="#s10">부분 취소 — 순액 축과 이벤트 축</a></li>
+    <li><a href="#s11">리포트·알림과 메타 모니터링</a></li>
+    <li><a href="#s12">실무 사례 — 대사 자체가 뚫리는 구멍</a></li>
+    <li><a href="#s13">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "정산/대사(reconciliation) 배치는 왜 필요하고 어떻게 설계하나요?"</p>
+  <p><b>출제 의도</b>: 실시간 정합성 장치가 아무리 완벽해도 대사는 필요하다 — <b>"우리 기록과 PG 기록은 반드시 어긋난다"는 현실 인정에서 출발하는지</b>를 본다. <b>결제를 만들어본 사람</b>과 <b>사후 검증 체계까지 갖춘 시스템을 만들어본 사람</b>이 이 질문에서 갈린다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"멱등성 키·상태 머신을 잘 짜면 대사는 부수적"이라는 인식</b> → 2·4절에서 두 장부가 어긋나는 것이 <b>버그가 아니라 구조적 필연</b>임을, 그리고 네 경로가 <b>우연이 아니라 구조적</b>임을 보인다.<br>
+    ② <b>대사와 정산을 섞어 쓰는 것</b> → 3절에서 <b>대사=건 단위 대조 / 정산=실제 입금</b>으로 가르고, <b>거래 대사와 정산 대사의 2층 구조</b>까지 세운다.<br>
+    ③ <b>"차이를 찾는 것"까지만 설계하고 끝내는 것</b> → 9절에서 <b>찾은 뒤에 무엇을 하나(자동 보정 vs 수동 큐, 멱등성)</b>를, 11절에서 <b>대사 배치 자체가 죽었을 때 누가 아는가(메타 모니터링)</b>를 붙인다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 등장인물 — 대사 문장에 나오는 여덟 단어</h2>
+
+<p>대사 이야기는 <b>낯선 명사가 한꺼번에 쏟아진다.</b> 설계를 보기 전에 용어부터 한 문장씩 정리하고 가자. <b>이 여덟 개면 이 문서 전체를 읽을 수 있다.</b></p>
+
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">PG사 — 결제대행사</div><div class="d">우리 서비스와 <b>카드사·은행 사이에 끼어 결제 요청을 중계</b>해 주는 회사(토스페이먼츠·NHN KCP·나이스페이먼츠 등). 카드사 수십 곳과 각각 계약·연동하는 대신 <b>PG 한 곳과만 연동하면 되도록 중간에서 표준화</b>해 준다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">장부(ledger)</div><div class="d">돈이 오간 사건을 <b>한 줄씩 시간 순으로 적어 둔 기록 전체.</b> 은행 앱의 거래내역 화면이 정확한 이미지다 — 잔액이라는 숫자 하나가 아니라 <b>줄이 쌓이고, 잔액은 그 줄들의 합</b>이다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">가맹점(merchant)</div><div class="d">PG와 계약해서 <b>카드 결제를 받는 사업자</b>, 즉 <b>우리 회사</b>다. "가맹점 계좌로 입금"이라는 표현이 나오면 <b>우리 회사 통장</b>을 말한다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">거래ID (tid)</div><div class="d">PG가 <b>거래 시도마다 하나씩 발급</b>하는 고유 식별자. 대사의 <b>1순위 매칭 키</b>다. 주문번호가 아니라 이것이 기준인 이유는 8절에서 다룬다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">D+1</div><div class="d">거래가 일어난 날을 <b>D</b>라 할 때 <b>그 다음 날</b>. D+2면 이틀 뒤. PG 대사 파일은 보통 <b>D+1 새벽</b>에 내려온다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">마감(cut-off)</div><div class="d">"이 시각 이후의 거래는 <b>다음 날짜로 넘긴다</b>"고 정해 둔 <b>하루의 경계선.</b> 우리와 PG의 경계선이 다르면 <b>같은 결제가 서로 다른 날짜에 실린다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">스테이징(staging) 테이블</div><div class="d"><b>가공 전 원본을 잠시 받아 두는 임시 테이블.</b> 무대에 올리기 전 짐을 풀어 두는 대기 공간이라는 뜻이다. 7절의 주인공.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">컨트롤 토탈(control total)</div><div class="d">파일 <b>맨 앞(헤더)이나 맨 뒤(트레일러)</b>에 "이 파일에는 총 12,847건, 합계 641,235,000원이 들어 있다"고 적어 둔 <b>요약 값.</b> 받는 쪽이 <b>파일이 잘렸는지 스스로 확인</b>하라고 넣어 주는 장치다.</div></div>
+</div>
+
+<div class="callout info"><span class="t">이미 알고 있어야 하는 세 장치 (실시간 정합성 쪽 용어)</span>
+<b>멱등성 키(idempotency key)</b> — 같은 요청을 두 번 보내도 결과가 한 번 보낸 것과 같아지도록 요청마다 붙이는 고유 식별자. &nbsp;·&nbsp; <b>상태 머신</b> — 결제 상태가 <code>PENDING → APPROVED</code>처럼 <b>미리 정해진 전이 경로로만</b> 움직이게 강제하는 구조. &nbsp;·&nbsp; <b>웹훅(webhook)</b> — PG가 처리 결과를 <b>우리 서버 URL로 HTTP POST</b> 해서 알려주는 콜백. <b>우리가 물어보러 가는 게 아니라 상대가 전화를 걸어오는 방식</b>이다.</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 두 장부는 왜 반드시 어긋나는가</h2>
+
+<p>이 문서의 나머지가 전부 여기서 나온다. <b>딱 하나만 먼저 머리에 넣고 가자 — 결제 한 건의 기록은 두 군데에 각각 따로 남는다.</b></p>
+
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">우리 서비스의 DB</div><div class="d"><code>payment</code> 테이블에 <b>주문번호 · 금액 · 상태(PENDING → APPROVED → CANCELED) · PG가 발급한 거래ID</b>가 저장된다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">PG사의 DB</div><div class="d">우리는 <b>들여다볼 수 없는</b> 그쪽 원장에 <b>승인 일시 · 승인 금액 · 카드사 승인번호 · 취소 이력</b>이 저장된다.</div></div>
+</div>
+
+<p>문제는 여기다. <b>이 두 장부는 하나의 트랜잭션으로 묶을 수 없다.</b> 우리가 CRUD API를 만들며 습관적으로 붙이는 <code>@Transactional</code>은 <b>하나의 DB 커넥션 위에서만</b> 동작한다. 같은 DB 안의 두 테이블은 한꺼번에 커밋되거나 한꺼번에 롤백되지만, <b>인터넷 너머 남의 회사 DB는 우리 트랜잭션 안으로 들어오지 않는다.</b> 우리가 할 수 있는 것은 HTTP 요청을 하나 보내고 응답을 기다리는 것뿐이고, <b>그 요청과 응답 사이 어디서든 네트워크는 끊어질 수 있다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 404" role="img" aria-label="우리 서비스 DB와 PG사 DB가 각각 별개의 장부로 그려져 있고, 두 상자를 잇는 것은 승인 요청, 승인 응답, 웹훅 통지 세 개의 화살표뿐이다. 그 선 위에 끊김 표시가 있고, 애트랜잭셔널 경계는 우리 DB 상자만 감싸며 PG DB에는 닿지 않는다. 하단에는 두 기록을 한 트랜잭션으로 묶을 수단이 없으므로 어긋남은 버그가 아니라 구조적 필연이라는 문구가 있다">
+    <defs>
+      <marker id="l-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="l-s" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">같은 사건을 두 곳에 각각 적는다 — 그리고 <tspan fill="#dc2626">두 기록을 한 트랜잭션으로 묶을 수단은 존재하지 않는다</tspan></text>
+
+    <!-- transaction boundary -->
+    <rect x="34" y="62" width="382" height="234" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="8 5"/>
+    <text x="50" y="82" font-size="11.5" fill="#1d4ed8" font-weight="700">@Transactional 경계 — 원자성은 여기까지만</text>
+
+    <!-- our db -->
+    <rect x="56" y="94" width="338" height="186" rx="11" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="225" y="118" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">장부 A — 우리 서비스 DB</text>
+    <text x="225" y="136" font-size="10.5" fill="#64748b" text-anchor="middle" class="mono">payment 테이블</text>
+    <line x1="76" y1="146" x2="374" y2="146" stroke="#e5e7eb"/>
+    <g font-size="12" class="mono" fill="#334155">
+      <text x="80" y="170">order_no</text><text x="220" y="170" font-weight="700">ORD-2201</text>
+      <text x="80" y="194">pg_tid</text><text x="220" y="194" font-weight="700">T-8891</text>
+      <text x="80" y="218">amount</text><text x="220" y="218" font-weight="700">49,000</text>
+      <text x="80" y="242">status</text><text x="220" y="242" font-weight="700" fill="#b45309">PENDING</text>
+    </g>
+    <text x="80" y="266" font-size="10.5" fill="#6b7280">우리가 읽고 쓸 수 있는 유일한 원장</text>
+
+    <!-- pg db -->
+    <rect x="726" y="94" width="338" height="186" rx="11" fill="#f8fafc" stroke="#64748b" stroke-width="1.8"/>
+    <text x="895" y="118" font-size="13.5" font-weight="700" fill="#334155" text-anchor="middle">장부 B — PG사 DB</text>
+    <text x="895" y="136" font-size="10.5" fill="#64748b" text-anchor="middle">거래 원장 · 우리는 들여다볼 수 없다</text>
+    <line x1="746" y1="146" x2="1044" y2="146" stroke="#e5e7eb"/>
+    <g font-size="12" class="mono" fill="#334155">
+      <text x="750" y="170">tid</text><text x="890" y="170" font-weight="700">T-8891</text>
+      <text x="750" y="194">amount</text><text x="890" y="194" font-weight="700">49,000</text>
+      <text x="750" y="218">status</text><text x="890" y="218" font-weight="700" fill="#166534">승인</text>
+      <text x="750" y="242">approved_at</text><text x="890" y="242" font-weight="700">23:59:57</text>
+    </g>
+    <text x="750" y="266" font-size="10.5" fill="#6b7280">확인하려면 조회 API를 호출하는 수밖에 없다</text>
+
+    <!-- links -->
+    <line x1="398" y1="150" x2="718" y2="150" stroke="#2563eb" stroke-width="1.8" marker-end="url(#l-b)"/>
+    <text x="558" y="142" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">① 승인 요청</text>
+    <line x1="722" y1="196" x2="402" y2="196" stroke="#64748b" stroke-width="1.8" marker-end="url(#l-s)"/>
+    <text x="558" y="188" font-size="11" fill="#334155" text-anchor="middle" font-weight="700">② 승인 응답</text>
+    <line x1="722" y1="242" x2="402" y2="242" stroke="#64748b" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#l-s)"/>
+    <text x="558" y="234" font-size="11" fill="#334155" text-anchor="middle" font-weight="700">③ 웹훅 통지</text>
+
+    <!-- break -->
+    <g stroke="#dc2626" stroke-width="3">
+      <line x1="640" y1="138" x2="664" y2="162"/><line x1="664" y1="138" x2="640" y2="162"/>
+      <line x1="640" y1="184" x2="664" y2="208"/><line x1="664" y1="184" x2="640" y2="208"/>
+      <line x1="640" y1="230" x2="664" y2="254"/><line x1="664" y1="230" x2="640" y2="254"/>
+    </g>
+    <rect x="470" y="262" width="180" height="24" rx="12" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="560" y="279" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">이 선은 언제든 끊긴다</text>
+
+    <!-- bottom -->
+    <rect x="34" y="316" width="1052" height="62" rx="11" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="56" y="340" font-size="13" fill="#b91c1c" font-weight="700">두 상자를 잇는 것은 신뢰할 수 없는 선 하나뿐이다 — 그 선이 끊기면 두 장부는 다른 내용을 갖게 되고, 그 순간 우리 시스템은 그 사실을 모른다.</text>
+    <text x="56" y="362" font-size="12.5" fill="#7f1d1d">→ 두 장부가 달라지는 것은 <tspan font-weight="700">"버그"가 아니라 구조적 필연</tspan>이다. <tspan font-weight="700">대사는 이 선이 끊겼던 흔적을 나중에 찾아내는 작업</tspan>이다.</text>
+  </svg>
+  <figcaption><code>@Transactional</code> 점선이 <b>왼쪽 상자만 감싸고 오른쪽에는 닿지 않는다</b>는 것이 이 그림의 전부다. 분산 트랜잭션이 없는 세계에서 <b>남은 선택지는 "어긋남을 막는 것"이 아니라 "어긋남을 빨리 발견하는 것"</b>뿐이다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>이 페이지의 출발점 한 문장</h4>
+  <div class="rule">대사가 필요한 이유는 <b>우리가 실수해서</b>가 아니라 <b>두 장부를 원자적으로 묶는 수단이 애초에 없어서</b>다</div>
+</div>
+
+<h3>2-1. 비유 — 창고 실사(stock-taking)</h3>
+<p>입출고를 <b>바코드로 한 건도 빠짐없이 찍는 물류창고</b>도 정기적으로 <b>실사</b>를 한다. 선반의 물건을 사람이 직접 세어서 시스템 재고와 맞춰보는 일이다. 기록이 정확한데 왜 세느냐 하면, <b>기록 장치 바깥에서 벌어지는 일</b>(파손·오배송·스캔 누락)이 반드시 있기 때문이다.</p>
+<div class="chain">
+  <span class="chip b">실시간 정합성 = 바코드 스캔</span><span class="arrow">→</span>
+  <span class="chip w">그래도 남는 오차</span><span class="arrow">→</span>
+  <span class="chip g">대사 = 정기 실사</span>
+</div>
+<p>결제도 같다. 멱등성 키·상태 머신·웹훅 검증은 <b>스캔을 정확히 하는 장치</b>이지 <b>스캔 바깥의 사건을 없애는 장치가 아니다.</b> 그리고 결제에는 창고와 결정적으로 다른 점이 하나 있다 — <b>차이 1건이 곧 고객 돈 또는 회사 돈의 유실</b>이다.</p>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 대사 ≠ 정산 — 용어부터 가른다</h2>
+
+<p><b>면접에서 이 두 단어를 섞어 쓰면 실무 경험을 의심받는다.</b> 이름의 유래부터 알면 헷갈리지 않는다.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>대사(對査, reconciliation) — <u>맞춰보는</u> 일</h4>
+    <ul>
+      <li>한자 그대로 <b>"마주 대고(對) 조사한다(査)"</b></li>
+      <li>우리 결제 기록과 PG·카드사 기록을 나란히 놓고 <b>건 단위로 한 줄씩 대조</b>해 차이를 찾는 <b>사후 검증 절차</b></li>
+      <li>영어 reconciliation도 <b>"어긋난 둘을 화해시킨다"</b>는 뜻이라 방향이 같다</li>
+      <li><b>돈이 움직이지 않는다</b> — 정보만 비교한다</li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>정산(settlement) — <u>돈이 들어오는</u> 일</h4>
+    <ul>
+      <li>PG사가 일정 주기(보통 <b>영업일 기준 며칠 뒤</b>)로 <b>결제 수수료를 떼고 판매 대금을 가맹점 계좌에 실제 입금</b>하는 절차</li>
+      <li>여기서 <b>가맹점 = 우리 회사</b></li>
+      <li><b>돈이 실제로 움직인다</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>한 줄로 외우는 구분</h4>
+  <div class="rule ok">정산은 <b>돈이 실제로 들어오는 절차</b>, 대사는 <b>그 돈이 맞는지 건 단위로 검증하는 절차</b></div>
+  <p style="margin-bottom:0">둘은 경쟁 관계가 아니라 <b>순서 관계</b>다. 정산 입금액이 맞는지 검증하려면 <b>"그 입금이 어떤 거래들의 합인지"</b>를 건 단위로 맞춰봐야 하고, <b>그게 대사</b>다.</p>
+</div>
+
+<div class="callout trap"><span class="t">대사 없이 정산만 받는 것 = 명세서 없이 청구서 총액만 보고 이체하는 것</span>
+<b>"이번 달 1,284만 원 입금"</b>이라는 숫자 하나만 받아 들면, 그 안에 <b>빠진 거래가 있는지 수수료가 잘못 적용됐는지 알 방법이 영원히 없다.</b></div>
+
+<h3>3-1. 한 겹 더 — 거래 대사와 정산 대사의 2층 구조 <span class="badge bonus">가산점</span></h3>
+<p>면접에서 여기까지 말하면 <b>3자 대조</b>를 아는 사람으로 읽힌다. 대사는 사실 <b>층이 둘</b>이다.</p>
+
+<figure>
+  <svg viewBox="0 0 920 244" role="img" aria-label="세 개의 상자가 가로로 놓여 있다. 왼쪽은 우리 거래 기록, 가운데는 PG 거래 내역, 오른쪽은 실제 입금액과 수수료 명세다. 왼쪽과 가운데를 잇는 곡선은 거래 대사, 가운데와 오른쪽을 잇는 곡선은 정산 대사로 표시된다. 하단에는 건은 다 맞는데 돈이 덜 들어오는 상황이 실제로 일어난다는 문구가 있다">
+    <defs>
+      <marker id="t-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="t-g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="20" y="24" font-size="14" font-weight="700" fill="#1f2937">대사는 두 층이다 — 두 층을 따로 두는 이유는 <tspan fill="#dc2626">건이 다 맞아도 입금액은 어긋날 수 있기 때문</tspan></text>
+
+    <rect x="24" y="104" width="240" height="70" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.7"/>
+    <text x="144" y="130" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">① 우리 거래 기록</text>
+    <text x="144" y="150" font-size="10.5" fill="#1e40af" text-anchor="middle" class="mono">payment 테이블</text>
+    <text x="144" y="166" font-size="10.5" fill="#1e40af" text-anchor="middle">우리가 아는 사실</text>
+
+    <rect x="340" y="104" width="240" height="70" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.7"/>
+    <text x="460" y="130" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">② PG 거래 내역</text>
+    <text x="460" y="150" font-size="10.5" fill="#475569" text-anchor="middle">D+1 대사 파일</text>
+    <text x="460" y="166" font-size="10.5" fill="#475569" text-anchor="middle">PG가 확정한 사실</text>
+
+    <rect x="656" y="104" width="240" height="70" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.7"/>
+    <text x="776" y="130" font-size="13" font-weight="700" fill="#166534" text-anchor="middle">③ 입금액 · 수수료 명세</text>
+    <text x="776" y="150" font-size="10.5" fill="#15803d" text-anchor="middle">가맹점 계좌 입금 내역</text>
+    <text x="776" y="166" font-size="10.5" fill="#15803d" text-anchor="middle">실제로 움직인 돈</text>
+
+    <path d="M264,124 C 296,104 308,104 336,124" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#t-b)"/>
+    <rect x="238" y="62" width="164" height="26" rx="13" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="320" y="80" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">거래 대사</text>
+    <text x="302" y="196" font-size="10.5" fill="#1d4ed8" text-anchor="middle">"모든 건이 양쪽에 있나"</text>
+
+    <path d="M580,124 C 612,104 624,104 652,124" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#t-g)"/>
+    <rect x="554" y="62" width="164" height="26" rx="13" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="636" y="80" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">정산 대사</text>
+    <text x="618" y="196" font-size="10.5" fill="#166534" text-anchor="middle">"그 건들의 합 − 수수료 = 입금액인가"</text>
+
+    <rect x="24" y="210" width="872" height="26" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="460" y="228" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">거래 대사가 완벽해도 수수료율이 잘못 적용되면 입금액이 어긋난다 — "건은 다 맞는데 돈이 덜 들어왔다"는 실제로 일어난다</text>
+  </svg>
+  <figcaption>이 문서가 주로 다루는 것은 <b>①↔② 거래 대사</b>다. 다만 면접에서는 <b>②↔③ 정산 대사가 그 위에 한 층 더 있다</b>는 것을 함께 말해야 "정산까지 운영해 본 사람"으로 들린다.</figcaption>
+</figure>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 어긋남을 만드는 네 가지 경로</h2>
+
+<p>결제 시스템에는 실시간 정합성을 지키는 장치들이 있다(1절의 세 장치). 그런데 이 장치들은 <b>요청 하나하나를 올바르게 처리하기 위한 것</b>이지, 두 시스템이 가진 <b>기록 전체의 집합이 서로 같음</b>을 보장하지 않는다. 그리고 <b>어긋나는 경로는 우연이 아니라 구조적</b>이다.</p>
+
+<div class="rule">멱등성 키·상태 머신·웹훅 검증은 <b>"한 건을 제대로"</b>를 보장할 뿐 <b>"전체 집합이 같음"</b>을 보장하지 않는다</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 496" role="img" aria-label="어긋남을 만드는 네 가지 경로를 네 줄의 타임라인으로 보여준다. 첫째 웹훅 유실, 둘째 타임아웃 뒤 뒤늦은 승인은 모두 PG에만 기록이 남는 PG_ONLY 유형이 된다. 셋째 취소 누락은 금액 불일치, 넷째 마감 경계는 우리에만 있는 것처럼 보이는 오탐이 된다">
+    <defs>
+      <marker id="c-s" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">두 장부가 어긋나는 네 경로 — 각 경로는 <tspan fill="#dc2626">특정 차이 유형</tspan>으로 정확히 귀결된다</text>
+    <g font-size="11" fill="#6b7280" font-weight="700">
+      <text x="24" y="62">원인</text><text x="206" y="62">시간 흐름 →</text><text x="772" y="62">D+1 대사 시점의 두 장부</text><text x="988" y="62">차이 유형</text>
+    </g>
+    <line x1="24" y1="70" x2="1096" y2="70" stroke="#cbd5e1"/>
+
+    <!-- row 1 -->
+    <rect x="24" y="92" width="166" height="48" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="107" y="112" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">① 웹훅 유실</text>
+    <text x="107" y="130" font-size="10" fill="#7f1d1d" text-anchor="middle">못 받으면 그냥 사라진다</text>
+    <line x1="206" y1="124" x2="752" y2="124" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#c-s)"/>
+    <g fill="#2563eb"><circle cx="272" cy="124" r="5"/><circle cx="466" cy="124" r="5"/><circle cx="660" cy="124" r="5"/></g>
+    <g font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle"><text x="272" y="108">PG 승인 완료</text><text x="466" y="108">웹훅 발송</text><text x="660" y="108">재시도 3회 소진</text></g>
+    <g font-size="10" fill="#6b7280" text-anchor="middle"><text x="272" y="144">49,000원</text><text x="466" y="144">우리 서버 배포 중 · 5xx 응답</text><text x="660" y="144">정보가 소멸한다</text></g>
+    <rect x="772" y="92" width="204" height="48" rx="9" fill="#ffffff" stroke="#e5e7eb"/>
+    <text x="784" y="112" font-size="10.5" fill="#334155">우리 : <tspan font-weight="700" fill="#b45309">PENDING</tspan></text>
+    <text x="784" y="130" font-size="10.5" fill="#334155">PG &#160;&#160;: <tspan font-weight="700" fill="#166534">승인 49,000</tspan></text>
+    <rect x="988" y="104" width="104" height="26" rx="13" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="1040" y="122" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">PG_ONLY</text>
+
+    <!-- row 2 -->
+    <rect x="24" y="186" width="166" height="48" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="107" y="206" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">② 뒤늦은 승인</text>
+    <text x="107" y="224" font-size="10" fill="#7f1d1d" text-anchor="middle">타임아웃 ≠ 처리 안 됨</text>
+    <line x1="206" y1="218" x2="752" y2="218" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#c-s)"/>
+    <g fill="#2563eb"><circle cx="272" cy="218" r="5"/><circle cx="466" cy="218" r="5"/><circle cx="660" cy="218" r="5"/></g>
+    <g font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle"><text x="272" y="202">우리 승인 요청</text><text x="466" y="202">3초 — 타임아웃</text><text x="660" y="202">5초 — PG 승인 완료</text></g>
+    <g font-size="10" fill="#6b7280" text-anchor="middle"><text x="272" y="238">t = 0</text><text x="466" y="238">우리는 FAILED로 기록</text><text x="660" y="238">고객 카드는 실제로 결제됨</text></g>
+    <rect x="772" y="186" width="204" height="48" rx="9" fill="#ffffff" stroke="#e5e7eb"/>
+    <text x="784" y="206" font-size="10.5" fill="#334155">우리 : <tspan font-weight="700" fill="#b91c1c">FAILED</tspan></text>
+    <text x="784" y="224" font-size="10.5" fill="#334155">PG &#160;&#160;: <tspan font-weight="700" fill="#166534">승인 49,000</tspan></text>
+    <rect x="988" y="198" width="104" height="26" rx="13" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="1040" y="216" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">PG_ONLY</text>
+
+    <!-- row 3 -->
+    <rect x="24" y="280" width="166" height="48" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="107" y="300" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">③ 취소 누락</text>
+    <text x="107" y="318" font-size="10" fill="#b45309" text-anchor="middle">한쪽만 성공한 취소</text>
+    <line x1="206" y1="312" x2="752" y2="312" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#c-s)"/>
+    <g fill="#d97706"><circle cx="272" cy="312" r="5"/><circle cx="466" cy="312" r="5"/><circle cx="660" cy="312" r="5"/></g>
+    <g font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle"><text x="272" y="296">우리 DB에 취소 기록</text><text x="466" y="296">PG 취소 API 실패</text><text x="660" y="296">보상 처리도 누락</text></g>
+    <g font-size="10" fill="#6b7280" text-anchor="middle"><text x="272" y="332">27,500원 부분 취소</text><text x="466" y="332">PG는 승인을 유지</text><text x="660" y="332">우리 기록을 되돌리지 못함</text></g>
+    <rect x="772" y="280" width="204" height="48" rx="9" fill="#ffffff" stroke="#e5e7eb"/>
+    <text x="784" y="300" font-size="10.5" fill="#334155">우리 순액 : <tspan font-weight="700">59,500</tspan></text>
+    <text x="784" y="318" font-size="10.5" fill="#334155">PG 순액 &#160;&#160;: <tspan font-weight="700">87,000</tspan></text>
+    <rect x="988" y="292" width="104" height="26" rx="13" fill="#fffbeb" stroke="#d97706"/>
+    <text x="1040" y="310" font-size="8.2" fill="#92400e" text-anchor="middle" font-weight="700" class="mono">AMOUNT_MISMATCH</text>
+
+    <!-- row 4 -->
+    <rect x="24" y="374" width="166" height="48" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="107" y="394" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">④ 마감 경계</text>
+    <text x="107" y="412" font-size="10" fill="#1e40af" text-anchor="middle">차이가 아니라 오탐</text>
+    <line x1="206" y1="406" x2="752" y2="406" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#c-s)"/>
+    <g fill="#2563eb"><circle cx="272" cy="406" r="5"/><circle cx="466" cy="406" r="5"/><circle cx="660" cy="406" r="5"/></g>
+    <g font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle"><text x="272" y="390">3/31 23:59:57 결제</text><text x="466" y="390">PG 마감 기준 적용</text><text x="660" y="390">3/31 파일에 없음</text></g>
+    <g font-size="10" fill="#6b7280" text-anchor="middle"><text x="272" y="426">우리 기준: KST 결제 시각</text><text x="466" y="426">→ 4/1 거래로 편입</text><text x="660" y="426">4/1 파일에서야 등장</text></g>
+    <rect x="772" y="374" width="204" height="48" rx="9" fill="#ffffff" stroke="#e5e7eb"/>
+    <text x="784" y="394" font-size="10.5" fill="#334155">우리 : <tspan font-weight="700">3/31에 있음</tspan></text>
+    <text x="784" y="412" font-size="10.5" fill="#334155">PG &#160;&#160;: <tspan font-weight="700">3/31 파일엔 없음</tspan></text>
+    <rect x="988" y="386" width="104" height="26" rx="13" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="1040" y="404" font-size="10" fill="#1d4ed8" text-anchor="middle" font-weight="700" class="mono">OURS_ONLY*</text>
+
+    <rect x="24" y="444" width="1072" height="40" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="462" font-size="12.5" fill="#b91c1c" font-weight="700">①②는 고객 카드에서 돈이 빠져나갔는데 우리 시스템만 모르는 유형이다 — CS와 카드사 분쟁으로 번지는, 가장 급한 차이.</text>
+    <text x="44" y="478" font-size="11.5" fill="#7f1d1d">④의 <tspan font-weight="700" class="mono">*</tspan>는 <tspan font-weight="700">진짜 차이가 아닌 오탐</tspan>이라는 표시다. 오탐을 구조적으로 없애는 방법은 6절에서 다룬다.</text>
+  </svg>
+  <figcaption>네 경로 모두 <b>"우리 쪽 코드가 틀려서"가 아니라 "두 시스템 사이의 선이 끊기거나 기준이 달라서"</b> 생긴다. 그래서 코드를 더 잘 짜는 것으로는 없앨 수 없고, <b>사후 대조라는 별도 장치</b>가 필요하다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>네 경로 암기 — <span style="color:#2563eb">웹 · 늦 · 취 · 경</span></h4>
+  <div class="grid g4">
+    <div class="tile red"><div class="k" style="font-family:inherit">웹</div><div class="s">웹훅 유실</div><div class="d">상대가 거는 전화라 <b>못 받으면 정보가 사라진다</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">늦</div><div class="s">뒤늦은 승인</div><div class="d">타임아웃은 <b>"기다리기를 포기한 것"</b>이지 <b>"상대가 처리 안 한 것"이 아니다</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">취</div><div class="s">취소 누락</div><div class="d">우리만 취소, PG는 승인 유지. <b>보상 처리 누락</b>이 겹친 형태</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">경</div><div class="s">마감 경계</div><div class="d">같은 결제가 <b>서로 다른 날짜</b>에 실린다</div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">"<b>웹</b>훅 놓치고, <b>늦</b>게 승인 오고, <b>취</b>소는 반만 되고, 날짜 <b>경</b>계에서 갈린다"</div>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 파이프라인 전체 그림 — 수 · 정 · 매 · 분 · 처</h2>
+
+<p>세부로 들어가기 전에 <b>전체 그림을 한 번 보고 가자.</b> 대사 배치는 <b>단계마다 실패 방식이 다른 파이프라인</b>이고, 각 단계에는 <b>"여기서 막지 못하면 뒤 단계가 전부 거짓말이 되는" 관문</b>이 하나씩 있다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 424" role="img" aria-label="대사 배치 파이프라인 다섯 단계가 왼쪽에서 오른쪽으로 이어진다. 수령, 정규화, 매칭, 분류, 처리 순서이며 각 단계 아래에 그 단계의 관문이 적혀 있다. 맨 아래에는 파이프라인 전체를 감시하는 메타 모니터링 네 개 층이 가로로 놓여 있다">
+    <defs>
+      <marker id="p-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="p-g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">대사 배치 파이프라인 — 단계마다 <tspan fill="#dc2626">막지 못하면 뒤가 전부 거짓말이 되는 관문</tspan>이 하나씩 있다</text>
+
+    <text x="114" y="66" font-size="10.5" fill="#6b7280" text-anchor="middle">입력: PG 대사 파일 (SFTP) / 대사 전용 조회 API</text>
+    <line x1="114" y1="72" x2="114" y2="86" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#p-g)"/>
+
+    <!-- stage boxes -->
+    <g>
+      <rect x="24" y="90" width="180" height="94" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+      <circle cx="48" cy="114" r="13" fill="#2563eb"/><text x="48" y="119" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+      <text x="70" y="119" font-size="13.5" fill="#1d4ed8" font-weight="700">수령 Receive</text>
+      <text x="40" y="146" font-size="10.5" fill="#1e40af">D+1 새벽에 올라온 전일</text>
+      <text x="40" y="163" font-size="10.5" fill="#1e40af">거래 파일을 내려받는다</text>
+
+      <rect x="240" y="90" width="180" height="94" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+      <circle cx="264" cy="114" r="13" fill="#2563eb"/><text x="264" y="119" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+      <text x="286" y="119" font-size="13.5" fill="#1d4ed8" font-weight="700">정규화 Normalize</text>
+      <text x="256" y="146" font-size="10.5" fill="#1e40af">스테이징 테이블에</text>
+      <text x="256" y="163" font-size="10.5" fill="#1e40af">"원본 그대로" 적재</text>
+
+      <rect x="456" y="90" width="180" height="94" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+      <circle cx="480" cy="114" r="13" fill="#2563eb"/><text x="480" y="119" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+      <text x="502" y="119" font-size="13.5" fill="#1d4ed8" font-weight="700">매칭 Match</text>
+      <text x="472" y="146" font-size="10.5" fill="#1e40af">PG 거래ID(tid)를 열쇠로</text>
+      <text x="472" y="163" font-size="10.5" fill="#1e40af">두 기록을 짝지운다</text>
+
+      <rect x="672" y="90" width="180" height="94" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+      <circle cx="696" cy="114" r="13" fill="#2563eb"/><text x="696" y="119" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">4</text>
+      <text x="718" y="119" font-size="13.5" fill="#1d4ed8" font-weight="700">분류 Classify</text>
+      <text x="688" y="146" font-size="10.5" fill="#1e40af">짝이 없거나 금액이 다른</text>
+      <text x="688" y="163" font-size="10.5" fill="#1e40af">건을 세 유형으로 나눈다</text>
+
+      <rect x="888" y="90" width="180" height="94" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+      <circle cx="912" cy="114" r="13" fill="#16a34a"/><text x="912" y="119" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">5</text>
+      <text x="934" y="119" font-size="13.5" fill="#166534" font-weight="700">처리 Resolve</text>
+      <text x="904" y="146" font-size="10.5" fill="#15803d">자동 보정 · 수동 큐</text>
+      <text x="904" y="163" font-size="10.5" fill="#15803d">· 리포트 · 알림</text>
+    </g>
+    <g stroke="#2563eb" stroke-width="2">
+      <line x1="206" y1="137" x2="234" y2="137" marker-end="url(#p-b)"/>
+      <line x1="422" y1="137" x2="450" y2="137" marker-end="url(#p-b)"/>
+      <line x1="638" y1="137" x2="666" y2="137" marker-end="url(#p-b)"/>
+      <line x1="854" y1="137" x2="882" y2="137" marker-end="url(#p-b)"/>
+    </g>
+
+    <!-- gates -->
+    <g>
+      <rect x="24" y="198" width="180" height="88" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+      <text x="38" y="218" font-size="11" fill="#b91c1c" font-weight="700">관문 — 입력 신뢰</text>
+      <text x="38" y="238" font-size="10" fill="#7f1d1d">파일이 오기는 했는가?</text>
+      <text x="38" y="254" font-size="10" fill="#7f1d1d">컨트롤 토탈이 맞는가?</text>
+      <text x="38" y="272" font-size="10" fill="#b91c1c" font-weight="700">아니면 배치를 실패시킨다</text>
+
+      <rect x="240" y="198" width="180" height="88" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+      <text x="254" y="218" font-size="11" fill="#92400e" font-weight="700">관문 — 원본 보존</text>
+      <text x="254" y="238" font-size="10" fill="#b45309">인코딩·금액 단위·코드</text>
+      <text x="254" y="254" font-size="10" fill="#b45309">변환은 적재 이후 SQL로</text>
+      <text x="254" y="272" font-size="10" fill="#92400e" font-weight="700">파싱 버그 ≠ 데이터 오류</text>
+
+      <rect x="456" y="198" width="180" height="88" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+      <text x="470" y="218" font-size="11" fill="#92400e" font-weight="700">관문 — 합집합 기준</text>
+      <text x="470" y="238" font-size="10" fill="#b45309">FULL OUTER JOIN 한 번</text>
+      <text x="470" y="254" font-size="10" fill="#b45309">= 어느 한쪽 기준이 아니라</text>
+      <text x="470" y="272" font-size="10" fill="#92400e" font-weight="700">양쪽 모두를 빠짐없이</text>
+
+      <rect x="672" y="198" width="180" height="88" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6"/>
+      <text x="686" y="218" font-size="11" fill="#334155" font-weight="700">관문 — 세 유형</text>
+      <text x="686" y="238" font-size="10" fill="#475569" class="mono">OURS_ONLY</text>
+      <text x="686" y="254" font-size="10" fill="#475569" class="mono">PG_ONLY</text>
+      <text x="686" y="272" font-size="10" fill="#475569" class="mono">AMOUNT_MISMATCH</text>
+
+      <rect x="888" y="198" width="180" height="88" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+      <text x="902" y="218" font-size="11" fill="#166534" font-weight="700">관문 — 멱등 · 흔적</text>
+      <text x="902" y="238" font-size="10" fill="#15803d">보정은 방향이 유일할 때만</text>
+      <text x="902" y="254" font-size="10" fill="#15803d">보정 자체도 멱등하게</text>
+      <text x="902" y="272" font-size="10" fill="#166534" font-weight="700">차이 0건인 날에도 리포트</text>
+    </g>
+
+    <!-- meta monitoring lane -->
+    <rect x="24" y="308" width="1044" height="96" rx="12" fill="#f8fafc" stroke="#334155" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <text x="44" y="332" font-size="13" fill="#1f2937" font-weight="700">메타 모니터링 — 이 파이프라인 자체가 정상인지 감시하는 층 (11절)</text>
+    <g>
+      <rect x="44" y="344" width="240" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+      <text x="58" y="362" font-size="11" fill="#1f2937" font-weight="700">① 입력 검증</text>
+      <text x="58" y="379" font-size="10" fill="#6b7280">도착 · 컨트롤 토탈 · 전일 대비 건수</text>
+
+      <rect x="296" y="344" width="240" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+      <text x="310" y="362" font-size="11" fill="#1f2937" font-weight="700">② 실행 검증</text>
+      <text x="310" y="379" font-size="10" fill="#6b7280">완료 시각 SLA — 조용히 안 돈 것을 잡는다</text>
+
+      <rect x="548" y="344" width="240" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+      <text x="562" y="362" font-size="11" fill="#1f2937" font-weight="700">③ 출력 검증</text>
+      <text x="562" y="379" font-size="10" fill="#6b7280">"차이 0건"도 리포트 — 무소식 ≠ 정상</text>
+
+      <rect x="800" y="344" width="248" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+      <text x="814" y="362" font-size="11" fill="#1f2937" font-weight="700">④ 잔여 관리</text>
+      <text x="814" y="379" font-size="10" fill="#6b7280">수동 큐 에이징 — 묵은 차이를 위로 올린다</text>
+    </g>
+  </svg>
+  <figcaption>파이프라인 다섯 단계는 <b>모두가 그리지만</b>, 아래 <b>점선 레인(메타 모니터링)</b>은 대사를 실제로 운영해 본 사람만 그린다. <b>안전망이 끊겼을 때 즉시 알 수 있는 장치가 없다면 그건 안전망이 아니다.</b></figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>파이프라인 5단계 암기 — <span style="color:#16a34a">수 · 정 · 매 · 분 · 처</span></h4>
+  <div class="chain">
+    <span class="chip b">수령</span><span class="arrow">→</span>
+    <span class="chip b">정규화</span><span class="arrow">→</span>
+    <span class="chip b">매칭</span><span class="arrow">→</span>
+    <span class="chip b">분류</span><span class="arrow">→</span>
+    <span class="chip g">처리</span><span class="arrow">→</span>
+    <span class="chip g">리포트</span>
+  </div>
+  <p style="margin-bottom:0">면접에서 이 순서를 <b>단어 다섯 개로 먼저 말하고</b> 각 단계의 <b>관문</b>을 하나씩 붙이면, 같은 내용이 <b>"설계를 해본 사람의 답"</b>으로 들린다. 관문만 따로 외우면 이렇다 — <b>파일 검증 · 원본 보존 · 합집합 · 3유형 · 멱등</b>.</p>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 수령과 마감(cut-off) — D+1, 그리고 기준 축 통일</h2>
+
+<p>대부분의 PG는 영업일 마감 후 <b>D+1 새벽</b>에 전일 거래 내역 파일을 <b>SFTP</b>로 내려주거나 <b>대사 전용 조회 API</b>를 제공한다.</p>
+
+<div class="callout info"><span class="t">왜 실시간이 아니라 D+1인가</span>
+PG 입장에서도 <b>그날의 거래는 카드사 매입과 취소 반영이 끝나야 확정</b>되기 때문이다. 즉 <b>PG 파일은 그쪽이 "이제 이게 최종본입니다"라고 선언한 확정본</b>이고, <b>대사가 신뢰할 수 있는 기준선이 되는 이유가 바로 여기</b>에 있다.</div>
+
+<h3>6-1. 설계 결정 ① — 대사 기준일은 PG의 마감 기준을 따른다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="왼쪽에는 두 개의 시간 축이 있다. 위 축은 우리 기준으로 KST 자정에서 날짜가 바뀌고, 아래 축은 PG 기준으로 영업일 마감 시각에서 날짜가 바뀐다. 같은 순간에 일어난 결제 한 건이 위 축에서는 3월 31일에, 아래 축에서는 4월 1일에 속한다. 오른쪽에는 차이 후보를 즉시 확정하지 않고 미확정 상태로 한 회차 유예했다가 다음 회차에 매칭되면 자동 소멸시키고 남으면 진짜 차이로 확정하는 흐름이 있다">
+    <defs>
+      <marker id="d-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="d-g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="d-r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="d-s" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">기준 축이 다르면 <tspan fill="#dc2626">같은 순간의 결제 한 건이 서로 다른 날짜 파일에 실린다</tspan></text>
+
+    <!-- part A -->
+    <text x="24" y="58" font-size="12.5" fill="#1f2937" font-weight="700">① 경계 오탐이 만들어지는 원리</text>
+
+    <text x="24" y="94" font-size="11" fill="#1d4ed8" font-weight="700">우리 기준 축 — 결제 시각(KST)</text>
+    <line x1="40" y1="120" x2="588" y2="120" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#d-s)"/>
+    <line x1="470" y1="102" x2="470" y2="138" stroke="#2563eb" stroke-width="2"/>
+    <text x="470" y="98" font-size="10" fill="#1d4ed8" text-anchor="middle" font-weight="700">KST 자정 00:00</text>
+    <rect x="60" y="126" width="404" height="20" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="262" y="141" font-size="10.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">우리가 3/31 대사 대상으로 잡는 범위</text>
+    <rect x="476" y="126" width="104" height="20" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="528" y="141" font-size="10.5" fill="#6b7280" text-anchor="middle">4/1</text>
+
+    <text x="24" y="196" font-size="11" fill="#334155" font-weight="700">PG 기준 축 — 영업일 마감(cut-off)</text>
+    <line x1="40" y1="222" x2="588" y2="222" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#d-s)"/>
+    <line x1="362" y1="204" x2="362" y2="240" stroke="#334155" stroke-width="2"/>
+    <text x="362" y="200" font-size="10" fill="#334155" text-anchor="middle" font-weight="700">PG 마감 — 이후는 다음 날짜로</text>
+    <rect x="60" y="228" width="296" height="20" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="208" y="243" font-size="10.5" fill="#475569" text-anchor="middle" font-weight="700">PG의 3/31 파일에 실리는 범위</text>
+    <rect x="368" y="228" width="212" height="20" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="474" y="243" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">PG의 4/1 파일에 실린다</text>
+
+    <circle cx="440" cy="120" r="6" fill="#dc2626"/><circle cx="440" cy="222" r="6" fill="#dc2626"/>
+    <line x1="440" y1="126" x2="440" y2="216" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <text x="450" y="168" font-size="10.5" fill="#b91c1c" font-weight="700">3/31 23:59:57</text>
+    <text x="450" y="183" font-size="10" fill="#7f1d1d">같은 결제 한 건</text>
+
+    <rect x="24" y="266" width="580" height="48" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="286" font-size="11.5" fill="#b91c1c" font-weight="700">결과 — 우리 3/31 대사 대상에는 있고, PG의 3/31 파일에는 없다 → OURS_ONLY로 분류</text>
+    <text x="40" y="304" font-size="10.5" fill="#7f1d1d">진짜 차이가 아닌데 경보가 울린 것 = <tspan font-weight="700">오탐(false positive)</tspan>. 월말에는 이런 건이 수십 건씩 쏟아진다.</text>
+
+    <line x1="618" y1="50" x2="618" y2="314" stroke="#e5e7eb" stroke-width="2"/>
+
+    <!-- part B -->
+    <text x="640" y="58" font-size="12.5" fill="#1f2937" font-weight="700">② 그래도 남는 경계 건 — 1회차 유예로 흡수한다</text>
+
+    <rect x="646" y="86" width="196" height="46" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="744" y="106" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">차이 후보 발견</text>
+    <text x="744" y="123" font-size="10" fill="#6b7280" text-anchor="middle" class="mono">OURS_ONLY / PG_ONLY</text>
+
+    <line x1="744" y1="132" x2="744" y2="156" stroke="#2563eb" stroke-width="2" marker-end="url(#d-b)"/>
+
+    <rect x="646" y="160" width="196" height="52" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="744" y="180" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">미확정(pending)</text>
+    <text x="744" y="197" font-size="10" fill="#b45309" text-anchor="middle">즉시 확정하지 않고 하루 들고 있는다</text>
+
+    <path d="M842,176 C 876,172 878,136 906,132" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#d-g)"/>
+    <path d="M842,198 C 876,202 878,238 906,242" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#d-r)"/>
+
+    <rect x="910" y="106" width="186" height="52" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="1003" y="126" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">다음 회차에서 매칭됨</text>
+    <text x="1003" y="143" font-size="10.5" fill="#15803d" text-anchor="middle">→ 자동 소멸 (알림 없음)</text>
+
+    <rect x="910" y="216" width="186" height="52" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="1003" y="236" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">그래도 짝이 없음</text>
+    <text x="1003" y="253" font-size="10.5" fill="#7f1d1d" text-anchor="middle">→ 진짜 차이로 확정 · 알림</text>
+
+    <rect x="640" y="282" width="456" height="32" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="868" y="302" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">오탐이 많은 알림은 결국 아무도 안 보게 된다 = 알림이 없는 것과 같다</text>
+  </svg>
+  <figcaption><b>기준 축을 PG 거래 일자로 통일</b>하면 대부분의 경계 오탐이 사라지고, 그래도 남는 건은 <b>미확정 1회차 유예</b>가 흡수한다. 두 장치는 <b>같은 문제에 대한 서로 다른 층의 대응</b>이라 함께 둔다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>기준 축 규칙</h4>
+  <div class="rule ok">판정의 기준선은 <b>확정본을 가진 쪽</b>에 맞춘다 — 우리 결제 시각이 아니라 <b>PG 파일에 적힌 거래 일자</b>가 축이다</div>
+</div>
+
+<h3>6-2. 설계 결정 ② — 파일 도착 자체를 감시한다</h3>
+<div class="callout trap"><span class="t">이 파이프라인의 최악의 실패</span>
+<b>파일이 아예 안 왔는데 배치가 "대상 0건, 차이 0건"으로 성공 처리하는 것.</b> 왜 최악이냐 하면 — <b>검증을 안 한 것</b>과 <b>검증해서 문제가 없는 것</b>이 <b>겉보기에 똑같아지기</b> 때문이다. 이 사고의 실제 전개는 12절 사례 3에서 본다.</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 정규화 — 스테이징 테이블에 원본 그대로</h2>
+
+<p>PG 파일은 생각보다 거칠다. <b>고정 길이 텍스트</b>일 수도 있고, <b>CSV</b>일 수도 있고, 인코딩이 UTF-8이 아니라 <b>EUC-KR</b>인 경우도 흔하다. 이걸 파싱해서 <b>곧바로 우리 데이터와 비교하고 싶은 유혹</b>이 있는데, 그러면 안 된다.</p>
+
+<div class="rule">먼저 <b>스테이징 테이블에 원본 그대로 적재</b>한다 — <b>변환은 적재 다음</b>이다</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 읽으면서 곧바로 변환하고 곧바로 비교한다</div>
+<pre><code><span class="cm">// 파일 스트림을 돌면서 즉석에서 파싱 → 즉석에서 비교</span>
+<span class="kw">try</span> (var reader = <span class="kw">new</span> BufferedReader(
+        <span class="kw">new</span> InputStreamReader(in, <span class="st">"EUC-KR"</span>))) {
+    String line;
+    <span class="kw">while</span> ((line = reader.readLine()) != <span class="kw">null</span>) {
+<span class="ln-bad">        PgRecord r = parse(line);   <span class="cm">// 코드 변환·금액 단위까지 한 번에</span></span>
+<span class="ln-bad">        compareWithOurDb(r);        <span class="cm">// 비교하고 버린다 — 원본이 안 남는다</span></span>
+    }
+}
+<span class="cm">// 문제 1: 값이 이상할 때 "우리 파싱이 틀렸나 PG 데이터가</span>
+<span class="cm">//   틀렸나"를 판정할 근거가 사라진다 → 논쟁이 안 끝난다</span>
+<span class="cm">// 문제 2: 중간에 죽으면 파일부터 다시 받아야 한다</span>
+<span class="cm">//   (PG 파일은 하루 지나면 재수령이 번거롭다)</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 원본 적재 → 그다음 변환 (두 걸음으로 나눈다)</div>
+<pre><code><span class="cm">-- (1) 가공 없이 한 줄씩 그대로 적재한다</span>
+<span class="kw">CREATE TABLE</span> pg_staging_raw (
+  recon_date date, line_no int, raw_line text
+);
+<span class="ln-good"><span class="kw">COPY</span> pg_staging_raw(raw_line) <span class="kw">FROM</span> <span class="st">'/data/pg/20260331.txt'</span></span>
+<span class="ln-good">     <span class="kw">WITH</span> (FORMAT text, ENCODING <span class="st">'EUC_KR'</span>);  <span class="cm">-- 대량 적재 전용</span></span>
+
+<span class="cm">-- (2) 코드 변환·금액 단위 통일은 적재 이후 SQL로</span>
+<span class="kw">INSERT INTO</span> pg_staging (recon_date, tid, order_no,
+                        net_amount, txn_type)
+<span class="kw">SELECT</span> :recon_date,
+       substr(raw_line,  1, 20),
+       substr(raw_line, 21, 30),
+       substr(raw_line, 51, 12)::bigint,
+       <span class="kw">CASE</span> substr(raw_line, 63, 1)
+         <span class="kw">WHEN</span> <span class="st">'1'</span> <span class="kw">THEN</span> <span class="st">'APPROVE'</span>
+         <span class="kw">WHEN</span> <span class="st">'2'</span> <span class="kw">THEN</span> <span class="st">'CANCEL'</span> <span class="kw">END</span>
+<span class="kw">FROM</span>   pg_staging_raw <span class="kw">WHERE</span> recon_date = :recon_date;</code></pre>
+  </div>
+</div>
+
+<p><code>COPY</code>는 <code>INSERT</code>를 한 줄씩 날리는 것보다 훨씬 빠른, <b>파일과 테이블 사이의 대량 적재 전용 명령</b>이다(PostgreSQL 기준). 핵심은 속도가 아니라 <b>"파싱 로직을 통과하지 않은 원본이 DB에 남는다"</b>는 사실이다.</p>
+
+<div class="memo">
+  <h4>원본을 굳이 남기는 이유 두 가지</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">① 책임 소재 구분</div><div class="d">나중에 값이 이상하면 <b>"우리 파싱이 잘못된 건지, PG가 보낸 데이터 자체가 틀린 건지"</b>를 원본과 대조해 판정할 수 있다. <b>원본이 없으면 이 논쟁은 영원히 안 끝난다.</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 재실행 가능</div><div class="d">배치가 중간에 죽어도 <b>파일을 다시 받을 필요 없이 스테이징에서부터 다시</b> 돌릴 수 있다. PG 파일은 보통 <b>하루가 지나면 다시 받기가 번거롭다.</b></div></div>
+  </div>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 매칭과 분류 — FULL OUTER JOIN 한 방</h2>
+
+<h3>8-1. 매칭 키는 왜 주문번호가 아니라 거래ID(tid)인가</h3>
+<p><b>매칭 키</b>는 두 장부에서 <b>"이 줄과 저 줄이 같은 거래"</b>라고 판정할 때 쓰는 열쇠다. <b>PG 거래ID(tid)를 1순위</b>로 쓰고, <b>우리 주문번호는 보조</b>로 쓴다.</p>
+<div class="split">
+  <div class="pane r">
+    <h4>주문번호를 키로 쓰면</h4>
+    <ul>
+      <li>한 주문에 <b>결제 시도가 여러 번</b> 붙을 수 있다</li>
+      <li>고객이 실패하고 다시 시도해 <b>한 주문에 승인이 2건</b> 생기면, 주문번호만으로는 <b>어느 승인이 우리 쪽 어느 기록에 대응하는지 구분할 수 없다</b></li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>거래ID(tid)를 키로 쓰면</h4>
+    <ul>
+      <li>tid는 <b>PG가 거래 시도마다 하나씩 발급</b>하므로 <b>모호함이 없다</b></li>
+      <li>주문번호는 <b>사람이 조사할 때 묶어 보는 보조 축</b>으로 남긴다</li>
+    </ul>
+  </div>
+</div>
+
+<h3>8-2. Before — 우리 DB를 기준으로만 순회하는 반쪽짜리 대사</h3>
+
+<div class="codehead bad"><span class="tag">Before</span> 순회의 출발점이 "우리 기록"이다 — 그래서 반대쪽이 통째로 안 보인다</div>
+<pre><code><span class="kw">public void</span> <span class="fn">reconcile</span>(LocalDate date) {
+    List&lt;Payment&gt; ours = paymentRepository.findByApprovedDate(date);
+    Map&lt;String, PgRecord&gt; pgMap = pgFileParser.parse(date).stream()
+            .collect(toMap(PgRecord::tid, r -&gt; r));
+
+    <span class="cm">// 순회의 출발점이 "우리 기록"이다. 즉 우리 DB에 행이 없는</span>
+    <span class="cm">// 거래는 이 for 문에 애초에 들어오지 못한다.</span>
+<span class="ln-bad">    <span class="kw">for</span> (Payment p : ours) {                       <span class="note">← 기준이 한쪽</span></span>
+        PgRecord pg = pgMap.get(p.getPgTid());
+        <span class="kw">if</span> (pg == <span class="kw">null</span>) {
+            report.oursOnly(p);            <span class="cm">// 우리에만 있음</span>
+        } <span class="kw">else if</span> (pg.amount() != p.getAmount()) {
+            report.amountMismatch(p, pg);  <span class="cm">// 금액 불일치</span>
+        }
+    }
+<span class="ln-bad">    <span class="cm">// 문제 1: 루프가 끝난 뒤 pgMap에 남아 있는 항목들 —</span></span>
+<span class="ln-bad">    <span class="cm">//   즉 "PG에만 있는" 거래 — 를 아무도 검사하지 않는다.</span></span>
+<span class="ln-bad">    <span class="cm">//   웹훅 유실로 우리 기록이 없는 승인이 여기 해당하는데,</span></span>
+<span class="ln-bad">    <span class="cm">//   고객 돈만 빠져나간 가장 위험한 유형이 조용히 통과된다.</span></span>
+    <span class="cm">// 문제 2: 양쪽 수십만 건을 통째로 JVM 힙에 올린다.</span>
+    <span class="cm">// 문제 3: 중간에 죽으면 어디까지 비교했는지 알 방법이 없다.</span>
+}</code></pre>
+
+<div class="callout trap"><span class="t">이 코드가 저지른 잘못을 한 단어로</span>
+<b>"LEFT JOIN만 한 셈"</b>이다. 대사는 <b>어느 한쪽을 기준으로 삼으면 안 되고 두 집합의 합집합을 봐야</b> 한다. 하필 <b>빠뜨린 쪽(PG_ONLY)이 고객 돈이 나간 가장 위험한 유형</b>이라는 게 이 버그의 성질을 결정한다.</div>
+
+<h3>8-3. JOIN 세 종류와 대사가 필요한 영역</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 306" role="img" aria-label="세 개의 벤 다이어그램. 첫째 이너 조인은 교집합만 칠해져 차이가 전부 사라진다. 둘째 레프트 조인은 왼쪽 원만 칠해져 PG에만 있는 건을 못 본다. 셋째 풀 아우터 조인은 두 원 전체가 칠해지고, 왼쪽 초승달은 우리에만 있음, 교집합은 금액 비교 대상, 오른쪽 초승달은 PG에만 있음으로 표시된다">
+    <defs>
+      <clipPath id="cl1"><circle cx="224" cy="152" r="60"/></clipPath>
+      <clipPath id="cl3"><circle cx="944" cy="152" r="60"/></clipPath>
+    </defs>
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">대사가 봐야 하는 것은 <tspan fill="#2563eb">합집합</tspan>이다 — 그래서 JOIN 세 종류 중 <tspan fill="#2563eb">FULL OUTER JOIN</tspan>이 정확히 이 문제의 모양이다</text>
+
+    <!-- panel 1 : inner -->
+    <rect x="24" y="46" width="320" height="240" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="184" y="70" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700" class="mono">INNER JOIN</text>
+    <circle cx="144" cy="152" r="60" fill="none" stroke="#94a3b8" stroke-width="1.6"/>
+    <circle cx="224" cy="152" r="60" fill="none" stroke="#94a3b8" stroke-width="1.6"/>
+    <circle cx="144" cy="152" r="60" fill="#2563eb" opacity=".38" clip-path="url(#cl1)"/>
+    <text x="184" y="230" font-size="10.5" fill="#475569" text-anchor="middle">양쪽 모두에 짝이 있는 행만 남긴다</text>
+    <rect x="44" y="244" width="280" height="28" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="184" y="263" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 차이가 전부 사라진다 (대사 불가)</text>
+
+    <!-- panel 2 : left -->
+    <rect x="368" y="46" width="320" height="240" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="528" y="70" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700" class="mono">LEFT JOIN</text>
+    <circle cx="488" cy="152" r="60" fill="#2563eb" opacity=".38"/>
+    <circle cx="488" cy="152" r="60" fill="none" stroke="#94a3b8" stroke-width="1.6"/>
+    <circle cx="568" cy="152" r="60" fill="none" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="528" y="230" font-size="10.5" fill="#475569" text-anchor="middle">왼쪽은 전부, 오른쪽 짝이 없으면 NULL</text>
+    <rect x="388" y="244" width="280" height="28" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="528" y="263" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">→ Before 코드가 한 짓 · PG_ONLY를 못 본다</text>
+
+    <!-- panel 3 : full outer -->
+    <rect x="712" y="46" width="384" height="240" rx="12" fill="#fff" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="904" y="70" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700" class="mono">FULL OUTER JOIN</text>
+    <circle cx="864" cy="152" r="60" fill="#2563eb" opacity=".30"/>
+    <circle cx="944" cy="152" r="60" fill="#dc2626" opacity=".26"/>
+    <circle cx="864" cy="152" r="60" fill="#7c3aed" opacity=".18" clip-path="url(#cl3)"/>
+    <circle cx="864" cy="152" r="60" fill="none" stroke="#94a3b8" stroke-width="1.6"/>
+    <circle cx="944" cy="152" r="60" fill="none" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="822" y="148" font-size="10" fill="#1d4ed8" text-anchor="middle" font-weight="700" class="mono">OURS</text>
+    <text x="822" y="162" font-size="10" fill="#1d4ed8" text-anchor="middle" font-weight="700" class="mono">_ONLY</text>
+    <text x="904" y="148" font-size="9.5" fill="#5b21b6" text-anchor="middle" font-weight="700">금액</text>
+    <text x="904" y="162" font-size="9.5" fill="#5b21b6" text-anchor="middle" font-weight="700">비교</text>
+    <text x="986" y="148" font-size="10" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">PG</text>
+    <text x="986" y="162" font-size="10" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">_ONLY</text>
+    <text x="864" y="98" font-size="10.5" fill="#1d4ed8" text-anchor="middle" font-weight="700" class="mono">our_daily_txn</text>
+    <text x="960" y="242" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">pg_staging</text>
+    <rect x="732" y="252" width="344" height="26" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="904" y="270" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">→ 세 유형이 한 번의 쿼리로 한꺼번에 나온다</text>
+  </svg>
+  <figcaption>세 유형은 <b>서로 다른 세 개의 쿼리로 찾는 게 아니라</b>, <b>합집합을 한 번 만들고 나면 자연히 세 영역으로 갈라진다.</b> "어느 쪽 기준으로 돌 것인가"라는 질문 자체가 사라지는 것이 FULL OUTER JOIN을 쓰는 진짜 이유다.</figcaption>
+</figure>
+
+<h3>8-4. After — 합집합 기준 대사 한 방</h3>
+
+<div class="codehead good"><span class="tag">After</span> 스테이징에 적재한 뒤 FULL OUTER JOIN으로 세 유형을 한 번에 분류</div>
+<pre><code><span class="kw">INSERT INTO</span> recon_diff
+       (recon_date, diff_type, pg_tid, order_no,
+        our_amount, pg_amount)
+<span class="kw">SELECT</span> :recon_date,
+       <span class="kw">CASE</span>
+         <span class="cm">-- 우리 행은 있는데 PG 쪽이 통째로 NULL → PG엔 없다</span>
+<span class="ln-good">         <span class="kw">WHEN</span> pg.tid <span class="kw">IS NULL</span>                <span class="kw">THEN</span> <span class="st">'OURS_ONLY'</span></span>
+         <span class="cm">-- PG 행은 있는데 우리 쪽이 통째로 NULL → 우리에겐 없다</span>
+<span class="ln-good">         <span class="kw">WHEN</span> o.pg_tid <span class="kw">IS NULL</span>              <span class="kw">THEN</span> <span class="st">'PG_ONLY'</span>   <span class="note">← Before가 빠뜨린 유형</span></span>
+         <span class="cm">-- 양쪽 다 있는데 순액이 다르다</span>
+<span class="ln-good">         <span class="kw">WHEN</span> o.net_amount &lt;&gt; pg.net_amount <span class="kw">THEN</span> <span class="st">'AMOUNT_MISMATCH'</span></span>
+       <span class="kw">END</span>,
+       <span class="cm">-- 한쪽이 NULL일 수 있으므로 값이 있는 쪽을 집어 온다</span>
+       COALESCE(o.pg_tid, pg.tid),
+       COALESCE(o.order_no, pg.order_no),
+       o.net_amount, pg.net_amount
+<span class="kw">FROM</span>   our_daily_txn o
+<span class="ln-good"><span class="kw">FULL OUTER JOIN</span> pg_staging pg <span class="kw">ON</span> pg.tid = o.pg_tid   <span class="note">← 합집합 기준</span></span>
+<span class="cm">-- 정상 매칭(양쪽 존재 + 금액 동일)은 저장하지 않는다.</span>
+<span class="cm">-- recon_diff 에는 "차이 나는 건"만 쌓인다.</span>
+<span class="kw">WHERE</span>  pg.tid <span class="kw">IS NULL</span>
+   <span class="kw">OR</span>  o.pg_tid <span class="kw">IS NULL</span>
+   <span class="kw">OR</span>  o.net_amount &lt;&gt; pg.net_amount;</code></pre>
+
+<div class="grid g3">
+  <div class="tile ok"><div class="k" style="font-family:inherit">집합 연산으로 옮겼다</div><div class="d">수십만 건을 <b>JVM 힙에 올리지 않는다.</b> Before의 문제 2가 사라진다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">중간에 죽어도 안전</div><div class="d">한 문장이 <b>커밋되거나 안 되거나</b> 둘 중 하나다. <b>"어디까지 비교했는지"라는 상태가 아예 없다.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">차이만 저장한다</div><div class="d"><code>recon_diff</code>에는 <b>정상 건이 들어가지 않는다</b> — 이 테이블의 행 수가 곧 그날의 차이 건수다.</div></div>
+</div>
+
+<div class="callout info"><span class="t">순액(net amount)이란</span>
+<b>"승인 금액에서 취소 금액을 뺀 나머지"</b>, 즉 결국 얼마가 남았느냐다. <b>87,000원 승인에 27,500원 부분 취소가 붙었으면 순액은 59,500원.</b> 왜 총액이 아니라 순액으로 비교하는지는 <a href="#s10">10절</a>에서 이어서 설명한다.</div>
+
+<h3>8-5. 세 유형 — 패턴이 아니라 <u>피해자</u>가 다르다</h3>
+
+<div class="scroll">
+<table class="wide">
+  <caption>차이 세 유형 — 마지막 열이 이 표에서 읽어야 할 핵심이다</caption>
+  <thead><tr><th>유형</th><th>우리 장부</th><th>PG 장부</th><th>대표 원인</th><th>돈은 어느 방향으로 새는가</th><th>대응</th></tr></thead>
+  <tbody>
+    <tr><td><code>OURS_ONLY</code><br><span class="sub">우리에만 있음</span></td><td>승인 있음</td><td>해당 거래 없음</td><td>승인 응답을 못 받았는데 우리가 성공으로 잘못 확정</td><td class="bad">고객에게 물건·이용권은 나갔는데 돈은 안 들어옴 → <b>회사 손실</b></td><td>원인 특정 가능할 때만 자동, 대개 <b>수동 큐</b></td></tr>
+    <tr class="hl"><td><code>PG_ONLY</code><br><span class="sub">PG에만 있음</span></td><td>기록 없음 또는 <code>PENDING</code></td><td>승인 있음</td><td>웹훅 유실, 타임아웃 후 뒤늦은 승인</td><td class="bad">고객 돈은 빠져나갔는데 물건은 못 받음 → <b>고객 피해·CS·분쟁</b></td><td>PG 조회로 재확인 후 <b>자동 보정 가능</b></td></tr>
+    <tr><td><code>AMOUNT_MISMATCH</code><br><span class="sub">금액 불일치</span></td><td>순액 59,500원</td><td>순액 32,000원</td><td>부분 취소 누락 또는 이중 반영</td><td class="bad">방향은 조사해 봐야 안다 → <b>조사 비용이 가장 큰 유형</b></td><td class="bad"><b>무조건 수동 큐</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>세 유형을 가르는 진짜 기준</h4>
+  <div class="rule red">유형이 다르다 = <b>패턴이 다르다</b>가 아니라 <b>피해자가 다르다</b></div>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">PG_ONLY</div><div class="d"><b>고객이 피해자</b> — 시간이 지날수록 <b>CS와 카드사 분쟁</b>으로 번진다. 가장 급하다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">OURS_ONLY</div><div class="d"><b>회사가 조용히 손실을 흡수</b>한다. 아무도 항의하지 않아 <b>발견이 늦다.</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">AMOUNT_MISMATCH</div><div class="d">방향을 모른다 — <b>사람이 붙어 조사해야</b> 한다.</div></div>
+  </div>
+  <p style="margin-bottom:0">그래서 <b>알림의 긴급도와 처리 기한을 유형별로 다르게</b> 잡는 것이 자연스럽다. "세 유형으로 나눈다"까지가 지식이고, <b>"유형별로 SLA가 다르다"까지가 설계</b>다.</p>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 처리 — 자동 보정 vs 수동 큐</h2>
+
+<p><b>차이를 찾는 것보다 "찾은 다음 무엇을 하느냐"가 설계의 나머지 절반</b>이다. 판단 기준은 하나로 요약된다.</p>
+
+<div class="memo green">
+  <h4>자동 보정 판단 기준 — 두 조건을 모두 만족할 때만</h4>
+  <div class="rule ok">① <b>PG 거래 조회 API로 사실을 재확인할 수 있고</b> &nbsp;·&nbsp; ② <b>보정 방향이 기계적으로 하나로 정해지는가</b></div>
+  <p style="margin-bottom:0"><b>PG 거래 조회 API</b>는 tid나 주문번호를 주면 <b>"그 거래가 지금 승인 상태인지, 취소됐는지, 아예 없는지"</b>를 알려주는 조회 엔드포인트다. <b>웹훅이 PG가 걸어오는 전화라면 이건 우리가 거는 전화</b>다. <b>웹훅이 유실돼도 이쪽 경로는 살아 있다</b>는 점이 결정적이다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="차이 한 건이 자동 보정으로 갈지 수동 큐로 갈지 결정하는 흐름도. 첫째 판단은 PG 조회로 사실 재확인이 가능한가, 둘째 판단은 보정 방향이 유일한가이며, 둘 다 예일 때만 자동 보정으로 간다. 자동 보정은 사실 재확인, 보정 이력 선점, 정규 상태 전이 API 호출 세 관문을 차례로 통과한다. 어느 하나라도 아니오면 수동 처리 큐로 간다">
+    <defs>
+      <marker id="r-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="r-o" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">차이 1건의 갈림길 — <tspan fill="#16a34a">자동 보정은 예외적으로만</tspan>, 나머지는 전부 <tspan fill="#d97706">사람에게</tspan></text>
+
+    <rect x="24" y="160" width="150" height="56" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.7"/>
+    <text x="99" y="182" font-size="12" fill="#334155" text-anchor="middle" font-weight="700" class="mono">recon_diff</text>
+    <text x="99" y="200" font-size="10.5" fill="#6b7280" text-anchor="middle">차이 1건</text>
+    <line x1="176" y1="188" x2="214" y2="188" stroke="#2563eb" stroke-width="2" marker-end="url(#r-b)"/>
+
+    <polygon points="310,134 400,188 310,242 220,188" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="310" y="177" font-size="10.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">PG 조회 API로</text>
+    <text x="310" y="192" font-size="10.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">사실 재확인이</text>
+    <text x="310" y="207" font-size="10.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">되는가?</text>
+
+    <line x1="402" y1="188" x2="444" y2="188" stroke="#2563eb" stroke-width="2" marker-end="url(#r-b)"/>
+    <text x="423" y="180" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">예</text>
+
+    <polygon points="540,134 630,188 540,242 450,188" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="540" y="182" font-size="10.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">보정 방향이</text>
+    <text x="540" y="197" font-size="10.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">하나로 정해지나?</text>
+
+    <line x1="632" y1="188" x2="672" y2="188" stroke="#2563eb" stroke-width="2" marker-end="url(#r-b)"/>
+    <text x="652" y="180" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">예</text>
+
+    <!-- auto group -->
+    <rect x="676" y="60" width="420" height="196" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.9"/>
+    <text x="694" y="84" font-size="12.5" fill="#166534" font-weight="700">자동 보정 — 세 관문을 순서대로 통과할 때만</text>
+    <rect x="694" y="94" width="384" height="46" rx="9" fill="#fff" stroke="#bbf7d0"/>
+    <text x="708" y="113" font-size="11" fill="#166534" font-weight="700">① 사실 재확인 — PG 거래 조회 API 호출</text>
+    <text x="708" y="130" font-size="10" fill="#15803d">"진짜 승인 맞나"를 우리가 직접 물어본다. 아니면 수동 큐로.</text>
+    <rect x="694" y="146" width="384" height="46" rx="9" fill="#fff" stroke="#bbf7d0"/>
+    <text x="708" y="165" font-size="11" fill="#166534" font-weight="700">② 보정 이력 선점 — 유니크 제약으로 멱등화</text>
+    <text x="708" y="182" font-size="10" fill="#15803d" class="mono">UNIQUE (recon_date, pg_tid, diff_type)</text>
+    <rect x="694" y="198" width="384" height="46" rx="9" fill="#fff" stroke="#bbf7d0"/>
+    <text x="708" y="217" font-size="11" fill="#166534" font-weight="700">③ 정규 상태 전이 API 호출 — 직접 UPDATE 금지</text>
+    <text x="708" y="234" font-size="10" fill="#15803d">평소 승인 처리와 같은 코드 경로 = 같은 상태 머신을 탄다</text>
+
+    <!-- manual queue -->
+    <polyline points="310,244 310,312 672,312" fill="none" stroke="#d97706" stroke-width="2" marker-end="url(#r-o)"/>
+    <polyline points="540,244 540,312" fill="none" stroke="#d97706" stroke-width="2"/>
+    <text x="330" y="266" font-size="10.5" fill="#b45309" font-weight="700">아니오</text>
+    <text x="560" y="266" font-size="10.5" fill="#b45309" font-weight="700">아니오</text>
+
+    <rect x="676" y="276" width="420" height="76" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="1.9"/>
+    <text x="694" y="300" font-size="12.5" fill="#92400e" font-weight="700">수동 처리 큐 — AMOUNT_MISMATCH 전부 + 원인 불명 OURS_ONLY</text>
+    <text x="694" y="320" font-size="10.5" fill="#b45309">recon_diff 에 <tspan class="mono">담당자 · 처리 상태 · 처리 기한</tspan> 컬럼을 붙여 운영 큐로 만든다</text>
+    <text x="694" y="338" font-size="10.5" fill="#b45309">며칠째 미처리 건은 <tspan font-weight="700">에이징(aging) 알림</tspan>으로 위로 끌어올린다</text>
+  </svg>
+  <figcaption>실무에서 가장 흔한 운영 실패는 <b>"차이를 찾긴 찾았는데 아무도 안 본" 상태</b>다. 그래서 <b>수동 큐는 테이블 하나가 아니라 담당자·기한·에이징 알림이 붙은 운영 프로세스</b>여야 한다.</figcaption>
+</figure>
+
+<h3>9-1. 자동 보정의 전형 — PG_ONLY + 우리 쪽 PENDING</h3>
+<p><b>PG_ONLY인데 우리 쪽에 같은 tid의 <code>PENDING</code> 기록이 남아 있는 경우</b>가 대표적이다. PG 조회 API로 승인 사실을 재확인한 다음 우리 상태를 <code>APPROVED</code>로 확정한다. <b>웹훅 유실을 사후에 복구하는 셈</b>이다. 단, 여기에 반드시 붙어야 하는 제약이 있다.</p>
+
+<div class="memo red">
+  <h4>제2의 진실 경로 <span class="badge trap">최다 함정</span></h4>
+  <div class="rule red">대사 배치가 <code>UPDATE payment SET status='APPROVED'</code>로 상태를 <b>직접</b> 바꾸기 시작하면 <b>결제 상태를 바꾸는 경로가 둘</b>이 된다</div>
+  <p style="margin-bottom:0">그러면 <b>상태 머신의 규칙이 한쪽에서만 적용</b>된다. 이걸 <b>제2의 진실 경로</b>라고 부른다 — <b>진실이 두 갈래가 되는 순간 어느 쪽도 믿을 수 없어진다.</b> 보정 로직은 <b>평소의 결제 승인 처리와 같은 코드 경로, 즉 같은 상태 머신 전이</b>를 타야 한다.</p>
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 배치가 payment 테이블을 직접 갈아엎는다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">fixPgOnly</span>(ReconDiff diff) {
+<span class="ln-bad">    jdbc.update(<span class="st">"UPDATE payment SET status='APPROVED' "</span></span>
+<span class="ln-bad">              + <span class="st">"WHERE pg_tid = ?"</span>, diff.tid());  <span class="note">← 상태 머신 우회</span></span>
+<span class="ln-bad">    grantService.grant(diff.orderNo());     <span class="note">← 재실행 시 또 지급</span></span>
+}
+
+<span class="cm">// 구멍 1: PG에 정말 승인이 남아 있는지 재확인하지 않았다.</span>
+<span class="cm">//   파일이 잘못됐다면 없는 승인을 우리 장부에 새겨 넣는다.</span>
+<span class="cm">// 구멍 2: 상태 머신을 거치지 않으므로 APPROVED → APPROVED</span>
+<span class="cm">//   같은 불가능한 전이도 그냥 통과한다.</span>
+<span class="cm">// 구멍 3: 배치를 재실행하면 이용권이 두 번 지급된다.</span>
+<span class="cm">//   → 대사가 잡아내라고 만든 사고를 대사가 직접 만든다 (사례 2)</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 재확인 → 멱등 선점 → 정규 전이 API</div>
+<pre><code><span class="kw">public void</span> <span class="fn">resolvePgOnly</span>(ReconDiff diff) {
+<span class="ln-good">    <span class="cm">// ① 사실 재확인 — 우리가 거는 전화</span></span>
+<span class="ln-good">    PgTxn actual = pgClient.getTransaction(diff.tid());</span>
+    <span class="kw">if</span> (!actual.isApproved()) {
+        manualQueue.push(diff, <span class="st">"PG 조회 결과가 파일과 다름"</span>);
+        <span class="kw">return</span>;
+    }
+<span class="ln-good">    <span class="cm">// ② 보정 이력 선점 — UNIQUE 위반이면 이미 보정된 건</span></span>
+<span class="ln-good">    <span class="kw">if</span> (!adjustmentLog.tryInsert(diff.reconDate(),</span>
+<span class="ln-good">                                diff.tid(), diff.type())) {</span>
+        log.info(<span class="st">"이미 보정됨 — 재실행 무시 {}"</span>, diff.tid());
+        <span class="kw">return</span>;  <span class="cm">// 두 번째 실행은 여기서 조용히 끝난다</span>
+    }
+<span class="ln-good">    <span class="cm">// ③ 평소 승인 처리와 같은 경로 = 같은 상태 머신</span></span>
+<span class="ln-good">    paymentService.confirmApproval(diff.orderNo(), actual);</span>
+    <span class="cm">// PENDING → APPROVED 전이만 허용되고, 이미 APPROVED면</span>
+    <span class="cm">// 전이가 거부되어 뒤에 달린 이용권 지급도 실행되지 않는다</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout ok"><span class="t">방어선을 두 겹으로 두는 이유</span>
+<b>배치 안쪽(유니크 제약)</b>과 <b>도메인 쪽(상태 머신)</b> 양쪽에 겹으로 둔다. <b>한 겹이 뚫려도 다른 겹이 남는다.</b> 유니크 제약은 <b>"같은 보정을 두 번 시도하는 것"</b>을 막고, 상태 머신은 <b>"보정이 아닌 경로로 들어온 이상한 전이"</b>까지 막는다 — <b>막는 대상이 다르므로 둘 중 하나만으로는 부족하다.</b></div>
+
+<div class="scroll">
+<table>
+  <caption>자동 보정과 수동 큐 — 무엇을 어디로 보내나</caption>
+  <thead><tr><th>구분</th><th>대상</th><th>필수 조건</th><th>이 경로의 위험</th></tr></thead>
+  <tbody>
+    <tr><td class="good">자동 보정</td><td><code>PG_ONLY</code> + 우리 쪽 <code>PENDING</code> 잔존 (웹훅 유실형)</td><td>PG 조회 재확인 · 보정 이력 유니크 · 정규 전이 API</td><td>잘못 판단하면 <b>대사가 장부를 오염</b>시킨다</td></tr>
+    <tr><td class="bad">수동 큐</td><td><code>AMOUNT_MISMATCH</code> <b>전부</b> · 원인 불명 <code>OURS_ONLY</code></td><td>담당자 배정 · 처리 기한 · 에이징 알림</td><td>큐에 쌓아두고 <b>아무도 안 보는 것</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>잘못된 자동 보정이 특히 무서운 이유 <span class="badge senior">시니어 변별</span></h4>
+  <div class="rule red">잘못 보정한 결과는 <b>다음 대사에서 "정상"으로 보인다</b></div>
+  <p style="margin-bottom:0">우리가 PG에 맞춰 고쳐 놨으니 <b>다음 날엔 두 장부가 사이좋게 같아진다.</b> 즉 <b>스스로 만든 오류를 스스로 못 잡는 구조</b>다. 그래서 잘못된 자동 보정은 <b>일반 버그보다 발견이 훨씬 어렵다</b> — 자동 보정 범위를 좁게 잡는 진짜 이유가 여기에 있다.</p>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 부분 취소·환불 — 순액 축과 이벤트 축</h2>
+
+<p>승인 87,000원에 부분 취소가 붙는 순간, 지금까지 전제한 <b>"우리 1건 vs PG 1건" 비교가 깨진다.</b> 한 주문에 딸린 기록이 <b>여러 줄</b>이 되기 때문이다. 그래서 <b>축을 두 개</b> 쓴다.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>축 1 — 원거래 기준 순액(net) 비교</h4>
+    <ul>
+      <li>원거래 tid로 <b>승인과 취소를 한 묶음</b>으로 만든 뒤</li>
+      <li><b>순액을 양쪽에서 각각 계산해 비교</b>한다</li>
+      <li>용도: <b>총액이 맞는지 빠르게 확인</b></li>
+    </ul>
+  </div>
+  <div class="pane b">
+    <h4>축 2 — 이벤트 단위 대사</h4>
+    <ul>
+      <li><b>승인 1건, 취소 1건을 각각 독립 레코드</b>로 놓고</li>
+      <li><b>1:1로 대조</b>한다</li>
+      <li>용도: <b>원인의 형태를 분해</b></li>
+    </ul>
+  </div>
+</div>
+
+<p><b>왜 축 하나로는 부족한가.</b> 순액만 보면 <b>서로 상쇄되는 오류를 놓치기 때문</b>이다. 아래가 정확히 그 상황이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="왼쪽 패널은 순액 비교다. 우리 장부는 승인 87000에 취소 B가 두 번 기록되어 순액 57000이고, PG 장부는 승인 87000에 취소 A와 취소 B가 각각 한 번씩 있어 순액도 57000이다. 순액이 같으므로 차이 없음으로 통과하지만 실제로는 누락과 이중 기록이 상쇄된 상태다. 오른쪽 패널은 이벤트 단위 대조로, 취소 A는 PG에만 있고 우리 쪽 중복 취소 B는 우리에만 있는 것으로 드러난다">
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">순액이 같다고 장부가 같은 것은 아니다 — <tspan fill="#dc2626">누락 1건과 이중 기록 1건이 상쇄</tspan>되면 순액 비교는 통과한다</text>
+
+    <!-- axis 1 -->
+    <rect x="24" y="44" width="532" height="308" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="44" y="70" font-size="12.5" fill="#1d4ed8" font-weight="700">축 1 — 순액(net) 비교</text>
+
+    <rect x="44" y="84" width="240" height="180" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="164" y="106" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">우리 장부</text>
+    <g class="mono" font-size="11" fill="#334155">
+      <text x="62" y="132">승인</text><text x="266" y="132" text-anchor="end">+87,000</text>
+      <text x="62" y="158">취소 B</text><text x="266" y="158" text-anchor="end">−15,000</text>
+      <text x="62" y="184" fill="#b91c1c" font-weight="700">취소 B</text><text x="266" y="184" text-anchor="end" fill="#b91c1c" font-weight="700">−15,000</text>
+    </g>
+    <text x="120" y="200" font-size="9.5" fill="#b91c1c">← 같은 취소를 두 번 기록(이중 반영)</text>
+    <line x1="62" y1="212" x2="266" y2="212" stroke="#94a3b8"/>
+    <text x="62" y="234" font-size="12" fill="#1f2937" font-weight="700">순액</text>
+    <text x="266" y="234" font-size="13" fill="#1f2937" text-anchor="end" font-weight="700" class="mono">57,000</text>
+
+    <rect x="300" y="84" width="240" height="180" rx="10" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="420" y="106" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">PG 장부</text>
+    <g class="mono" font-size="11" fill="#334155">
+      <text x="318" y="132">승인</text><text x="522" y="132" text-anchor="end">+87,000</text>
+      <text x="318" y="158" fill="#b91c1c" font-weight="700">취소 A</text><text x="522" y="158" text-anchor="end" fill="#b91c1c" font-weight="700">−15,000</text>
+      <text x="318" y="184">취소 B</text><text x="522" y="184" text-anchor="end">−15,000</text>
+    </g>
+    <text x="376" y="174" font-size="9.5" fill="#b91c1c">← 우리 장부엔 없는 취소</text>
+    <line x1="318" y1="212" x2="522" y2="212" stroke="#94a3b8"/>
+    <text x="318" y="234" font-size="12" fill="#1f2937" font-weight="700">순액</text>
+    <text x="522" y="234" font-size="13" fill="#1f2937" text-anchor="end" font-weight="700" class="mono">57,000</text>
+
+    <rect x="44" y="280" width="496" height="54" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="292" y="302" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">57,000 = 57,000 → "차이 없음"으로 통과한다</text>
+    <text x="292" y="322" font-size="11" fill="#7f1d1d" text-anchor="middle">누락된 취소 A와 이중 기록된 취소 B가 <tspan font-weight="700">우연히 상쇄</tspan>되어 총량이 맞아버린 것</text>
+
+    <!-- axis 2 -->
+    <rect x="580" y="44" width="516" height="308" rx="12" fill="#fff" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="600" y="70" font-size="12.5" fill="#166534" font-weight="700">축 2 — 이벤트 단위 1:1 대조</text>
+    <g font-size="10.5" fill="#6b7280" font-weight="700">
+      <text x="600" y="96">이벤트</text><text x="760" y="96">우리</text><text x="850" y="96">PG</text><text x="940" y="96">판정</text>
+    </g>
+    <line x1="600" y1="102" x2="1076" y2="102" stroke="#cbd5e1"/>
+
+    <g font-size="11" fill="#334155">
+      <text x="600" y="128" class="mono">승인 87,000</text><text x="760" y="128" fill="#16a34a" font-weight="700">있음</text><text x="850" y="128" fill="#16a34a" font-weight="700">있음</text>
+      <rect x="936" y="112" width="132" height="22" rx="11" fill="#f0fdf4" stroke="#bbf7d0"/><text x="1002" y="128" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">매칭</text>
+
+      <text x="600" y="170" class="mono">취소 A 15,000</text><text x="760" y="170" fill="#b91c1c" font-weight="700">없음</text><text x="850" y="170" fill="#16a34a" font-weight="700">있음</text>
+      <rect x="936" y="154" width="132" height="22" rx="11" fill="#fef2f2" stroke="#dc2626"/><text x="1002" y="170" font-size="10" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">PG_ONLY</text>
+
+      <text x="600" y="212" class="mono">취소 B 15,000</text><text x="760" y="212" fill="#16a34a" font-weight="700">있음</text><text x="850" y="212" fill="#16a34a" font-weight="700">있음</text>
+      <rect x="936" y="196" width="132" height="22" rx="11" fill="#f0fdf4" stroke="#bbf7d0"/><text x="1002" y="212" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">매칭</text>
+
+      <text x="600" y="254" class="mono">취소 B 15,000 (2번째)</text><text x="760" y="254" fill="#16a34a" font-weight="700">있음</text><text x="850" y="254" fill="#b91c1c" font-weight="700">없음</text>
+      <rect x="936" y="238" width="132" height="22" rx="11" fill="#eff6ff" stroke="#2563eb"/><text x="1002" y="254" font-size="10" fill="#1d4ed8" text-anchor="middle" font-weight="700" class="mono">OURS_ONLY</text>
+    </g>
+
+    <rect x="600" y="280" width="476" height="54" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="838" y="302" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">차이 2건이 드러난다 — 그리고 원인의 형태까지 보인다</text>
+    <text x="838" y="322" font-size="11" fill="#15803d" text-anchor="middle">"취소가 하나 누락됐고, 다른 취소가 하나 이중 기록됐다"까지 읽힌다</text>
+  </svg>
+  <figcaption>반대 방향으로도 차이가 난다. 취소가 우리 장부엔 1건인데 PG엔 2건일 때, <b>순액 비교는 "금액이 다르다"까지만</b> 알려주지만 <b>이벤트 대사는 "PG_ONLY 취소 1건"이라고 원인의 형태까지</b> 드러낸다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>두 축의 분업</h4>
+  <div class="rule ok">빠른 <b>총량 검증은 순액</b>으로, <b>원인 분해는 이벤트</b>로 — 두 축을 <b>함께</b> 돌리는 것이 정답</div>
+</div>
+
+<div class="callout info"><span class="t">이벤트 대사의 전제조건 — 취소에도 멱등 키가 있어야 한다 <span class="badge senior">시니어 변별</span></span>
+이벤트 단위 대사가 가능하려면 <b>취소에도 가맹점 취소 번호(멱등 키)를 부여</b>해 둬야 한다. 그래야 <b>"우리 취소 1건 = PG 취소 1건"의 대응 관계</b>가 명확해진다. 취소마다 고유 번호가 없으면 <b>15,000원짜리 취소 두 줄이 같은 취소의 중복 기록인지, 서로 다른 두 번의 취소인지 구분할 방법이 없다.</b><br>
+이 대목이 흥미로운 이유는 <b>대사 설계가 거꾸로 결제 요청 설계에 요구사항을 만들어 낸다</b>는 점이다 — <b>사후 검증을 제대로 하려면 사전 기록 방식부터 바꿔야 한다</b>는 것을 알고 있다는 신호가 된다.</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 리포트·알림과 메타 모니터링</h2>
+
+<p>대사 결과는 <b>매일 리포트로 남긴다.</b> 담아야 할 항목은 다섯 가지다.</p>
+
+<div class="memo">
+  <h4>일일 대사 리포트 필수 항목 다섯</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">① 대상 건수 · 총액</div><div class="d">그날 대조한 모수. <b>전일 대비 급변</b>이 곧 이상 신호다.</div></div>
+    <div class="tile"><div class="k">② 매칭 성공 건수</div><div class="d">양쪽에 있고 금액도 같은 건.</div></div>
+    <div class="tile"><div class="k">③ 차이 유형별 건수 · 금액</div><div class="d"><b>세 유형을 합쳐서 쓰지 않는다</b> — 유형별로 긴급도가 다르므로.</div></div>
+    <div class="tile"><div class="k">④ 자동 보정 건수</div><div class="d">이 수가 늘면 <b>앞단 감지 계층이 부실</b>하다는 신호.</div></div>
+    <div class="tile"><div class="k">⑤ 수동 큐 잔여 건수</div><div class="d"><b>어제보다 줄었는가</b>가 운영 건강도의 지표.</div></div>
+    <div class="tile ok"><div class="k">그리고 — 차이 0건인 날도</div><div class="d">"대상 12,847건 대조 완료, <b>차이 0건</b>"을 반드시 남긴다.</div></div>
+  </div>
+</div>
+
+<h3>11-1. "차이 0건"도 반드시 보고한다</h3>
+
+<figure>
+  <svg viewBox="0 0 920 232" role="img" aria-label="알림이 오지 않았다는 사실 하나에서 두 갈래 해석이 나온다. 하나는 정상적으로 차이가 0건이었던 경우, 다른 하나는 배치가 죽어 아무것도 하지 않은 경우다. 차이 0건 리포트를 남기면 이 두 갈래가 하나로 좁혀진다">
+    <defs>
+      <marker id="n-s" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+      <marker id="n-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="20" y="24" font-size="14" font-weight="700" fill="#1f2937">"오늘 알림이 없다"는 사실은 <tspan fill="#dc2626">두 가지를 동시에 뜻한다</tspan> — 그래서 아무것도 뜻하지 않는다</text>
+
+    <rect x="20" y="98" width="176" height="56" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.7"/>
+    <text x="108" y="122" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">알림이 오지 않았다</text>
+    <text x="108" y="140" font-size="10.5" fill="#6b7280" text-anchor="middle">무소식</text>
+
+    <path d="M198,116 C 232,110 236,82 264,76" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#n-s)"/>
+    <path d="M198,138 C 232,144 236,176 264,182" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#n-s)"/>
+
+    <rect x="268" y="50" width="300" height="52" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.7"/>
+    <text x="286" y="72" font-size="11.5" fill="#166534" font-weight="700">① 정상 — 그날 차이가 실제로 0건이었다</text>
+    <text x="286" y="90" font-size="10.5" fill="#15803d">평화로운 하루</text>
+
+    <rect x="268" y="156" width="300" height="52" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.7"/>
+    <text x="286" y="178" font-size="11.5" fill="#b91c1c" font-weight="700">② 배치가 죽어 아무것도 하지 않았다</text>
+    <text x="286" y="196" font-size="10.5" fill="#7f1d1d">어긋난 하루가 통째로 검증 없이 지나간 것</text>
+
+    <text x="600" y="122" font-size="26" fill="#dc2626" text-anchor="middle" font-weight="700">?</text>
+    <text x="600" y="146" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">구분 불가</text>
+
+    <path d="M568,76 C 610,76 620,110 648,116" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#n-b)"/>
+    <path d="M568,182 C 610,182 620,148 648,138" fill="none" stroke="#2563eb" stroke-width="1.8" marker-end="url(#n-b)"/>
+
+    <rect x="652" y="94" width="248" height="64" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.9"/>
+    <text x="776" y="116" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">"차이 0건" 리포트를 남기면</text>
+    <text x="776" y="134" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">②는 "리포트 없음"으로 드러난다</text>
+    <text x="776" y="151" font-size="10" fill="#1e40af" text-anchor="middle">= 무소식과 정상이 분리된다</text>
+  </svg>
+  <figcaption>야간 순찰 일지에 <b>"이상 없음"이라고 굳이 적는 이유</b>와 같다. 빈 칸은 <b>"순찰했는데 문제가 없었다"</b>와 <b>"순찰을 안 했다"</b>를 구분하지 못한다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>알림 설계의 일반 원칙</h4>
+  <div class="rule red">무소식이 희소식이 되는 시스템은 <b>만들면 안 된다</b></div>
+</div>
+
+<h3>11-2. 메타 모니터링 — "대사의 대사" <span class="badge senior">시니어 변별</span></h3>
+<p>면접에서 <b>"대사 배치가 정상 동작하는지는 어떻게 아나요?"</b>라는 꼬리질문이 오면 여기서 갈린다. 답은 <b>네 층</b>으로 정리한다.</p>
+
+<div class="scroll">
+<table>
+  <caption>메타 모니터링 4층 — 각 층이 잡는 실패가 다르다</caption>
+  <thead><tr><th>층</th><th>무엇을 보는가</th><th>이 층이 없으면 놓치는 것</th></tr></thead>
+  <tbody>
+    <tr><td class="good">① 입력 검증</td><td>파일이 도착했는가 · 컨트롤 토탈이 맞는가 · 전일 대비 건수가 정상 범위인가</td><td class="bad">빈 파일·잘린 파일로 <b>"차이 0건 완료"</b>가 되는 사고(사례 3)</td></tr>
+    <tr><td class="good">② 실행 검증</td><td>대사 <b>완료 시각 SLA</b> — 예를 들어 오전 7시까지 완료되지 않으면 알림</td><td class="bad">배치가 <b>조용히 안 돈 것</b>. 아무도 모르는 채 하루가 간다</td></tr>
+    <tr><td class="good">③ 출력 검증</td><td><b>"차이 0건"도 리포트</b>로 남겨 무소식과 정상을 구분</td><td class="bad">죽은 날을 <b>평화로운 날로 착각</b></td></tr>
+    <tr><td class="good">④ 잔여 관리</td><td>수동 큐 <b>에이징 알림</b> — 며칠째 아무도 손대지 않은 차이를 위로</td><td class="bad">차이를 <b>찾긴 찾았는데 아무도 안 보는</b> 상태</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo">
+  <h4>4층 암기 — <span style="color:#2563eb">입 · 실 · 출 · 잔</span></h4>
+  <div class="chain">
+    <span class="chip b">입력(파일·토탈)</span><span class="arrow">→</span>
+    <span class="chip b">실행(완료 SLA)</span><span class="arrow">→</span>
+    <span class="chip b">출력(0건 리포트)</span><span class="arrow">→</span>
+    <span class="chip w">잔여(에이징)</span>
+  </div>
+  <div class="rule" style="margin-bottom:0">마무리 한 문장 — <b>대사는 최후 안전망인데, 그 안전망이 끊겼을 때 즉시 알 수 있는 장치가 없다면 그건 안전망이 아니다</b></div>
+</div>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 실무 사례 — 대사 배치 자체가 뚫리는 구멍들</h2>
+
+<h3>12-1. 사례 1: 시간대 경계 — 월말 밤 결제가 오탐 폭풍을 만든다</h3>
+<div class="card">
+  <div class="step red"><span class="n">상황</span><div class="body"><b>3월 31일 23:59:57</b>에 승인된 49,000원 결제가 <b>PG 마감 기준으로는 4월 1일 거래</b>로 실렸다. 우리 DB의 결제 시각을 기준 축으로 3월 31일 자 대사를 돌리자, 이 건은 <b>"우리 DB엔 있는데 그날 PG 파일엔 없다"</b>는 이유로 <code>OURS_ONLY</code>로 분류됐다(<a href="#s6">6절 도식</a>).</div></div>
+  <div class="step red"><span class="n">결말</span><div class="body"><b>월말이라 같은 유형이 수십 건 쏟아졌다.</b> 담당자는 <b>오탐 더미를 훑다 지쳤고</b>, 그 안에 섞여 있던 <b>진짜 차이 1건을 놓쳤다.</b></div></div>
+  <div class="step ok"><span class="n">대응</span><div class="body">
+    <b>① 기준 축 통일</b> — 대사 기준 축을 우리 결제 시각이 아니라 <b>PG 거래 일자</b>로 통일했다. <b>판정의 기준선은 확정본을 가진 쪽에 맞춘다.</b><br>
+    <b>② 1회차 유예 후 확정</b> — <code>OURS_ONLY</code>·<code>PG_ONLY</code>는 발견 즉시 확정하지 않고 <b>"미확정" 상태로 하루</b>를 들고 있다가, 다음 날 파일에서 매칭되면 <b>자동 소멸</b>, 그래도 남으면 <b>그때 진짜 차이로</b> 올린다.
+  </div></div>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 사례가 말하는 것</span>
+  경계 오탐을 <b>구조적으로 없애야 알림의 신뢰도가 유지된다.</b> <b>오탐이 많은 알림은 결국 아무도 안 보게 되고, 그러면 알림이 없는 것과 같아진다.</b></div>
+</div>
+
+<h3>12-2. 사례 2: 재실행에서 보정이 두 번 — 대사가 사고를 만든다</h3>
+<div class="card">
+  <div class="step red"><span class="n">상황</span><div class="body">배치가 <b>후반부에서 실패</b>해 담당자가 재실행했다. 그런데 앞부분에서 이미 수행했던 자동 보정 — <b>웹훅 유실 건의 승인 확정과 그에 딸린 이용권 지급</b> — 이 <b>처음부터 다시 실행</b>됐다. <b>고객 한 명에게 이용권이 두 번 지급됐다.</b></div></div>
+  <div class="step red"><span class="n">역설</span><div class="body"><b>대사가 잡아내라고 만든 이중 지급을, 대사 배치가 직접 만들어낸 셈</b>이다. 이 구도가 특히 위험한 이유는 <b>사람들이 대사 결과를 의심하지 않기 때문</b>이다 — 안전망이 사고의 원인이 되면 아무도 그쪽을 먼저 보지 않는다.</div></div>
+  <div class="step ok"><span class="n">대응</span><div class="body">
+    <b>① 보정 이력 테이블에 유니크 제약</b> — <code>(recon_date, pg_tid, diff_type)</code> 조합에 유니크 인덱스를 걸어, 같은 차이에 대한 보정 INSERT가 <b>두 번째부터는 DB 레벨에서 튕기게</b> 했다. <b>보정 자체를 멱등하게</b> 만든 것이다.<br>
+    <b>② 정규 상태 전이 API 경유</b> — 보정이 결제 도메인의 정규 전이 API를 호출하게 했다. 그러면 상태 머신이 <code>APPROVED → APPROVED</code> 같은 <b>불가능한 전이를 거부</b>하고, <b>전이가 거부되면 그 뒤에 달린 이용권 지급도 실행되지 않는다.</b>
+  </div></div>
+  <div class="rule ok" style="margin-bottom:0">전제 — <b>대사 배치는 반드시 재실행된다</b>(파일 재수령·장애 복구·담당자 수동 실행). 재실행을 예외가 아니라 <b>정상 시나리오</b>로 놓고 설계한다</div>
+</div>
+
+<h3>12-3. 사례 3: 파일이 안 왔는데 "차이 0건 완료"</h3>
+<div class="card">
+  <div class="step red"><span class="n">상황</span><div class="body">PG 쪽 장애로 대사 파일이 정상 파일이 아니라 <b>빈 파일</b>로 내려왔다. 배치는 스테이징에 <b>0건</b>을 적재했다.</div></div>
+  <div class="split" style="margin:12px 0">
+    <div class="pane r"><h4>구현 A — 그대로 JOIN을 돌렸다면</h4><ul>
+      <li>우리 쪽 전 건이 <code>OURS_ONLY</code>로 분류</li>
+      <li><b>수천 건짜리 오탐 폭탄</b></li>
+      <li>시끄럽지만 <b>최소한 누군가는 알아챈다</b></li>
+    </ul></div>
+    <div class="pane r"><h4>구현 B — "대상 없음"으로 성공 처리했다면</h4><ul>
+      <li><b>어긋난 하루가 통째로 검증 없이 지나간다</b></li>
+      <li>리포트에는 <b>"차이 0건"</b>이 찍힌다</li>
+      <li><b>후자가 훨씬 위험하다 — 아무도 이상을 눈치채지 못한다</b></li>
+    </ul></div>
+  </div>
+  <div class="step ok"><span class="n">대응</span><div class="body">비교를 시작하기 <b>전에</b> <b>컨트롤 토탈 검증</b>을 관문으로 세웠다. 컨트롤 토탈은 파일 <b>헤더나 트레일러</b>에 <b>"이 파일에는 총 12,847건, 합계 641,235,000원이 들어 있다"</b>고 적어 두는 요약 값으로, <b>파일이 잘리거나 전송이 끊겼는지를 받는 쪽에서 스스로 확인</b>하라고 넣어 주는 장치다.</div></div>
+</div>
+
+<div class="codehead good"><span class="tag">관문</span> 입력이 정상일 때만 대사 결과를 신뢰한다 — 세 검증을 통과해야 비교를 시작한다</div>
+<pre><code><span class="cm">// 대사 파이프라인의 1단계는 "비교"가 아니라 "입력을 믿을 수 있는가"다</span>
+ReconFile file = sftp.download(date);
+<span class="ln-good"><span class="kw">if</span> (file == <span class="kw">null</span>) failBatch(<span class="st">"① 파일 미도착"</span>);            <span class="note">← 도착 자체를 감시</span></span>
+
+StagingResult s = staging.loadRaw(file);   <span class="cm">// COPY로 원본 그대로 적재</span>
+<span class="ln-good"><span class="kw">if</span> (s.count()     != file.trailer().count()</span>
+<span class="ln-good"> || s.sumAmount() != file.trailer().sumAmount()) {</span>
+<span class="ln-good">    failBatch(<span class="st">"② 컨트롤 토탈 불일치: 파일 "</span> + file.trailer().count()</span>
+<span class="ln-good">            + <span class="st">"건 / 적재 "</span> + s.count() + <span class="st">"건"</span>);            <span class="note">← 잘린 파일 차단</span></span>
+}
+<span class="kw">long</span> prev = reconStat.countOf(date.minusDays(1));
+<span class="ln-good"><span class="kw">if</span> (s.count() &lt; prev * <span class="st">0.8</span>) failBatch(<span class="st">"③ 전일 대비 건수 급감"</span>);  <span class="note">← 이상 감지</span></span>
+
+<span class="cm">// 세 관문을 모두 통과해야 비로소 FULL OUTER JOIN 대사를 돌린다.</span>
+<span class="cm">// failBatch()는 조용히 넘어가지 않고 "배치 실패 + 알림"이다.</span>
+runReconciliation(date);</code></pre>
+
+<div class="memo red">
+  <h4>대사에서의 GIGO(Garbage In, Garbage Out)</h4>
+  <div class="rule red">쓰레기를 넣으면 쓰레기가 나오는데, <b>대사에서는 그 쓰레기가 "이상 없음"이라는 얼굴로 나온다</b></div>
+  <p style="margin-bottom:0">그래서 <b>"입력이 정상일 때만 대사 결과를 신뢰한다"는 전제 검증이 파이프라인의 첫 단계</b>여야 한다. 검증 항목 셋 — <b>헤더·트레일러 대조 / 전일 대비 건수 급감(예: 80% 미만) / 하나라도 걸리면 배치 실패 + 알림.</b></p>
+</div>
+
+<!-- ===================== 13 ===================== -->
+<h2 id="s13">13. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>13-1. 3초 인출 카드 — 답을 먼저 떠올리고 오른쪽을 본다</h3>
+<div class="grid g2">
+  <div class="tile red"><div class="k" style="font-family:inherit">대사가 필요한 근본 이유 한 줄?</div><div class="d">우리 DB와 PG DB는 <b>하나의 트랜잭션으로 묶을 수 없는 두 장부</b>이기 때문. <b>버그가 아니라 구조적 필연</b>이다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">대사 vs 정산?</div><div class="d"><b>정산 = 돈이 실제로 들어오는 절차</b> / <b>대사 = 그 돈이 맞는지 건 단위로 검증</b>. 순서 관계다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">어긋남 4경로?</div><div class="d"><b>웹 · 늦 · 취 · 경</b> — 웹훅 유실 / 뒤늦은 승인 / 취소 누락 / 마감 경계.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">파이프라인 5단계?</div><div class="d"><b>수 · 정 · 매 · 분 · 처</b> — 수령 · 정규화 · 매칭 · 분류 · 처리(+리포트). 관문은 <b>파일 검증 · 원본 보존 · 합집합 · 3유형 · 멱등</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">차이 3유형과 피해자?</div><div class="d"><code>OURS_ONLY</code> = <b>회사 손실</b> / <code>PG_ONLY</code> = <b>고객 피해·CS</b> / <code>AMOUNT_MISMATCH</code> = <b>조사 비용</b>. 유형이 다르다 = <b>피해자가 다르다</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">매칭 키와 그 이유?</div><div class="d"><b>PG 거래ID(tid) 1순위</b>, 주문번호는 보조. <b>한 주문에 결제 시도가 여러 번</b> 붙을 수 있어 주문번호로는 짝을 특정할 수 없다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">왜 FULL OUTER JOIN인가?</div><div class="d">대사는 <b>어느 한쪽 기준이 아니라 합집합</b>을 봐야 한다. LEFT JOIN만 하면 <b>가장 위험한 <code>PG_ONLY</code>가 통째로 안 보인다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">자동 보정 2조건?</div><div class="d">① <b>PG 조회 API로 사실 재확인 가능</b> ② <b>보정 방향이 하나로 정해짐</b>. 둘 다 아니면 <b>수동 큐</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">제2의 진실 경로란?</div><div class="d">배치가 <code>UPDATE payment SET status=...</code>로 <b>상태 머신을 우회</b>하는 것. <b>진실이 두 갈래가 되면 어느 쪽도 못 믿는다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">보정 멱등 키는?</div><div class="d">보정 이력 테이블의 <code>(recon_date, pg_tid, diff_type)</code> <b>유니크 제약</b>. <b>재실행은 예외가 아니라 정상 시나리오</b>다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">부분 취소 두 축?</div><div class="d"><b>순액(net)</b> = 빠른 총량 검증 / <b>이벤트 단위</b> = 원인 분해. 순액만 보면 <b>상쇄된 오류를 놓친다</b>.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">메타 모니터링 4층?</div><div class="d"><b>입 · 실 · 출 · 잔</b> — 입력 검증 / 실행 SLA / 출력(0건 리포트) / 잔여 에이징.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">컨트롤 토탈 검증 3항목?</div><div class="d">① 헤더·트레일러 <b>건수·합계 대조</b> ② <b>전일 대비 급감</b>(예: 80% 미만) ③ 하나라도 걸리면 <b>배치 실패 + 알림</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">알림 설계 한 줄 원칙?</div><div class="d"><b>무소식이 희소식이 되는 시스템은 만들면 안 된다</b> — 차이 0건인 날에도 리포트를 남긴다.</div></div>
+</div>
+
+<h3>13-2. 꼬리질문 — 먼저 답해보고 펼친다</h3>
+
+<details class="q"><summary>정산과 대사는 뭐가 다른가요? <span class="badge core">필수</span><span class="hint">힌트: 한 줄로 가른 다음, "한 겹 더"를 붙일 수 있어야 한다</span></summary><div class="a">
+  <p><b>정산은 돈이 실제로 들어오는 절차, 대사는 그 돈이 맞는지 건 단위로 검증하는 절차</b>다. 여기까지가 기본이고, 실무에선 한 겹 더 들어가 <b>3자 대조</b>까지 말하면 좋다(<a href="#s3">3절 도식</a>).</p>
+  <div class="split">
+    <div class="pane b"><h4>거래 대사</h4><ul>
+      <li><b>우리 거래 기록 ↔ PG 거래 내역</b></li>
+      <li>"그날 있었던 <b>모든 건이 양쪽에 있는가</b>"</li>
+      <li>이 문서가 주로 다루는 층</li>
+    </ul></div>
+    <div class="pane g"><h4>정산 대사</h4><ul>
+      <li><b>거래 대사 결과 ↔ 실제 입금액·수수료 명세</b></li>
+      <li>"그 건들의 합에서 <b>수수료를 뺀 값이 입금액인가</b>"</li>
+    </ul></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">두 층을 따로 두는 이유 — <b>거래 대사가 완벽해도 수수료율이 잘못 적용되면 입금액이 어긋난다.</b> "건은 다 맞는데 돈이 덜 들어왔다"는 실제로 일어난다</div>
+</div></details>
+
+<details class="q"><summary>차이가 발견되면 자동으로 고치나요? <span class="badge core">필수</span><span class="hint">힌트: "조건부"라고 답한 뒤, 자동 보정이 틀렸을 때 무슨 일이 생기는지까지 말해야 완성된다</span></summary><div class="a">
+  <p><b>조건부다.</b> <b>PG 거래 조회 API로 사실을 재확인할 수 있고 보정 방향이 하나로 정해지는 유형</b> — 대표적으로 <b>웹훅 유실로 인한 상태 지연</b> — 만 자동 보정하고, 그마저도 <b>정규 상태 전이 경로</b>를 태운다. <b>금액 불일치는 무조건 수동 큐</b>다.</p>
+  <p>여기서 <b>이유를 붙여 말하는 게 중요</b>하다.</p>
+  <div class="memo red" style="margin-top:12px">
+    <h4>잘못된 자동 보정이 일반 버그보다 무서운 이유</h4>
+    <div class="rule red">자동 보정이 만든 오염은 <b>다음 대사에서 "정상"으로 보인다</b></div>
+    <p style="margin-bottom:0">우리가 PG에 맞춰 고쳐 놨으니 <b>다음 날엔 두 장부가 사이좋게 같아진다.</b> 즉 <b>스스로 만든 오류를 스스로 못 잡는 구조</b>다. 그래서 <b>자동 보정의 범위는 좁게, 대신 확실하게</b>가 원칙이 된다.</p>
+  </div>
+  <p style="margin-bottom:0">덧붙일 한 문장 — <b>보정 자체도 멱등해야 한다.</b> <code>(recon_date, pg_tid, diff_type)</code> 유니크 제약과 상태 머신, <b>두 겹</b>으로 막는다(<a href="#s12">사례 2</a>).</p>
+</div></details>
+
+<details class="q"><summary>대사는 D+1 배치면 충분한가요? 실시간 대사는요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "충분하다/부족하다"가 아니라 "역할이 다른 두 계층"으로 답한다</span></summary><div class="a">
+  <p><b>역할이 다르다</b>는 것을 <b>계층</b>으로 나눠 말하면 된다.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th></th><th>D+1 파일 대사</th><th>능동 조회 (실시간에 가까운 검증)</th></tr></thead>
+    <tbody>
+      <tr><th>기준</th><td>PG가 마감한 <b>확정본</b></td><td>PG 거래 조회 API의 <b>현재 상태</b></td></tr>
+      <tr><th>묻는 질문</th><td class="good">"그날 모든 거래가 <b>양쪽에 빠짐없이</b> 있는가" = <b>완결성 검증</b></td><td class="good">"이 한 건이 <b>지금 어떤 상태</b>인가" = <b>개별 확인</b></td></tr>
+      <tr><th>대상</th><td>그날 전체 집합</td><td><code>PENDING</code>이 30분을 넘긴 건 등 <b>의심 건만</b></td></tr>
+      <tr><th>못 하는 것</th><td class="bad">지연 — 최대 하루 늦게 안다</td><td class="bad"><b>집합의 완결성</b> — 우리가 존재조차 모르는 건은 조회할 수도 없다</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="rule">둘의 관계 — <b>능동 조회가 촘촘할수록 D+1 대사에서 잡히는 차이가 줄고, 대사는 "능동 조회조차 놓친 것"을 잡는 최후 안전망으로 물러난다</b></div>
+  <p style="margin-bottom:0">마지막에 한 문장을 더 붙이면 좋다 — <b>대사에서 차이가 많이 잡힌다는 건 그 자체로 앞단 감지 계층이 부실하다는 신호</b>다. 즉 <b>대사 차이 건수는 결과 지표가 아니라 앞단의 품질 지표</b>로도 읽어야 한다.</p>
+</div></details>
+
+<details class="q"><summary>부분 취소가 섞이면 매칭 키를 어떻게 잡나요?<span class="hint">힌트: 축은 둘. 그리고 이 답에는 "결제 요청 설계에 대한 요구사항"이 딸려 나온다</span></summary><div class="a">
+  <p><b>원거래 tid로 승인·취소 이벤트를 그룹핑해 순액을 비교하고, 동시에 이벤트 단위로도 1:1 대조</b>한다. <b>순액 비교는 빠른 총량 검증, 이벤트 대사는 원인 분해용</b>이다(<a href="#s10">10절 도식</a>).</p>
+  <p>여기에 한 가지를 덧붙이면 답이 완성된다 — <b>이벤트 단위 대사가 가능하려면 취소에도 가맹점 취소 번호(멱등 키)를 부여해 둬야 한다.</b> 그래야 <b>"우리 취소 1건 = PG 취소 1건"의 대응 관계</b>가 명확해진다. 취소마다 고유 번호가 없으면 <b>같은 금액의 취소 두 줄이 중복 기록인지 서로 다른 두 번의 취소인지 구분할 방법이 없다.</b></p>
+  <div class="rule ok" style="margin-bottom:0">이 대목의 값 — <b>대사 설계가 거꾸로 결제 요청 설계에 요구사항을 만들어 낸다</b>. 사후 검증을 제대로 하려면 <b>사전 기록 방식부터 바꿔야 한다</b>는 것을 아는 신호다</div>
+</div></details>
+
+<details class="q"><summary>대사 배치가 정상 동작하는지는 어떻게 아나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "대사의 대사". 층으로 나눠서 네 개</span></summary><div class="a">
+  <p><b>메타 모니터링</b>을 말할 수 있어야 한다. 네 층으로 정리한다(<a href="#s11">11절 표</a>).</p>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k">① 입력 검증</div><div class="d">파일이 <b>도착</b>했는가, <b>컨트롤 토탈</b>이 맞는가, <b>전일 대비 건수</b>가 정상 범위인가.</div></div>
+    <div class="tile ok"><div class="k">② 실행 검증</div><div class="d">대사 <b>완료 시각 SLA</b> — 예를 들어 오전 7시까지 완료되지 않으면 알림. <b>배치가 조용히 안 돈 것</b>을 잡는 층.</div></div>
+    <div class="tile ok"><div class="k">③ 출력 검증</div><div class="d"><b>"차이 0건"도 리포트</b>로 남겨 <b>무소식과 정상을 구분</b>한다.</div></div>
+    <div class="tile ok"><div class="k">④ 잔여 관리</div><div class="d">수동 큐 <b>에이징 알림</b> — 며칠째 아무도 손대지 않은 차이를 위로 끌어올린다.</div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">마무리 한 문장 — <b>대사는 최후 안전망인데, 그 안전망이 끊겼을 때 즉시 알 수 있는 장치가 없다면 그건 안전망이 아니다</b></div>
+</div></details>
+
+<details class="q"><summary>하루 수백만 건이면 대사 배치 성능은 어떻게 잡나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 성능 이야기의 90%는 "어디서 계산하느냐"에서 결정된다</span></summary><div class="a">
+  <p>핵심은 튜닝 기법이 아니라 <b>계산을 어디서 하느냐</b>다. Before 코드의 진짜 문제도 정확성뿐 아니라 <b>양쪽 전 건을 JVM 힙에 올린 것</b>이었다.</p>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">① 집합 연산은 DB 안에서</div><div class="d">애플리케이션이 <b>행을 하나씩 당겨와 비교</b>하는 대신 <b>FULL OUTER JOIN 한 문장</b>으로 끝낸다. 데이터를 <b>네트워크로 옮기지 않는 것</b>이 가장 큰 절감이다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">② 적재는 벌크로</div><div class="d">한 줄씩 <code>INSERT</code>가 아니라 <code>COPY</code> 같은 <b>대량 적재 경로</b>를 쓴다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">③ 조인 키에 인덱스</div><div class="d">스테이징의 <b>tid</b>와 우리 쪽 <b>pg_tid</b>에 인덱스를 두고, 우리 원천은 <b>대사 일자로 좁힌 스냅샷</b>을 쓴다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">④ 차이만 저장</div><div class="d"><code>recon_diff</code>에 <b>정상 건을 넣지 않는다.</b> 그러면 이 테이블은 <b>모수가 아니라 차이 수만큼만</b> 커진다.</div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">그리고 성능보다 먼저 지켜야 할 것 — <b>재실행 가능성</b>. 빠른 대신 중간에 죽으면 처음부터 못 돌리는 설계는, <b>느리지만 언제든 다시 돌릴 수 있는 설계보다 나쁘다</b></div>
+</div></details>
+
+<details class="q"><summary>PG사가 여러 곳이면 대사는 어떻게 설계하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 무엇을 PG별로 두고, 무엇을 공통으로 둘 것인가</span></summary><div class="a">
+  <p>구분선은 하나다 — <b>"PG마다 다른 것"은 바깥에, "대사 로직"은 하나로.</b></p>
+  <div class="split">
+    <div class="pane r"><h4>PG별로 따로 둬야 하는 것</h4><ul>
+      <li><b>파일 포맷·인코딩·파서</b>와 원본 스테이징</li>
+      <li><b>마감(cut-off) 기준과 파일 도착 시각</b> — 그래서 배치 스케줄도 PG별</li>
+      <li><b>코드 값 매핑</b>(승인/취소/부분취소 코드)</li>
+      <li><b>컨트롤 토탈의 위치</b>(헤더냐 트레일러냐)와 급감 임계치</li>
+    </ul></div>
+    <div class="pane g"><h4>공통으로 둬야 하는 것</h4><ul>
+      <li><b>정규화된 공통 모델</b> — 여기로 수렴시킨 뒤부터는 PG를 구분하지 않는다</li>
+      <li><b>매칭·분류·처리 로직</b>(FULL OUTER JOIN, 3유형, 수동 큐)</li>
+      <li><b>리포트 스키마</b> — 단, 집계는 <b>PG별 + 전체</b> 두 단위로 낸다</li>
+    </ul></div>
+  </div>
+  <div class="rule">키 설계 한 가지 — tid는 <b>PG 안에서만 유일</b>하므로 매칭 키는 <code>(pg_code, tid)</code> <b>복합</b>으로 잡는다</div>
+  <p style="margin-bottom:0">면접에서 덧붙일 한 문장 — <b>PG가 늘어날 때 늘어나야 하는 것은 "파서와 설정"이지 "대사 로직"이 아니다.</b> 이 경계가 흐려지면 <b>PG 추가할 때마다 대사 버그가 새로 생긴다.</b></p>
+</div></details>
+
+<details class="q"><summary>우리 쪽 대사 원천 데이터는 무엇을 기준으로 뽑나요?<span class="hint">힌트: 운영 테이블을 그냥 조회하면 무엇이 흔들리는가</span></summary><div class="a">
+  <p>대사는 <b>"어떤 순간의 우리 장부"와 "PG의 확정본"을 비교</b>하는 일이다. 그런데 운영 <code>payment</code> 테이블은 <b>대사가 도는 동안에도 계속 바뀐다</b> — 지연 도착한 웹훅이 상태를 바꾸고, 오늘 취소가 어제 건에 붙는다. 기준이 흔들리면 <b>같은 날짜를 두 번 돌렸을 때 결과가 달라진다.</b></p>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k" style="font-family:inherit">① 일자별 스냅샷으로 고정</div><div class="d">대사 대상일의 거래를 <b><code>our_daily_txn</code> 같은 스냅샷 테이블로 한 번 떠서</b> 그것과 비교한다. <b>재실행해도 같은 결과</b>가 나오는 것이 목적이다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">② 기준 시각은 PG 축에 맞춘다</div><div class="d">스냅샷을 뜰 때의 날짜 경계도 <b>PG 마감 기준</b>으로 잡는다(<a href="#s6">6절</a>). 우리 쪽만 KST 자정으로 자르면 <b>경계 오탐이 다시 살아난다.</b></div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">③ 운영 DB 부하 분리</div><div class="d">대량 스캔은 <b>읽기 전용 복제본</b>에서 도는 편이 안전하다. 대사는 <b>새벽에 도는 대량 읽기 작업</b>이라 운영 트래픽과 자원을 다툴 이유가 없다.</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">스냅샷은 <b>순액 계산의 기준점</b>이기도 하다 — 승인·취소 이벤트를 원거래 tid로 묶어 순액을 미리 계산해 두면, 매칭 쿼리는 <b>단순 비교</b>만 하면 된다.</p>
+</div></details>
+
+<details class="q"><summary>대사 배치를 재실행하면 recon_diff가 중복으로 쌓이지 않나요?<span class="hint">힌트: 차이 산출과 보정 이력은 성질이 다르다 — 하나는 다시 만들어도 되고 하나는 안 된다</span></summary><div class="a">
+  <p><b>두 테이블을 성질에 따라 다르게 다뤄야 한다.</b> 이 구분을 못 하면 <a href="#s12">사례 2</a>가 재현된다.</p>
+  <div class="split">
+    <div class="pane b"><h4><code>recon_diff</code> — 다시 만들어도 되는 것</h4><ul>
+      <li>같은 입력에서 같은 결과가 나오는 <b>결정적 산출물</b></li>
+      <li>재실행 시 <b>해당 <code>recon_date</code>의 행을 지우고 다시 생성</b>하거나, <code>(recon_date, pg_tid, diff_type)</code> 기준 <b>upsert</b></li>
+      <li>단, <b>담당자·처리 상태·메모 같은 운영 컬럼은 보존</b>해야 하므로 통째 삭제보다 <b>upsert가 안전</b>하다</li>
+    </ul></div>
+    <div class="pane r"><h4>보정 이력 — 다시 만들면 안 되는 것</h4><ul>
+      <li><b>실제로 부수효과가 일어난 사실</b>의 기록(승인 확정·이용권 지급)</li>
+      <li>지우고 다시 만들면 <b>"이미 보정했다"는 사실이 사라져 두 번 실행</b>된다</li>
+      <li><b>append-only + 유니크 제약</b>으로 유지한다</li>
+    </ul></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">판별 기준 — <b>"바깥 세상에 영향을 준 기록인가?"</b> 그렇다면 재생성 대상이 아니다</div>
+</div></details>
+
+<details class="q"><summary>차이가 계속 0건이면 대사 주기를 줄여도 되나요?<span class="hint">힌트: 0건은 좋은 소식일 수도, 가장 나쁜 소식일 수도 있다</span></summary><div class="a">
+  <p>먼저 <b>0건의 의미부터 의심</b>해야 한다. <b>차이 0건은 두 가지를 뜻할 수 있다</b> — 정말 깨끗한 것, 그리고 <b>입력이 비어 있거나 비교가 사실상 일어나지 않은 것</b>(<a href="#s12">사례 3</a>). 그래서 <b>0건을 신뢰하려면 먼저 입력 검증(컨트롤 토탈)이 통과했음을 함께 봐야</b> 한다.</p>
+  <p>그 위에서, 진짜로 차이가 줄었다면 그것은 <b>앞단 감지 계층(능동 조회·웹훅 재처리)이 좋아졌다는 신호</b>로 읽는 게 맞다. 하지만 <b>주기를 늦추는 결정은 다른 문제</b>다.</p>
+  <div class="rule">대사는 <b>비용이 아니라 보험</b>이다 — 주기를 늦추는 순간 늘어나는 것은 <b>차이 건수가 아니라 "어긋난 채 지나가는 시간"</b>이다</div>
+  <p style="margin-bottom:0">면접용 마무리 — <b>대사가 없는 결제 시스템은 어긋난 채로 몇 달을 모르고 지나가는 시스템</b>이다. 차이가 0건이라는 사실은 <b>대사를 계속 돌렸기 때문에 알 수 있는 것</b>이지, 안 돌려도 된다는 근거가 아니다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  우리 DB와 PG의 DB는 <b>하나의 트랜잭션으로 묶을 수 없는 서로 다른 두 장부</b>이고 <b>웹훅 유실·뒤늦은 승인·취소 누락·마감 경계</b> 때문에 반드시 어긋나므로, <b>수령(컨트롤 토탈 검증) → 스테이징 정규화 → 거래ID 매칭 → 3유형 분류(우리에만/PG에만/금액 불일치) → 멱등한 자동 보정 + 수동 큐 → 리포트</b>로 이어지는 <b>D+1 대사 파이프라인</b>을 최후 안전망으로 세워야 하며, <b>대사 배치 자체의 실패까지 감시</b>해야 비로소 <b>"어긋남을 하루 안에 아는" 시스템</b>이 된다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/10-payment-consistency/08-reconciliation-batch-design.md</code> · 함께 볼 문서: 결제 상태 관리(01) · PG 연동 기본(02) · 웹훅 수신 처리(03) · PG 타임아웃/UNKNOWN(04) · 취소·환불 상태 머신(06) · 이중 결제 다층 방어(07)</p>
+</main>
+</body>
+</html>

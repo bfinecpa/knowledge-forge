@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>망취소(net cancellation) — "우리는 실패로 아는데 PG엔 승인된" 거래를 지우는 안전장치</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">10 결제 / 정합성 &nbsp;|&nbsp; 알면 좋은 +α &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>망취소 (net cancellation)<br><span class="sub">"우리는 실패로 아는데 PG엔 승인된" 거래를 지우는 안전장치</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"망취소(net cancellation)란 무엇이고 언제 필요한가요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 망취소는 <b>통신 장애(타임아웃, 응답 유실)로 승인 결과를 받지 못한 거래를, "승인됐을 가능성"을 전제로 원천 취소하는 절차</b>다. 승인번호를 알고 확정 거래를 되돌리는 일반 취소와 달리, 망취소는 <b>승인번호를 모르는 상태에서 가맹점 주문번호 등 원거래 식별 정보로</b> 취소를 요청한다 — <b>거래가 없었으면 취소할 게 없어 무해하고, 있었으면 취소된다.</b> 어느 쪽이든 "승인 없음"으로 수렴시키는 <b>소거 연산</b>인 것이다. 발동 조건은 <b>① 타임아웃 후 거래 조회로도 확정 불가</b>일 때, 또는 <b>② 승인 응답은 받았지만 내부 처리(DB 반영)에 실패</b>했을 때다. 단, <b>망취소 요청도 같은 망을 타므로 실패할 수 있고</b> — 그때의 최후 방어선은 <b>D+1 대사</b>다. 그리고 자동 망취소는 <b>"사실은 성공했을 결제"를 날려 고객 재결제를 강요하는 비용</b>이 있으므로, <b>보류 후 조회 확정과의 트레이드오프를 도메인 특성(재고, 금액, 조회 API 신뢰도)에 따라</b> 골라야 한다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>망취소는 "취소"가 아니라 "소거"다</b> — 결과를 받지 못한 거래를 <b>원거래 식별 정보(가맹점 주문번호 등)로 "있다면 지워달라"</b>고 요청하는 연산이다. <b>있었으면 취소되고 없었으면 아무 일도 안 일어나므로</b>, 어느 쪽이든 세상은 <b>"승인 없음"이라는 하나의 상태로 수렴</b>한다. 일반 취소가 <b>확정된 거래를 번호로 지정해</b> 되돌리는 것과 근본적으로 다른 연산이다.</div></li>
+    <li><span class="n">2</span><div><b>발동 조건은 두 개고, 두 번째를 빠뜨리는 사람이 많다</b> — <b>조건 A</b>는 타임아웃 뒤 <b>거래 조회로도 확정할 수 없을 때</b>, <b>조건 B</b>는 <b>승인 응답은 받았는데 DB 커밋에 실패했을 때</b>다. <code>@Transactional</code>은 <b>우리 DB만 되돌리고 PG에 만들어진 승인은 되돌리지 못한다</b> — 남의 서버에 생긴 사실은 <b>별도 요청으로만</b> 지울 수 있다.</div></li>
+    <li><span class="n">3</span><div><b>망취소도 실패하고, 성공해도 공짜가 아니다</b> — 같은 망을 타므로 <b>가장 필요한 순간에 가장 실패하기 쉽다.</b> 그래서 <b>멱등 백오프 재시도(1층·2층)</b>를 걸고 <b>D+1 대사(3층)</b>를 최후 방어선으로 세운다. 또 확정 불가 건의 일부는 <b>실제로 성공한 결제</b>이므로, 자동 망취소와 보류 후 조회 확정 중 무엇을 쓸지는 <b>"미확정 시간과 성공했을 결제 중 무엇을 잃어도 되는가"</b>라는 도메인 판단이다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">먼저 등장인물 — 번호 세 개와 용어 셋</a></li>
+    <li><a href="#s2">"우리만 모르는 승인"은 왜 생기는가</a></li>
+    <li><a href="#s3">망취소의 정의 — 소거 연산이라는 성질</a></li>
+    <li><a href="#s4">일반 취소와의 차이 — 무엇을 아는 상태에서 취소하는가</a></li>
+    <li><a href="#s5">전체 파이프라인 — 망취소는 어디에 있는가</a></li>
+    <li><a href="#s6">발동 조건 두 가지 (A: 못 받았다 / B: 받고도 못 적었다)</a></li>
+    <li><a href="#s7">Before/After — 타임아웃 catch의 마지막 줄</a></li>
+    <li><a href="#s8">망취소도 실패한다 — 3층 방어선</a></li>
+    <li><a href="#s9">자동 망취소 vs 보류 후 확인 — 공짜가 아니다</a></li>
+    <li><a href="#s10">PG마다 지원 방식이 다르다 — 연동 전 확인 항목</a></li>
+    <li><a href="#s11">실무 사례 세 건</a></li>
+    <li><a href="#s12">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "망취소(net cancellation)란 무엇이고 언제 필요한가요?"</p>
+  <p><b>출제 의도</b>: 타임아웃으로 <b>"우리는 실패로 기록했는데 PG에는 승인된"</b> 거래가 생길 수 있다는 것, 그리고 이를 정리하는 절차가 <b>업계에 이름을 갖고 존재한다</b>는 것 자체를 아는지 본다. 결제 연동을 실제로 해본 사람만 아는 디테일이라, <b>결제 경험의 진위를 판별하는 힘이 큰 질문</b>이다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"타임아웃 나면 그냥 실패로 적으면 되지"</b> → 2절에서 <b>읽기 타임아웃은 우리 서버 안의 타이머 사건일 뿐</b>임을 보이고, 7절 Before 코드에서 <b>"조회 실패 = 미승인 확인"으로 착각하는 한 줄</b>을 찍어낸다.<br>
+    ② <b>"망취소는 타임아웃 전용 장치"라는 절반의 이해</b> → 6절에서 <b>조건 B(응답 수신 후 커밋 실패)</b>를 세우고, 11절 사례 3에서 <b>조건 A만 구현했다가 조용히 터진</b> 시스템을 본다.<br>
+    ③ <b>"망취소 쐈으니 끝"이라는 낙관</b> → 8절에서 <b>망취소는 가장 필요한 순간에 가장 실패하기 쉽다</b>는 것과 3층 방어선을, 11절 사례 2에서 <b>"거래 없음" 응답을 믿었다가 뒤늦게 승인이 생긴</b> 순서 역전을 본다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 먼저 등장인물 — 번호 세 개와 용어 셋</h2>
+
+<p>망취소 이야기는 <b>"어떤 번호를 아느냐"가 곧 "어떤 연산을 쓸 수 있느냐"</b>로 이어진다. 그래서 <b>식별자 세 개</b>를 먼저 구분해두면 4절 이후가 훨씬 쉬워진다. 함께 나오는 용어 셋도 여기서 정리하고 간다.</p>
+
+<div class="grid g3">
+  <div class="tile ok"><div class="k" style="font-family:inherit">가맹점 주문번호</div><div class="s">우리가 만든다 · 요청 전부터 있다</div><div class="d">우리 시스템이 결제 건에 붙인 키(<code>merchantOrderNo</code>). <b>PG를 부르기 전에 이미 우리 손에 있으므로 무슨 일이 나도 유실되지 않는다.</b> 망취소가 이것을 쓰는 이유가 여기 있다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">PG 거래번호</div><div class="s">PG가 만든다 · <b>승인 응답에 실려 온다</b></div><div class="d">PG가 자기 시스템에서 그 거래를 가리키는 키. <b>일반 취소 API가 요구하는 값</b>인데, <b>응답을 못 받으면 우리 손에 없다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">승인번호</div><div class="s">카드사가 만든다 · 승인 응답에 실려 온다</div><div class="d">카드사가 발급한 승인 식별 번호. 역시 <b>응답을 받아야만 알 수 있다.</b> 조건 B에서 이 번호가 살아 있느냐 아니냐가 <b>일반 취소냐 망취소냐</b>를 가른다.</div></div>
+</div>
+
+<div class="grid g3" style="margin-top:10px">
+  <div class="tile"><div class="k" style="font-family:inherit">VAN</div><div class="s">부가가치통신망사업자</div><div class="d">카드 단말과 카드사를 잇는 <b>승인 중계망을 운영하는 회사.</b> "망취소"라는 용어가 태어난 곳이 이 승인망이다. 즉 <b>망(網) = 네트워크</b>이고, <b>망 구간의 문제로 결과가 불명해진 거래</b>를 다룬다는 뜻이 이름에 들어 있다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">거래 조회 API</div><div class="s">"알아내기"</div><div class="d">"이 주문번호의 결제가 지금 어떤 상태냐"를 <b>우리가 PG에 직접 물어보는</b> API. 5절에서 보듯 <b>망취소보다 항상 먼저</b> 시도해야 하는 수단이다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">대사(reconciliation)</div><div class="s">D+1 전건 대조</div><div class="d">다음 날 PG가 내려주는 <b>거래 내역 파일과 우리 결제 테이블을 전건 대조</b>하는 작업. 회계에서 장부 둘을 맞춰보는 것을 대사라 부르는 데서 왔다. <b>망취소의 최후 방어선</b>이다.</div></div>
+</div>
+
+<div class="memo">
+  <h4>이 세 번호가 만드는 한 문장 — 4절의 결론을 미리 본다</h4>
+  <div class="rule">일반 취소는 <b>"받아야 아는 번호"</b>를 요구하고, 망취소는 <b>"처음부터 가진 번호"</b>만 쓴다</div>
+  <p style="margin-bottom:0">그래서 <b>응답을 못 받은 상황에서 쓸 수 있는 유일한 소거 수단</b>이 망취소다. 이 한 줄만 잡고 있으면 "왜 일반 취소로 때우면 안 되냐"는 꼬리질문에 바로 답할 수 있다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. "우리만 모르는 승인"은 왜 생기는가</h2>
+
+<p>망취소를 이해하려면 먼저 <b>그것이 치우려는 대상</b>이 무엇인지 알아야 한다. 그 대상은 <b>PG에는 승인이 살아 있는데 우리 DB에는 그 기록이 없는 거래</b>다. 이런 거래가 생기는 경로는 딱 두 가지이고, 이 둘이 나중에 <b>망취소의 발동 조건 A·B</b>가 된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 440" role="img" aria-label="우리만 모르는 승인이 생기는 두 경로 도식. 왼쪽 패널은 승인 응답을 받지 못한 타임아웃 경로로, 우리 서버의 타이머만 만료되고 PG는 승인 처리를 계속해 고객에게 승인 문자가 간다. 오른쪽 패널은 승인 응답을 받았지만 DB 커밋에 실패한 경로로, 트랜잭션 롤백 경계 안쪽의 DB 쓰기만 되돌아가고 경계 밖 PG의 승인은 그대로 남는다. 두 경로 모두 고객 돈은 나갔는데 우리는 모르는 결과로 끝난다">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a1s" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+    </defs>
+
+    <text x="20" y="26" font-size="15" font-weight="700" fill="#1f2937">"우리만 모르는 승인"이 만들어지는 두 경로 — 원인은 다르지만 <tspan fill="#dc2626">남는 결과는 똑같다</tspan></text>
+
+    <rect x="16" y="42" width="536" height="344" rx="12" fill="#fbfcfd" stroke="#cbd5e1"/>
+    <rect x="568" y="42" width="536" height="344" rx="12" fill="#fbfcfd" stroke="#cbd5e1"/>
+
+    <!-- ========== PANEL A ========== -->
+    <text x="36" y="68" font-size="13" font-weight="700" fill="#b91c1c">경로 1 — 승인 응답을 못 받았다 (타임아웃)</text>
+    <rect x="56" y="80" width="130" height="26" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="121" y="98" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">우리 서버</text>
+    <rect x="386" y="80" width="130" height="26" rx="8" fill="#f1f3f7" stroke="#94a3b8"/>
+    <text x="451" y="98" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">PG · 카드사</text>
+    <g stroke="#cbd5e1" stroke-width="1.3" stroke-dasharray="5 5">
+      <line x1="121" y1="106" x2="121" y2="344"/><line x1="451" y1="106" x2="451" y2="344"/>
+    </g>
+
+    <text x="286" y="128" font-size="10.5" fill="#1d4ed8" text-anchor="middle">승인 요청</text>
+    <line x1="121" y1="134" x2="447" y2="134" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)"/>
+
+    <rect x="112" y="142" width="18" height="60" rx="4" fill="#fde68a" stroke="#d97706"/>
+    <text x="102" y="166" font-size="9.5" fill="#92400e" text-anchor="end" font-weight="700">읽기 타임아웃</text>
+    <text x="102" y="180" font-size="9.5" fill="#b45309" text-anchor="end">30초 대기</text>
+
+    <rect x="44" y="208" width="164" height="44" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="126" y="226" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">타이머 만료 · 소켓 close</text>
+    <text x="126" y="242" font-size="10" fill="#7f1d1d" text-anchor="middle">우리에겐 예외 하나만 남는다</text>
+
+    <rect x="224" y="206" width="152" height="48" rx="8" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="300" y="224" font-size="10.5" fill="#9a3412" text-anchor="middle" font-weight="700">PG는 우리가 포기한 것을</text>
+    <text x="300" y="240" font-size="10.5" fill="#9a3412" text-anchor="middle" font-weight="700">알지 못한다</text>
+
+    <rect x="376" y="262" width="150" height="30" rx="8" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="451" y="281" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">승인 처리 계속 → 완료</text>
+    <line x1="451" y1="292" x2="451" y2="300" stroke="#16a34a" stroke-width="1.6"/>
+    <rect x="366" y="302" width="170" height="28" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="451" y="320" font-size="10.5" fill="#166534" text-anchor="middle">고객에게 승인 문자 발송</text>
+
+    <rect x="32" y="346" width="504" height="30" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="48" y="366" font-size="11.5" fill="#b91c1c">우리에게 남은 것: <tspan font-weight="700">예외 한 줄</tspan> &nbsp;·&nbsp; PG에 남은 것: <tspan font-weight="700">45,000원 승인</tspan></text>
+
+    <!-- ========== PANEL B ========== -->
+    <text x="588" y="68" font-size="13" font-weight="700" fill="#b91c1c">경로 2 — 응답은 받았는데 DB에 못 남겼다</text>
+    <rect x="608" y="80" width="130" height="26" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="673" y="98" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">우리 서버</text>
+    <rect x="938" y="80" width="130" height="26" rx="8" fill="#f1f3f7" stroke="#94a3b8"/>
+    <text x="1003" y="98" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">PG · 카드사</text>
+    <g stroke="#cbd5e1" stroke-width="1.3" stroke-dasharray="5 5">
+      <line x1="673" y1="106" x2="673" y2="344"/><line x1="1003" y1="106" x2="1003" y2="344"/>
+    </g>
+
+    <text x="838" y="126" font-size="10.5" fill="#1d4ed8" text-anchor="middle">① 승인 요청</text>
+    <line x1="673" y1="132" x2="999" y2="132" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)"/>
+    <text x="838" y="156" font-size="10.5" fill="#166534" text-anchor="middle">② 승인 응답 (승인번호 포함)</text>
+    <line x1="1003" y1="162" x2="677" y2="162" stroke="#16a34a" stroke-width="1.8" marker-end="url(#a1)"/>
+
+    <rect x="592" y="178" width="168" height="106" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="600" y="194" font-size="9.5" fill="#1d4ed8" font-weight="700" class="mono">@Transactional 롤백 경계</text>
+    <rect x="604" y="202" width="144" height="26" rx="7" fill="#fff" stroke="#94a3b8"/>
+    <text x="676" y="219" font-size="10.5" fill="#334155" text-anchor="middle">③ DB 쓰기 시도</text>
+    <rect x="604" y="236" width="144" height="26" rx="7" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="676" y="253" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">④ 커밋 실패 → 롤백</text>
+    <text x="676" y="277" font-size="9.5" fill="#1d4ed8" text-anchor="middle">되돌릴 수 있는 범위 = 이 안쪽뿐</text>
+
+    <line x1="762" y1="230" x2="796" y2="230" stroke="#dc2626" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#a1r)"/>
+    <text x="779" y="222" font-size="9" fill="#b91c1c" text-anchor="middle" font-weight="700">✕</text>
+    <rect x="800" y="200" width="200" height="60" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="900" y="220" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">경계 밖 — PG에 생긴 승인은</text>
+    <text x="900" y="236" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">우리 트랜잭션의 관할이 아니다</text>
+    <text x="900" y="252" font-size="10" fill="#7f1d1d" text-anchor="middle">지우려면 별도 요청을 보내야 한다</text>
+
+    <rect x="598" y="296" width="156" height="30" rx="8" fill="#f1f3f7" stroke="#94a3b8"/>
+    <text x="676" y="315" font-size="10.5" fill="#334155" text-anchor="middle" font-weight="700">우리 DB: 기록 없음</text>
+
+    <rect x="584" y="346" width="504" height="30" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="600" y="366" font-size="11.5" fill="#b91c1c">우리에게 남은 것: <tspan font-weight="700">로그 한 줄</tspan> &nbsp;·&nbsp; PG에 남은 것: <tspan font-weight="700">45,000원 승인</tspan></text>
+
+    <rect x="16" y="396" width="1088" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="418" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">두 경로 모두 결과는 같다 — 고객 돈은 나갔는데 우리는 그 사실을 모른다</text>
+  </svg>
+  <figcaption><b>왼쪽에서 꼭 읽어야 할 것</b>: 읽기 타임아웃은 <b>우리 서버 안의 타이머가 만료된 사건</b>일 뿐이다. 우리가 소켓을 닫아도 PG는 <b>우리가 포기했다는 사실을 모르고</b> 진행 중이던 승인 처리를 멈추지도 않는다. <b>오른쪽에서 꼭 읽어야 할 것</b>: 롤백은 <b>파란 점선 안쪽</b>만 되돌린다. 밖에 이미 만들어진 사실은 <b>요청을 하나 더 보내야만</b> 지워진다.</figcaption>
+</figure>
+
+<h3>2-1. 경로 2의 함정 — 외부 API 호출은 트랜잭션 롤백의 대상이 아니다</h3>
+
+<p><code>@Transactional</code>에 익숙한 개발자가 가장 자주 빠지는 함정이 이것이다. 코드로 보면 한 줄 차이도 없어 보이지만, <b>①과 ②는 서로 다른 세계에 속한다.</b></p>
+
+<div class="codehead bad"><span class="tag">함정</span> 롤백이 지워주는 것과 지워주지 못하는 것</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">approve</span>(Order order) {
+<span class="ln-bad">    PgApproveResponse res = pgClient.<span class="fn">approve</span>(<span class="fn">toRequest</span>(order)); <span class="cm">// ① 외부 호출</span></span>
+    paymentRepository.<span class="fn">save</span>(Payment.<span class="fn">approved</span>(order, res));        <span class="cm">// ② DB 쓰기</span>
+
+    <span class="cm">// ③ 여기서 예외가 나면 ②는 롤백된다. 그러나 ①은 롤백되지 않는다.
+    //    PG 서버에 만들어진 승인은 우리 트랜잭션의 관할 밖이기 때문이다.
+    //    결과: DB는 깨끗해지고 PG에는 45,000원 승인이 남는다.</span>
+}</code></pre>
+
+<div class="memo red">
+  <h4>여기서 나오는 한 문장 — 망취소의 존재 이유</h4>
+  <div class="rule red">트랜잭션은 <b>우리 DB 안의 변경</b>만 되돌린다 — <b>남의 서버에 만들어진 사실은 별도의 요청으로만 지워진다</b></div>
+  <p style="margin-bottom:0">이 "별도의 요청"이 곧 <b>보상 처리</b>이고, 그중 <b>승인번호조차 모르는 경우</b>에 쓰는 것이 <b>망취소</b>다. 반대로 <b>승인번호가 손에 남아 있다면 일반 취소</b>가 더 정확하다 — 지울 대상을 정확히 지정할 수 있기 때문이다(6절 조건 B).</p>
+</div>
+
+<div class="callout trap"><span class="t">고객 입장에서 이 두 경로가 어떻게 끝나는가</span>
+고객 돈은 나갔는데 우리는 그 사실을 모른다. 고객은 <b>실패 화면을 보고 떠나고, 카드 명세서를 보고서야 항의</b>한다. 그리고 <b>우리 DB에는 그 거래가 없으니 상담원이 찾지도 못한다.</b> 11절 사례 1이 정확히 이 결말이다.</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 망취소의 정의 — "소거 연산"이라는 성질</h2>
+
+<div class="callout info"><span class="t">한 문장 정의</span>
+망취소는 <b>통신 장애로 승인 결과를 수신하지 못한 거래를, 승인됐을 가능성을 전제로 원천 취소하는 절차</b>다. 이름의 <b>망(網)이 곧 네트워크</b>다 — 승인 자체에 문제가 있어서 취소하는 것이 아니라 <b>망 구간의 문제로 결과가 불명해진 거래</b>를 다루기 때문에 붙은 이름이다. VAN·PG 업계에서 오래 써온 용어이고, 영어로는 <b>network cancellation</b>, 문맥에 따라 <b>net cancellation</b>이라고 쓴다.</div>
+
+<h3>3-1. 왜 "소거"인가 — 두 세계가 하나로 수렴한다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="망취소의 소거 연산 도식. 왼쪽에는 PG에 승인이 있는 세계 A와 승인이 없는 세계 B가 있고 우리는 어느 쪽인지 모른다. 가운데 망취소 요청을 거치면 세계 A는 취소되고 세계 B는 취소할 것이 없어 무해하게 끝나, 오른쪽에서 두 경우 모두 승인 없음이라는 하나의 상태로 수렴한다">
+    <defs>
+      <marker id="a2" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="a2g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="20" y="26" font-size="15" font-weight="700" fill="#1f2937">망취소는 취소가 아니라 <tspan fill="#2563eb">소거</tspan>다 — 어느 세계에 있었든 결과가 하나로 수렴한다</text>
+
+    <text x="40" y="62" font-size="12" font-weight="700" fill="#6b7280">지금 세상은 둘 중 하나인데, 우리는 어느 쪽인지 모른다</text>
+
+    <rect x="40" y="74" width="250" height="56" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="165" y="96" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">세계 A — PG에 승인이 있다</text>
+    <text x="165" y="115" font-size="10.5" fill="#7f1d1d" text-anchor="middle">고객 돈이 이미 나가 있다</text>
+
+    <rect x="40" y="150" width="250" height="56" rx="10" fill="#f1f3f7" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="165" y="172" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">세계 B — 승인이 없다</text>
+    <text x="165" y="191" font-size="10.5" fill="#64748b" text-anchor="middle">애초에 아무 일도 없었다</text>
+
+    <text x="165" y="230" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">우리는 어느 쪽인지 확인할 방법이 없다</text>
+
+    <path d="M292,98 C 340,98 344,132 384,140" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#a2)"/>
+    <path d="M292,178 C 340,178 344,166 384,160" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#a2)"/>
+
+    <rect x="390" y="112" width="210" height="80" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2.2"/>
+    <text x="495" y="138" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">망취소 요청</text>
+    <text x="495" y="158" font-size="10.5" fill="#1e40af" text-anchor="middle">가맹점 주문번호 · 금액 · 시각으로</text>
+    <text x="495" y="176" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">"있다면 지워 주세요"</text>
+
+    <text x="640" y="128" font-size="10.5" fill="#b91c1c" font-weight="700">A였다면 → 취소된다</text>
+    <text x="640" y="196" font-size="10.5" fill="#334155" font-weight="700">B였다면 → 지울 게 없다 (무해)</text>
+    <path d="M602,140 C 632,140 660,146 700,150" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#a2g)"/>
+    <path d="M602,168 C 632,168 660,164 700,160" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#a2g)"/>
+
+    <rect x="706" y="118" width="290" height="72" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.2"/>
+    <text x="851" y="148" font-size="16" fill="#166534" text-anchor="middle" font-weight="700">승인 없음</text>
+    <text x="851" y="172" font-size="10.5" fill="#15803d" text-anchor="middle">두 세계가 하나의 상태로 수렴 — 이제 FAILED로 닫아도 안전</text>
+
+    <rect x="20" y="252" width="1080" height="52" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="40" y="274" font-size="11.5" fill="#374151">이 성질이 이 문서에서 <tspan font-weight="700">두 번</tspan> 쓰인다 &nbsp;①&nbsp; <tspan font-weight="700" fill="#2563eb">"해당 거래 없음" 응답을 오류가 아니라 성공으로 처리해도 되는 근거</tspan> (7절)</text>
+    <text x="40" y="294" font-size="11.5" fill="#374151">&nbsp;②&nbsp; <tspan font-weight="700" fill="#2563eb">망취소를 백오프 자동 재시도해도 안전한 근거</tspan> (8절) — 승인은 절대 자동 재시도하면 안 되지만, 망취소는 해도 된다</text>
+  </svg>
+  <figcaption>왼쪽 두 상자는 <b>"우리가 모르는 것"</b>이고, 오른쪽 한 상자는 <b>"우리가 강제로 만들어 낸 것"</b>이다. 조회가 <b>진실을 알아내는</b> 연산이라면, 망취소는 <b>진실을 하나로 만들어 버리는</b> 연산이다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>소거 연산의 세 성질 — 이 셋으로 망취소의 모든 판단이 나온다</h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k">① 무해(harmless)</div><div class="d">대상이 <b>없으면 아무 일도 안 일어난다.</b> 그래서 "혹시 몰라서" 쏴도 손해가 없다. <code>DELETE ... WHERE</code>가 <b>0건 삭제여도 에러가 아닌 것</b>과 같다.</div></div>
+    <div class="tile ok"><div class="k">② 멱등(idempotent)</div><div class="d">한 번 하든 <b>세 번 하든 결과가 같다.</b> 그래서 <b>자동 재시도가 안전</b>하다. 승인은 재시도하면 결제가 두 번 되지만, 망취소는 두 번 해도 "없음"이다.</div></div>
+    <div class="tile ok"><div class="k">③ 수렴(converging)</div><div class="d">출발 상태가 무엇이든 <b>도착 상태는 항상 하나</b>("승인 없음")다. 그래서 <b>결과를 몰라도 상태를 확정</b>할 수 있다.</div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">외울 문장 — <b>"없으면 무해, 여러 번 해도 멱등, 결과는 하나로 수렴"</b></div>
+</div>
+
+<h3>3-2. 비유 — 통화가 끊긴 전화 주문</h3>
+
+<div class="split">
+  <div class="pane r">
+    <h4>망취소가 없는 세계</h4>
+    <ul>
+      <li>주문을 불러주는 도중 <b>통화가 끊겼다</b></li>
+      <li>주문이 들어갔는지 <b>알 수 없는 채로 상황이 종료</b>된다</li>
+      <li>나는 "안 들어갔겠지" 하고 <b>다른 집에 주문</b>한다</li>
+      <li>한 시간 뒤 <b>치킨 두 마리</b>가 도착한다</li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>망취소를 쓰는 세계</h4>
+    <ul>
+      <li>다시 전화해서 <b>"혹시 아까 제 주문이 들어갔다면 취소해 주세요"</b></li>
+      <li>안 들어갔으면 <b>취소할 게 없어 아무 일도 안 일어난다</b></li>
+      <li>들어갔으면 <b>취소된다</b></li>
+      <li>어느 경우든 통화를 끊는 시점의 세상은 <b>"내 주문은 없다" 하나</b>다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="rule">조회는 <b>"결과를 알아내는" 연산</b>, 망취소는 <b>"알 수 없으니 없던 것으로 만드는" 연산</b> — 앞은 확정을 <b>얻는</b> 것이고 뒤는 확정을 <b>강제하는</b> 것이다</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 일반 취소와의 차이 — 무엇을 아는 상태에서 취소하는가</h2>
+
+<p>"승인이 남았으면 그냥 취소 API 부르면 되는 거 아닌가?"가 가장 자연스러운 반문이다. <b>그런데 그게 안 된다.</b> 이유는 논리적으로 깔끔한 <b>순환</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="일반 취소를 쓸 수 없는 이유 도식. PG 승인 응답에 승인번호와 PG 거래번호가 들어 있지만 응답이 유실되어 우리 손에는 가맹점 주문번호와 금액과 시각만 남는다. 일반 취소 API는 PG 거래번호를 요구하므로 호출할 수 없고, 망취소는 가맹점 주문번호만으로 호출할 수 있다">
+    <defs>
+      <marker id="a3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a3s" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+      <marker id="a3r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="20" y="26" font-size="15" font-weight="700" fill="#1f2937">일반 취소가 요구하는 번호는 <tspan fill="#dc2626">바로 그 못 받은 응답 안에</tspan> 들어 있다</text>
+
+    <rect x="30" y="66" width="234" height="96" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="147" y="88" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">PG 승인 응답</text>
+    <text x="147" y="110" font-size="11" fill="#15803d" text-anchor="middle" class="mono">· 승인번호</text>
+    <text x="147" y="128" font-size="11" fill="#15803d" text-anchor="middle" class="mono">· PG 거래번호</text>
+    <text x="147" y="150" font-size="9.5" fill="#166534" text-anchor="middle">= 일반 취소가 요구하는 값</text>
+
+    <line x1="266" y1="114" x2="414" y2="114" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#a3s)"/>
+    <g stroke="#dc2626" stroke-width="3.2" stroke-linecap="round">
+      <line x1="330" y1="98" x2="354" y2="132"/><line x1="354" y1="98" x2="330" y2="132"/>
+    </g>
+    <text x="342" y="88" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">응답 유실 (타임아웃)</text>
+    <text x="342" y="152" font-size="9.5" fill="#7f1d1d" text-anchor="middle">번호가 우리에게 도달하지 못한다</text>
+
+    <rect x="420" y="66" width="208" height="96" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="524" y="88" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">지금 우리 손에 있는 것</text>
+    <text x="524" y="110" font-size="11" fill="#166534" text-anchor="middle">가맹점 주문번호 · 금액 · 시각 ✓</text>
+    <text x="524" y="130" font-size="11" fill="#b91c1c" text-anchor="middle">승인번호 ✗ &nbsp; PG 거래번호 ✗</text>
+    <text x="524" y="150" font-size="9.5" fill="#7f1d1d" text-anchor="middle">우리가 만든 값만 남아 있다</text>
+
+    <path d="M632,96 C 664,92 668,86 692,82" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a3r)"/>
+    <path d="M632,132 C 664,136 668,144 692,150" fill="none" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a3)"/>
+
+    <rect x="698" y="56" width="392" height="52" rx="10" fill="#f1f3f7" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="716" y="77" font-size="12" fill="#334155" font-weight="700">일반 취소 API &nbsp;— 요구: PG 거래번호 / 승인번호</text>
+    <text x="716" y="97" font-size="11" fill="#b91c1c" font-weight="700">→ 지금은 그 번호가 없다. 호출 자체가 성립하지 않는다.</text>
+
+    <rect x="698" y="124" width="392" height="52" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2.2"/>
+    <text x="716" y="145" font-size="12" fill="#1d4ed8" font-weight="700">망취소 &nbsp;— 요구: 가맹점 주문번호 (+ 금액 · 요청 시각)</text>
+    <text x="716" y="165" font-size="11" fill="#1d4ed8" font-weight="700">→ 처음부터 우리 손에 있던 값. 지금 바로 호출할 수 있다.</text>
+
+    <rect x="20" y="200" width="1080" height="48" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="222" font-size="12.5" fill="#b91c1c" font-weight="700">순환 — 일반 취소 API는 PG 거래번호를 요구하는데, 망취소가 필요한 상황은 정의상 그 번호를 받지 못한 상황이다.</text>
+    <text x="40" y="240" font-size="11.5" fill="#7f1d1d">번호는 승인 응답에 담겨 오는데, 그 응답을 못 받은 것이 지금 이 문제를 만든 원인 자체이기 때문이다.</text>
+
+    <rect x="20" y="258" width="1080" height="40" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="40" y="283" font-size="11.5" fill="#374151">그래서 망취소는 <tspan font-weight="700">별도의 API이거나 별도의 요청 방식</tspan>으로 제공되며, 우리가 <tspan font-weight="700">가진 정보만으로</tspan> 지울 대상을 지정할 수 있게 설계돼 있다.</text>
+  </svg>
+  <figcaption>"일반 취소로 때우면 되지"가 성립하지 않는 이유는 <b>API가 없어서가 아니라 인자를 채울 수 없어서</b>다. 반대로 말하면 — <b>번호를 알게 되는 순간(예: D+1 대사)에는 망취소가 아니라 일반 취소를 쓴다</b>(8절).</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>일반 취소와 망취소 — 네 가지 축으로 비교</caption>
+  <thead><tr><th style="width:150px"></th><th>일반 취소</th><th>망취소</th></tr></thead>
+  <tbody>
+    <tr><th>대상</th><td>승인이 <b>확정된</b> 거래</td><td>승인 여부 <b>불명</b>인 거래</td></tr>
+    <tr class="hl"><th>식별</th><td>승인번호 · PG 거래번호를 <b>안다</b></td><td><b>모른다</b> — 가맹점 주문번호, 금액, 요청 시각 등 원거래 정보로 지정</td></tr>
+    <tr><th>의미</th><td>성립한 거래의 <b>청약 철회 · 환불</b></td><td>성립했는지 모를 거래의 <b>소거</b></td></tr>
+    <tr><th>실패했을 때</th><td class="good">재시도하면 된다 — 거래는 확정 상태로 <b>존재</b>하고 번호도 안다</td><td class="bad">승인 잔존 가능성이 <b>계속 남는다</b> → 대사까지 끌고 가야 한다</td></tr>
+    <tr><th>자동 재시도</th><td>가능 (대상이 명확)</td><td class="good">가능 — <b>멱등한 소거</b>이므로 안전</td></tr>
+    <tr><th>정산 기록</th><td>승인 · 취소가 <b>쌍으로</b> 남는다</td><td>PG에 따라 다르다 — <b>아예 안 나타나기도, 승인·취소 두 줄로 나타나기도</b> 한다 (12절 꼬리질문)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><b>마지막에서 두 번째 줄이 특히 중요하다.</b> 일반 취소가 실패하면 상황은 명확하다 — 거래는 확정 상태로 존재하고 우리는 그 번호를 알고 있으니 나중에 다시 취소하면 된다. 반면 <b>망취소가 실패하면 애초에 지울 것이 있었는지조차 모르는 상태로 되돌아간다.</b></p>
+
+<div class="rule red">그래서 망취소 실패는 <b>"재시도하면 되는 일"이 아니라 "대사까지 끌고 가야 하는 일"</b>이다</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 전체 파이프라인 — 망취소는 어디에 있는가</h2>
+
+<p>개별 조건을 보기 전에 전체 그림을 먼저 본다. <b>망취소는 독립적인 장치가 아니라 조회가 실패한 자리에 들어가는 다음 수단</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 780" role="img" aria-label="승인 요청부터 망취소까지의 전체 파이프라인 흐름도. 승인 요청 전송 후 정상 응답을 받으면 확정 시도로 가고 DB 커밋 성공이면 APPROVED, 실패면 조건 B 보상 취소로 간다. 타임아웃이면 UNKNOWN을 기록하고 거래 조회 API를 호출해 승인됨이면 APPROVED, 미승인이나 없음이면 FAILED, 조회 실패나 확정 불가면 조건 A 망취소로 간다. 조건 A와 조건 B가 망취소 실행으로 합류하고, 성공하면 FAILED로 닫고 실패하면 CANCEL_PENDING으로 두어 백오프 재시도 후 기한 초과 시 D 플러스 1 대사 명단에 등록한다">
+    <defs>
+      <marker id="a4" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+      <marker id="a4b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a4r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a4g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <g fill="none" stroke-width="1.9" stroke="#64748b" marker-end="url(#a4)">
+      <path d="M560,84 V98 H290 V108"/>
+      <path d="M560,84 V98 H840 V108"/>
+      <path d="M290,150 V174"/>
+      <path d="M840,150 V174"/>
+      <path d="M290,214 V228 H150 V238"/>
+      <path d="M290,214 V228 H390 V238"/>
+      <path d="M840,214 V238"/>
+      <path d="M150,278 V302"/>
+      <path d="M390,278 V302"/>
+      <path d="M840,278 V292 H610 V302"/>
+      <path d="M840,278 V292 H790 V302"/>
+      <path d="M840,278 V292 H985 V302"/>
+      <path d="M610,342 V368"/>
+      <path d="M790,342 V368"/>
+      <path d="M985,342 V368"/>
+      <path d="M470,556 V582"/>
+      <path d="M910,556 V582"/>
+      <path d="M910,628 V654"/>
+      <path d="M910,692 V718"/>
+    </g>
+    <g fill="none" stroke-width="2.4" stroke="#2563eb" marker-end="url(#a4b)">
+      <path d="M390,354 V428"/>
+      <path d="M985,406 V428"/>
+      <path d="M690,480 V496 H470 V508"/>
+      <path d="M690,480 V496 H910 V508"/>
+    </g>
+
+    <text x="20" y="26" font-size="15" font-weight="700" fill="#1f2937">승인 한 건이 지나가는 전체 경로 — <tspan fill="#2563eb">망취소는 "조회가 실패한 자리"에 들어간다</tspan></text>
+
+    <rect x="470" y="50" width="180" height="34" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="560" y="72" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">승인 요청 전송</text>
+
+    <text x="410" y="94" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">정상 응답 수신</text>
+    <text x="700" y="94" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">타임아웃 — 결과 불명</text>
+
+    <rect x="190" y="110" width="200" height="40" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="290" y="135" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">정상 응답 수신</text>
+
+    <rect x="730" y="110" width="220" height="40" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="840" y="135" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">타임아웃 (결과 불명)</text>
+
+    <rect x="190" y="176" width="200" height="38" rx="9" fill="#fff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="290" y="200" font-size="11.5" fill="#334155" text-anchor="middle">검증 후 확정 시도</text>
+
+    <rect x="730" y="176" width="220" height="38" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+    <text x="840" y="200" font-size="11.5" fill="#92400e" text-anchor="middle" font-weight="700" class="mono">UNKNOWN 기록</text>
+
+    <rect x="60" y="240" width="180" height="38" rx="9" fill="#fff" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="150" y="264" font-size="11.5" fill="#334155" text-anchor="middle">DB 커밋 성공</text>
+
+    <rect x="300" y="240" width="180" height="38" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="390" y="264" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">DB 커밋 실패</text>
+
+    <rect x="730" y="240" width="220" height="38" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="840" y="264" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">거래 조회 API 호출</text>
+
+    <rect x="60" y="304" width="180" height="38" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="150" y="328" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700" class="mono">APPROVED</text>
+
+    <rect x="285" y="304" width="210" height="50" rx="9" fill="#fff7ed" stroke="#ea580c" stroke-width="1.8"/>
+    <text x="390" y="324" font-size="11.5" fill="#9a3412" text-anchor="middle" font-weight="700">[조건 B] 보상 취소 필요</text>
+    <text x="390" y="343" font-size="9.3" fill="#9a3412" text-anchor="middle">번호 남았으면 일반 취소 · 유실이면 망취소</text>
+
+    <rect x="540" y="304" width="140" height="38" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="610" y="328" font-size="11.5" fill="#166534" text-anchor="middle">"승인됨"</text>
+
+    <rect x="715" y="304" width="150" height="38" rx="9" fill="#f1f3f7" stroke="#94a3b8" stroke-width="1.4"/>
+    <text x="790" y="328" font-size="11.5" fill="#334155" text-anchor="middle">"미승인 · 없음"</text>
+
+    <rect x="890" y="304" width="190" height="38" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="985" y="328" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">조회 실패 · 확정 불가</text>
+
+    <rect x="540" y="370" width="140" height="36" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="610" y="393" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700" class="mono">APPROVED</text>
+
+    <rect x="715" y="370" width="150" height="36" rx="9" fill="#f1f3f7" stroke="#64748b" stroke-width="1.8"/>
+    <text x="790" y="393" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700" class="mono">FAILED</text>
+
+    <rect x="890" y="370" width="190" height="36" rx="9" fill="#fff7ed" stroke="#ea580c" stroke-width="1.8"/>
+    <text x="985" y="393" font-size="12" fill="#9a3412" text-anchor="middle" font-weight="700">[조건 A] 망취소 대상</text>
+
+    <!-- legend -->
+    <rect x="40" y="400" width="240" height="150" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="56" y="422" font-size="11.5" fill="#1f2937" font-weight="700">이 그림에서 읽어야 할 것 셋</text>
+    <text x="56" y="446" font-size="10.5" fill="#1d4ed8" font-weight="700">① 망취소는 조회 "다음"이다</text>
+    <text x="56" y="462" font-size="9.5" fill="#6b7280">알아낼 수 있으면 알아내는 게 먼저</text>
+    <text x="56" y="486" font-size="10.5" fill="#1d4ed8" font-weight="700">② 망취소로 닫는 상태는 FAILED</text>
+    <text x="56" y="502" font-size="9.5" fill="#6b7280">근거는 "망취소가 성공했다"는 사실</text>
+    <text x="56" y="526" font-size="10.5" fill="#b91c1c" font-weight="700">③ 망취소 실패는 FAILED가 아니다</text>
+    <text x="56" y="542" font-size="9.5" fill="#6b7280">CANCEL_PENDING이라는 미확정 상태로</text>
+
+    <!-- net cancel bar -->
+    <rect x="300" y="430" width="780" height="50" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2.6"/>
+    <text x="690" y="454" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">망취소 실행 — 원거래 식별 정보로 "있다면 지워라"</text>
+    <text x="690" y="472" font-size="10.5" fill="#1e40af" text-anchor="middle">조건 A(못 받았다)와 조건 B(받고도 못 적었다)가 여기서 합류한다</text>
+
+    <rect x="320" y="510" width="300" height="46" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="470" y="531" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">망취소 성공</text>
+    <text x="470" y="548" font-size="9.8" fill="#15803d" text-anchor="middle">"해당 거래 없음" 응답도 성공으로 간주한다</text>
+
+    <rect x="760" y="510" width="300" height="46" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="910" y="531" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">망취소 실패 (타임아웃 등)</text>
+    <text x="910" y="548" font-size="9.8" fill="#7f1d1d" text-anchor="middle">여기서 FAILED로 닫으면 도입 이유가 사라진다</text>
+
+    <rect x="320" y="584" width="300" height="44" rx="10" fill="#f1f3f7" stroke="#64748b" stroke-width="2"/>
+    <text x="470" y="604" font-size="13" fill="#334155" text-anchor="middle" font-weight="700" class="mono">FAILED</text>
+    <text x="470" y="620" font-size="9.8" fill="#64748b" text-anchor="middle">소거가 확인됐으므로 실패로 닫아도 안전</text>
+
+    <text x="470" y="654" font-size="10" fill="#6b7280" text-anchor="middle">확정 근거 = "시간이 지났다"가 아니라 <tspan font-weight="700" fill="#374151">"PG 쪽에서 소거가 확인됐다"</tspan></text>
+
+    <rect x="760" y="584" width="300" height="44" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="910" y="604" font-size="13" fill="#92400e" text-anchor="middle" font-weight="700" class="mono">CANCEL_PENDING</text>
+    <text x="910" y="620" font-size="9.8" fill="#b45309" text-anchor="middle">실패로 확정하지 않는다 (미확정 상태)</text>
+
+    <rect x="740" y="656" width="340" height="36" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="910" y="679" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">↻ 백오프 자동 재시도 — 멱등하므로 안전</text>
+
+    <rect x="560" y="720" width="520" height="40" rx="9" fill="#f1f3f7" stroke="#64748b" stroke-width="1.5"/>
+    <text x="820" y="737" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">기한 초과 → D+1 대사 명단 등록</text>
+    <text x="820" y="753" font-size="9.8" fill="#64748b" text-anchor="middle">그 시점엔 거래번호를 알게 되므로 정리는 <tspan font-weight="700">일반 취소</tspan>로 한다</text>
+  </svg>
+  <figcaption>재시도 화살표(↻)는 <b>다시 "망취소 실행" 박스로 돌아간다</b>는 뜻이다. 즉 2층은 새로운 로직이 아니라 <b>같은 연산을 다시 쏘는 것</b>이고, 그게 가능한 이유가 <b>멱등성</b>(3절)이다.</figcaption>
+</figure>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">① 망취소는 조회 다음이다</div><div class="d">조회로 확정이 되면 <b>망취소는 등장하지 않는다.</b> 알아낼 수 있으면 알아내는 게 먼저고, <b>소거는 알아낼 수 없을 때의 수단</b>이다. 망취소는 <b>성공했을 결제를 날릴 수 있는 연산</b>이라 순서가 이래야 한다(9절).</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">② 망취소로 닫는 상태는 FAILED</div><div class="d">승인 가능성을 지웠으니 <b>실패로 닫아도 고객 돈이 남지 않는다.</b> 이때의 확정 근거는 "시간이 지났다"가 아니라 <b>"망취소가 성공했다"는 PG 쪽 사실</b>이라는 점이 중요하다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">③ 실패하면 FAILED로 가지 않는다</div><div class="d"><code>CANCEL_PENDING</code>이라는 <b>별도의 미확정 상태</b>로 빠진다. <code>UNKNOWN</code>은 <b>"조회해서 알아내야 할 건"</b>이고 <code>CANCEL_PENDING</code>은 <b>"지우기를 다시 시도해야 할 건"</b>이라, 배치가 다르게 처리해야 하므로 상태값을 나눈다.</div></div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 발동 조건 두 가지 — A "못 받았다" / B "받고도 못 적었다"</h2>
+
+<div class="memo">
+  <h4>외울 것은 이 대비 하나다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">조건 A — 못 받았다</div><div class="d">승인 요청이 <b>타임아웃</b>됐고, <b>거래 조회로도 결과를 확정할 수 없을 때.</b></div></div>
+    <div class="tile red"><div class="k">조건 B — 받고도 못 적었다</div><div class="d">승인 응답은 <b>정상 수신</b>했는데 <b>우리 쪽 DB 커밋이 실패</b>했을 때. <b>여기를 빼먹는 설계가 많다.</b></div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">망취소를 <b>"타임아웃 전용 장치"</b>로만 알고 있으면 <b>조건 B를 설계에서 통째로 빠뜨린다</b></div>
+</div>
+
+<h3>6-1. 조건 A — 타임아웃 + 조회로도 확정 불가</h3>
+
+<p>타임아웃 자체가 망취소의 조건이 아니라는 점을 먼저 짚어야 한다. <b>타임아웃 뒤에는 조회가 먼저 오고, 그 조회가 확정을 못 줄 때 비로소 망취소</b>다. 구체적으로 세 가지 상황이 여기 해당한다.</p>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k">① 조회 자체가 계속 실패</div><div class="d">PG 장애가 <b>승인 API만 골라서 나지 않는다.</b> 승인이 타임아웃 나는 시간대에는 <b>조회도 타임아웃 나기 쉽다.</b></div></div>
+  <div class="tile red"><div class="k">② "거래 없음"을 믿을 수 없음</div><div class="d">PG 내부 지연으로 <b>승인이 아직 만들어지는 중</b>이면 조회는 "없음"을 반환하지만, <b>몇 분 뒤 승인이 완성될 수 있다.</b> 11절 사례 2가 이 함정이다.</div></div>
+  <div class="tile red"><div class="k">③ 조회 API 자체가 없음</div><div class="d">모든 결제수단이 <b>실시간 조회를 제공하지는 않는다.</b> 이 경우 확정 수단이 처음부터 없다.</div></div>
+</div>
+
+<div class="rule">조건 A를 한 문장으로 — 결제 건을 <b>실패로 닫고 싶은데 "PG에 승인이 살아 있을지도 모른다"는 꼬리가 남아 있을 때</b>, 그 꼬리를 자르는 수단</div>
+
+<h3>6-2. 조건 B — 응답은 받았는데 내부 처리에 실패</h3>
+
+<p>2절의 <b>경로 2</b>가 여기에 해당한다. PG 승인 응답(승인번호 포함)까지 정상 수신했는데, 그 직후 우리 쪽 <b>DB 커밋이 실패</b>한 경우다. 원인은 흔하다 — <b>커넥션 풀 고갈, 데드락, 서버 강제 종료, 배포 중 프로세스 종료.</b></p>
+
+<div class="callout trap"><span class="t">이때 우리가 마주하는 상황</span>
+고객에겐 <b>오류가 표시됐고</b>, 우리 DB에 <b>승인 기록이 없고</b>, PG에는 <b>45,000원 승인이 존재</b>한다. — 타임아웃 경로와 <b>결과가 완전히 같다.</b> 그런데 이 경로는 <b>알림도 안 뜬다</b>(11절 사례 3).</div>
+
+<p>여기서 처리 방식이 두 갈래로 갈리고, <b>이 분기를 말할 수 있느냐가 이해도의 척도</b>다.</p>
+
+<div class="split">
+  <div class="pane g">
+    <h4>승인번호가 손에 남아 있다면 → 일반 취소</h4>
+    <ul>
+      <li>지울 대상을 <b>정확히 지정</b>할 수 있으므로 이쪽이 정확하다</li>
+      <li>실패해도 <b>번호를 알고 있으니 재시도가 쉽다</b>(4절 표)</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>커밋 실패 시점에 번호마저 유실됐다면 → 망취소</h4>
+    <ul>
+      <li>응답을 <b>메모리에만 들고 있다가 프로세스가 죽은</b> 경우</li>
+      <li>남은 것은 <b>가맹점 주문번호뿐</b> → 원거래 정보로 지우는 수밖에 없다</li>
+    </ul>
+  </div>
+</div>
+
+<h3>6-3. 그래서 실무의 순서가 바뀐다 — "지울 근거"를 먼저 남긴다</h3>
+
+<p>위의 갈림길에서 <b>왼쪽(일반 취소)으로 갈 확률을 최대한 높이는</b> 것이 설계의 목표가 된다. 방법은 하나다 — <b>승인 응답을 받으면 확정 처리보다 먼저 응답 원문을 남긴다.</b></p>
+
+<div class="codehead good"><span class="tag">설계</span> 확정보다 먼저 "지울 근거"를 남긴다</div>
+<pre><code>PgApproveResponse res = pgClient.<span class="fn">approve</span>(<span class="fn">toRequest</span>(order));
+
+<span class="cm">// ① 확정보다 "먼저" 응답 원문을 남긴다.
+//    반드시 별도 트랜잭션(REQUIRES_NEW)이나 append-only 로그로 —
+//    본 트랜잭션과 운명을 같이하면 롤백 때 같이 사라져 의미가 없다.</span>
+<span class="ln-good">approvalLog.<span class="fn">appendInNewTransaction</span>(order.<span class="fn">merchantOrderNo</span>(), res); <span class="note">지울 근거 확보</span></span>
+
+<span class="cm">// ② 그다음에 확정을 시도한다</span>
+<span class="kw">try</span> {
+    <span class="fn">confirmPayment</span>(order, res);            <span class="cm">// 여기서 커밋이 실패해도</span>
+} <span class="kw">catch</span> (Exception e) {
+<span class="ln-good">    <span class="fn">compensateWithApprovalNo</span>(order, res);  <span class="cm">// ①이 남긴 번호로 "정확히" 지운다</span></span>
+    <span class="cm">// 그마저 실패하면 CANCEL_PENDING + 대사 등록 (8절)</span>
+}</code></pre>
+
+<div class="rule ok">원칙 — <b>"외부에 요청을 보내기 전에 보냈다는 사실을, 응답을 받으면 받았다는 사실을, 확정보다 먼저 적는다"</b></div>
+
+<p>이 순서를 지키면 <b>확정이 실패해도 지울 근거가 남는다.</b> 반대로 이 순서를 어기면 조건 B에서 <b>매번 오른쪽(망취소) 길로 떨어지고</b>, 망취소마저 실패하면 <b>대사 전까지 아무도 모르는 거래</b>가 된다.</p>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. Before/After — 타임아웃 <code>catch</code>의 마지막 줄</h2>
+
+<p>망취소가 있고 없고의 차이는 대개 <b>catch 블록의 마지막 한 줄</b>에서 갈린다. 그 한 줄이 <b>"모른다"를 "실패"로 바꿔 적는 순간</b>, 그 거래는 우리 시스템의 시야에서 사라진다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 조회가 실패하면 그냥 실패로 기록한다</div>
+<pre><code>} <span class="kw">catch</span> (ResourceAccessException e) {
+    payment.<span class="fn">markUnknown</span>(<span class="st">"PG_TIMEOUT"</span>);
+    <span class="kw">try</span> {
+        <span class="kw">return</span> <span class="fn">resolveByInquiry</span>(order);   <span class="cm">// 조회로 확정 시도</span>
+
+    } <span class="kw">catch</span> (Exception inquiryFailed) {
+        <span class="cm">// 문제는 아래 두 줄이다.
+        // 조회가 실패했다는 것은 "미승인이 확인됐다"가 아니라
+        // "여전히 모른다"는 뜻인데, 여기서 실패로 확정해 버린다.</span>
+<span class="ln-bad">        payment.<span class="fn">markFailed</span>(<span class="st">"UNRESOLVED"</span>);   <span class="note">모름 → 실패</span></span>
+<span class="ln-bad">        <span class="kw">return</span> PaymentResult.<span class="fn">failed</span>();</span>
+    }
+}
+
+<span class="cm">// 결과: 승인이 살아 있으면
+//   고객 돈은 나간 채로 우리 장부에서 사라진다.
+//   FAILED 안에 "진짜 실패"와 "실패로 잘못 기록된 승인"이
+//   섞여, 우리 DB만으로는 구분할 수 없게 된다. (사례 1)</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 확정 불가 → 망취소로 소거한 뒤에만 실패로 확정</div>
+<pre><code>} <span class="kw">catch</span> (ResourceAccessException e) {
+    payment.<span class="fn">markUnknown</span>(<span class="st">"PG_TIMEOUT"</span>);
+    <span class="kw">try</span> {
+        <span class="kw">return</span> <span class="fn">resolveByInquiry</span>(order);
+    } <span class="kw">catch</span> (Exception inquiryFailed) {
+<span class="ln-good">        <span class="kw">return</span> <span class="fn">netCancelThenFail</span>(order);   <span class="note">소거 후 확정</span></span>
+    }
+}
+
+<span class="kw">private</span> PaymentResult <span class="fn">netCancelThenFail</span>(Order order) {
+    <span class="kw">try</span> {
+        <span class="cm">// 승인번호를 모르므로 원거래 식별 정보로
+        // "있다면 지워달라"고 요청한다.</span>
+<span class="ln-good">        pgClient.<span class="fn">netCancel</span>(order.<span class="fn">merchantOrderNo</span>());</span>
+
+        <span class="cm">// 여기까지 왔다 = "PG에 그 거래가 남아 있지 않다"가
+        // 확인된 것. 이제 실패로 닫아도 고객 돈이 뜨지 않는다.
+        // ※ "해당 거래 없음" 응답도 예외가 아니라 성공으로 처리.
+        //   소거 연산의 목표 상태에 이미 도달한 것이므로.</span>
+<span class="ln-good">        payment.<span class="fn">markFailed</span>(<span class="st">"NET_CANCELED"</span>);</span>
+        <span class="kw">return</span> PaymentResult.<span class="fn">failed</span>();
+
+    } <span class="kw">catch</span> (Exception cancelFailed) {
+        <span class="cm">// 망취소마저 실패. 여기서 FAILED로 확정하면
+        // Before와 똑같아진다. 승인 잔존 가능성이 남아 있다.</span>
+<span class="ln-good">        payment.<span class="fn">markCancelPending</span>();</span>
+<span class="ln-good">        reconciliationQueue.<span class="fn">register</span>(order); <span class="note">재시도·대사</span></span>
+        <span class="kw">return</span> PaymentResult.<span class="fn">pending</span>();  <span class="cm">// 고객에겐 "확인 중"</span>
+    }
+}</code></pre>
+  </div>
+</div>
+
+<div class="grid g2">
+  <div class="tile ok"><div class="k" style="font-family:inherit">핵심 ① "거래 없음"을 성공으로 처리한다</div><div class="d"><b>소거 연산이므로 목표 상태(승인 없음)에 이미 도달한 것</b>이다. 이걸 예외로 처리하면 <b>정상 케이스의 절반이 실패 경로로 새어 나간다</b> — 알림은 폭발하는데 실제로는 다 정상인 상황이 된다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">핵심 ② 실패 시 FAILED가 아니라 CANCEL_PENDING</div><div class="d">이름을 따로 준 이유는 <b>UNKNOWN과 다루는 방식이 다르기 때문</b>이다. <code>UNKNOWN</code> = <b>조회해서 알아내야 할 건</b>, <code>CANCEL_PENDING</code> = <b>지우기를 다시 시도해야 할 건.</b> 배치가 두 상태를 다르게 처리하므로 값을 나눈다.</div></div>
+</div>
+
+<div class="callout warn"><span class="t">고객 화면도 함께 바뀐다</span>
+After에서 마지막 반환값은 <code>failed()</code>가 아니라 <code>pending()</code>이다. 아직 소거가 확인되지 않았으므로 <b>"결제 실패"라고 말하면 안 된다</b> — 그 문구를 본 고객은 <b>재결제를 하고, 그것이 이중 결제가 된다.</b> 이 구간의 올바른 문구는 <b>"확인 중"</b>이다.</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 망취소도 실패한다 — 최후 방어선은 대사</h2>
+
+<p>망취소 요청도 <b>승인과 같은 망을 타고 나간다.</b> PG 전면 장애라면 승인이 타임아웃 나는 그 순간에 망취소도 타임아웃 난다. 즉 <b>망취소는 가장 필요한 순간에 가장 실패하기 쉽다.</b> 그래서 뒤를 받쳐줄 층이 필요하다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 380" role="img" aria-label="망취소 3층 방어선 도식. 결과 불명 건이 유입되면 1층 실시간 망취소가 몇 초 안에 대부분을 소거하고, 남은 건은 2층 백오프 자동 재시도가 수 분 안에 흡수하며, 그래도 남은 건은 3층 D 플러스 1 대사가 하루 뒤 잡아낸다. 왼쪽에는 망취소 요청도 같은 망을 타므로 가장 필요할 때 가장 약하다는 설명이 있다">
+    <defs>
+      <marker id="a5" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a5r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="20" y="26" font-size="15" font-weight="700" fill="#1f2937">방어선은 3층 — <tspan fill="#2563eb">각 층은 서로를 대체하지 않고, 잡는 시간대가 다르다</tspan></text>
+
+    <rect x="40" y="62" width="200" height="44" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="140" y="82" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">결과 불명 건 유입</text>
+    <text x="140" y="98" font-size="9.8" fill="#7f1d1d" text-anchor="middle">조건 A + 조건 B</text>
+    <line x1="242" y1="84" x2="274" y2="84" stroke="#2563eb" stroke-width="2" marker-end="url(#a5)"/>
+
+    <rect x="40" y="130" width="200" height="150" rx="10" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="56" y="152" font-size="11.5" fill="#9a3412" font-weight="700">왜 망취소만으론 안 되나</text>
+    <text x="56" y="176" font-size="10" fill="#7c2d12">망취소 요청도 승인과</text>
+    <text x="56" y="192" font-size="10" fill="#7c2d12">같은 망을 타고 나간다.</text>
+    <text x="56" y="214" font-size="10" fill="#7c2d12">PG 전면 장애라면 승인이</text>
+    <text x="56" y="230" font-size="10" fill="#7c2d12">타임아웃 나는 그 순간에</text>
+    <text x="56" y="246" font-size="10" fill="#7c2d12">망취소도 타임아웃 난다.</text>
+    <text x="56" y="270" font-size="10.5" fill="#b91c1c" font-weight="700">= 가장 필요할 때 가장 약하다</text>
+
+    <!-- layer 1 -->
+    <rect x="280" y="56" width="800" height="58" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2.2"/>
+    <text x="300" y="80" font-size="13" fill="#1d4ed8" font-weight="700">1층 · 실시간 망취소</text>
+    <text x="300" y="100" font-size="10.5" fill="#1e40af">확정 불가를 감지한 그 자리에서 즉시 소거한다 — <tspan font-weight="700">대부분의 건이 여기서 끝난다</tspan></text>
+    <rect x="936" y="66" width="128" height="38" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <text x="1000" y="90" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">몇 초</text>
+
+    <path d="M380,114 V138" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#a5r)"/>
+    <text x="396" y="132" font-size="10" fill="#b91c1c" font-weight="700">여기서 실패한 건만 아래로 (CANCEL_PENDING)</text>
+
+    <!-- layer 2 -->
+    <rect x="280" y="142" width="800" height="58" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="300" y="166" font-size="13" fill="#1d4ed8" font-weight="700">2층 · 망취소 백오프 자동 재시도 ↻</text>
+    <text x="300" y="186" font-size="10.5" fill="#1e40af">간격을 1초 → 2초 → 4초로 늘려가며 다시 쏜다 — <tspan font-weight="700">일시적 장애를 흡수하는 층</tspan>. 멱등하므로 자동화해도 안전하다</text>
+    <rect x="936" y="152" width="128" height="38" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <text x="1000" y="176" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">수 분</text>
+
+    <path d="M380,200 V224" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#a5r)"/>
+    <text x="396" y="218" font-size="10" fill="#b91c1c" font-weight="700">기한 내 소거 실패 → 대사 명단 등록</text>
+
+    <!-- layer 3 -->
+    <rect x="280" y="228" width="800" height="58" rx="10" fill="#f1f3f7" stroke="#64748b" stroke-width="2.2"/>
+    <text x="300" y="252" font-size="13" fill="#334155" font-weight="700">3층 · D+1 대사 (reconciliation)</text>
+    <text x="300" y="272" font-size="10.5" fill="#475569">PG 거래 내역 파일과 우리 결제 테이블을 전건 대조 — <tspan font-weight="700">거래번호를 알게 되므로 정리는 "일반 취소"로</tspan>. 절대 놓치지 않는 마지막 그물</text>
+    <rect x="936" y="238" width="128" height="38" rx="8" fill="#fff" stroke="#cbd5e1"/>
+    <text x="1000" y="262" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">하루 뒤</text>
+
+    <rect x="40" y="300" width="1040" height="60" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="60" y="324" font-size="11.8" fill="#374151">각 층의 역할이 다르다 — 망취소는 대사를 <tspan font-weight="700">대체하는 것이 아니라</tspan>, 대사까지 가는 건수를 줄이고 <tspan font-weight="700" fill="#2563eb">고객 피해 시간을 하루에서 몇 초로 줄이는</tspan> 장치다.</text>
+    <text x="60" y="346" font-size="11.8" fill="#b91c1c" font-weight="700">대사만 있고 망취소가 없으면 모든 사고가 하루짜리 사고가 되고, 망취소만 있고 대사가 없으면 망취소가 실패한 건은 영원히 방치된다.</text>
+  </svg>
+  <figcaption>3층에서 <b>일반 취소로 바뀌는 것</b>이 이 그림의 숨은 요점이다. 대사 파일에는 <b>PG 거래번호가 들어 있으므로</b>, 그 시점의 우리는 더 이상 "번호를 모르는 상태"가 아니다 — <b>망취소로 시작한 문제가 일반 취소로 끝난다.</b></figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>3층 방어선 — 시간 규모로 외운다</h4>
+  <div class="grid g3">
+    <div class="tile big ok"><div class="k">초</div><div class="s">1층 실시간 망취소</div></div>
+    <div class="tile big ok"><div class="k">분</div><div class="s">2층 백오프 자동 재시도</div></div>
+    <div class="tile big"><div class="k">일</div><div class="s">3층 D+1 대사 (일반 취소)</div></div>
+  </div>
+  <div class="rule ok" style="margin-bottom:0"><b>"초 · 분 · 일"</b> — 그리고 층이 내려갈수록 <b>건수는 줄고 고객 피해 시간은 길어진다</b></div>
+</div>
+
+<h3>8-1. 승인은 자동 재시도 금지, 망취소는 자동 재시도 허용 — 이 대비가 자주 확인된다</h3>
+
+<div class="scroll">
+<table>
+  <caption>같은 "재시도"인데 안전성이 정반대인 이유</caption>
+  <thead><tr><th style="width:130px"></th><th>승인 요청 재시도</th><th>망취소 재시도</th></tr></thead>
+  <tbody>
+    <tr><th>안전한가</th><td class="bad">위험 — 이중 승인이 난다</td><td class="good">안전 — 결과가 달라지지 않는다</td></tr>
+    <tr><th>이유</th><td>요청 하나가 <b>새로운 승인을 하나 더 만든다</b>(생성 연산)</td><td>대상이 있든 없든, 몇 번을 하든 결과는 <b>"승인 없음"</b>(소거 연산)</td></tr>
+    <tr class="hl"><th>자동화</th><td>멱등키 등 별도 장치 없이는 <b>자동 재시도 금지</b></td><td class="good"><b>지수 백오프 자동 재시도 가능</b></td></tr>
+    <tr><th>재시도 실패 시</th><td>사람이 개입 — 조회로 결과부터 확인</td><td><code>CANCEL_PENDING</code> 유지 후 <b>대사로 이월</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout ok"><span class="t">대사가 무엇인지 한 번 더</span>
+<b>대사(reconciliation)는 D+1에 PG가 내려주는 거래 내역 파일과 우리 결제 테이블을 전건 대조하는 작업</b>이다. 회계에서 장부 두 개를 맞춰보는 것을 대사라 부르는 데서 온 말이다. 양쪽을 나란히 놓으면 <b>"PG에는 승인이 있는데 우리는 실패/미확정인 거래"가 기계적으로 드러난다.</b></div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 자동 망취소 vs 보류 후 확인 — 망취소는 공짜가 아니다</h2>
+
+<p>여기부터가 트레이드오프다. 지금까지의 설명만 보면 망취소는 무해해 보이지만, 실은 숨은 비용이 있다. <b>사실은 성공했을 결제를 날린다는 것</b>이다.</p>
+
+<p><b>확정 불가 거래의 전부가 실패한 거래는 아니다.</b> 상당수는 실제로 승인에 성공한 거래이고, 우리가 그 결과를 못 받았을 뿐이다. 그 거래에 망취소를 쏘면 <b>고객 입장에서</b> 어떤 일이 벌어지는지 따라가 보자.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 360" role="img" aria-label="자동 망취소의 고객 경험 타임라인. T 플러스 0초에 고객이 결제 버튼을 누르고 우리는 승인 요청을 보낸다. T 플러스 15초에 고객 휴대폰에 45,000원 승인 문자가 도착한다. T 플러스 30초에 우리는 타임아웃과 조회 실패를 거쳐 망취소를 발동한다. T 플러스 32초에 고객 휴대폰에 취소 문자가 도착하고 T 플러스 33초에 화면에는 결제 실패가 표시된다. 고객은 문자 두 통을 받고 실패 화면을 보게 된다">
+    <text x="20" y="26" font-size="15" font-weight="700" fill="#1f2937">자동 망취소의 숨은 비용 — <tspan fill="#dc2626">사실은 성공했을 결제를 날린다</tspan></text>
+
+    <rect x="20" y="64" width="1080" height="56" rx="8" fill="#fbfcfd" stroke="#eef1f5"/>
+    <rect x="20" y="146" width="1080" height="56" rx="8" fill="#fbfcfd" stroke="#eef1f5"/>
+
+    <g stroke="#e2e8f0" stroke-width="1.2" stroke-dasharray="4 4">
+      <line x1="200" y1="60" x2="200" y2="248"/><line x1="390" y1="60" x2="390" y2="248"/>
+      <line x1="610" y1="60" x2="610" y2="248"/><line x1="790" y1="60" x2="790" y2="248"/>
+      <line x1="950" y1="60" x2="950" y2="248"/>
+    </g>
+
+    <text x="32" y="97" font-size="11.5" fill="#6b7280" font-weight="700">고객 휴대폰</text>
+    <text x="32" y="179" font-size="11.5" fill="#6b7280" font-weight="700">우리 시스템</text>
+
+    <rect x="125" y="76" width="150" height="34" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="200" y="98" font-size="11" fill="#1d4ed8" text-anchor="middle">결제 버튼 클릭</text>
+
+    <rect x="300" y="76" width="180" height="34" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="390" y="98" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">"45,000원 승인" 문자</text>
+
+    <rect x="700" y="76" width="180" height="34" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="790" y="98" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">"45,000원 취소" 문자</text>
+
+    <rect x="125" y="158" width="150" height="34" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="200" y="180" font-size="11" fill="#1d4ed8" text-anchor="middle">승인 요청 전송</text>
+
+    <rect x="485" y="152" width="250" height="46" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.6"/>
+    <text x="610" y="171" font-size="11" fill="#9a3412" text-anchor="middle" font-weight="700">타임아웃 → 조회 실패</text>
+    <text x="610" y="188" font-size="11" fill="#9a3412" text-anchor="middle" font-weight="700">→ 망취소 발동</text>
+
+    <rect x="850" y="158" width="200" height="34" rx="8" fill="#f1f3f7" stroke="#64748b" stroke-width="1.4"/>
+    <text x="950" y="180" font-size="11" fill="#334155" text-anchor="middle" font-weight="700">화면: "결제에 실패했습니다"</text>
+
+    <line x1="150" y1="248" x2="1070" y2="248" stroke="#94a3b8" stroke-width="1.6"/>
+    <g stroke="#94a3b8" stroke-width="1.6">
+      <line x1="200" y1="242" x2="200" y2="254"/><line x1="390" y1="242" x2="390" y2="254"/>
+      <line x1="610" y1="242" x2="610" y2="254"/><line x1="790" y1="242" x2="790" y2="254"/>
+      <line x1="950" y1="242" x2="950" y2="254"/>
+    </g>
+    <g font-size="10.5" fill="#475569" text-anchor="middle" class="mono">
+      <text x="200" y="270">T+0초</text><text x="390" y="270">T+15초</text><text x="610" y="270">T+30초</text><text x="790" y="270">T+32초</text><text x="950" y="270">T+33초</text>
+    </g>
+
+    <rect x="20" y="292" width="1080" height="56" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="315" font-size="12" fill="#b91c1c" font-weight="700">고객은 문자 두 통을 받고 실패 화면을 본다 → 다시 결제하거나, 혼란스러워서 이탈한다.</text>
+    <text x="40" y="336" font-size="11.5" fill="#7f1d1d">재결제 과정에서 이탈하면 그 주문은 매출에서 사라진다 — 망취소는 <tspan font-weight="700">미확정 상태를 없애는 대가로 성공했을 매출을 버리는</tspan> 선택이다.</text>
+  </svg>
+  <figcaption>이 타임라인의 <b>T+15초와 T+32초 사이</b>가 비용의 실체다. 기술적으로는 완벽하게 동작했지만, <b>고객에게는 "돈이 나갔다가 들어온" 혼란</b>만 남는다.</figcaption>
+</figure>
+
+<h3>9-1. 두 전략과, 각각에 맞는 도메인</h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4>자동 망취소 — 빠른 확정 우선</h4>
+    <ul>
+      <li>확정 불가 <b>즉시 소거하고 실패로 닫는다</b></li>
+      <li><b>얻는 것</b>: 상태가 단순해지고 미확정 구간이 짧다</li>
+      <li><b>맞는 도메인</b>: 재고가 걸린 실물 커머스, 선착순 판매 — <b>재고를 잡아둔 채 30분을 기다리면 그 상품은 다른 고객에게도 안 팔린다</b></li>
+      <li><b>치르는 비용</b>: 성공했을 결제의 폐기, 재결제 이탈</li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>보류 후 확인 — 성공 구제 우선</h4>
+    <ul>
+      <li><code>UNKNOWN</code>으로 두고 <b>백오프 재조회와 확인 배치로 결과를 끝까지 추적</b>해, 승인이 확인되면 주문을 살린다</li>
+      <li><b>얻는 것</b>: 성공한 결제를 구제한다</li>
+      <li><b>맞는 도메인</b>: 건당 가치가 큰 고액 상품, 조회 API가 신뢰할 만한 PG, <b>확정이 늦어져도 잃는 게 적은 디지털 상품</b></li>
+      <li><b>치르는 비용</b>: 미확정 구간이 길어짐, 그동안의 고객 문의와 상태 관리 복잡도</li>
+    </ul>
+  </div>
+</div>
+
+<div class="scroll">
+<table>
+  <caption>무엇을 잃을지 고르는 표 — 정답은 도메인 조건의 함수다</caption>
+  <thead><tr><th style="width:120px"></th><th>자동 망취소</th><th>보류 후 확인</th></tr></thead>
+  <tbody>
+    <tr><th>잃는 것</th><td class="bad">성공했을 결제, 재결제 이탈</td><td class="bad">미확정 시간, 상태 복잡도</td></tr>
+    <tr><th>얻는 것</th><td class="good">짧은 미확정 구간, 단순한 상태</td><td class="good">성공한 결제의 구제</td></tr>
+    <tr class="hl"><th>맞는 도메인</th><td>재고 · 선착순, 저가 · 대량</td><td>고액, 디지털, 조회 신뢰도 높음</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>면접에서 이 절이 쓰이는 방식</h4>
+  <div class="rule red">"저는 무조건 망취소"가 아니라 — <b>"무엇을 잃어도 되는가, 미확정 시간인가 성공했을 결제인가"</b></div>
+  <p style="margin-bottom:0">이 트레이드오프를 <b>조건과 함께</b> 말하는 것이 균형 잡힌 답이다. 그리고 어느 전략을 고르든 <b>대사(3층)는 공통으로 필요하다</b>는 점을 덧붙이면 설계 전체를 본 사람으로 보인다.</p>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. PG마다 지원 방식이 다르다 — 연동 전에 확인할 것</h2>
+
+<p><b>망취소는 표준 API가 아니다.</b> PG와 결제수단마다 방식이 갈리므로, <b>연동 검토 단계에서</b> 반드시 확인해야 한다. 크게 세 갈래다.</p>
+
+<div class="scroll">
+<table>
+  <caption>PG의 망취소 지원 방식 세 갈래 — 우리 쪽 구현이 어떻게 달라지나</caption>
+  <thead><tr><th style="width:200px">유형</th><th>우리 쪽 구현</th><th>주의할 점</th></tr></thead>
+  <tbody>
+    <tr><th>① 전용 망취소 API 제공</th><td>가맹점 주문번호로 소거를 요청하는 <b>별도 엔드포인트</b>를 호출한다</td><td class="good">가장 다루기 쉬운 경우. "해당 거래 없음" <b>응답 코드를 성공으로 매핑</b>하는 것만 잊지 않으면 된다</td></tr>
+    <tr class="hl"><th>② PG · VAN 레벨 자동 망취소</th><td>구현이 <b>얇아진다</b> — 응답 미수신을 감지하면 중계 구간이 알아서 처리한다</td><td class="bad"><b>"언제 자동으로 취소되는지"를 정확히 알아야 한다.</b> 모르면 우리가 쏜 망취소와 PG의 자동 망취소가 겹치거나, <b>PG가 자동 취소한 거래를 우리는 살아 있다고 믿는</b> 불일치가 생긴다</td></tr>
+    <tr><th>③ 미지원</th><td><b>거래 조회 + 일반 취소</b>를 조합해 절차를 직접 구성한다 (조회로 거래번호를 얻은 뒤 그 번호로 취소)</td><td class="bad">한계가 명확하다 — <b>조회가 안 되는 동안에는 아무것도 못 한다.</b> 그 공백은 대사로만 메워지므로 <b>대사 주기와 알림을 더 촘촘히</b> 가져가야 한다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout info"><span class="t">②가 존재하는 이유 — 망취소는 원래 카드 승인망의 장치였다</span>
+카드 승인망에는 <b>단말이나 중계 구간이 응답 미수신을 감지하면 자동으로 망취소를 수행하는 체계</b>가 오래전부터 있었다. 온라인 PG 중에도 일정 조건에서 자동 처리해 주는 곳이 있다. 즉 <b>망취소는 우리가 발명하는 절차가 아니라, 이미 업계에 있는 절차에 우리 쪽 처리를 맞추는 일</b>에 가깝다.</div>
+
+<h3>10-1. 결제수단별 차이 — 망취소는 만능이 아니다</h3>
+
+<p>망취소는 <b>카드 승인망에서 출발한 개념</b>이다. 승인 구조가 다른 결제수단에는 <b>같은 개념이 그대로 적용되지 않는다.</b></p>
+
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">카드 (승인형)</div><div class="d">"승인"이라는 <b>되돌릴 대상</b>이 존재한다. 망취소가 <b>그대로 적용되는 영역</b>이다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">가상계좌 · 계좌이체</div><div class="d">가상계좌는 <b>"승인"이 아니라 "입금 대기 → 입금 확인"의 흐름</b>이라 소거할 승인 자체가 없다. <b>입금 전이면 채번한 계좌를 만료</b>시키고, <b>입금 후면 환불</b>로 대응한다.</div></div>
+</div>
+
+<div class="rule red">답에 넣으면 좋은 한계 인식 — <b>"망취소는 만능이 아니라 승인형 결제의 도구"</b></div>
+
+<div class="memo">
+  <h4>연동 검토 때 PG에 물어볼 여섯 가지 — 그대로 체크리스트로 쓴다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">① 전용 API가 있는가</div><div class="d">없다면 <b>대체 절차(조회 + 일반 취소)</b>의 구체적 흐름은 무엇인가.</div></div>
+    <div class="tile"><div class="k">② 무엇으로 지정하는가</div><div class="d">가맹점 주문번호만으로 되는가, <b>금액 · 요청 시각도 함께 보내야</b> 하는가.</div></div>
+    <div class="tile"><div class="k">③ "거래 없음"의 응답 코드</div><div class="d">그 코드를 <b>성공으로 매핑해도 되는가.</b> 이걸 오류로 두면 정상 케이스가 실패 경로로 샌다.</div></div>
+    <div class="tile red"><div class="k">④ 순서 역전을 막아주는가</div><div class="d">망취소 이후에 도착한 원승인을 <b>PG가 자동으로 거절하는가.</b> 보증이 없으면 사례 2가 열린다.</div></div>
+    <div class="tile red"><div class="k">⑤ 자동 망취소 조건</div><div class="d">PG가 <b>스스로 망취소하는 경우</b>가 있다면 그 조건과 시점은 정확히 무엇인가.</div></div>
+    <div class="tile"><div class="k">⑥ 대사 파일 표기</div><div class="d">망취소된 건이 D+1 파일에 <b>아예 안 나타나는지, 승인·취소 두 줄로 나타나는지.</b> 대사 로직이 여기서 갈린다.</div></div>
+  </div>
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 실무 사례 세 건 — 망취소가 없어서, 혹은 있어서 생기는 일</h2>
+
+<h3>11-1. 사례 1: 망취소 없이 실패 확정 → 월말 정산 차액 45,000원</h3>
+
+<p>타임아웃 건을 조회 실패 시 그대로 <code>FAILED</code>로 닫던 시스템이었다. <b>7절의 Before 코드가 그대로 돌고 있었다</b>고 보면 된다. 고객 A의 45,000원 결제가 이 경로를 탔는데, <b>실제로는 PG에 승인이 살아 있었다.</b></p>
+
+<div class="step red"><span class="n">1</span><div class="body"><b>결제 시점</b> — 고객: <b>승인 문자 수신</b> / 우리 화면: <b>"결제 실패"</b>. 우리 DB는 <code>FAILED</code>, PG에는 45,000원 승인 존재.</div></div>
+<div class="step red"><span class="n">2</span><div class="body"><b>그날 저녁</b> — 고객이 <b>타사에서 같은 물건을 구매</b>한다. 우리 매출은 이미 사라졌다.</div></div>
+<div class="step red"><span class="n">3</span><div class="body"><b>한 달 뒤</b> — 고객이 카드 청구서에서 <b>"산 적 없는 45,000원"</b>을 발견하고 항의. 그런데 <b>상담원은 우리 장부에 실패 기록뿐이라 거래를 찾지 못한다.</b></div></div>
+<div class="step red"><span class="n">4</span><div class="body"><b>월말</b> — 정산에서 <b>PG 정산금이 장부 매출보다 45,000원 많은 것</b>으로 비로소 실체가 확인된다.</div></div>
+
+<div class="callout trap"><span class="t">가장 비쌌던 것은 45,000원이 아니다</span>
+<b>같은 경로를 탄 잠재 건수를 전수 조사하는 데 반나절이 들었다는 것</b>이다. <code>FAILED</code>라는 <b>하나의 상태값에 "진짜 실패"와 "실패로 잘못 기록된 승인"이 섞여 있어서</b>, 우리 DB만으로는 구분할 수 없었기 때문이다. — 타임아웃 → 조회 불가 → 망취소 경로가 있었다면 <b>몇 초 만에 소거됐을 거래</b>다.</div>
+
+<h3>11-2. 사례 2: 망취소의 "거래 없음"을 믿었는데 승인이 살아남았다 <span class="badge senior">시니어 변별</span></h3>
+
+<p>타임아웃 직후 망취소를 쐈고, PG가 <b>"해당 거래 없음"</b>으로 응답해서 실패로 확정했다. <b>7절 After 코드대로 동작한 것이고, 여기까지는 설계대로였다.</b> 그런데 원승인이 PG 내부에서 <b>지연 처리 중</b>이었다 — 망취소가 도착한 시점에는 <b>아직 거래가 만들어지기 전</b>이었던 것이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 380" role="img" aria-label="순서 역전 사례 타임라인. T 플러스 0초에 승인 요청을 보내고 PG 내부에서는 원승인이 계속 지연 처리 중이다. T 플러스 30초에 우리가 망취소를 발동하고 T 플러스 31초에 PG는 해당 거래 없음을 응답하며 그 시점에는 실제로 거래가 없었다. 우리는 FAILED로 확정했지만 T 플러스 4분에 원승인이 뒤늦게 완성되어 고객에게 78,000원 승인 문자가 발송된다">
+    <defs>
+      <marker id="a7r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="20" y="26" font-size="15" font-weight="700" fill="#1f2937">순서 역전 — <tspan fill="#dc2626">망취소가 원승인을 시간적으로 추월했다</tspan></text>
+
+    <rect x="20" y="58" width="1080" height="62" rx="8" fill="#fbfcfd" stroke="#eef1f5"/>
+    <rect x="20" y="148" width="1080" height="94" rx="8" fill="#fbfcfd" stroke="#eef1f5"/>
+
+    <g stroke="#e2e8f0" stroke-width="1.2" stroke-dasharray="4 4">
+      <line x1="180" y1="54" x2="180" y2="258"/><line x1="420" y1="54" x2="420" y2="258"/>
+      <line x1="660" y1="54" x2="660" y2="258"/><line x1="930" y1="54" x2="930" y2="258"/>
+    </g>
+
+    <text x="30" y="94" font-size="11.5" fill="#6b7280" font-weight="700">우리</text>
+    <text x="30" y="204" font-size="11.5" fill="#6b7280" font-weight="700">PG 내부</text>
+
+    <rect x="100" y="68" width="155" height="42" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="177" y="94" font-size="11" fill="#1d4ed8" text-anchor="middle">승인 요청 전송</text>
+
+    <rect x="310" y="68" width="220" height="42" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.6"/>
+    <text x="420" y="86" font-size="10.8" fill="#9a3412" text-anchor="middle" font-weight="700">타임아웃 → 조회 실패</text>
+    <text x="420" y="103" font-size="10.8" fill="#9a3412" text-anchor="middle" font-weight="700">→ 망취소 발동</text>
+
+    <rect x="540" y="68" width="240" height="42" rx="8" fill="#f1f3f7" stroke="#64748b" stroke-width="1.6"/>
+    <text x="660" y="86" font-size="10.8" fill="#334155" text-anchor="middle" font-weight="700">FAILED로 확정</text>
+    <text x="660" y="103" font-size="10.8" fill="#64748b" text-anchor="middle">소거를 확인했다고 판단</text>
+
+    <path d="M420,112 C 460,126 500,132 560,152" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#a7r)"/>
+    <text x="596" y="136" font-size="11" fill="#b91c1c" font-weight="700">망취소가 먼저 도착했고, 원승인은 그 뒤에 완성됐다 — 처리 순서가 뒤집혔다</text>
+
+    <rect x="100" y="156" width="830" height="26" rx="7" fill="#fef3c7" stroke="#d97706"/>
+    <text x="114" y="174" font-size="10.8" fill="#92400e" font-weight="700">원승인이 PG 내부에서 지연 처리 중 — 아직 거래가 만들어지지 않았다</text>
+
+    <rect x="530" y="192" width="255" height="42" rx="8" fill="#f1f3f7" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="657" y="210" font-size="10.8" fill="#334155" text-anchor="middle" font-weight="700">"해당 거래 없음" 응답</text>
+    <text x="657" y="227" font-size="10.5" fill="#64748b" text-anchor="middle">이 시점엔 진짜로 없었다</text>
+
+    <rect x="795" y="192" width="270" height="42" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="930" y="210" font-size="10.8" fill="#b91c1c" text-anchor="middle" font-weight="700">원승인 처리 완료 (뒤늦게 생성)</text>
+    <text x="930" y="227" font-size="10.5" fill="#7f1d1d" text-anchor="middle">고객에게 78,000원 승인 문자 발송</text>
+
+    <line x1="80" y1="258" x2="1070" y2="258" stroke="#94a3b8" stroke-width="1.6"/>
+    <g stroke="#94a3b8" stroke-width="1.6">
+      <line x1="180" y1="252" x2="180" y2="264"/><line x1="420" y1="252" x2="420" y2="264"/>
+      <line x1="660" y1="252" x2="660" y2="264"/><line x1="930" y1="252" x2="930" y2="264"/>
+    </g>
+    <g font-size="10.5" fill="#475569" text-anchor="middle" class="mono">
+      <text x="180" y="280">T+0초</text><text x="420" y="280">T+30초</text><text x="660" y="280">T+31초</text><text x="930" y="280">T+4분</text>
+    </g>
+
+    <rect x="20" y="296" width="1080" height="76" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="40" y="318" font-size="12.5" fill="#b91c1c" font-weight="700">교훈 — 망취소의 "거래 없음" 응답은 "지금 없다"는 사실일 뿐, "앞으로도 없을 것"이라는 보증이 아니다.</text>
+    <text x="40" y="340" font-size="11.5" fill="#7f1d1d">대응 ① PG가 이 경합을 내부에서 막아주는지 — <tspan font-weight="700">망취소 이후 도착한 원거래를 자동 거절하는지</tspan> — 스펙으로 확인한다.</text>
+    <text x="40" y="360" font-size="11.5" fill="#7f1d1d">대응 ② 보증이 없다면 <tspan font-weight="700">망취소로 닫은 건도 D+1 대사 대상에 포함</tspan>해 재검증한다.</text>
+  </svg>
+  <figcaption>우리가 보낸 <b>두 요청의 순서는 맞았다.</b> 뒤집힌 것은 <b>PG 내부에서 처리된 순서</b>다. 결과는 <b>우리는 FAILED, PG는 승인 — 아무도 모르는 상태</b>가 된다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>여기서 드러나는 흔한 설계 실수 하나</h4>
+  <div class="rule red">대사를 <b>"망취소가 실패한 건만 보는 것"</b>으로 좁게 설계하면 이 구멍을 놓친다</div>
+  <p style="margin-bottom:0">이 사례의 건은 <b>망취소가 성공한 건</b>이기 때문이다. 그러므로 대사 대상은 "미확정 건"이 아니라 <b>"그 시간대의 결제 전건"</b>이어야 한다.</p>
+</div>
+
+<h3>11-3. 사례 3: 승인 응답 수신 후 커밋 실패 — 조건 B를 빼먹은 설계</h3>
+
+<p>이벤트 트래픽으로 <b>DB 커넥션 풀이 고갈</b>된 시점이었다. 승인 응답을 받고 결제 확정을 커밋하려던 트랜잭션들이 <b>커넥션을 못 받아 줄줄이 타임아웃으로 굴러떨어졌다.</b></p>
+
+<p><code>catch</code> 블록은 <b>"DB 오류"만 로그로 기록하고 끝</b>이었다. 2절에서 본 것처럼 <b>트랜잭션 롤백은 PG의 승인을 되돌리지 못한다.</b> 그 결과 <b>PG에는 승인이 살아 있는데 우리에겐 아무 기록이 없는 거래</b>가 그 몇 분 사이 수십 건 생겼다.</p>
+
+<div class="split">
+  <div class="pane g">
+    <h4>이 시스템이 갖고 있던 것</h4>
+    <ul>
+      <li><b>타임아웃 경로에는 망취소가 있었다</b> — 조건 A는 잘 구현돼 있었다</li>
+      <li>UNKNOWN 해소 배치도 돌고 있었다</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>통째로 빠져 있던 것</h4>
+    <ul>
+      <li><b>"응답은 받았는데 내부가 실패한" 경로에는 소거 장치가 전혀 없었다</b></li>
+      <li>즉 <b>조건 B가 설계에 존재하지 않았다</b></li>
+    </ul>
+  </div>
+</div>
+
+<p>수습 후 추가한 것은 두 가지다. <b>① 승인 응답을 받으면 확정 커밋 이전에 응답 원문(승인번호 포함)을 별도로 남기게</b> 했고(6-3절 코드), <b>② 확정 커밋이 실패하면 그 승인번호로 즉시 취소를 시도하고 그마저 실패하면 대사에 등록하는 보상 로직</b>을 <code>catch</code>에 넣었다.</p>
+
+<div class="callout trap"><span class="t">이 경로가 더 위험한 이유</span>
+조건 B 경로는 타임아웃 경로보다 <b>더 조용하게</b> 사고를 낸다. <b>타임아웃은 알림이 뜨지만 "DB 오류"는 그냥 로그 한 줄</b>이기 때문이다. 그래서 이 경로의 사고는 <b>대사나 고객 항의로만 발견된다.</b></div>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>12-1. 3초 인출 카드 — 답을 먼저 떠올리고 오른쪽을 본다</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">망취소 한 문장 정의는?</div><div class="d"><b>통신 장애로 승인 결과를 수신하지 못한 거래를, 승인됐을 가능성을 전제로 원천 취소하는 절차.</b> 망(網) = 네트워크 — <b>망 구간의 문제</b>로 결과가 불명해진 거래를 다룬다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">소거 연산의 세 성질은?</div><div class="d"><b>무해 · 멱등 · 수렴</b> — 없으면 무해, 여러 번 해도 결과 같음, 결과는 항상 "승인 없음" 하나로 수렴.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">발동 조건 두 가지는?</div><div class="d"><b>A "못 받았다"</b>(타임아웃 + 조회로도 확정 불가) / <b>B "받고도 못 적었다"</b>(승인 응답 수신 후 DB 커밋 실패). <b>B를 빠뜨리는 설계가 많다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">일반 취소를 못 쓰는 이유 한 줄?</div><div class="d">일반 취소는 <b>PG 거래번호를 요구하는데, 그 번호는 못 받은 그 응답 안에 들어 있다.</b> 망취소는 <b>처음부터 우리가 가진 번호</b>(가맹점 주문번호)만 쓴다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">망취소 성공 시 / 실패 시 상태는?</div><div class="d">성공 → <code>FAILED</code>(소거 확인됨). 실패 → <b><code>CANCEL_PENDING</code></b>. <b>실패를 FAILED로 닫으면 도입 이유가 사라진다.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">3층 방어선은?</div><div class="d"><b>초 · 분 · 일</b> — ① 실시간 망취소 ② 백오프 자동 재시도 ③ D+1 대사(이때는 <b>일반 취소</b>).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">"해당 거래 없음" 응답 처리는?</div><div class="d"><b>예외가 아니라 성공</b>으로 처리한다 — 목표 상태에 이미 도달했으므로. 단 <b>"지금 없다"일 뿐 "앞으로도 없다"는 보증은 아니다</b>(순서 역전).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">자동 망취소의 비용은?</div><div class="d"><b>사실은 성공했을 결제를 날려 고객에게 재결제를 강요</b>한다. 판단 기준 — <b>"미확정 시간과 성공했을 결제 중 무엇을 잃어도 되는가"</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">승인 재시도 vs 망취소 재시도?</div><div class="d">승인은 <b>생성 연산</b>이라 자동 재시도 금지, 망취소는 <b>멱등 소거</b>라 백오프 자동 재시도 안전. <b>이 대비가 자주 확인된다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">대사 대상은 무엇인가?</div><div class="d">"미확정 건"이 아니라 <b>"그 시간대의 결제 전건"</b> — <b>망취소가 성공한 건도 포함</b>해야 순서 역전을 잡는다.</div></div>
+</div>
+
+<h3>12-2. 꼬리질문 — 먼저 답해보고 펼친다</h3>
+
+<details class="q"><summary>일반 취소로 하면 안 되나요? 굳이 망취소가 왜 따로 있죠? <span class="badge core">필수</span><span class="hint">힌트: API가 없어서가 아니라 인자를 채울 수 없어서다</span></summary><div class="a">
+  <p>일반 취소는 <b>승인번호 · PG 거래번호로 확정된 거래를 지정해</b> 되돌리는 연산인데, <b>망취소가 필요한 순간은 정의상 그 번호를 못 받은 순간</b>이다. 번호는 승인 응답에 담겨 오는데 <b>그 응답을 못 받은 것이 지금의 문제</b>이기 때문이다(4절 도식).</p>
+  <div class="rule">그래서 <b>원거래 식별 정보(가맹점 주문번호 등)로 "있다면 지워달라"</b>고 요청하는 별도 연산이 필요하다</div>
+  <p>덧붙여 <b>의미도 다르다.</b> 일반 취소는 성립한 거래의 철회라 매출·정산에 <b>취소 이력이 남지만</b>, 망취소는 <b>성립 자체를 소거하는 쪽</b>에 가깝다(PG에 따라 승인·취소 쌍으로 기록되기도 한다).</p>
+  <div class="callout ok" style="margin-bottom:0"><span class="t">여기까지 말하면 실무 경험이 드러난다</span>
+  이 처리 방식 차이가 <b>대사 파일에 어떻게 찍히는지</b> 확인해두는 것까지가 실무다. <b>망취소된 건이 파일에 아예 안 나타나는지, 승인·취소 두 줄로 나타나는지에 따라 대사 로직이 달라지기 때문</b>이다(10절 체크리스트 ⑥).</div>
+</div></details>
+
+<details class="q"><summary>망취소 요청도 타임아웃 나면 어떻게 하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 승인과 망취소는 재시도 안전성이 정반대다. 그리고 끝은 다른 연산으로 닫힌다</span></summary><div class="a">
+  <p><b>"망취소는 멱등한 소거 연산"</b>이라는 성질에서 답이 나온다. 없는 거래를 지워도, 이미 지운 거래를 또 지워도 결과가 같으므로 — <b>승인과 달리</b> — <b>백오프 자동 재시도가 안전</b>하다. 이 대비를 명확히 말하는 것이 첫 번째 포인트다.</p>
+  <div class="rule ok">승인은 <b>생성</b>이라 재시도가 이중 결제를 만들지만, 망취소는 <b>소거</b>라 재시도가 결과를 바꾸지 않는다</div>
+  <p>기한 내에 끝내 실패하면 그 건을 <code>FAILED</code>로 확정하지 말고 <b><code>CANCEL_PENDING</code> 같은 미확정 상태로 대사 명단에 올린다.</b> 여기서 실패로 확정하면 <b>애초에 망취소를 도입한 이유가 사라진다.</b></p>
+  <p>그다음 <b>D+1 PG 거래 내역 대조에서 승인 잔존이 확인되면, 그때는 거래번호를 아는 상태이므로 일반 취소로 닫는다.</b> 망취소로 시작한 문제가 <b>일반 취소로 끝나는 이 전환</b>을 설명할 수 있으면 파이프라인 전체를 이해한 것이다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">마지막 한 문장까지 붙이면 완결된다</span>
+  <b>"망취소 실패 → 대사가 최후 방어선"</b>이라는 층위 구조와, 그 사이 <b>고객 화면은 실패가 아닌 "확인 중"</b>이어야 한다는 것.</div>
+</div></details>
+
+<details class="q"><summary>거래 조회 API가 있으면 망취소는 필요 없지 않나요? <span class="badge core">필수</span><span class="hint">힌트: 조회가 "확정을 못 주는" 구간이 세 종류 있다</span></summary><div class="a">
+  <p><b>조회가 확정을 주면 망취소는 필요 없다.</b> 승인이 확인되면 살리고, 미승인이 확인되면 그냥 닫으면 된다. 망취소가 등판하는 것은 <b>조회가 확정을 못 주는 구간</b>이다.</p>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">① 조회도 실패</div><div class="d">PG 장애 시간대에는 <b>조회도 같이 타임아웃</b> 난다</div></div>
+    <div class="tile red"><div class="k">② "없음"을 못 믿음</div><div class="d"><b>지연 승인 가능성</b>이 남아 있는 시점 (사례 2)</div></div>
+    <div class="tile red"><div class="k">③ 조회 API 부재</div><div class="d">그 <b>결제수단에 실시간 조회가 없는</b> 경우</div></div>
+  </div>
+  <div class="rule" style="margin-top:12px">역할로 정리하면 — <b>조회는 "알아내기", 망취소는 "알 수 없으니 없던 것으로 만들기"</b></div>
+  <p style="margin-bottom:0">파이프라인에서 <b>조회가 먼저이고 망취소가 그다음인 이유</b>도 여기서 나온다. <b>알아낼 수 있으면 알아내는 게 항상 낫다</b> — 망취소는 <b>성공했을 결제를 날릴 수 있는 연산</b>이기 때문이다.</p>
+</div></details>
+
+<details class="q"><summary>망취소하면 고객 카드 한도랑 승인 문자는 어떻게 되나요?<span class="hint">힌트: 기술 절차만으로는 답이 반쪽이다</span></summary><div class="a">
+  <p>원승인이 실제로 있었던 경우, 고객은 <b>승인 문자와 취소 문자를 연달아</b> 받는다. 한도는 취소가 반영되면서 복구되는데, <b>카드사에 따라 즉시부터 며칠까지 걸릴 수 있다.</b> 즉 고객 입장에서는 <b>"돈이 잠깐 묶였다가 풀리는" 경험</b>을 한다.</p>
+  <div class="rule red">그래서 자동 망취소를 쓰는 서비스는 <b>실패 화면 문구를 따로 설계</b>한다</div>
+  <div class="callout info"><span class="t">문구 예시</span>
+  <b>"결제가 정상 완료되지 않아 자동 취소되었습니다. 다시 시도해 주세요"</b> — 문자 두 통을 받은 고객이 <b>이중 결제로 오인해 CS를 넣는 것</b>을 줄이는 장치다.</div>
+  <p style="margin-bottom:0"><b>기술 절차만이 아니라 고객 커뮤니케이션까지 한 세트</b>라는 점을 언급하면 좋다. 망취소는 <b>기술적으로 완벽하게 동작해도 고객에게는 혼란스러운 경험</b>이므로, 그 혼란을 문구로 흡수하지 않으면 <b>CS 비용이 그대로 남는다.</b></p>
+</div></details>
+
+<details class="q"><summary>자동 망취소가 항상 정답인가요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 확정 불가 건의 일부는 "실제로 성공한" 결제다</span></summary><div class="a">
+  <p><b>아니다.</b> 확정 불가 거래의 일부는 실제로 성공한 결제이고, <b>자동 망취소는 그것을 날려 고객에게 재결제를 강요한다.</b> 9절의 타임라인이 그 비용의 실체다.</p>
+  <div class="split">
+    <div class="pane b"><h4>자동 망취소가 맞는 경우</h4><ul>
+      <li><b>재고 · 선착순</b>이 걸려 있어 빠른 확정이 중요한 도메인</li>
+      <li>재고를 30분씩 잡아두면 <b>그동안 다른 고객에게도 안 팔리기</b> 때문</li>
+    </ul></div>
+    <div class="pane g"><h4>보류 후 확인이 맞는 경우</h4><ul>
+      <li><b>건당 가치가 크고</b> 확정 지연의 비용이 낮은 도메인(고액 상품, 디지털 상품)</li>
+      <li><b>성공한 결제 한 건을 구제하는 가치</b>가 미확정 30분의 비용보다 크기 때문</li>
+    </ul></div>
+  </div>
+  <div class="rule" style="margin-bottom:0"><b>"무엇을 잃어도 되는가 — 미확정 시간인가, 성공했을 결제인가"</b>를 도메인 조건으로 판단한다</div>
+</div></details>
+
+<details class="q"><summary>승인 API에 멱등키를 붙여 재시도하면 망취소가 필요 없지 않나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 멱등키가 막는 것은 "중복 생성"이지 "이미 생긴 승인의 소거"가 아니다</span></summary><div class="a">
+  <p>좋은 방향이지만 <b>망취소를 대체하지는 못한다.</b> 둘은 겨냥하는 문제가 다르다.</p>
+  <div class="split">
+    <div class="pane b"><h4>멱등키가 하는 일</h4><ul>
+      <li><b>같은 요청이 두 번 도착해도 승인이 두 번 생기지 않게</b> 한다 (중복 생성 방지)</li>
+      <li>PG가 지원한다면, 타임아웃 후 <b>같은 키로 재요청해 기존 결과를 돌려받는</b> 방식으로 사실상 <b>조회에 가까운 확정 수단</b>이 될 수 있다</li>
+    </ul></div>
+    <div class="pane r"><h4>그래도 망취소가 남는 이유 셋</h4><ul>
+      <li><b>재요청 자체가 또 타임아웃 나면</b> 여전히 결과를 모른다 — 확정 불가 구간은 사라지지 않는다</li>
+      <li>모든 PG · 결제수단이 <b>승인 API에 멱등키를 제공하지는 않는다</b></li>
+      <li><b>조건 B는 멱등키로 해결되지 않는다</b> — 승인은 이미 정상적으로 만들어졌고, 우리가 <b>그것을 쓸 수 없게 된 것</b>이므로 필요한 건 재요청이 아니라 <b>소거</b>다</li>
+    </ul></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">역할 분담 — <b>멱등키는 "두 번 만들지 않기", 망취소는 "만들어진 것을 지우기"</b></div>
+</div></details>
+
+<details class="q"><summary>UNKNOWN과 CANCEL_PENDING을 왜 굳이 다른 상태로 두나요?<span class="hint">힌트: 상태값의 목적은 "배치가 무슨 행동을 해야 하는가"를 정하는 것이다</span></summary><div class="a">
+  <p>상태값은 <b>표시용 라벨이 아니라 후속 행동의 지시서</b>다. 두 상태는 <b>요구하는 행동이 다르다.</b></p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:170px">상태</th><th>의미</th><th>배치가 할 일</th></tr></thead>
+    <tbody>
+      <tr><td><code>UNKNOWN</code></td><td>결과를 <b>모른다</b></td><td>거래 조회 API로 <b>알아낸다</b> → APPROVED / FAILED로 해소</td></tr>
+      <tr class="hl"><td><code>CANCEL_PENDING</code></td><td>소거를 시도했는데 <b>확인 못 했다</b></td><td>망취소를 <b>다시 쏜다</b> → 기한 초과 시 대사 등록</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>둘을 하나로 합치면 배치는 <b>"이 건을 조회해야 하나 소거해야 하나"를 판단할 근거를 잃는다.</b> 게다가 <b>"이미 소거를 시도했다"는 사실 자체가 정보</b>다 — 그 시점에는 이미 조회로 확정하려는 시도가 실패한 뒤이므로, 조회로 되돌아가는 것은 실익이 적다.</p>
+  <div class="rule" style="margin-bottom:0">덧붙이면 — <b>둘 다 고객 화면에는 "확인 중"</b>이다. 내부 상태와 표시 문구는 별개다.</div>
+</div></details>
+
+<details class="q"><summary>망취소가 "성공한" 건도 대사 대상에 넣어야 하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 사례 2의 건은 망취소가 성공한 건이었다</span></summary><div class="a">
+  <p><b>넣어야 한다.</b> 사례 2가 그 이유다 — <b>망취소가 "성공"으로 응답받은 건에서도 이후 지연 승인이 살아날 수 있다.</b> 대사를 "망취소가 실패한 건만 보는 것"으로 좁게 설계하면 <b>정확히 그 구멍을 놓친다.</b></p>
+  <div class="rule red">대사 대상은 <b>"미확정 건"이 아니라 "그 시간대의 결제 전건"</b></div>
+  <p style="margin-bottom:0">비용 측면에서도 부담이 크지 않다. <b>대사는 어차피 PG 파일을 전건 훑는 작업</b>이라, 우리 쪽 비교 대상을 넓히는 것이 추가 부담으로 이어지지 않는다. 오히려 <b>"미확정 건만 본다"는 필터가 버그의 원인</b>이 된다.</p>
+</div></details>
+
+<details class="q"><summary>가상계좌나 계좌이체에도 망취소가 있나요?<span class="hint">힌트: 망취소가 지우는 대상이 무엇이었는지 다시 생각한다</span></summary><div class="a">
+  <p><b>같은 개념이 그대로 적용되지 않는다.</b> 망취소는 <b>카드 승인망에서 출발한 개념</b>이고, 지우는 대상이 <b>"승인"</b>이기 때문이다.</p>
+  <div class="split">
+    <div class="pane b"><h4>가상계좌 (입금 대기형)</h4><ul>
+      <li>흐름이 <b>"승인"이 아니라 "입금 대기 → 입금 확인"</b>이다</li>
+      <li>따라서 <b>소거할 승인 자체가 없다</b></li>
+      <li><b>입금 전</b>이면 채번한 계좌를 <b>만료</b>시키고, <b>입금 후</b>면 <b>환불</b>로 대응한다</li>
+    </ul></div>
+    <div class="pane r"><h4>그래서 답에 넣을 한계 인식</h4><ul>
+      <li><b>"망취소는 만능이 아니라 승인형 결제의 도구"</b></li>
+      <li>결제수단이 늘어나면 <b>수단별로 "결과 불명"을 닫는 방법이 달라진다</b>는 것까지 설계에 반영해야 한다</li>
+    </ul></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">비동기 승인형 결제수단의 상태 설계는 <code>15-async-approval-payment-methods.md</code>에서 더 다룬다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  망취소는 <b>승인 결과를 못 받은 거래를 원거래 정보로 소거해 "있었으면 취소, 없었으면 무해"로 상태를 강제 수렴</b>시키는 절차로 — <b>타임아웃 후 조회로도 확정 불가일 때</b>와 <b>승인 응답 수신 후 내부 처리 실패 시</b> 발동하며 — <b>망취소 자체도 실패할 수 있으므로 멱등 재시도와 D+1 대사를 뒤에 세우고</b>, <b>"성공했을 결제를 날리는 비용"</b> 때문에 자동 망취소와 보류 후 확인 사이의 선택은 <b>도메인 조건으로 판단</b>한다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/10-payment-consistency/14-net-cancellation.md</code> · 함께 볼 문서: 결제 상태 관리(01) · PG 연동 기본(02) · PG 타임아웃과 UNKNOWN 상태(04) · 이중 결제 다층 방어(07) · 대사 배치 설계(08) · Saga 보상과 멱등성(10) · 비동기 승인 결제수단(15) · 대사 실제 불일치 사례(18)</p>
+</main>
+</body>
+</html>

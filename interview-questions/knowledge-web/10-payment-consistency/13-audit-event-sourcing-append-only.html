@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>결제 감사와 append-only 설계 — "지금 상태"는 "어떻게 여기까지 왔는가"에 답하지 못한다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">10 결제 / 정합성 &nbsp;|&nbsp; 심화⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>결제 감사와 append-only 설계<br><span class="sub">"지금 상태"는 "어떻게 여기까지 왔는가"에 답하지 못한다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"결제 데이터의 감사(audit) 요구사항 — 이벤트 소싱이나 append-only 설계가 유리한 이유는 무엇인가요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>UPDATE는 이전 값을 파괴한다.</b> 잔액 컬럼을 덮어쓰는 모델은 <b>"왜 잔액이 0원이죠?"</b>라는 CS·분쟁·감사 질문 앞에서 재구성할 근거가 없다. 돈을 다루는 데이터는 <b>회계의 복식부기처럼</b> 다뤄야 한다 — 기록은 <b>추가(append)만</b> 하고, 정정은 삭제가 아니라 <b>반대 방향의 기록을 하나 더 남기는</b> 방식으로 한다. 설계는 스펙트럼이다: <b>상태 UPDATE + 이력 테이블</b>(최소), <b>append-only 원장이 진실의 원천이고 상태 테이블은 파생 캐시</b>(현실적 절충), <b>모든 변경을 이벤트로 저장하고 상태를 리플레이로 재구성하는 완전한 이벤트 소싱</b>(최대). 세 단계를 가르는 축은 <b>"진실의 원천을 상태에 둘 것인가 기록에 둘 것인가"</b>와 <b>"그 원칙을 돈의 흐름까지만 적용할 것인가 도메인 전체로 넓힐 것인가"</b> 두 개다. 감사 요건(<b>불변성·행위자·시각·사유</b>)은 절충안으로 대부분 충족되며, 완전한 이벤트 소싱은 <b>스키마 진화·리플레이·스냅샷이라는 운영 비용을 함께 산다</b>는 것까지 말해야 시니어의 답이 된다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>감사가 던지는 질문은 언제나 "경로"다</b> — 현재 상태가 아니라 <b>언제·누가·무슨 근거로·얼마를·어떤 순서로</b>가 필요하다. <b>UPDATE는 이 다섯을 전부 버린다.</b> 그래서 돈 데이터는 복식부기처럼 <b>추가만 하고, 정정은 역분개(반대 방향 한 줄 추가)로</b> 한다.</div></li>
+    <li><span class="n">2</span><div><b>전부 아니면 전무가 아니라 스펙트럼이다</b> — <b>레벨 1</b> 상태 UPDATE + 이력 테이블, <b>레벨 2</b> append-only 원장이 진실이고 잔액은 파생 캐시, <b>레벨 3</b> 완전한 이벤트 소싱. 레벨 1→2는 <b>진실의 위치를 옮기는</b> 변화이고, 레벨 2→3은 <b>적용 범위를 넓히는</b> 변화다 — 성격이 다르니 비용의 성격도 다르다.</div></li>
+    <li><span class="n">3</span><div><b>실무 균형점은 레벨 2다</b> — 감사 4대 요건(<b>불변성·행위자·시각·사유</b>)은 원장 + 상태 전이 이력으로 충족되고, 불변성은 팀 규칙이 아니라 <b><code>REVOKE UPDATE, DELETE</code>라는 권한 구조</b>로 강제한다. 완전한 이벤트 소싱은 <b>스키마 진화·리플레이·CQRS라는 영구 비용</b>을 정당화할 서브도메인에만 쓴다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">UPDATE는 과거를 지운다 — MVCC 오해까지</a></li>
+    <li><a href="#s2">"왜 제 잔액이 0원이죠?" — 로그로는 못 답한다</a></li>
+    <li><a href="#s3">회계가 500년 전에 낸 답 — 원장과 역분개</a></li>
+    <li><a href="#s4">감사 로그의 4대 요건</a></li>
+    <li><a href="#s5">설계 스펙트럼 — 레벨 0~3과 두 개의 축</a></li>
+    <li><a href="#s6">레벨 1: 상태 UPDATE + 이력 테이블</a></li>
+    <li><a href="#s7">레벨 2: append-only 원장 + 프로젝션</a></li>
+    <li><a href="#s8">레벨 3: 이벤트 소싱 — 그리고 청구서</a></li>
+    <li><a href="#s9">그래서 어디에 설 것인가</a></li>
+    <li><a href="#s10">실무 사례 세 건</a></li>
+    <li><a href="#s11">불변성 4계층 — 규칙이 아니라 구조로</a></li>
+    <li><a href="#s12">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "결제 데이터의 감사(audit) 요구사항 — 이벤트 소싱이나 append-only 설계가 유리한 이유는 무엇인가요?"</p>
+  <p><b>출제 의도</b>: "지금 상태"만 저장하는 모델은 <b>"어떻게 이 상태가 됐는가"</b>라는 감사·CS·분쟁 대응 질문에 답할 수 없다. <b>데이터 모델링에 규제·감사 요구를 반영하는 시야</b>가 있는지 — 컴플라이언스가 명시된 포지션과 직결되는 검증이다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"감사 = 로그 잘 남기기"라는 반사</b> → 2절에서 애플리케이션 로그가 <b>증빙이 될 수 없는 세 가지 이유</b>를 세우고, 10절 사례 1에서 로그가 롤링된 뒤 도착한 분쟁으로 확인한다.<br>
+    ② <b>"감사 필요 → 이벤트 소싱 도입"이라는 전부 아니면 전무</b> → 5절에서 <b>레벨 0~3 스펙트럼과 두 개의 축</b>을 세우고, 8절에서 레벨 3이 지불하는 <b>영구 비용의 청구서</b>를 펼친다.<br>
+    ③ <b>"append-only는 우리 팀 규칙입니다"</b> → 10절 사례 2에서 그 규칙이 <b>가장 급한 날 깨지는</b> 장면을 보고, 11절에서 <b>권한·트리거·해시 체인·WORM의 4계층</b>으로 대체한다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. UPDATE는 과거를 지운다 — MVCC 오해까지 걷어내기</h2>
+
+<p>너무 당연해서 오히려 의식하지 못하는 사실부터 짚고 시작하자. <b>관계형 DB의 테이블은 기본적으로 "지금 상태"를 담는 그릇이다.</b></p>
+<p><code>UPDATE wallet SET balance = 0 WHERE user_id = 77</code>을 실행하면, 그 행의 <code>balance</code>가 이전에 무엇이었는지는 <b>어디에도 남지 않는다.</b> 커밋되는 순간 이전 값은 애플리케이션이 알 수 있는 세계에서 사라진다.</p>
+
+<div class="callout info"><span class="t">여기서 흔한 오해 하나를 먼저 걷어낸다 — "MVCC라 옛날 값이 남아 있지 않나요?"</span>
+PostgreSQL은 <b>MVCC(Multi-Version Concurrency Control, 다중 버전 동시성 제어)</b>를 쓰기 때문에 UPDATE가 기존 행을 물리적으로 덮어쓰지 않고 <b>새 버전의 행을 추가한 뒤 옛 버전에 "죽은 행" 표시를 남긴다.</b> 그래서 "물리적으로는 남아 있는 것 아닌가?"라고 생각하기 쉬운데, <b>그 옛 버전은 감사 기록으로 쓸 수 없다.</b> 이유는 아래 그림의 오른쪽 세 장이다.</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 396" role="img" aria-label="UPDATE가 과거를 지우는 과정 도식. 위쪽은 애플리케이션이 볼 수 있는 세계로 잔액 오만원 행이 UPDATE 후 영원 행으로 바뀌고 이전 값은 조회 불가가 된다. 아래쪽은 PostgreSQL의 물리 저장으로 옛 버전이 죽은 행으로 남았다가 VACUUM이 공간을 회수해 사라진다. 오른쪽에는 그 죽은 행을 감사 기록으로 쓸 수 없는 세 가지 이유 카드가 있다.">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <pattern id="hatch" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <rect width="7" height="7" fill="#f8fafc"/><line x1="0" y1="0" x2="0" y2="7" stroke="#cbd5e1" stroke-width="3"/>
+      </pattern>
+    </defs>
+
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">UPDATE 한 번이 지우는 것 — <tspan fill="#dc2626">"이전에 얼마였는가"는 커밋과 함께 세계에서 사라진다</tspan></text>
+
+    <!-- upper: application world -->
+    <text x="30" y="60" font-size="12.5" font-weight="700" fill="#1d4ed8">① 애플리케이션이 접근할 수 있는 세계</text>
+    <rect x="30" y="70" width="184" height="58" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="122" y="92" font-size="11" fill="#166534" text-anchor="middle" class="mono">wallet(user_id=77)</text>
+    <text x="122" y="113" font-size="14" font-weight="700" fill="#15803d" text-anchor="middle" class="mono">balance = 50,000</text>
+
+    <line x1="216" y1="99" x2="300" y2="99" stroke="#2563eb" stroke-width="2" marker-end="url(#a1)"/>
+    <text x="258" y="90" font-size="10" fill="#1d4ed8" text-anchor="middle" font-weight="700">UPDATE</text>
+    <text x="258" y="117" font-size="9.5" fill="#64748b" text-anchor="middle" class="mono">SET balance = 0</text>
+
+    <rect x="306" y="70" width="184" height="58" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="398" y="92" font-size="11" fill="#475569" text-anchor="middle" class="mono">wallet(user_id=77)</text>
+    <text x="398" y="113" font-size="14" font-weight="700" fill="#334155" text-anchor="middle" class="mono">balance = 0</text>
+
+    <rect x="30" y="138" width="460" height="30" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="260" y="158" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">SELECT로 도달 가능한 값은 오른쪽 하나뿐 — 왼쪽은 조회할 방법이 없다</text>
+
+    <!-- lower: physical -->
+    <text x="30" y="204" font-size="12.5" font-weight="700" fill="#475569">② PostgreSQL의 물리 저장 (MVCC)</text>
+    <rect x="30" y="214" width="184" height="54" rx="10" fill="url(#hatch)" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <text x="122" y="235" font-size="10.5" fill="#64748b" text-anchor="middle" class="mono">v1 · balance=50,000</text>
+    <text x="122" y="254" font-size="10.5" fill="#7f1d1d" text-anchor="middle" font-weight="700">dead tuple (죽은 행)</text>
+
+    <rect x="306" y="214" width="184" height="54" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="398" y="235" font-size="10.5" fill="#1e40af" text-anchor="middle" class="mono">v2 · balance=0</text>
+    <text x="398" y="254" font-size="10.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">live tuple (살아 있는 행)</text>
+
+    <line x1="122" y1="270" x2="122" y2="300" stroke="#dc2626" stroke-width="2" marker-end="url(#a1r)"/>
+    <rect x="30" y="304" width="300" height="46" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="180" y="324" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">VACUUM이 공간을 회수 → 완전히 소멸</text>
+    <text x="180" y="341" font-size="10.5" fill="#7f1d1d" text-anchor="middle">언제 사라질지는 <tspan font-weight="700">DB가 정한다</tspan></text>
+
+    <!-- right: three reasons -->
+    <text x="556" y="60" font-size="12.5" font-weight="700" fill="#1f2937">죽은 행을 감사 기록으로 쓸 수 없는 이유 3</text>
+    <rect x="556" y="70" width="534" height="72" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="574" y="92" font-size="12.5" fill="#b91c1c" font-weight="700">① 질의할 인터페이스가 없다</text>
+    <text x="574" y="113" font-size="11.5" fill="#374151">SQL에 <tspan class="mono">"이 행의 이전 버전을 보여줘"</tspan> 같은 문법이 없다.</text>
+    <text x="574" y="132" font-size="11.5" fill="#374151">애플리케이션이 접근할 <tspan font-weight="700">경로 자체가 존재하지 않는다.</tspan></text>
+
+    <rect x="556" y="152" width="534" height="72" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="574" y="174" font-size="12.5" fill="#b91c1c" font-weight="700">② 보존 기간을 우리가 정하지 못한다</text>
+    <text x="574" y="195" font-size="11.5" fill="#374151">참조하는 트랜잭션이 없어지면 <tspan class="mono">VACUUM</tspan>이 공간을 회수해 재사용한다.</text>
+    <text x="574" y="214" font-size="11.5" fill="#374151">감사 기록의 수명은 <tspan font-weight="700">시효에 맞춰야 하는데 DB가 정해버린다.</tspan></text>
+
+    <rect x="556" y="234" width="534" height="72" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="574" y="256" font-size="12.5" fill="#b91c1c" font-weight="700">③ 누가·왜가 애초에 없다</text>
+    <text x="574" y="277" font-size="11.5" fill="#374151">옛 버전에 남는 것은 <tspan font-weight="700">컬럼 값뿐</tspan>이다.</text>
+    <text x="574" y="296" font-size="11.5" fill="#374151">행위자·사유·참조는 <tspan font-weight="700">저장된 적이 없으므로 복원할 수 없다.</tspan></text>
+
+    <rect x="556" y="316" width="534" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="823" y="338" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">"과거가 남아 있다"와 "과거를 증빙으로 쓸 수 있다"는 전혀 다른 말이다</text>
+
+    <rect x="30" y="362" width="1060" height="26" rx="8" fill="#f1f3f7" stroke="#cbd5e1"/>
+    <text x="560" y="380" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">DB의 기본 동작은 "현재"만 보존하는 것 — 과거 보존은 공짜 기능이 아니라 우리가 설계로 만들어 넣어야 하는 기능이다</text>
+  </svg>
+  <figcaption>이 문서의 나머지는 전부 <b>"그 기능을 어느 수준까지 만들 것인가"</b>에 대한 이야기다. 레벨 1·2·3은 결국 이 그림의 왼쪽 위 상자(사라진 값)를 <b>어디에, 얼마나 강하게 붙잡아 둘 것인가</b>의 차이다.</figcaption>
+</figure>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. "왜 제 잔액이 0원이죠?" — 로그로는 답할 수 없다</h2>
+
+<p>포인트 잔액을 컬럼 하나로 들고 UPDATE로 덮어쓰는, 아주 흔한 모델을 보자.</p>
+
+<div class="codehead bad"><span class="tag">Before</span> UPDATE가 이력을 파괴한다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> deduct(Long userId, <span class="kw">long</span> amount) {
+    Wallet w = walletRepository.findByUserIdForUpdate(userId);
+    <span class="kw">if</span> (w.getBalance() &lt; amount) {
+        <span class="kw">throw new</span> InsufficientBalanceException();
+    }
+<span class="ln-bad">    w.setBalance(w.getBalance() - amount);<span class="note">여기서 과거가 소멸한다</span></span>
+    <span class="cm">// JPA 더티 체킹으로 커밋 시점에 UPDATE가 나간다.
+    // 그 순간 "이전 잔액이 얼마였고, 누가, 왜, 얼마를 차감했는지"는
+    // 어디에도 남지 않는다. 남는 것은 바뀐 뒤의 숫자 하나뿐이다.</span>
+}</code></pre>
+
+<p>고객이 <b>"어제 50,000원 충전했는데 잔액이 0원"</b>이라고 항의하면, 이 모델이 줄 수 있는 답은 <b>"현재 0원입니다"</b>뿐이다. 여기서 반사적으로 나오는 반론이 <b>"애플리케이션 로그를 뒤지면 되지 않나"</b>인데, 실무에서는 안 된다.</p>
+
+<div class="scroll">
+<table>
+  <caption>애플리케이션 로그가 감사 증빙이 될 수 없는 세 가지 이유</caption>
+  <thead><tr><th style="width:130px">결함</th><th>무슨 일이 벌어지는가</th><th>증빙 관점의 귀결</th></tr></thead>
+  <tbody>
+    <tr><th>유실된다</th><td>롤링 정책(일정 기간 뒤 오래된 파일부터 삭제)으로 30일·90일이면 사라진다. 수집 파이프라인이 잠깐 죽어 <b>통째로 빠진 구간</b>도 생긴다.</td><td class="bad">필요한 시점에 없을 확률이 높다</td></tr>
+    <tr><th>원자적이지 않다</th><td>로그를 찍은 뒤 트랜잭션이 롤백되면 "로그엔 차감, DB엔 미반영". 반대로 로그 전송이 실패하면 "DB엔 있고 로그엔 없음".</td><td class="bad">둘이 다를 때 <b>어느 쪽이 사실인지 판정할 기준이 없다</b></td></tr>
+    <tr><th>내구성이 다르다</th><td>업무 데이터는 백업·복제로 보호하지만, 로그는 보통 그 정도로 지키지 않는다.</td><td class="bad">보호 수준이 증빙 요구에 못 미친다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>결국 사실 규명 없이 <b>보상 지급으로 상황을 덮게</b> 되고, 원인을 모르니 같은 문의가 계속 반복된다.</p>
+
+<div class="callout info"><span class="t">용어 — 분쟁(chargeback)</span>
+고객이 카드사에 이의를 제기해 <b>결제를 되돌려 달라고 요청하는 절차</b>다. 이때 가맹점은 <b>"이 결제는 정당했다"를 증빙으로 입증</b>해야 한다. 즉 분쟁은 "우리가 맞다고 주장하는" 자리가 아니라 <b>"우리가 자료로 증명하는"</b> 자리다.</div>
+
+<div class="memo">
+  <h4>감사·분쟁·규제가 던지는 질문의 형태 — 다섯 칸</h4>
+  <p style="margin-top:0">이들은 <b>절대 "현재 상태"를 묻지 않는다.</b> 항상 <b>"그 상태에 이르게 된 경로"</b>를 묻는다. 경로는 다섯 요소로 이루어진다.</p>
+  <div class="grid g3">
+    <div class="tile big"><div class="k">언제</div><div class="s">시각</div></div>
+    <div class="tile big"><div class="k">누가</div><div class="s">행위자</div></div>
+    <div class="tile big"><div class="k">무엇을 근거로</div><div class="s">사유 · 참조</div></div>
+    <div class="tile big"><div class="k">얼마를</div><div class="s">변화량</div></div>
+    <div class="tile big"><div class="k">어떤 순서로</div><div class="s">시퀀스</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">UPDATE 모델은 이 다섯 가지를 <b>전부 버린다</b> — 남는 것은 "바뀐 뒤의 숫자" 하나뿐이다</div>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 회계가 500년 전에 낸 답 — 원장과 역분개</h2>
+
+<p>여기서부터 회계 용어가 나오는데, 하나씩 풀어 쓰면 어렵지 않다. 오히려 <b>이 비유를 이해하면 뒤의 설계가 전부 자연스러워진다.</b></p>
+
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">원장 (元帳, ledger)</div><div class="d">돈의 <b>모든 이동을 시간 순으로 적는 장부.</b> 은행 거래내역서를 떠올리면 된다 — <b>잔액이라는 숫자를 고쳐 쓰는 게 아니라</b> "입금 5,000원", "출금 3,000원" 같은 줄을 계속 덧붙이고, <b>잔액은 그 줄들의 합</b>으로 계산한다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">분개 (分介, journal entry)</div><div class="d">원장에 적히는 <b>한 줄.</b> "5월 3일, 주문 ORD-2201 결제로 포인트 49,000원 차감"처럼 <b>하나의 거래 사건을 장부 형식에 맞춰 기록한 항목</b>이다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">복식부기 (複式簿記)</div><div class="d">모든 거래를 <b>"어디서 나가서 어디로 들어갔는가" 두 방향으로 함께</b> 적는 방식. 15세기 이탈리아에서 정립됐고, <b>돈이 한쪽에서만 사라지거나 생겨나는 기록을 구조적으로 불가능하게</b> 만드는 것이 핵심이다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">역분개 (reversing entry) ★</div><div class="d"><b>잘못 쓴 분개는 지우개로 지우지 않는다.</b> 대신 <b>반대 방향의 분개를 하나 더 추가</b>해 효과를 상쇄한다. 49,000원을 잘못 차감했다면 그 줄을 지우는 게 아니라 <b>+49,000원짜리 줄을 새로 적는다.</b></div></div>
+</div>
+
+<h3>3-1. 왜 지우지 않고 상쇄하는가 — 결과는 같은데도</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 366" role="img" aria-label="지운 장부와 상쇄한 장부를 나란히 비교하는 도식. 왼쪽 붉은 장부는 잘못된 차감 줄을 지워 최종 잔액 오만원이 되지만 실수의 흔적이 사라지고 감사 실패로 판정된다. 오른쪽 초록 장부는 역분개 줄을 추가해 최종 잔액이 같지만 실수와 정정이 모두 보존된다.">
+    <defs>
+      <marker id="b1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="24" y="26" font-size="15" font-weight="700" fill="#1f2937">최종 잔액은 같다 — 그런데 회계는 500년째 <tspan fill="#16a34a">상쇄</tspan>를 고집한다</text>
+
+    <!-- left ledger -->
+    <rect x="30" y="46" width="480" height="252" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="50" y="72" font-size="13.5" font-weight="700" fill="#b91c1c">지운 장부 — UPDATE / DELETE 모델</text>
+    <rect x="50" y="84" width="440" height="30" rx="6" fill="#fff" stroke="#fecaca"/>
+    <text x="66" y="104" font-size="11.5" fill="#374151" class="mono">05-02  +50,000  CHARGE      ORD-2190</text>
+    <rect x="50" y="118" width="440" height="30" rx="6" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="66" y="138" font-size="11.5" fill="#9ca3af" class="mono">05-03  -49,000  ORDER_PAY   ORD-2201</text>
+    <line x1="60" y1="133" x2="480" y2="133" stroke="#dc2626" stroke-width="2"/>
+    <text x="404" y="167" font-size="11" fill="#b91c1c" font-weight="700" text-anchor="end">← 잘못된 차감이어서 이 줄을 지웠다</text>
+    <rect x="50" y="178" width="440" height="30" rx="6" fill="#fff" stroke="#fecaca"/>
+    <text x="66" y="198" font-size="11.5" fill="#111827" class="mono" font-weight="700">현재 잔액 = 50,000</text>
+    <rect x="50" y="218" width="440" height="64" rx="9" fill="#fff" stroke="#dc2626"/>
+    <text x="66" y="240" font-size="12" fill="#b91c1c" font-weight="700">남지 않은 것 — 실수가 있었다는 사실, 누가 지웠는지, 언제</text>
+    <text x="66" y="262" font-size="11.5" fill="#374151">숫자는 맞는데 <tspan font-weight="700" fill="#b91c1c">그 숫자를 신뢰할 근거가 사라졌다.</tspan></text>
+    <text x="66" y="277" font-size="11.5" fill="#374151">지울 수 있는 장부는 <tspan font-weight="700">내용이 맞아도 그 자체로 감사 실패</tspan>다.</text>
+
+    <!-- right ledger -->
+    <rect x="610" y="46" width="480" height="252" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="630" y="72" font-size="13.5" font-weight="700" fill="#166534">상쇄한 장부 — append-only 모델</text>
+    <rect x="630" y="84" width="440" height="30" rx="6" fill="#fff" stroke="#bbf7d0"/>
+    <text x="646" y="104" font-size="11.5" fill="#374151" class="mono">05-02  +50,000  CHARGE      ORD-2190</text>
+    <rect x="630" y="118" width="440" height="30" rx="6" fill="#fff" stroke="#bbf7d0"/>
+    <text x="646" y="138" font-size="11.5" fill="#374151" class="mono">05-03  -49,000  ORDER_PAY   ORD-2201</text>
+    <rect x="630" y="152" width="440" height="30" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="646" y="172" font-size="11.5" fill="#166534" class="mono" font-weight="700">05-04  +49,000  REVERSAL    #8812 · admin:1042</text>
+    <rect x="630" y="186" width="440" height="26" rx="6" fill="#fff" stroke="#bbf7d0"/>
+    <text x="646" y="204" font-size="11.5" fill="#111827" class="mono" font-weight="700">SUM = 50,000  ← 잔액은 계산 결과다</text>
+    <rect x="630" y="222" width="440" height="60" rx="9" fill="#fff" stroke="#16a34a"/>
+    <text x="646" y="244" font-size="12" fill="#166534" font-weight="700">남은 것 — 실수 + 정정 + 정정한 사람 + 정정한 시각</text>
+    <text x="646" y="266" font-size="11.5" fill="#374151">"이 계정에 관리자 보정이 몇 번 있었나"를 <tspan class="mono">reason_code</tspan>로 바로 집계할 수 있다.</text>
+
+    <!-- center equality -->
+    <line x1="512" y1="196" x2="606" y2="196" stroke="#64748b" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#b1)"/>
+    <text x="559" y="188" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">잔액 동일</text>
+
+    <rect x="30" y="312" width="1060" height="38" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="336" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">차이는 최종 숫자가 아니라 "실수했다는 사실"이다 — 그 사실 자체가 감사 대상 정보이기 때문에 실수와 정정이 둘 다 보존돼야 한다</text>
+  </svg>
+  <figcaption><b>append-only 설계는 이 원칙을 데이터베이스 언어로 번역한 것이다.</b> 결제·포인트 데이터에서 UPDATE와 DELETE를 금지하고 INSERT만 허용하면 두 가지가 따라온다 — ① <b>어느 시점의 상태든 그 시점까지의 기록을 합산해 재구성</b>할 수 있고, ② <b>"기록이 조작되지 않았다"는 주장에 구조적 근거</b>가 생긴다.</figcaption>
+</figure>
+
+<h3>3-2. 개발자용 비유 — 이미 매일 쓰고 있는 append-only 시스템, git</h3>
+
+<p>회계 비유가 낯설면 <b>git을 떠올리면 정확히 같은 구조</b>가 나온다. 이 대응표를 머리에 넣어두면 뒤의 레벨 2·3 설계가 이미 아는 이야기가 된다.</p>
+
+<div class="scroll">
+<table>
+  <caption>git ↔ append-only 원장 대응 (개념 대응이며, git 자체는 결제 감사 저장소가 아니다)</caption>
+  <thead><tr><th style="width:210px">git</th><th style="width:230px">원장 설계</th><th>같은 이유</th></tr></thead>
+  <tbody>
+    <tr><td><code>커밋 히스토리</code></td><td><b>append-only 원장</b></td><td>추가만 된다. 각 커밋에 <b>author·date·message</b>가 붙는다 — 감사 요건의 행위자·시각·사유와 그대로 대응한다.</td></tr>
+    <tr><td><code>워킹 트리 / HEAD 상태</code></td><td><b>프로젝션(잔액 테이블)</b></td><td>둘 다 <b>파생물</b>이다. 날려도 히스토리에서 <b>다시 만들 수 있다.</b></td></tr>
+    <tr class="hl"><td><code>git revert</code></td><td><b>역분개(REVERSAL) 엔트리</b></td><td>되돌리는 <b>새 커밋을 하나 더 쌓는다.</b> 실수와 정정이 <b>둘 다 남는다.</b></td></tr>
+    <tr><td><code>reset --hard</code> + force push</td><td class="bad">원장 UPDATE / DELETE</td><td>과거를 <b>고쳐 쓴다.</b> 결과 트리는 같아 보여도 <b>무슨 일이 있었는지 사라진다.</b></td></tr>
+    <tr><td><b>보호 브랜치 규칙</b><br>(force push 금지)</td><td><b><code>REVOKE UPDATE, DELETE</code></b></td><td>둘 다 <b>"하지 말자"는 합의를 "할 수 없다"는 구조로</b> 바꾼 것이다. 10절 사례 2의 교훈이 여기 그대로 있다.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>정정에 대한 단 하나의 규칙</h4>
+  <div class="rule ok">정정은 <b>삭제가 아니라 반대 방향 한 줄 추가</b>다 — <code>git revert</code>는 되고 <code>reset --hard</code>는 안 된다</div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 감사 로그의 4대 요건</h2>
+
+<p>"감사 가능하다"는 말이 막연하게 들리지 않도록, <b>최소 요건을 명시적으로 나열</b>해 두자. 이 넷은 뒤에 나올 원장 테이블의 컬럼과 <b>1:1로 대응</b>한다.</p>
+
+<div class="memo">
+  <h4>감사 4대 요건 — 한 문장으로 외운다</h4>
+  <div class="rule">"<b>누가 · 언제 · 왜</b> — 그리고 <b>못 지운다</b>"</div>
+  <div class="grid g4" style="margin-top:12px">
+    <div class="tile ok"><div class="k">불변성</div><div class="s">immutability</div><div class="d">한번 쓴 기록은 <b>수정·삭제 불가.</b> 정정은 반드시 <b>새 기록</b>으로 — 역분개 원칙이 그대로 여기 해당한다.</div></div>
+    <div class="tile"><div class="k">행위자</div><div class="s">actor</div><div class="d">변경을 일으킨 주체. 시스템 자동인지, 어느 관리자인지(<code>admin:1042</code>), 어떤 배치인지. <b>"누가"가 없으면 내부자 조작과 정상 처리를 구분할 수 없다.</b></div></div>
+    <div class="tile"><div class="k">시각</div><div class="s">timestamp</div><div class="d">신뢰할 수 있는 <b>서버 시각을 시간대와 함께.</b> PostgreSQL이면 <code>timestamptz</code>.</div></div>
+    <div class="tile"><div class="k">사유 · 참조</div><div class="s">reason · reference</div><div class="d">왜 일어났는지(주문 결제·환불·CS 보정)와 <b>근거 엔티티</b>(주문번호·원거래 ID·CS 티켓). <b>사유 없는 금액 변동은 감사에서 가장 먼저 지적받는다.</b></div></div>
+  </div>
+</div>
+
+<div class="callout info"><span class="t">왜 <code>timestamp</code>가 아니라 <code>timestamptz</code>인가</span>
+<code>timestamptz</code>는 <b>내부적으로 UTC로 저장하고 조회 시 세션 시간대로 변환</b>해 준다. 시간대 정보가 없는 <code>timestamp</code>와 달리, <b>서버 시간대 설정이 바뀌어도 같은 순간을 가리킨다.</b> 감사 기록에서 <b>시간대가 모호한 시각은 증빙 가치가 크게 떨어진다</b> — "이 09:31이 어느 나라 09:31인가"에 답할 수 없는 기록은 분쟁에서 그대로 공격받는다.</div>
+
+<div class="memo red">
+  <h4>가장 흔한 오답 — "그래서 감사 로그를 남기고 있습니다"</h4>
+  <p style="margin-top:0">4대 요건을 만족하는 것과 <b>그것을 어디에 저장하느냐</b>는 별개의 문제다. 2절에서 봤듯 <b>애플리케이션 로그는 이 요건을 충족하지 못한다.</b></p>
+  <div class="rule red" style="margin-bottom:0">감사 기록은 <b>업무 데이터와 같은 트랜잭션, 같은 내구성</b>으로 남아야 한다 — 즉 <b>로그가 아니라 테이블</b>이어야 한다</div>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 설계 스펙트럼 — 레벨 0~3과 두 개의 축</h2>
+
+<p>여기서 흔한 오해 하나를 먼저 깨야 한다. <b>"감사가 필요하다 → 이벤트 소싱을 도입한다"는 전부 아니면 전무의 선택이 아니다.</b> 실제로는 단계가 있고, 그 단계가 왜 하필 이 모양인지에는 이유가 있다. 설계 대안이 임의로 셋인 게 아니라 <b>세 개의 질문에 어떻게 답하느냐</b>로 자연스럽게 갈라진다.</p>
+
+<div class="memo">
+  <h4>3초 판정 — 우리 시스템은 몇 레벨인가</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">질문 A</div><div class="d"><b>변경 기록을 남기는가?</b><br>안 남기면 감사는 <b>애초에 불가능</b>하다. → <b>레벨 0</b></div></div>
+    <div class="tile"><div class="k">질문 B</div><div class="d"><b>그 기록이 진실의 원천인가, 참고용 사본인가?</b><br>참고용이면 상태 테이블이 여전히 정답이다. → <b>레벨 1</b></div></div>
+    <div class="tile ok"><div class="k">질문 C</div><div class="d"><b>그 원칙을 어디까지 적용하는가?</b><br>돈의 흐름까지면 <b>레벨 2</b>, 도메인의 모든 상태 전이까지면 <b>레벨 3</b></div></div>
+  </div>
+  <div class="callout info" style="margin-bottom:0"><span class="t">여기서 "진실의 원천(source of truth)"의 정확한 정의</span>
+  거창한 말이 아니다. <b>"둘이 어긋났을 때 어느 쪽을 정답으로 삼을지 미리 정해 둔 쪽"</b>이다. 기록이 진실의 원천이면 <b>상태 테이블은 계산 결과에 불과</b>해진다.</div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 434" role="img" aria-label="감사 설계 스펙트럼 도식. 왼쪽에서 오른쪽으로 진실의 원천이 상태 테이블에서 기록으로 이동한다. 레벨 0 UPDATE만, 레벨 1 UPDATE와 이력 테이블, 레벨 2 원장과 프로젝션, 레벨 3 완전한 이벤트 소싱 네 칸이 있고 각각 남는 것, 신뢰의 근거, 감사 가능성이 적혀 있다. 아래에는 레벨 1에서 2로 가는 변화가 진실의 위치를 옮기는 일회성 비용이고 레벨 2에서 3으로 가는 변화가 적용 범위를 넓히는 영구 비용이라는 설명이 있다.">
+    <defs>
+      <marker id="s-b" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker>
+      <marker id="s-c" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <linearGradient id="axg" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#fecaca"/><stop offset="100%" stop-color="#bbf7d0"/>
+      </linearGradient>
+    </defs>
+    <text x="24" y="24" font-size="15" font-weight="700" fill="#1f2937">감사 설계 스펙트럼 — 레벨을 가르는 것은 "기록의 양"이 아니라 <tspan fill="#2563eb">"진실이 어디에 있는가"</tspan>다</text>
+
+    <!-- axis -->
+    <rect x="30" y="40" width="1060" height="18" rx="9" fill="url(#axg)"/>
+    <line x1="34" y1="49" x2="1082" y2="49" stroke="#334155" stroke-width="1.4" marker-end="url(#s-b)"/>
+    <text x="46" y="53" font-size="11" fill="#7f1d1d" font-weight="700">진실의 원천 = 상태 테이블</text>
+    <text x="1070" y="53" font-size="11" fill="#166534" font-weight="700" text-anchor="end">진실의 원천 = 기록(append-only)</text>
+
+    <!-- columns -->
+    <!-- L0 -->
+    <rect x="30" y="72" width="250" height="58" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="155" y="96" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">레벨 0 · UPDATE만</text>
+    <text x="155" y="116" font-size="10.5" fill="#7f1d1d" text-anchor="middle">상태 컬럼 하나를 덮어쓴다</text>
+    <rect x="30" y="136" width="250" height="52" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="44" y="156" font-size="10.5" fill="#6b7280">남는 것</text>
+    <text x="44" y="176" font-size="12" fill="#111827" font-weight="700">과거 소멸</text>
+    <rect x="30" y="194" width="250" height="52" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="44" y="214" font-size="10.5" fill="#6b7280">신뢰의 근거</text>
+    <text x="44" y="234" font-size="12" fill="#111827" font-weight="700">없음</text>
+    <rect x="30" y="252" width="250" height="42" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="155" y="278" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">감사 불가</text>
+
+    <!-- L1 -->
+    <rect x="296" y="72" width="250" height="58" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="421" y="96" font-size="13.5" font-weight="700" fill="#92400e" text-anchor="middle">레벨 1 · UPDATE + 이력</text>
+    <text x="421" y="116" font-size="10.5" fill="#b45309" text-anchor="middle">바뀔 때마다 이력 테이블에 INSERT</text>
+    <rect x="296" y="136" width="250" height="52" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="310" y="156" font-size="10.5" fill="#6b7280">남는 것</text>
+    <text x="310" y="176" font-size="12" fill="#111827" font-weight="700">과거는 남지만 어긋나면 판정 불가</text>
+    <rect x="296" y="194" width="250" height="52" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="310" y="214" font-size="10.5" fill="#6b7280">신뢰의 근거</text>
+    <text x="310" y="234" font-size="12" fill="#b45309" font-weight="700">팀의 규칙 (모두가 지킨다는 가정)</text>
+    <rect x="296" y="252" width="250" height="42" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="421" y="278" font-size="12.5" fill="#92400e" text-anchor="middle" font-weight="700">추적은 가능 · 판정은 불가</text>
+
+    <!-- L2 -->
+    <rect x="562" y="72" width="250" height="58" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.6"/>
+    <text x="687" y="96" font-size="13.5" font-weight="700" fill="#166534" text-anchor="middle">레벨 2 · 원장 + 프로젝션</text>
+    <text x="687" y="116" font-size="10.5" fill="#15803d" text-anchor="middle">원장이 진실 · 잔액은 그 합으로 파생</text>
+    <rect x="646" y="62" width="126" height="20" rx="10" fill="#16a34a"/>
+    <text x="709" y="76" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">★ 실무 균형점</text>
+    <rect x="562" y="136" width="250" height="52" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="576" y="156" font-size="10.5" fill="#6b7280">남는 것</text>
+    <text x="576" y="176" font-size="12" fill="#111827" font-weight="700">돈의 흐름 전체 + 정정 이력</text>
+    <rect x="562" y="194" width="250" height="52" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="576" y="214" font-size="10.5" fill="#6b7280">신뢰의 근거</text>
+    <text x="576" y="234" font-size="12" fill="#15803d" font-weight="700">DB 권한 구조 (고칠 수 없다)</text>
+    <rect x="562" y="252" width="250" height="42" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="687" y="278" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">판정이 가능 — "원장이 맞다"</text>
+
+    <!-- L3 -->
+    <rect x="828" y="72" width="262" height="58" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="959" y="96" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">레벨 3 · 완전한 이벤트 소싱</text>
+    <text x="959" y="116" font-size="10.5" fill="#1e40af" text-anchor="middle">도메인 전체가 이벤트 · 상태는 리플레이 결과</text>
+    <rect x="828" y="136" width="262" height="52" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="842" y="156" font-size="10.5" fill="#6b7280">남는 것</text>
+    <text x="842" y="176" font-size="12" fill="#111827" font-weight="700">모든 상태 전이 (빠진 정보 없음)</text>
+    <rect x="828" y="194" width="262" height="52" rx="9" fill="#fff" stroke="#e5e7eb"/>
+    <text x="842" y="214" font-size="10.5" fill="#6b7280">신뢰의 근거</text>
+    <text x="842" y="234" font-size="12" fill="#1d4ed8" font-weight="700">이벤트 스토어 자체가 유일한 쓰기 경로</text>
+    <rect x="828" y="252" width="262" height="42" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="959" y="271" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">임의 시점 재구성 + 스키마 진화·</text>
+    <text x="959" y="286" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">리플레이의 영구 비용</text>
+
+    <!-- transitions -->
+    <path d="M300,318 C 380,318 400,318 500,318" fill="none" stroke="#2563eb" stroke-width="2.4" marker-end="url(#s-c)"/>
+    <path d="M600,318 C 700,318 720,318 830,318" fill="none" stroke="#2563eb" stroke-width="2.4" marker-end="url(#s-c)"/>
+
+    <rect x="30" y="336" width="520" height="84" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="48" y="358" font-size="13" fill="#1d4ed8" font-weight="700">레벨 1 → 2 : 진실의 "위치"를 옮긴다</text>
+    <text x="48" y="380" font-size="11.5" fill="#374151">기록을 더 남기는 변화가 아니다. <tspan font-weight="700">어느 쪽이 정답인지를 바꾸는</tspan> 변화다.</text>
+    <text x="48" y="402" font-size="11.5" fill="#374151">비용의 성격 : <tspan font-weight="700" fill="#16a34a">설계와 권한 정비 — 한 번 치르면 끝난다</tspan></text>
+
+    <rect x="570" y="336" width="520" height="84" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="588" y="358" font-size="13" fill="#92400e" font-weight="700">레벨 2 → 3 : 적용 "범위"를 넓힌다</text>
+    <text x="588" y="380" font-size="11.5" fill="#374151">진실의 위치는 그대로 두고 <tspan font-weight="700">돈의 흐름 → 도메인 전체</tspan>로 확장한다.</text>
+    <text x="588" y="402" font-size="11.5" fill="#374151">비용의 성격 : <tspan font-weight="700" fill="#b91c1c">스키마 진화와 리플레이 운영 — 평생 나간다</tspan></text>
+  </svg>
+  <figcaption>두 변화의 <b>성격이 다르기 때문에 비용의 성격도 다르다.</b> 왜 실무의 균형점이 대체로 레벨 2인지가 이 그림에서 이미 예고된다 — <b>일회성 비용으로 판정 능력을 사고, 영구 비용은 정말 필요한 곳에만 지불</b>하는 것이다.</figcaption>
+</figure>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 레벨 1: 상태 UPDATE + 이력 테이블 — 어디까지 되고 어디서 막히나</h2>
+
+<p>기존 모델을 그대로 두고, 값을 바꿀 때마다 이력 테이블에 <b>스냅샷(이전 값, 이후 값, 행위자, 사유)</b>을 INSERT하는 방식이다.</p>
+
+<div class="split">
+  <div class="pane g">
+    <h4>되는 것 — 최대 장점은 도입 비용</h4>
+    <ul>
+      <li>기존 코드 구조를 바꾸지 않고 <b>훅 하나 더 다는 정도</b>로 시작할 수 있다</li>
+      <li><b>"무슨 일이 있었는지"는 실제로 추적된다</b> — CS 응대 수준에서는 상당히 쓸모 있다</li>
+      <li>레벨 0 대비 개선 폭이 가장 크다 (0 → 1이 1 → 2보다 쉽다)</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>막히는 것 — 진실의 원천이 여전히 상태 테이블</h4>
+    <ul>
+      <li>이력은 어디까지나 <b>옆에 적어 둔 메모</b>다</li>
+      <li>이력을 빼먹은 코드 경로가 <b>하나라도</b> 있으면 상태와 어긋난다</li>
+      <li>어긋났을 때 <b>어느 쪽이 맞는지 판정할 기준이 없다</b> — 상태가 맞고 이력이 빠진 건지, 이력이 맞고 상태가 오염된 건지 알 수 없다</li>
+    </ul>
+  </div>
+</div>
+
+<h3>6-1. 이력을 빼먹는 경로는 언제나 존재한다</h3>
+<div class="grid g3">
+  <div class="tile red"><div class="k" style="font-family:inherit">급하게 짠 네이티브 쿼리</div><div class="d">ORM을 우회한 <code>UPDATE</code> 한 줄. 훅이 걸려 있지 않으므로 <b>이력이 생기지 않는다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">장애 대응 운영 스크립트</div><div class="d">가장 급한 날, 가장 검증이 덜 된 상태로 실행된다. <b>규칙이 깨지는 전형적인 순간.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">배치의 대량 갱신</div><div class="d">수만 건을 한 문장으로 갱신하면서 <b>이력만 빼먹는</b> 패턴이 흔하다.</div></div>
+</div>
+
+<div class="memo red">
+  <h4>레벨 1의 진짜 한계 — 한 문장</h4>
+  <div class="rule red" style="margin-bottom:0">레벨 1의 신뢰는 <b>"모두가 규칙을 지킨다"는 가정</b> 위에 서 있고, 그 가정은 <b>가장 급한 날 깨진다</b></div>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 레벨 2: append-only 원장 + 파생 상태 테이블 (현실적 절충)</h2>
+
+<p>방향을 뒤집는다. <b>원장이 진실의 원천</b>이고, 잔액 같은 상태는 <b>원장에서 계산해 낸 결과를 저장해 둔 사본</b>이다.</p>
+
+<div class="callout info"><span class="t">용어 — 프로젝션(projection)</span>
+원본 기록을 <b>용도에 맞게 가공해 둔 조회용 사본</b>이라는 뜻이다. 영사기가 <b>필름(원본)을 스크린에 투영(project)</b>한 것이 화면이듯, <b>원장이 원본이고 잔액은 그 투영</b>이라는 이미지에서 온 이름이다. 핵심은 하나 — <b>투영은 언제든 원본에서 다시 만들 수 있다.</b></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 424" role="img" aria-label="레벨 2 아키텍처 도식. 한 트랜잭션 안에서 원장에 엔트리를 추가하고 프로젝션 잔액을 조건부 UPDATE한다. 원장은 REVOKE UPDATE DELETE로 보호되고 프로젝션은 언제든 원장 합계로 재계산할 수 있다. 아래에는 매일 도는 정합 검증 배치가 두 테이블을 대조해 불일치를 찾고 원장 기준으로 재계산한 뒤 불일치 사실 자체를 조사 대상으로 남긴다는 흐름이 있다.">
+    <defs>
+      <marker id="l-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="l-g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="l-r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="15" font-weight="700" fill="#1f2937">레벨 2의 구조 — <tspan fill="#16a34a">원장은 진실</tspan>, <tspan fill="#2563eb">잔액은 계산 결과</tspan>, 그리고 <tspan fill="#dc2626">둘이 어긋나면 원장이 이긴다</tspan></text>
+
+    <!-- transaction box -->
+    <rect x="24" y="44" width="286" height="216" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="7 5"/>
+    <text x="167" y="66" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">하나의 트랜잭션</text>
+    <rect x="40" y="78" width="254" height="52" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="54" y="98" font-size="11.5" fill="#166534" font-weight="700">① 진실을 먼저 기록</text>
+    <text x="54" y="118" font-size="11" fill="#15803d" class="mono">INSERT INTO point_ledger (-49,000 ...)</text>
+    <rect x="40" y="138" width="254" height="52" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="54" y="158" font-size="11.5" fill="#1d4ed8" font-weight="700">② 프로젝션 조건부 UPDATE</text>
+    <text x="54" y="178" font-size="11" fill="#1e40af" class="mono">WHERE balance &gt;= :amount</text>
+    <rect x="40" y="198" width="254" height="48" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="54" y="217" font-size="11.5" fill="#b91c1c" font-weight="700">③ 0행이면 예외 → 함께 롤백</text>
+    <text x="54" y="235" font-size="10.5" fill="#7f1d1d">"차감 기록만 남고 잔액은 그대로"가 생기지 않는다</text>
+
+    <!-- ledger -->
+    <line x1="310" y1="104" x2="378" y2="104" stroke="#16a34a" stroke-width="2.2" marker-end="url(#l-g)"/>
+    <rect x="384" y="52" width="336" height="208" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.4"/>
+    <text x="400" y="76" font-size="13.5" fill="#166534" font-weight="700" class="mono">point_ledger</text>
+    <rect x="566" y="60" width="142" height="22" rx="11" fill="#16a34a"/>
+    <text x="637" y="76" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">진실의 원천 (append-only)</text>
+    <g class="mono" font-size="11" fill="#374151">
+      <rect x="400" y="88" width="304" height="26" rx="5" fill="#fff" stroke="#bbf7d0"/><text x="412" y="106">05-02  +50,000  CHARGE     ORD-2190</text>
+      <rect x="400" y="118" width="304" height="26" rx="5" fill="#fff" stroke="#bbf7d0"/><text x="412" y="136">05-03  -49,000  ORDER_PAY  ORD-2201</text>
+      <rect x="400" y="148" width="304" height="26" rx="5" fill="#fff" stroke="#bbf7d0"/><text x="412" y="166">05-03   -1,000  ORDER_PAY  ORD-2205</text>
+      <rect x="400" y="178" width="304" height="26" rx="5" fill="#eff6ff" stroke="#bfdbfe" stroke-dasharray="4 3"/><text x="412" y="196" fill="#1d4ed8">(추가만 된다 — 위 줄들은 절대 변하지 않는다)</text>
+    </g>
+    <rect x="400" y="214" width="304" height="34" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="552" y="236" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700" class="mono">REVOKE UPDATE, DELETE ON point_ledger</text>
+
+    <!-- projection -->
+    <path d="M720,140 C 760,140 770,140 806,140" fill="none" stroke="#2563eb" stroke-width="2.2" marker-end="url(#l-b)"/>
+    <rect x="742" y="112" width="64" height="20" rx="10" fill="#fff" stroke="#bfdbfe"/>
+    <text x="774" y="127" font-size="10" fill="#1d4ed8" text-anchor="middle" font-weight="700" class="mono">SUM</text>
+
+    <rect x="812" y="76" width="278" height="120" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="828" y="100" font-size="13.5" fill="#1d4ed8" font-weight="700" class="mono">point_balance</text>
+    <rect x="960" y="84" width="116" height="20" rx="10" fill="#2563eb"/>
+    <text x="1018" y="99" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">프로젝션 · 캐시</text>
+    <text x="828" y="124" font-size="11.5" fill="#1e40af" class="mono">user_id 77 → balance 0</text>
+    <rect x="828" y="134" width="246" height="50" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <text x="840" y="153" font-size="11" fill="#374151">조회는 <tspan font-weight="700">PK 단건 O(1)</tspan> — SUM을 매번 돌지 않는다</text>
+    <text x="840" y="171" font-size="11" fill="#374151">통째로 날아가도 <tspan font-weight="700" fill="#16a34a">원장에서 재계산하면 복구</tspan></text>
+
+    <!-- reconciliation -->
+    <rect x="384" y="284" width="706" height="120" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="404" y="308" font-size="13" fill="#92400e" font-weight="700">매일 도는 정합 검증 배치</text>
+    <text x="404" y="330" font-size="11.5" fill="#374151" class="mono">SUM(point_ledger.amount) per user  vs  point_balance.balance</text>
+    <line x1="530" y1="264" x2="530" y2="280" stroke="#d97706" stroke-width="2"/>
+    <line x1="900" y1="200" x2="900" y2="280" stroke="#d97706" stroke-width="2"/>
+    <rect x="404" y="342" width="330" height="48" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="418" y="361" font-size="11.5" fill="#166534" font-weight="700">불일치 → 판정은 이미 정해져 있다</text>
+    <text x="418" y="379" font-size="11" fill="#374151">"원장이 맞다" → 프로젝션을 원장 합계로 <tspan font-weight="700">재계산</tspan></text>
+    <rect x="748" y="342" width="326" height="48" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="762" y="361" font-size="11.5" fill="#b91c1c" font-weight="700">값을 맞췄다고 사건은 끝나지 않는다</text>
+    <text x="762" y="379" font-size="11" fill="#374151">같은 트랜잭션인데 어긋났다면 <tspan font-weight="700">누군가 우회한 것</tspan></text>
+
+    <!-- level1 contrast -->
+    <rect x="24" y="284" width="336" height="120" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="308" font-size="13" fill="#b91c1c" font-weight="700">레벨 1과의 결정적 차이</text>
+    <text x="44" y="332" font-size="11.5" fill="#374151">레벨 1 : 상태와 이력이 달라도</text>
+    <text x="44" y="350" font-size="11.5" fill="#b91c1c" font-weight="700">　　　　 어느 쪽이 맞는지 알 수 없다</text>
+    <text x="44" y="374" font-size="11.5" fill="#374151">레벨 2 : 판정 기준이 <tspan font-weight="700" fill="#16a34a">설계에 내장</tspan>돼 있어</text>
+    <text x="44" y="392" font-size="11.5" fill="#16a34a" font-weight="700">　　　　 대응이 기계적이 된다</text>
+  </svg>
+  <figcaption>레벨 2가 실제로 파는 것은 "기록"이 아니라 <b>"판정 능력"</b>이다. 불일치를 <b>사고에서 절차로</b> 바꾸는 것 — 이것이 레벨 1과의 결정적 차이다.</figcaption>
+</figure>
+
+<h3>7-1. 원장 테이블 — 감사 4대 요건이 컬럼으로 박혀 있다</h3>
+
+<div class="codehead good"><span class="tag">After</span> append-only 원장 DDL — 잔액의 진실은 이 테이블 <code>amount</code>의 합계다</div>
+<pre><code><span class="kw">CREATE TABLE</span> point_ledger (
+    id          bigserial   <span class="kw">PRIMARY KEY</span>,
+    user_id     bigint      <span class="kw">NOT NULL</span>,
+<span class="ln-good">    <span class="cm">-- 잔액이 아니라 "변화량"을 적는다. 적립은 +, 차감은 - (원 단위).</span>
+    <span class="cm">-- 잔액을 적으면 그 순간 순서에 의존하게 되고 정정이 어려워진다.</span>
+    amount      bigint      <span class="kw">NOT NULL</span>,<span class="note">핵심 설계 결정</span></span>
+    <span class="cm">-- 감사 4대 요건 중 "사유": 왜 이 줄이 생겼는가</span>
+    reason_code text        <span class="kw">NOT NULL</span>,  <span class="cm">-- ORDER_PAY, REFUND,
+                                       --  ADMIN_ADJUST, REVERSAL ...</span>
+    <span class="cm">-- 감사 4대 요건 중 "참조": 무엇을 근거로 생겼는가</span>
+    ref_type    text        <span class="kw">NOT NULL</span>,  <span class="cm">-- ORDER, CS_TICKET, LEDGER ...</span>
+    ref_id      text        <span class="kw">NOT NULL</span>,
+    <span class="cm">-- 감사 4대 요건 중 "행위자": 누가 일으켰는가</span>
+    actor       text        <span class="kw">NOT NULL</span>,  <span class="cm">-- SYSTEM, admin:1042, batch:recon</span>
+    <span class="cm">-- 감사 4대 요건 중 "시각": timestamptz로 시간대 모호성을 제거</span>
+    created_at  timestamptz <span class="kw">NOT NULL DEFAULT</span> now()
+);
+
+<span class="cm">-- 불변성을 "규칙"이 아니라 "권한"으로 강제한다.
+-- 애플리케이션 계정에서 UPDATE/DELETE 권한 자체를 회수하면,
+-- 실수로든 급해서든 원장을 고치는 쿼리는 DB가 거부한다.</span>
+<span class="ln-good"><span class="kw">REVOKE</span> UPDATE, DELETE <span class="kw">ON</span> point_ledger <span class="kw">FROM</span> app_rw;<span class="note">10절 사례 2의 대응</span></span>
+
+<span class="cm">-- 파생 상태(프로젝션): 조회 성능을 위한 캐시일 뿐 진실이 아니다.
+-- 이 테이블이 통째로 날아가도 원장에서 재계산하면 복구된다.</span>
+<span class="kw">CREATE TABLE</span> point_balance (
+    user_id bigint <span class="kw">PRIMARY KEY</span>,
+    balance bigint <span class="kw">NOT NULL</span>
+);</code></pre>
+
+<div class="memo green">
+  <h4>원장 한 줄에 반드시 들어가는 여섯 칸</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">user_id</div><div class="d">누구의 장부인가</div></div>
+    <div class="tile ok"><div class="k">amount</div><div class="d"><b>잔액이 아니라 변화량</b> (+ / −)</div></div>
+    <div class="tile"><div class="k">reason_code</div><div class="d">왜 — 사유</div></div>
+    <div class="tile"><div class="k">ref_type + ref_id</div><div class="d">무엇을 근거로 — 참조</div></div>
+    <div class="tile"><div class="k">actor</div><div class="d">누가 — 행위자</div></div>
+    <div class="tile"><div class="k">created_at</div><div class="d">언제 — <code>timestamptz</code></div></div>
+  </div>
+  <div class="rule ok" style="margin-bottom:0">뒤의 넷이 곧 <b>감사 4대 요건</b>이다 — 요건이 문서가 아니라 <b>스키마에 박혀 있어야</b> 빠뜨릴 수 없다</div>
+</div>
+
+<h3>7-2. before / after — 같은 "차감"이 무엇으로 바뀌는가</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 상태를 덮어쓴다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> deduct(Long userId, <span class="kw">long</span> amount) {
+    Wallet w = walletRepository
+            .findByUserIdForUpdate(userId);
+    <span class="kw">if</span> (w.getBalance() &lt; amount) {
+        <span class="kw">throw new</span> InsufficientBalanceException();
+    }
+<span class="ln-bad">    w.setBalance(w.getBalance() - amount);<span class="note">과거 소멸</span></span>
+}
+
+<span class="cm">// 남는 것: 바뀐 뒤의 숫자 하나
+// 답할 수 없는 질문: 언제 / 누가 / 왜 / 얼마를 / 순서
+// 정정 방법: 또 한 번의 UPDATE (= 또 한 번의 파괴)</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 기록을 추가하고, 캐시를 갱신한다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> deduct(Long userId, <span class="kw">long</span> amount, PayRef ref) {
+<span class="ln-good">    <span class="cm">// 1) 진실을 먼저 기록 — 차감은 "음수 엔트리 추가"다</span>
+    ledgerRepository.append(<span class="kw">new</span> LedgerEntry(
+            userId, -amount, <span class="st">"ORDER_PAY"</span>,
+            ref.type(), ref.id(), <span class="st">"SYSTEM"</span>));<span class="note">과거 보존</span></span>
+
+    <span class="cm">// 2) 프로젝션 갱신. WHERE에 balance &gt;= :amount 조건을 넣은
+    //    이유는 "읽고 → 검사하고 → 쓰는" 세 단계를 한 문장으로
+    //    합치기 위해서다. 동시에 두 요청이 들어와도 DB가 행 락을
+    //    잡고 조건을 다시 평가하므로, 잔액이 음수로 내려가는
+    //    경합을 애플리케이션 코드 없이 막는다.</span>
+    <span class="kw">int</span> updated = jdbc.update(<span class="st">"""
+        UPDATE point_balance
+           SET balance = balance - :amount
+         WHERE user_id = :userId AND balance &gt;= :amount
+        """</span>, Map.of(<span class="st">"amount"</span>, amount, <span class="st">"userId"</span>, userId));
+
+    <span class="cm">// 3) 0행이면 잔액 부족. 예외를 던지면 같은 트랜잭션 안의
+    //    1) 원장 INSERT까지 함께 롤백되므로 "차감 기록만 남고
+    //    잔액은 그대로"인 상태가 생기지 않는다.</span>
+    <span class="kw">if</span> (updated == 0) <span class="kw">throw new</span> InsufficientBalanceException();
+}</code></pre>
+  </div>
+</div>
+
+<h3>7-3. 이 구조가 실제로 해결하는 것 셋</h3>
+
+<div class="step ok">
+  <div class="n">1</div>
+  <div class="body">
+    <b>"왜 0원이죠?"에 즉답할 수 있다.</b> 해당 사용자의 원장을 시간순으로 뽑으면 <b>그 조회 결과 자체가 곧 답변</b>이다.
+    <div class="scroll">
+    <table>
+      <thead><tr><th>created_at</th><th>amount</th><th>reason_code</th><th>참조</th><th>actor</th></tr></thead>
+      <tbody>
+        <tr><td>05-02 10:12</td><td class="good">+50,000</td><td><code>CHARGE</code></td><td>ORDER / ORD-2190</td><td><code>SYSTEM</code></td></tr>
+        <tr><td>05-03 09:31</td><td class="bad">−49,000</td><td><code>ORDER_PAY</code></td><td>ORDER / ORD-2201</td><td><code>SYSTEM</code></td></tr>
+        <tr><td>05-03 21:04</td><td class="bad">−1,000</td><td><code>ORDER_PAY</code></td><td>ORDER / ORD-2205</td><td><code>SYSTEM</code></td></tr>
+        <tr class="hl"><td class="dash">—</td><td><b>합계 0</b></td><td colspan="3">← 이 합이 곧 현재 잔액이다 (잔액은 저장된 값이 아니라 계산 결과)</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="margin-bottom:0">CS 화면에 이 원장을 그대로 노출하면 <b>문의 자체가 줄어든다.</b> 고객이 스스로 "아, ORD-2205를 내가 결제했었지"를 확인하기 때문이다.</p>
+  </div>
+</div>
+
+<div class="step ok">
+  <div class="n">2</div>
+  <div class="body">
+    <b>정정은 역분개로 한다.</b> 위의 −49,000원이 잘못된 차감이었다면, 그 행을 지우거나 고치는 게 아니라 <b>반대 방향 엔트리를 한 줄 더 추가</b>한다.
+    <div class="scroll">
+    <table>
+      <thead><tr><th>created_at</th><th>amount</th><th>reason_code</th><th>참조</th><th>actor</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td>05-04 11:20</td><td class="good">+49,000</td><td><code>REVERSAL</code></td><td>LEDGER / #8812 (원거래)</td><td><code>admin:1042</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="margin-bottom:0"><b>이 한 줄에 감사 4대 요건이 전부 들어 있다</b> — 언제(05-04 11:20), 누가(<code>admin:1042</code>), 왜(<code>REVERSAL</code>), 무엇을 근거로(원거래 #8812). 덤으로 <b>"이 계정에 관리자 보정이 몇 번 있었나"를 <code>reason_code</code>로 바로 집계</b>할 수 있다.</p>
+  </div>
+</div>
+
+<div class="step ok">
+  <div class="n">3</div>
+  <div class="body">
+    <b>어긋남을 판정할 수 있다.</b> 이게 레벨 1과의 결정적 차이다.
+<pre><code><span class="cm">-- 매일 도는 정합 검증 배치: 원장 합계와 프로젝션이 다른 사용자를 찾는다</span>
+<span class="kw">SELECT</span> b.user_id,
+       b.balance      <span class="kw">AS</span> projection_balance,
+       l.sum_amount   <span class="kw">AS</span> ledger_sum
+<span class="kw">FROM</span>   point_balance b
+<span class="kw">JOIN</span>  (<span class="kw">SELECT</span> user_id, SUM(amount) <span class="kw">AS</span> sum_amount
+       <span class="kw">FROM</span>   point_ledger
+       <span class="kw">GROUP  BY</span> user_id) l <span class="kw">ON</span> l.user_id = b.user_id
+<span class="kw">WHERE</span>  b.balance &lt;&gt; l.sum_amount;</code></pre>
+    <p>결과가 나오면 <b>원장이 맞다.</b> 판정이 이미 정해져 있으므로 대응도 기계적이다 — <b>프로젝션을 원장 합계로 재계산하면 끝</b>이다.</p>
+    <div class="callout trap" style="margin-bottom:0"><span class="t">다만 값을 맞췄다고 사건이 끝난 건 아니다</span>
+    두 값은 <b>같은 트랜잭션 안에서 갱신</b>되는데도 어긋났다면, <b>누군가 그 트랜잭션 경로를 우회했다는 뜻</b>이다. 그러므로 <b>불일치 발생 사실 자체를 조사 대상으로 남긴다.</b> 이게 실제로 어떻게 터지는지는 <a href="#s10">10절 사례 2</a>에서 본다.</div>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>레벨 2를 한 문장으로</h4>
+  <div class="rule ok" style="margin-bottom:0">원장이 진실, 잔액은 파생 캐시 — <b>어긋나면 원장이 맞다</b>는 판정 기준이 <b>설계에 내장</b>돼 있다</div>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 레벨 3: 완전한 이벤트 소싱 — 그리고 그 청구서</h2>
+
+<p><b>이벤트 소싱(event sourcing)</b>은 상태 변경 전부를 <b>불변 이벤트</b>(<code>PaymentApproved</code>, <code>PartialCanceled</code> 같은)로 저장하고, 현재 상태는 그 이벤트들을 <b>처음부터 순서대로 재생해서 재구성</b>하는 패턴이다. 여기서 <b>재생(replay, 리플레이)</b>은 말 그대로 저장된 이벤트를 1번부터 차례로 다시 적용해 현재 상태를 계산해 내는 것을 말한다.</p>
+
+<div class="callout info"><span class="t">레벨 2의 원장과 무엇이 다른가 — 차이는 "범위" 하나다</span>
+<b>원장</b>은 금액의 흐름만 append-only로 다루고 나머지(결제 상태, 배송지, 옵션 변경)는 <b>여전히 평범한 테이블</b>이다. <b>이벤트 소싱</b>은 <b>도메인의 모든 상태 전이</b>가 이벤트다. 감사 관점에서는 이상적이다 — <b>임의의 과거 시점 상태를 정확히 재구성</b>할 수 있고, <b>빠진 정보가 원리적으로 없다.</b> 그런데 청구서가 따라온다.</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 404" role="img" aria-label="이벤트 소싱의 운영 비용 도식. 위쪽에 append-only 이벤트 스트림이 있고 구버전 스키마 이벤트는 읽을 때마다 업캐스터로 변환해야 하며 스냅샷 이후 이벤트만 재생해 현재 상태를 만든다. 아래에는 스키마 진화 비용, 리플레이 비용, 조회 모델 분리 강제라는 세 가지 청구서 카드가 있다.">
+    <defs>
+      <marker id="e-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="e-w" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+      <marker id="e-g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="15" font-weight="700" fill="#1f2937">이벤트 소싱이 이상적인 이유와 <tspan fill="#dc2626">청구서가 영구적인 이유</tspan>는 같은 뿌리다 — "지울 수도 고칠 수도 없다"</text>
+
+    <text x="30" y="54" font-size="12" fill="#475569" font-weight="700">이벤트 스토어 (append-only · 수정 불가)</text>
+
+    <!-- stream -->
+    <line x1="34" y1="94" x2="898" y2="94" stroke="#cbd5e1" stroke-width="2"/>
+    <g class="mono" font-size="10.5" text-anchor="middle">
+      <rect x="40" y="76" width="58" height="34" rx="6" fill="#f1f3f7" stroke="#94a3b8"/><text x="69" y="98" fill="#475569">e1 v1</text>
+      <rect x="106" y="76" width="58" height="34" rx="6" fill="#f1f3f7" stroke="#94a3b8"/><text x="135" y="98" fill="#475569">e2 v1</text>
+      <rect x="172" y="76" width="58" height="34" rx="6" fill="#f1f3f7" stroke="#94a3b8"/><text x="201" y="98" fill="#475569">e3 v1</text>
+      <rect x="238" y="76" width="58" height="34" rx="6" fill="#f1f3f7" stroke="#94a3b8"/><text x="267" y="98" fill="#475569">e4 v1</text>
+      <rect x="370" y="76" width="58" height="34" rx="6" fill="#eff6ff" stroke="#2563eb"/><text x="399" y="98" fill="#1d4ed8">e5 v2</text>
+      <rect x="436" y="76" width="58" height="34" rx="6" fill="#eff6ff" stroke="#2563eb"/><text x="465" y="98" fill="#1d4ed8">e6 v2</text>
+      <rect x="502" y="76" width="58" height="34" rx="6" fill="#eff6ff" stroke="#2563eb"/><text x="531" y="98" fill="#1d4ed8">e7 v2</text>
+      <rect x="634" y="76" width="58" height="34" rx="6" fill="#eff6ff" stroke="#2563eb"/><text x="663" y="98" fill="#1d4ed8">e8 v2</text>
+      <rect x="700" y="76" width="58" height="34" rx="6" fill="#eff6ff" stroke="#2563eb"/><text x="729" y="98" fill="#1d4ed8">e9 v2</text>
+      <rect x="766" y="76" width="58" height="34" rx="6" fill="#eff6ff" stroke="#2563eb"/><text x="795" y="98" fill="#1d4ed8">e10 v2</text>
+    </g>
+    <!-- schema change marker -->
+    <line x1="333" y1="66" x2="333" y2="120" stroke="#d97706" stroke-width="2" stroke-dasharray="5 4"/>
+    <text x="333" y="62" font-size="10.5" fill="#92400e" text-anchor="middle" font-weight="700">스키마 변경 v1→v2</text>
+    <!-- snapshot marker -->
+    <line x1="597" y1="66" x2="597" y2="120" stroke="#16a34a" stroke-width="2" stroke-dasharray="5 4"/>
+    <text x="597" y="62" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">스냅샷 s1</text>
+
+    <!-- replay to state -->
+    <line x1="830" y1="94" x2="922" y2="94" stroke="#2563eb" stroke-width="2.2" marker-end="url(#e-b)"/>
+    <text x="876" y="86" font-size="10.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">replay</text>
+    <rect x="928" y="68" width="162" height="52" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="1009" y="90" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">현재 상태</text>
+    <text x="1009" y="108" font-size="10.5" fill="#1e40af" text-anchor="middle">저장된 값이 아니라 계산 결과</text>
+
+    <!-- upcaster -->
+    <path d="M170,152 L170,116" fill="none" stroke="#d97706" stroke-width="2" marker-end="url(#e-w)"/>
+    <rect x="40" y="154" width="256" height="52" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="56" y="174" font-size="11.5" fill="#92400e" font-weight="700">업캐스터 (upcaster) v1 → v2</text>
+    <text x="56" y="194" font-size="10.5" fill="#374151">읽을 때마다 <tspan font-weight="700">구버전을 신버전 형태로 끌어올린다</tspan></text>
+
+    <!-- snapshot box -->
+    <path d="M597,152 L597,116" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#e-g)"/>
+    <rect x="452" y="154" width="290" height="52" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="468" y="174" font-size="11.5" fill="#166534" font-weight="700">스냅샷 — "이 시점의 상태는 이랬다"를 저장</text>
+    <text x="468" y="194" font-size="10.5" fill="#374151">리플레이는 <tspan font-weight="700">스냅샷 이후 이벤트만</tspan> 재생하면 된다</text>
+
+    <!-- three bills -->
+    <text x="30" y="234" font-size="13" fill="#dc2626" font-weight="700">청구서 3장 — 모두 "한 번 내고 끝"이 아니라 "계속 나가는" 비용이다</text>
+    <rect x="30" y="244" width="344" height="146" rx="11" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="48" y="268" font-size="12.5" fill="#b91c1c" font-weight="700">① 스키마 진화 비용</text>
+    <text x="48" y="290" font-size="11" fill="#374151">3년 치가 쌓인 뒤 이벤트 필드를 바꾸고 싶다면?</text>
+    <text x="48" y="310" font-size="11" fill="#374151">구버전 이벤트는 <tspan font-weight="700">지울 수도 고칠 수도 없다</tspan></text>
+    <text x="48" y="330" font-size="11" fill="#374151">(그게 이 패턴의 전제다) → 업캐스터가 필요</text>
+    <text x="48" y="354" font-size="11.5" fill="#b91c1c" font-weight="700">부담이 영구적이다 — 버전이 늘수록</text>
+    <text x="48" y="372" font-size="11.5" fill="#b91c1c" font-weight="700">업캐스터도 쌓이고, 아무도 지울 수 없다</text>
+
+    <rect x="396" y="244" width="344" height="146" rx="11" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="414" y="268" font-size="12.5" fill="#b91c1c" font-weight="700">② 리플레이 비용</text>
+    <text x="414" y="290" font-size="11" fill="#374151">재구성 시간이 <tspan font-weight="700">이벤트 수에 비례</tspan>한다</text>
+    <text x="414" y="310" font-size="11" fill="#374151">수천만 건이면 리플레이 한 번이 수 시간</text>
+    <text x="414" y="330" font-size="11" fill="#374151">완화책은 스냅샷 —</text>
+    <text x="414" y="354" font-size="11.5" fill="#b91c1c" font-weight="700">스냅샷 자체가 또 하나의 관리 대상이다</text>
+    <text x="414" y="372" font-size="11.5" fill="#b91c1c" font-weight="700">이벤트 구조가 바뀌면 옛 스냅샷도 무효</text>
+
+    <rect x="762" y="244" width="328" height="146" rx="11" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="780" y="268" font-size="12.5" fill="#b91c1c" font-weight="700">③ 조회 모델 분리의 강제</text>
+    <text x="780" y="290" font-size="11" fill="#374151">"잔액 상위 100명", "지난주 환불 합계"를</text>
+    <text x="780" y="310" font-size="11" fill="#374151">이벤트 목록에 <tspan font-weight="700">직접 질의할 수는 없다</tspan></text>
+    <text x="780" y="330" font-size="11" fill="#374151">→ 조회 전용 프로젝션이 사실상 필수 = CQRS</text>
+    <text x="780" y="354" font-size="11.5" fill="#b91c1c" font-weight="700">비동기 갱신이면 최종 일관성을 받아들여야</text>
+    <text x="780" y="372" font-size="11.5" fill="#b91c1c" font-weight="700">하고, "아직 안 보임" UX 처리가 추가된다</text>
+  </svg>
+  <figcaption><b>CQRS(Command Query Responsibility Segregation)</b>는 명령(쓰기)과 조회(읽기)의 모델을 분리하는 것이고, <b>최종 일관성(eventual consistency)</b>은 "지금 당장은 다를 수 있지만 시간이 지나면 같아지는" 상태를 말한다. 이벤트 소싱을 택하면 이 둘이 <b>선택이 아니라 딸려 오는 조건</b>이 된다.</figcaption>
+</figure>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 그래서 어디에 설 것인가 — 감사 강도별 차등 적용</h2>
+
+<p>실무의 균형점은 대체로 <b>레벨 2</b>다. 다만 "레벨 2로 하겠다"가 아니라 <b>대상마다 강도를 다르게 준다</b>고 말하는 것이 정확하다.</p>
+
+<div class="scroll">
+<table class="wide">
+  <caption>감사 요구 강도에 따른 모델 차등 적용 — 하나의 패턴을 도메인 전체에 균일하게 바르지 않는다</caption>
+  <thead><tr><th style="width:190px">대상</th><th style="width:230px">선택하는 모델</th><th>이유</th><th style="width:150px">레벨</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>돈의 흐름</b><br>포인트·잔액·정산 금액</td><td><b>append-only 원장</b><br>+ 파생 잔액 프로젝션</td><td>감사 요구가 <b>가장 강한 곳</b>이자 append-only의 <b>이득이 가장 큰 곳</b>이다. 정정은 역분개로만.</td><td class="good">레벨 2</td></tr>
+    <tr><td><b>결제 건의 상태</b><br>PENDING → APPROVED → CANCELED</td><td><b>상태 컬럼</b><br>+ 상태 전이 이력 테이블</td><td>상태 값 자체는 <b>자주 조회</b>되므로 컬럼으로 두는 편이 실용적이고, <b>전이 이력만 별도로 남기면 감사 요건은 충족</b>된다.</td><td>레벨 1~2</td></tr>
+    <tr><td><b>일반 도메인 변경</b><br>배송지·옵션 등</td><td>평범한 테이블<br>(+ 필요 시 변경 이력)</td><td>포인트 잔액과 배송지 변경 이력에 <b>같은 강도의 불변성을 요구할 이유가 없다.</b></td><td>레벨 0~1</td></tr>
+    <tr><td><b>완전한 이벤트 소싱</b></td><td>이벤트 스토어 + CQRS</td><td><b>그것이 정말 필요한 서브도메인에만.</b> 임의 시점 재구성이나 이벤트 기반 통합이 <b>요구로 존재할 때</b>만 비용이 정당화된다.</td><td>레벨 3</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>면접 함정 — "그래서 전면 도입합니다"</h4>
+  <p style="margin-top:0">"이벤트 소싱이 유리한 이유"를 묻는 질문에 <b>"그래서 전면 도입합니다"로 답하면 오히려 비용 감각을 의심받는다.</b> 질문의 진짜 의도는 <b>패턴 지식</b>이 아니라 <b>요구와 비용을 저울에 올릴 수 있는가</b>이기 때문이다.</p>
+  <div class="rule red" style="margin-bottom:0">답의 형태는 <b>"패턴의 장점"</b>이 아니라 <b>"요구 대비 비용"</b>이어야 한다</div>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 실무 사례 세 건 — append-only가 지켜준 것, 못 지킨 것</h2>
+
+<h3>사례 1 · 로그가 롤링된 뒤에 도착한 분쟁</h3>
+<div class="card">
+  <div class="split">
+    <div class="pane r"><h4>무슨 일이 있었나</h4><ul>
+      <li>UPDATE 모델을 쓰던 시절, 고객이 <b>석 달 전</b> 결제 55,000원에 <b>카드사 분쟁</b>을 걸었다. 주장은 "취소했는데 환불이 안 됐다"</li>
+      <li>DB를 열어 보니 상태는 <code>CANCELED</code>인데 <b>환불 이체 기록이 없었다</b></li>
+      <li>취소가 <b>언제·누구에 의해·어떤 경로로</b> 처리됐는지 복원하려 했지만 애플리케이션 로그는 <b>30일 보존 정책이라 이미 사라진 뒤</b></li>
+      <li><b>근거를 제출하지 못해 분쟁에서 패소</b> — 55,000원 + 분쟁 처리 수수료가 손실로 확정. 이 사건이 <b>원장 도입의 직접적 계기</b>가 됐다</li>
+    </ul></div>
+    <div class="pane b"><h4>여기서 얻을 교훈은 금액이 아니라 "보존 기한을 정하는 기준"</h4><ul>
+      <li>감사 기록의 보존 기한은 <b>인프라팀의 로그 정책이 아니라 분쟁·규제의 시효</b>에 맞춰야 한다</li>
+      <li>카드 분쟁은 <b>수개월</b>, 전자상거래·전자금융 관련 기록 보존 의무는 <b>수년 단위</b>다</li>
+      <li><b>30일짜리 로그를 증빙으로 쓰겠다는 계획은 계획이 아니다</b></li>
+    </ul></div>
+  </div>
+</div>
+
+<h3>사례 2 · 원장을 UPDATE한 운영 스크립트 — 불변성은 규칙이 아니라 권한이다</h3>
+<div class="card">
+  <p style="margin-top:0"><b>원장을 도입한 뒤에도 사고는 났다.</b> 이벤트 포인트 지급 오류를 급히 수습하던 운영자가, 원장 엔트리의 <code>amount</code> 컬럼을 <b>직접 UPDATE하는 스크립트</b>를 실행했다. 당시 원장 테이블의 "UPDATE 금지"는 <b>팀의 합의로만 존재</b>했고 <b>DB 권한으로는 막혀 있지 않았다.</b></p>
+  <div class="callout trap"><span class="t">진짜 문제는 숫자가 아니었다</span>
+  다음 날 정합 검증 배치가 <b>127명의 불일치</b>를 알렸다. 그런데 심각한 것은 불일치 건수가 아니라 <b>"어긋나면 원장이 맞다"는 전제 자체가 깨진 것</b>이다. <b>원장이 수정 가능하다면 원장도 더 이상 진실의 원천이 아니다.</b> 그 순간 이 시스템에는 <b>정답이 없어진다.</b></div>
+  <p><b>대응은 규칙 강화가 아니라 구조 변경이었다.</b></p>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k" style="font-family:inherit">① 권한 회수</div><div class="d">애플리케이션 계정과 <b>운영 계정 모두</b>에서 <code>REVOKE UPDATE, DELETE ON point_ledger</code>. 스크립트가 아무리 급해도 <b>DB가 거부한다.</b></div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">② 정정용 API 신설</div><div class="d">보정은 <b>반드시 역분개 엔트리로만.</b> 운영자가 화면에서 처리할 수 있게 했다 — <b>우회할 이유를 없애는 것이 핵심</b>이다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">③ DDL·권한 변경 리뷰 필수</div><div class="d"><b>권한을 되돌리는 것도 사고</b>이기 때문이다. 막아 둔 문이 조용히 다시 열리는 것을 막는다.</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">한 줄 교훈 — <b>불변성을 컨벤션으로 두면 가장 급한 날 깨진다.</b> 지킬 수 있는 규칙이 아니라 <b>어길 수 없는 구조</b>로 만들어야 한다</div>
+</div>
+
+<h3>사례 3 · 이벤트 소싱 전면 도입 팀의 후퇴</h3>
+<div class="card">
+  <p style="margin-top:0">인접 팀이 <b>결제 도메인 전체를 이벤트 소싱으로</b> 구축했다.</p>
+  <div class="chain">
+    <span class="chip b">2년 운영</span><span class="arrow">→</span>
+    <span class="chip w">정기 결제 개편에서 <code>SubscriptionRenewed</code> 필드 의미 변경</span><span class="arrow">→</span>
+    <span class="chip r">구버전 이벤트 수백만 건용 업캐스터를 만들어 <b>영구 유지</b></span><span class="arrow">→</span>
+    <span class="chip r">배포마다 리플레이 검증에 <b>수 시간</b></span><span class="arrow">→</span>
+    <span class="chip r">배포 주기 자체가 느려짐</span>
+  </div>
+  <p>결국 <b>감사가 꼭 필요한 금액 흐름만 원장으로 남기고, 나머지는 상태 테이블 + 전이 이력으로 되돌렸다.</b></p>
+  <div class="callout info" style="margin-bottom:0"><span class="t">중요한 건 결론의 방향이 아니라 이유다</span>
+  <b>패턴이 틀려서가 아니라 모든 테이블에 같은 수준의 감사 요구가 있지는 않기 때문</b>이다. <b>감사 강도에 따라 모델을 차등 적용하는 것이 설계</b>이고, 하나의 패턴을 도메인 전체에 균일하게 바르는 것은 설계라기보다 <b>유행 추종에 가깝다.</b></div>
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 불변성 4계층 — 규칙이 아니라 구조로</h2>
+
+<p>사례 2의 교훈을 설계로 옮기면 <b>계층 방어</b>가 된다. 중요한 것은 계층의 개수가 아니라 <b>각 층이 막는 대상이 다르다</b>는 점이다 — 이걸 짚으면서 답하면 "패턴을 외운 것"과 "위협 모델을 아는 것"이 구분된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 344" role="img" aria-label="불변성 4계층 방어 도식. 1층 권한 회수는 애플리케이션과 일반 운영 계정의 실수를 차단하고, 2층 트리거는 권한이 잘못 부여된 계정까지 봉쇄하며, 3층 해시 체인은 DB 관리자의 변조를 차단하지 못하지만 사후 탐지하고, 4층 WORM 스토리지는 DB 권한과 무관하게 원본을 보존한다.">
+    <defs>
+      <marker id="i-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="15" font-weight="700" fill="#1f2937">불변성 방어 4계층 — 위로 갈수록 <tspan fill="#dc2626">위협 모델에 포함되는 사람</tspan>이 넓어진다</text>
+
+    <text x="40" y="52" font-size="11.5" fill="#6b7280" font-weight="700">방어 계층</text>
+    <text x="392" y="52" font-size="11.5" fill="#6b7280" font-weight="700">이 층이 막는 대상 (아래 층이 못 막는 것)</text>
+    <text x="880" y="52" font-size="11.5" fill="#6b7280" font-weight="700">성격</text>
+
+    <!-- L1 -->
+    <rect x="30" y="60" width="330" height="58" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="46" y="82" font-size="12" fill="#166534" font-weight="700">1층 · 권한 회수 (기본)</text>
+    <text x="46" y="103" font-size="11" fill="#15803d" class="mono">REVOKE UPDATE, DELETE ON point_ledger</text>
+    <line x1="364" y1="89" x2="384" y2="89" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#i-b)"/>
+    <rect x="392" y="60" width="472" height="58" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="408" y="84" font-size="11.5" fill="#374151"><tspan font-weight="700">애플리케이션과 일반 운영 계정</tspan>의 실수·급조 스크립트</text>
+    <text x="408" y="104" font-size="11" fill="#6b7280">사례 2가 정확히 이 층이 없어서 뚫린 경우다</text>
+    <rect x="880" y="60" width="210" height="58" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="985" y="94" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">차단 · 필수</text>
+
+    <!-- L2 -->
+    <rect x="30" y="128" width="330" height="58" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="46" y="150" font-size="12" fill="#1d4ed8" font-weight="700">2층 · 트리거로 예외 없이 차단</text>
+    <text x="46" y="171" font-size="11" fill="#1e40af" class="mono">BEFORE UPDATE OR DELETE → RAISE EXCEPTION</text>
+    <line x1="364" y1="157" x2="384" y2="157" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#i-b)"/>
+    <rect x="392" y="128" width="472" height="58" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="408" y="152" font-size="11.5" fill="#374151"><tspan font-weight="700">권한이 잘못 부여된 계정</tspan>까지 봉쇄한다</text>
+    <text x="408" y="172" font-size="11" fill="#6b7280">어떤 경로로 들어온 UPDATE든 실행 직전에 가로챈다 · <tspan font-weight="700">슈퍼유저 우회만 남는다</tspan></text>
+    <rect x="880" y="128" width="210" height="58" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="985" y="162" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">차단 · 권한 실수 대비</text>
+
+    <!-- L3 -->
+    <rect x="30" y="196" width="330" height="58" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="46" y="218" font-size="12" fill="#92400e" font-weight="700">3층 · 해시 체인</text>
+    <text x="46" y="239" font-size="11" fill="#b45309">각 엔트리에 <tspan class="mono">직전 엔트리의 해시</tspan>를 함께 저장</text>
+    <line x1="364" y1="225" x2="384" y2="225" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#i-b)"/>
+    <rect x="392" y="196" width="472" height="58" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="408" y="220" font-size="11.5" fill="#374151"><tspan font-weight="700">DB 관리자</tspan>까지 위협 모델에 넣을 때 쓰는 층</text>
+    <text x="408" y="240" font-size="11" fill="#6b7280">중간 한 줄을 몰래 고치면 <tspan font-weight="700">그 뒤 모든 해시가 어긋난다</tspan></text>
+    <rect x="880" y="196" width="210" height="58" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="985" y="222" font-size="12.5" fill="#92400e" text-anchor="middle" font-weight="700">탐지 (차단이 아니다)</text>
+    <text x="985" y="240" font-size="10.5" fill="#b45309" text-anchor="middle">막지는 못해도 사후에 드러난다</text>
+
+    <!-- L4 -->
+    <rect x="30" y="264" width="330" height="58" rx="10" fill="#f1f3f7" stroke="#475569" stroke-width="1.8"/>
+    <text x="46" y="286" font-size="12" fill="#1f2937" font-weight="700">4층 · WORM 스토리지 / 오브젝트 락</text>
+    <text x="46" y="307" font-size="11" fill="#475569">Write Once Read Many — 쓰면 정해진 기간 수정·삭제 불가</text>
+    <line x1="364" y1="293" x2="384" y2="293" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#i-b)"/>
+    <rect x="392" y="264" width="472" height="58" rx="10" fill="#fff" stroke="#e5e7eb"/>
+    <text x="408" y="288" font-size="11.5" fill="#374151">DB 관리 권한과 <tspan font-weight="700">무관하게 원본이 보존</tspan>된다</text>
+    <text x="408" y="308" font-size="11" fill="#6b7280">클라우드 오브젝트 스토리지의 락 기능으로 아카이브를 보관</text>
+    <rect x="880" y="264" width="210" height="58" rx="10" fill="#f1f3f7" stroke="#cbd5e1"/>
+    <text x="985" y="298" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">물리적 차단</text>
+  </svg>
+  <figcaption>마무리는 <b>"어디까지 가느냐는 규제 요구 수준(전자금융 감독 규정, 내부 통제 요건)에 따른 선택"</b>이라고 덧붙인다. <b>모든 시스템에 4단계가 필요한 것은 아니다</b> — 대부분은 1층으로 시작해 필요할 때 올린다.</figcaption>
+</figure>
+
+<div class="codehead good"><span class="tag">2층</span> 트리거는 "권한을 우회한 경로"까지 봉쇄한다 (PostgreSQL)</div>
+<pre><code><span class="kw">CREATE OR REPLACE FUNCTION</span> forbid_ledger_change() <span class="kw">RETURNS</span> trigger <span class="kw">AS</span> $$
+<span class="kw">BEGIN</span>
+    <span class="cm">-- 어떤 경로로 들어온 UPDATE/DELETE든 실행 직전에 가로채 실패시킨다.</span>
+    <span class="kw">RAISE EXCEPTION</span> <span class="st">'point_ledger is append-only'</span>;
+<span class="kw">END</span>; $$ <span class="kw">LANGUAGE</span> plpgsql;
+
+<span class="ln-good"><span class="kw">CREATE TRIGGER</span> point_ledger_immutable
+<span class="kw">BEFORE UPDATE OR DELETE</span> <span class="kw">ON</span> point_ledger
+<span class="kw">FOR EACH ROW EXECUTE FUNCTION</span> forbid_ledger_change();<span class="note">권한 실수까지 방어</span></span></code></pre>
+
+<!-- ===================== 12 ===================== -->
+<h2 id="s12">12. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<div class="memo">
+  <h4>면접 전날 3분 인출 — 이 여섯 개만 입에서 나오면 된다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">① 감사가 묻는 것</div><div class="d">현재 상태가 아니라 <b>경로</b> — 언제·누가·무엇을 근거로·얼마를·어떤 순서로. <b>UPDATE는 이 다섯을 전부 버린다.</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 감사 4대 요건</div><div class="d"><b>"누가 · 언제 · 왜 — 그리고 못 지운다"</b> (행위자·시각·사유+참조·불변성)</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">③ 정정 규칙</div><div class="d">삭제가 아니라 <b>반대 방향 한 줄 추가(역분개)</b>. <code>git revert</code>는 되고 <code>reset --hard</code>는 안 된다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">④ 스펙트럼 3판정</div><div class="d">기록을 남기나 → 그 기록이 <b>진실의 원천</b>인가 → 돈의 흐름까지인가 <b>도메인 전체</b>인가</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">⑤ 판정 규칙</div><div class="d"><b>어긋나면 원장이 맞다</b> → 프로젝션 재계산. 단, <b>불일치 사실 자체는 조사 대상</b>으로 남긴다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">⑥ 함정 두 개</div><div class="d">"로그 남기면 되죠"(원자성·내구성·보존 실패) / "그래서 전면 도입합니다"(비용 감각 의심)</div></div>
+  </div>
+</div>
+
+<p class="sub">아래는 <b>질문만 먼저 읽고 스스로 답해본 뒤</b> 펼쳐서 확인하는 순서로 쓴다.</p>
+
+<details class="q"><summary>append-only면 잘못 들어간 데이터는 어떻게 고치나요? <span class="badge core">핵심</span><span class="hint">힌트: 회계는 이 질문에 500년 전에 답했다</span></summary><div class="a">
+  <p><b>지우지 않고 상쇄한다.</b> 잘못된 차감 −49,000원에는 <b>원거래를 참조하는 +49,000원 <code>REVERSAL</code> 엔트리</b>를 추가하고, <b>사유 코드와 행위자(승인한 운영자)</b>를 함께 남긴다. 회계의 <b>역분개</b>와 정확히 같은 원리다.</p>
+  <div class="rule ok">이유를 한 문장으로 붙일 수 있어야 한다 — <b>"실수했다는 사실" 자체가 감사 대상 정보</b>이므로 실수와 정정이 <b>둘 다</b> 보존돼야 한다</div>
+  <p style="margin-bottom:0">여기서 유일하게 까다로운 예외가 <b>개인정보 파기 의무와의 충돌</b>인데, 그건 바로 다음 질문에서 따로 다룬다.</p>
+</div></details>
+
+<details class="q"><summary>고객이 탈퇴하며 개인정보 삭제를 요구하는데 원장은 지울 수 없습니다. 어떻게 하나요? <span class="badge trap">까다로움</span><span class="hint">힌트: "지울 수 없는 것"과 "지워야 하는 것"이 같은 테이블에 있는 게 문제다</span></summary><div class="a">
+  <p>실무 해법은 <b>분리 보관</b>이다. 문제의 본질은 <b>보존 의무가 있는 데이터와 파기 의무가 있는 데이터를 한 테이블에 섞어 둔 것</b>이므로, 둘을 물리적으로 분리하면 충돌 자체가 사라진다.</p>
+  <div class="split">
+    <div class="pane g"><h4>원장에 남는 것 — 법정 보존 대상</h4><ul>
+      <li><b>금액·거래 기록</b>(amount, reason_code, ref, created_at)</li>
+      <li>사람을 가리키는 것은 <b>식별자(<code>user_id</code>)뿐</b></li>
+    </ul></div>
+    <div class="pane r"><h4>별도 테이블에 두고 파기하는 것</h4><ul>
+      <li><b>이름·연락처 같은 개인 식별 정보</b></li>
+      <li>파기하면 <b>그 식별자로 사람을 특정할 수 없게</b> 된다</li>
+    </ul></div>
+  </div>
+  <p style="margin-bottom:0">즉 <b>원장은 그대로 두되 "그 번호가 누구인지"를 알 수 없게 만드는</b> 구조다. 거래의 존재와 금액은 증빙으로 남고, 개인은 식별되지 않는다.</p>
+</div></details>
+
+<details class="q"><summary>잔액을 조회할 때마다 원장을 SUM 하나요? 성능은요? <span class="badge core">핵심</span><span class="hint">힌트: 진실의 원천과 조회 경로는 같을 필요가 없다</span></summary><div class="a">
+  <p><b>아니다. 진실의 원천과 조회 경로를 분리한다.</b> 잔액은 프로젝션 테이블(<code>point_balance</code>)에서 <b>기본키로 O(1) 조회</b>하고, <b>원장 추가와 프로젝션 갱신을 같은 트랜잭션으로 묶어</b> 둘이 어긋날 틈을 없앤다.</p>
+  <p>원장이 <b>수억 건</b>으로 커지면 이번엔 <b>검증 비용</b>이 문제가 되는데, 이때도 <b>회계에서 답을 빌려 온다.</b></p>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k" style="font-family:inherit">마감 = 기간 스냅샷</div><div class="d">월말 잔액을 확정해 두고, 검증을 <b>"직전 스냅샷 + 그 이후 엔트리 합"</b>으로 계산한다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">비용이 상수에 가까워진다</div><div class="d">전체 SUM이 아니라 <b>한 달 치만 훑기</b> 때문이다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">파티셔닝 + 아카이브</div><div class="d"><code>created_at</code> 기준 <b>월 단위 파티셔닝</b>을 더하고, 오래된 구간은 <b>아카이브 스토리지</b>로 내린다.</div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">답의 뼈대 — <b>"쓰기는 원장, 읽기는 프로젝션, 검증은 스냅샷 이후 구간만"</b></div>
+</div></details>
+
+<details class="q"><summary>원장과 상태 테이블이 어긋나면 어느 쪽을 믿나요? <span class="badge core">핵심</span><span class="hint">힌트: 이 질문에 답할 수 있다는 것 자체가 레벨 2의 가치다</span></summary><div class="a">
+  <p><b>원장이다.</b> 그리고 여기서 한 걸음 더 나가야 한다 — <b>이 판정 기준이 존재한다는 것 자체가 레벨 2 설계의 핵심 가치</b>라는 점을 함께 말하는 게 좋다. <b>레벨 1에서는 같은 질문에 답할 수 없다.</b></p>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">운영</div><div class="d"><code>SUM(amount)</code> vs <code>balance</code>를 대조하는 <b>정합 검증 배치를 매일</b> 돌리고, 불일치는 <b>프로젝션 재계산으로 수렴</b>시킨다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">종결하지 않는다</div><div class="d">같은 트랜잭션 안에서 갱신되는데도 어긋났다면 <b>누군가 정규 경로를 우회한 것</b>이므로, <b>불일치 발생 사실 자체를 조사 대상</b>으로 남긴다.</div></div>
+  </div>
+  <p style="margin-bottom:0">면접에서는 <b>"어긋나면 원장 기준으로 재계산합니다"</b>를 한 문장으로 답할 수 있으면 충분하고, 여유가 있으면 위의 "조사 대상으로 남긴다"를 덧붙인다.</p>
+</div></details>
+
+<details class="q"><summary>append-only라면서 프로젝션 테이블은 UPDATE하네요? 모순 아닌가요?<span class="hint">힌트: 이 테이블을 통째로 지워도 복구할 수 있는가?</span></summary><div class="a">
+  <p><b>모순이 아니다.</b> append-only 원칙이 적용되는 대상은 <b>진실의 원천</b>이지 <b>모든 테이블</b>이 아니다. 프로젝션은 정의상 <b>파생물</b>이고, UPDATE로 덮어써도 <b>잃는 정보가 없다</b> — 원장에 다 있기 때문이다.</p>
+  <div class="rule">판정 규칙 — <b>"이 테이블을 통째로 지우고 원본에서 다시 만들 수 있는가?"</b><br>예 → UPDATE해도 되는 테이블 · 아니오 → append-only여야 하는 테이블</div>
+  <p style="margin-bottom:0">이 질문에 <b>"프로젝션은 캐시입니다"</b>라고 답하는 것이 중요한 이유가 하나 더 있다. <b>캐시라고 부르는 순간</b> "캐시가 틀렸으면 <b>원본에서 다시 계산한다</b>"는 복구 전략이 자연스럽게 따라 나오기 때문이다. 반대로 프로젝션을 "진짜 데이터"로 여기는 팀은 불일치가 났을 때 <b>수작업으로 값을 맞추려</b> 든다.</p>
+</div></details>
+
+<details class="q"><summary>원장에 잔액을 적으면 왜 안 되나요? 굳이 변화량이어야 하는 이유는?<span class="hint">힌트: 과거 한 줄을 정정했을 때 뒤의 줄들이 어떻게 되는지 그려본다</span></summary><div class="a">
+  <p>변화량(delta)과 잔액 스냅샷의 결정적 차이는 <b>"각 줄이 다른 줄에 의존하는가"</b>다.</p>
+  <div class="split">
+    <div class="pane g"><h4>변화량을 적으면 — 각 줄이 독립적</h4><ul>
+      <li>잔액은 <b><code>SUM(amount)</code>이라는 하나의 규칙</b>으로 나온다</li>
+      <li>덧셈이므로 <b>합산 순서가 결과를 바꾸지 않는다</b></li>
+      <li>과거를 정정할 때 <b>반대 부호 한 줄만 추가</b>하면 합계가 저절로 맞는다 — 역분개가 성립한다</li>
+    </ul></div>
+    <div class="pane r"><h4>잔액을 적으면 — 각 줄이 앞줄에 의존</h4><ul>
+      <li>한 줄의 값이 <b>"그 앞의 모든 줄"의 함수</b>가 된다</li>
+      <li>과거 한 줄이 틀렸다고 밝혀지면 <b>그 뒤 모든 줄이 함께 틀어진다</b></li>
+      <li>고치려면 뒤의 줄들을 전부 다시 써야 하는데, 그건 <b>append-only가 금지하는 바로 그 행위</b>다</li>
+      <li>동시에 두 건이 들어올 때 <b>어느 쪽이 먼저였느냐에 따라 기록 값이 달라진다</b></li>
+    </ul></div>
+  </div>
+  <p style="margin-bottom:0"><b>실무 절충</b>은 이렇게 말하면 된다 — 조회·감사 편의를 위해 <code>balance_after</code> 같은 <b>참고 컬럼</b>을 함께 적을 수는 있지만, <b>진실은 어디까지나 <code>amount</code>의 합</b>이고 검증도 그 합을 기준으로 한다는 원칙은 유지한다.</p>
+</div></details>
+
+<details class="q"><summary>레벨 1의 이력 테이블도 INSERT만 하는데, 레벨 2와 뭐가 다른가요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "기록을 빼먹었을 때 무슨 일이 일어나는가"를 두 설계에서 각각 그려본다</span></summary><div class="a">
+  <p>겉보기 동작(INSERT만 한다)은 같다. 차이는 두 가지이고, 둘 다 <b>"기록이 업무 경로 안에 있는가 밖에 있는가"</b>에서 나온다.</p>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 어긋났을 때 누가 이기는가</div><div class="d"><b>레벨 1</b> — 상태가 진실, 이력은 메모. 둘이 달라도 <b>판정 불가.</b><br><b>레벨 2</b> — 잔액은 원장의 함수(<code>SUM</code>). 불일치는 곧 <b>프로젝션 오류로 자동 판정</b>된다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② 누락이 드러나는가</div><div class="d"><b>레벨 1</b> — 이력을 빼먹어도 <b>시스템은 멀쩡히 동작한다.</b> 그래서 조용히 누락된다.<br><b>레벨 2</b> — 원장을 빼먹으면 <b>잔액 자체가 틀어져</b> 검증 배치에 즉시 잡힌다.</div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">한 문장 — <b>감사 기록이 업무 경로 밖에 있으면 조용히 사라지고, 업무 경로 안에 있으면 사라지는 순간 장애로 드러난다</b></div>
+</div></details>
+
+<details class="q"><summary>감사 기록을 카프카 같은 스트림이나 로그 수집기로 보내면 되지 않나요?<span class="hint">힌트: 2절에서 로그가 탈락한 이유 중 어느 것이 그대로 남는가?</span></summary><div class="a">
+  <p><b>1차 저장소로는 안 된다.</b> 2절에서 애플리케이션 로그가 탈락한 이유 중 <b>"업무 트랜잭션과 원자적이지 않다"</b>가 그대로 남기 때문이다. 전송에 성공했는데 트랜잭션이 롤백되면 <b>일어나지 않은 일이 감사 기록에 남고</b>, 트랜잭션은 커밋됐는데 전송이 실패하면 <b>일어난 일이 감사 기록에 없다.</b> 그리고 둘이 다를 때 <b>어느 쪽이 사실인지 판정할 기준이 없다.</b></p>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">올바른 순서</div><div class="d"><b>① 업무 트랜잭션과 같은 트랜잭션으로 DB에 기록한다</b> → ② 외부 전달이 필요하면 <b>그 기록을 근거로</b> 별도 과정에서 내보낸다. DB가 진실이고 스트림은 사본이다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">보존 기간도 따져야 한다</div><div class="d">스트림은 <b>보존(retention) 설정에 따라 삭제</b>된다. 사례 1의 교훈이 그대로 적용된다 — <b>보존 기한은 인프라 설정이 아니라 분쟁·규제 시효에 맞춘다.</b></div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">"DB에 먼저 적고, 외부로는 그 기록을 근거로 내보낸다"를 구조로 만든 것이 <b>트랜잭셔널 아웃박스 패턴</b>이다 (같은 카테고리 23번 문서).</p>
+</div></details>
+
+<details class="q"><summary>DB 권한 말고 불변성을 더 강하게 보장하는 방법이 있나요?<span class="hint">힌트: 층마다 "위협 모델에 누가 들어오는가"가 다르다</span></summary><div class="a">
+  <p><b>계층을 올려 가며 답하면 된다.</b> 핵심은 층의 개수가 아니라 <b>각 층이 막는 대상이 다르다</b>는 점을 짚는 것이다. (자세한 도식은 <a href="#s11">11절</a>)</p>
+  <div class="step ok"><div class="n">1</div><div class="body"><b><code>REVOKE UPDATE, DELETE</code></b> — 기본. 애플리케이션과 <b>일반 운영 계정의 실수·급조 스크립트</b>를 막는다.</div></div>
+  <div class="step ok"><div class="n">2</div><div class="body"><b><code>BEFORE UPDATE OR DELETE</code> 트리거로 예외 없이 차단</b> — 어떤 경로로 들어온 UPDATE든 실행 직전에 가로채 예외를 던지므로 <b>권한이 잘못 부여된 계정까지 봉쇄</b>한다. <b>슈퍼유저의 우회만 남는다.</b></div></div>
+  <div class="step"><div class="n">3</div><div class="body"><b>해시 체인</b> — 각 엔트리에 <b>직전 엔트리의 해시</b>를 함께 저장한다. 중간 한 줄을 몰래 고치면 <b>그 뒤 모든 해시가 어긋나므로</b>, <b>막지는 못해도 사후에 변조를 탐지</b>할 수 있다. <b>DB 관리자까지 위협 모델에 넣을 때</b> 쓰는 층이다.</div></div>
+  <div class="step"><div class="n">4</div><div class="body"><b>WORM 스토리지 / 오브젝트 락</b> — WORM(Write Once Read Many)은 <b>한 번 쓰면 정해진 기간 동안 물리적으로 수정·삭제가 불가능한</b> 저장 방식이다. 클라우드 오브젝트 스토리지의 락 기능으로 아카이브를 보관하면 <b>DB 관리 권한과 무관하게 원본이 보존</b>된다.</div></div>
+  <p style="margin-bottom:0">마무리는 <b>"어디까지 가느냐는 규제 요구 수준(전자금융 감독 규정, 내부 통제 요건)에 따른 선택"</b>이라고 덧붙인다. <b>모든 시스템에 4단계가 필요한 것은 아니다.</b></p>
+</div></details>
+
+<details class="q"><summary>이벤트 소싱까지 안 가고 원장으로 멈춘 이유는 뭔가요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "추가로 얻는 것"과 "추가로 내는 것"을 각각 세어 본다</span></summary><div class="a">
+  <p>감사 요건의 본질은 <b>"돈의 흐름과 상태 변화를 불변으로, 행위자·사유와 함께 남겨라"</b>이고, 이것은 <b>원장 + 상태 전이 이력</b>으로 충족된다.</p>
+  <div class="split">
+    <div class="pane g"><h4>완전한 이벤트 소싱이 <u>추가로</u> 주는 것 (2)</h4><ul>
+      <li><b>임의 시점 상태 재구성</b></li>
+      <li><b>이벤트 기반 시스템 통합</b></li>
+    </ul></div>
+    <div class="pane r"><h4>그 대가 (4)</h4><ul>
+      <li>스키마 진화의 <b>영구 부담</b>(업캐스터)</li>
+      <li><b>리플레이·스냅샷 운영</b></li>
+      <li><b>CQRS 강제</b> + 최종 일관성 UX</li>
+      <li><b>팀 러닝커브</b></li>
+    </ul></div>
+  </div>
+  <div class="rule">판단의 형태 — <b>요구가 충족되는 최소 복잡도에서 멈추고, 비용을 정당화할 수 있는 서브도메인에만 확장한다</b></div>
+  <p style="margin-bottom:0"><b>반대 방향까지 말하면 균형이 완성된다</b> — 이미 이벤트 소싱이 깔려 있는 조직이라면 <b>원장을 별도로 둘 필요가 없다.</b> 이벤트 스트림이 이미 그 역할을 하기 때문이다. <b>정답이 패턴에 있는 게 아니라 맥락에 있다</b>는 것을 아는 답이다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  UPDATE는 과거를 파괴하므로 <b>"어떻게 이 상태가 됐는가"</b>를 묻는 감사·CS·분쟁에 답하려면 <b>복식부기처럼 추가만 하고 정정은 역분개로 남기는 append-only 원장을 진실의 원천</b>으로 삼고 <b>상태 테이블은 파생 캐시</b>로 두는 것이 현실적 절충이며, 완전한 이벤트 소싱은 <b>스키마 진화·리플레이·스냅샷이라는 영구 비용</b>을 지불할 가치가 있는 서브도메인에만 — <b>감사 요건(불변성·행위자·시각·사유)을 최소 복잡도로 충족하는 지점을 고르는 것이 설계</b>다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/10-payment-consistency/13-audit-event-sourcing-append-only.md</code> · 함께 볼 문서: 결제 상태 관리(01) · 대사 배치 설계(08) · 트랜잭셔널 아웃박스(23)</p>
+</main>
+</body>
+</html>
