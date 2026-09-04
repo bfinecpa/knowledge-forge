@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>트랜잭션 동기화와 커넥션 바인딩 — 한 트랜잭션의 쿼리는 어떻게 같은 커넥션을 타는가</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">02 Spring / Spring Boot &nbsp;|&nbsp; 고난이도 ⭐⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>트랜잭션 동기화와 커넥션 바인딩 원리<br><span class="sub">한 트랜잭션의 쿼리는 어떻게 같은 커넥션을 타는가 — <code>TransactionSynchronizationManager</code></span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"Spring의 트랜잭션 동기화(TransactionSynchronizationManager)와 커넥션 바인딩 원리를 설명해주세요."</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <code>@Transactional</code>이 시작되면 트랜잭션 매니저가 <b>풀에서 커넥션을 하나 얻어</b> <code>TransactionSynchronizationManager</code>의 <b>ThreadLocal 리소스 맵</b>(키가 <code>DataSource</code> 객체, 값이 <code>ConnectionHolder</code>)에 <b>바인딩</b>한다. 이후 JdbcTemplate·JPA·MyBatis 등 모든 데이터 접근 코드는 커넥션을 풀에서 직접 꺼내지 않고 <code>DataSourceUtils</code>를 경유해 <b>"내 스레드에 바인딩된 커넥션이 있으면 그것을 재사용"</b>한다 — 그래서 한 트랜잭션의 모든 쿼리가 같은 커넥션을 타고, <b>쿼리마다 <code>close()</code>를 불러도 안전하다.</b> 반대로 이 규칙을 우회해 <code>dataSource.getConnection()</code>을 직접 부르면 <b>트랜잭션 밖의 별개 커넥션</b>이 나와 방금 쓴 데이터가 안 보이고 커넥션도 두 개를 점유한다. <b>저장소가 ThreadLocal이라는 사실에서 나머지 전부가 따라 나온다</b> — <code>@Async</code>로 스레드가 바뀌면 새 스레드의 리소스 맵이 비어 있어 트랜잭션이 전파되지 않고, 그렇다고 리소스 맵을 복사해 물려주면 <b>JDBC 커넥션이 스레드세이프하지 않은 데다</b> 원 트랜잭션 종료 시 <b>풀로 반환된 커넥션을 제3의 요청과 나눠 쓰는 참사</b>가 난다. 같은 저장소의 짝인 <code>synchronizations</code>에는 <b><code>beforeCommit → beforeCompletion → 커밋 → afterCommit → afterCompletion</code></b> 순서로 불리는 콜백이 등록되며, <code>@TransactionalEventListener</code>와 OSIV는 <b>전부 이 기계 위에 얹힌 것</b>이다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>구조부터 말한다</b> — <code>@Transactional</code> 진입 시 매니저가 풀에서 커넥션을 얻어 <b>TSM의 ThreadLocal 리소스 맵</b>에 <b><code>DataSource</code> 객체를 키로</b> 바인딩하고, 이후 모든 데이터 접근은 <code>DataSourceUtils.getConnection()</code>을 경유해 <b>"내 스레드에 바인딩된 것이 있으면 재사용"</b>한다. 반납도 대칭이라 <b>트랜잭션 소속 커넥션은 참조 카운트만 줄고 닫히지 않는다.</b></div></li>
+    <li><span class="n">2</span><div><b>규칙을 우회하면 무슨 일이 생기는지로 이해도를 증명한다</b> — <code>dataSource.getConnection()</code>을 직접 부르면 <b>별개 커넥션 = 별개 트랜잭션</b>이라 ① 커밋 전이라 <b>방금 쓴 데이터가 안 보이고</b> ② <b>커넥션을 두 개 점유</b>해 풀이 절반의 트래픽에서 마르고 ③ 심하면 <b>자기 자신과 락 대기</b>에 걸린다.</div></li>
+    <li><span class="n">3</span><div><b>저장소가 ThreadLocal이라는 한 문장에서 나머지를 연역한다</b> — <code>@Async</code> 경계에서는 새 스레드의 맵이 비어 있어 <b>참여가 아니라 분리</b>이고, 리소스를 물려주는 것은 <b>비스레드세이프 + 풀 재대여 오염</b> 때문에 금지다. 짝인 <code>synchronizations</code>의 <b>콜백 5단계 + 마지막 언바인딩</b> 순서가 <code>@TransactionalEventListener</code>와 OSIV를 떠받치는 하부 기계다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">전제: <code>ThreadLocal</code>이라는 사물함</a></li>
+    <li><a href="#s2">TSM — 저장소의 실물 두 칸</a></li>
+    <li><a href="#s3">커넥션의 일생 — 진입과 종료</a></li>
+    <li><a href="#s4">왜 키가 <code>DataSource</code>인가 — 멀티 DS</a></li>
+    <li><a href="#s5"><code>DataSourceUtils</code> — 분기 하나가 전부</a></li>
+    <li><a href="#s6">함정: 커넥션을 직접 꺼내면</a></li>
+    <li><a href="#s7">JPA + JdbcTemplate 혼용의 근거</a></li>
+    <li><a href="#s8">비동기 경계 — 왜 못 물려주는가</a></li>
+    <li><a href="#s9">동기화 콜백 순서와 이벤트 리스너</a></li>
+    <li><a href="#s10">OSIV — 같은 바인딩의 수명 연장</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "Spring의 트랜잭션 동기화(TransactionSynchronizationManager)와 커넥션 바인딩 원리를 설명해주세요."</p>
+  <p><b>출제 의도</b>: 멀티 데이터소스, 배치+API 혼재, 비동기 경계에서 트랜잭션이 <b>"왜 안 타는지"</b>를 추적하려면 이 내부 구조까지 알아야 한다. <b>프레임워크의 추상화가 새는(leaky) 지점</b>에서 일할 수 있는 깊이인지 확인하는 질문이다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"커넥션을 공유한다"에서 멈추는 것</b> → 1·2절에서 <b>ThreadLocal 사물함 구조</b>와 리소스 맵의 <b>키·값이 정확히 무엇인지</b>를 도식으로 못 박고, 5절에서 <b>분기 한 줄</b>로 답 전체를 압축한다.<br>
+    ② <b>비동기에서 "트랜잭션이 안 탄다"는 현상만 아는 것</b> → 8절에서 <b>"그럼 물려주면 되지 않나"</b>에 대한 반박을 <b>풀 재대여 오염 타임라인</b>으로 그린다. 이걸 설명하는 순간 현상 암기가 아니라 구조 이해로 읽힌다.<br>
+    ③ <b>콜백 순서를 못 외우고 <code>afterCommit</code>의 "조용한 소실"을 모르는 것</b> → 9절에서 <b>커밋/롤백 두 경로 타임라인</b>과 <b>언바인딩이 콜백 뒤라는 사실</b>을 암기 카드로 분리한다.
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">이 문서의 자리 — 형제 문서와의 관계</span>
+  <b>이 문서 = 내부 구조</b>(무엇이 어디에 바인딩되는가) &nbsp;/&nbsp; <b><code>22-external-api-call-inside-transaction</code> = 그 구조가 만드는 장애</b>(경계 안에 외부 호출을 두면 벌어지는 일) &nbsp;/&nbsp; <b><code>23-transactional-outbox-pattern</code> = 경계를 넘는 일의 정합성 해법</b>. 기준 환경은 <b>Spring Framework 6.x / Spring Boot 3.x, HikariCP, PostgreSQL</b>이다.
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 전제 지식 — <code>ThreadLocal</code>이라는 사물함</h2>
+
+<p>이 문서 전체가 <code>ThreadLocal</code>이라는 <b>저장소 하나 위에 서 있다.</b> 여기부터 정확히 잡고 가야 뒤의 모든 현상이 "외울 것"이 아니라 <b>"따라 나오는 것"</b>이 된다.</p>
+
+<p><b><code>ThreadLocal</code>은 스레드마다 각자 자기 값을 갖는 저장소다.</b> 같은 변수 이름으로 읽어도 스레드마다 다른 값이 나온다.</p>
+
+<pre><code><span class="kw">private static final</span> ThreadLocal&lt;String&gt; currentUser = <span class="kw">new</span> ThreadLocal&lt;&gt;();
+
+<span class="cm">// 스레드 A에서</span>
+currentUser.<span class="fn">set</span>(<span class="st">"alice"</span>);
+currentUser.<span class="fn">get</span>();   <span class="cm">// "alice"</span>
+
+<span class="cm">// 스레드 B에서 — 같은 static 필드를 읽는데</span>
+<span class="ln-bad">currentUser.<span class="fn">get</span>();   <span class="cm">// null. A가 넣은 값이 안 보인다.</span><span class="note">여기서 모든 것이 시작된다</span></span></code></pre>
+
+<p><code>static</code> 필드인데 스레드마다 값이 다르다는 것이 처음에는 이상하게 보인다. 이름이 오해를 부르는데, <b>값은 <code>ThreadLocal</code> 객체 안에 있는 것이 아니라 <code>Thread</code> 객체 안에 있다.</b> 각 <code>Thread</code>는 <code>ThreadLocalMap</code>이라는 자기만의 맵을 들고 있고, <code>ThreadLocal</code> 인스턴스는 그 맵의 <b>키</b>로 쓰일 뿐이다.</p>
+
+<figure>
+  <svg viewBox="0 0 960 296" role="img" aria-label="ThreadLocal 구조 도식. 왼쪽에 static ThreadLocal 필드가 있고 그것은 값을 담지 않는 번호표일 뿐이며, 오른쪽에 두 개의 스레드가 각자 자기 ThreadLocalMap을 갖고 있다. 스레드 A의 맵에는 DataSource를 키로 ConnectionHolder가 들어 있고 스레드 B의 맵은 비어 있다. 아래에는 사물함 비유 설명이 있다.">
+    <defs>
+      <marker id="t1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="480" y="24" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">값은 <tspan class="mono">ThreadLocal</tspan> 객체가 아니라 <tspan class="mono">Thread</tspan> 객체 안에 있다</text>
+
+    <rect x="20" y="52" width="252" height="104" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="36" y="76" font-size="11.5" class="mono" fill="#334155">static final ThreadLocal&lt;...&gt;</text>
+    <text x="36" y="94" font-size="11.5" class="mono" font-weight="700" fill="#334155">resources</text>
+    <text x="36" y="120" font-size="12" font-weight="700" fill="#92400e">= 사물함 "3번 칸" 번호표</text>
+    <text x="36" y="140" font-size="11.5" fill="#64748b">키일 뿐, 값을 담지 않는다</text>
+
+    <g stroke="#94a3b8" stroke-width="1.5" marker-end="url(#t1a)" fill="none">
+      <path d="M272 84 L318 76"/>
+      <path d="M272 124 L318 132"/>
+    </g>
+    <text x="295" y="112" font-size="10.5" fill="#94a3b8" text-anchor="middle">같은 키</text>
+
+    <rect x="322" y="46" width="300" height="122" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="338" y="68" font-size="12.5" font-weight="700" fill="#1d4ed8">Thread A — http-nio-8080-exec-3</text>
+    <rect x="338" y="78" width="268" height="76" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <text x="350" y="96" font-size="11" fill="#64748b">ThreadLocalMap (이 스레드 전용)</text>
+    <text x="350" y="118" font-size="11" class="mono" fill="#1e293b">resources → { DataSource@1a2b :</text>
+    <text x="350" y="136" font-size="11" class="mono" font-weight="700" fill="#166534">ConnectionHolder(Connection#7) }</text>
+
+    <rect x="640" y="46" width="300" height="122" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="656" y="68" font-size="12.5" font-weight="700" fill="#b91c1c">Thread B — task-1 (@Async)</text>
+    <rect x="656" y="78" width="268" height="76" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="668" y="96" font-size="11" fill="#64748b">ThreadLocalMap (이 스레드 전용)</text>
+    <text x="668" y="118" font-size="11" class="mono" fill="#1e293b">resources → <tspan font-weight="700" fill="#b91c1c">(비어 있음)</tspan></text>
+    <text x="668" y="136" font-size="11" class="mono" fill="#1e293b">actualTransactionActive → <tspan fill="#b91c1c">(없음)</tspan></text>
+
+    <rect x="20" y="182" width="920" height="62" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="38" y="204" font-size="12.5" font-weight="700" fill="#92400e">사물함 비유 — <tspan class="mono">ThreadLocal</tspan> 인스턴스는 "3번 칸"이라는 번호표이고, 사물함 자체는 스레드마다 하나씩 따로 있다.</text>
+    <text x="38" y="228" font-size="12.5" fill="#a16207">모두가 "3번 칸을 열어라"라는 <tspan font-weight="700">같은 지시(= 같은 static 필드)</tspan>를 받지만, <tspan font-weight="700">각자 자기 사물함</tspan>을 열기 때문에 안에 든 물건이 다르다.</text>
+
+    <text x="480" y="272" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">★ 이 그림 한 장에서 8절(비동기에서 트랜잭션이 안 타는 이유)이 그대로 따라 나온다.</text>
+  </svg>
+  <figcaption><code>currentUser.get()</code>은 <b>"현재 스레드의 맵에서 <code>currentUser</code>라는 키로 값을 꺼내라"</b>는 뜻이다. 이 구조에서 나오는 <b>메모리 누수·정보 유출 위험</b>은 <code>01-java-kotlin/16-threadlocal-thread-pool-risks.md</code>에 따로 있다.</figcaption>
+</figure>
+
+<h3>1-1. 왜 하필 <code>ThreadLocal</code>에 두는가 — 대안을 그려보면 안다</h3>
+
+<p>스프링이 이 저장소를 고른 이유는 <b>"요청 하나 = 스레드 하나 = 트랜잭션 하나"</b>라는 전제 때문이다. 블로킹 방식의 Spring MVC에서 요청 하나는 톰캣 워커 스레드 하나가 처음부터 끝까지 처리한다. 컨트롤러 → 서비스 → 리포지토리로 내려가는 <b>호출 스택 전체가 같은 스레드 위에 있다.</b> 그러므로 <b>"현재 스레드"는 곧 "현재 요청"</b>이다.</p>
+
+<p>대안을 그려 보면 이 선택의 값이 분명해진다.</p>
+
+<div class="codehead bad"><span class="tag">대안</span> 만약 스프링이 <code>ThreadLocal</code>을 안 썼다면 — 커넥션이 모든 시그니처를 오염시킨다</div>
+<pre><code><span class="kw">public</span> Order <span class="fn">placeOrder</span>(<span class="ln-bad">Connection con</span>, OrderRequest request) {
+    orderRepository.<span class="fn">save</span>(<span class="ln-bad">con</span>, order);
+    couponRepository.<span class="fn">use</span>(<span class="ln-bad">con</span>, couponId);
+    pointRepository.<span class="fn">deduct</span>(<span class="ln-bad">con</span>, userId, amount);
+}
+<span class="cm">// 비즈니스 로직과 아무 상관 없는 Connection이 모든 메서드에 따라다닌다.</span>
+<span class="cm">// 게다가 중간에 한 군데라도 다른 커넥션을 넘기면 트랜잭션이 조용히 쪼개진다.</span></code></pre>
+
+<div class="memo green">
+  <h4>용어 봉인 — "동기화(synchronization)"의 뜻부터 정확히</h4>
+  <div class="rule ok">여러 스레드를 맞추는 동기화가 아니라, <b>트랜잭션 리소스를 스레드에 맞춰(동기화해) 두고 어디서든 꺼내 쓰게 하는 것</b></div>
+  <p style="margin-bottom:0" class="sub">자바의 <code>synchronized</code>가 떠올라 <b>"락 이야기인가?"</b>로 오해하기 쉬운 지점이다. 면접에서 이 뜻을 먼저 정확히 짚고 들어가면, 뒤의 설명이 전부 같은 축 위에 정렬된다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. <code>TransactionSynchronizationManager</code> — 저장소의 실물</h2>
+
+<p>이름이 길어서 위압적이지만, 실제 클래스를 열어 보면 <b>필드가 전부 <code>static</code> + <code>ThreadLocal</code>인 저장소 한 벌</b>이다. 인스턴스를 만들 필요도 없는 <code>abstract</code> 클래스이고, 하는 일은 <b>"현재 스레드에 무엇이 걸려 있는가"를 넣고 빼는 것</b>뿐이다.</p>
+
+<div class="codehead plain"><span class="tag">실물</span> 필드가 전부 <code>ThreadLocal</code>이다 — 이것이 전부다</div>
+<pre><code><span class="kw">public abstract class</span> <span class="fn">TransactionSynchronizationManager</span> {
+
+<span class="ln-good">    <span class="cm">// ① 리소스 맵: 이 문서의 주인공. 키 = DataSource / EntityManagerFactory 객체</span>
+    <span class="kw">private static final</span> ThreadLocal&lt;Map&lt;Object, Object&gt;&gt; resources
+            = <span class="kw">new</span> NamedThreadLocal&lt;&gt;(<span class="st">"Transactional resources"</span>);<span class="note">커넥션이 여기 걸린다</span></span>
+
+<span class="ln-good">    <span class="cm">// ② 동기화 콜백 집합: 커밋 전후에 불릴 훅들 (9절)</span>
+    <span class="kw">private static final</span> ThreadLocal&lt;Set&lt;TransactionSynchronization&gt;&gt; synchronizations
+            = <span class="kw">new</span> NamedThreadLocal&lt;&gt;(<span class="st">"Transaction synchronizations"</span>);<span class="note">이벤트·OSIV의 하부</span></span>
+
+    <span class="cm">// ③ 현재 트랜잭션의 메타 정보 — @Transactional의 속성이 여기 실려 다닌다</span>
+    <span class="kw">private static final</span> ThreadLocal&lt;String&gt;  currentTransactionName            = ...;
+    <span class="kw">private static final</span> ThreadLocal&lt;Boolean&gt; currentTransactionReadOnly        = ...;
+    <span class="kw">private static final</span> ThreadLocal&lt;Integer&gt; currentTransactionIsolationLevel  = ...;
+    <span class="kw">private static final</span> ThreadLocal&lt;Boolean&gt; actualTransactionActive           = ...;
+}</code></pre>
+
+<div class="memo">
+  <h4>저장소는 두 칸이다 — 이 구분이 문서 전체의 뼈대</h4>
+  <div class="grid g2" style="margin-top:6px">
+    <div class="tile"><div class="k">resources</div><div class="s">"지금 무엇을 쓰고 있는가"</div><div class="d">키 = <code>DataSource</code>/<code>EntityManagerFactory</code> <b>객체</b>, 값 = <code>ConnectionHolder</code>/<code>EntityManagerHolder</code>. <b>5·6·7절의 주제.</b></div></div>
+    <div class="tile"><div class="k">synchronizations</div><div class="s">"끝날 때 무엇을 할 것인가"</div><div class="d">커밋 전후에 불릴 <b>콜백 집합</b>. <code>@TransactionalEventListener</code>가 여기 얹힌다. <b>9절의 주제.</b></div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">면접 답변을 이 두 칸으로 나눠 시작하면 <b>"구조를 눈으로 본 사람"</b>처럼 들린다. 반대로 둘을 뭉뚱그리면 이벤트 리스너 얘기가 나올 때 연결이 끊긴다.</p>
+</div>
+
+<h3>2-1. 리소스 맵은 상황마다 이렇게 생겼다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="리소스 맵의 세 가지 상태 비교. 첫째 단일 데이터소스에서는 HikariDataSource 키에 ConnectionHolder 하나가 들어 있다. 둘째 멀티 데이터소스에서 stats 트랜잭션 매니저를 쓰면 stats 데이터소스 키만 있고 main 키는 없어서 main 쿼리는 새 커넥션에 auto-commit으로 즉시 확정된다. 셋째 JPA와 JdbcTemplate 혼용에서는 EntityManagerFactory 키와 DataSource 키가 같은 커넥션을 가리키며 이중으로 바인딩된다.">
+    <text x="560" y="24" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">같은 <tspan class="mono">resources</tspan> 맵, 세 가지 상황 — 키가 무엇이고 무엇이 <tspan fill="#b91c1c">없는지</tspan>를 본다</text>
+
+    <!-- panel 1 -->
+    <rect x="20" y="42" width="348" height="256" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="194" y="66" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">① 단일 DataSource + @Transactional</text>
+    <rect x="36" y="78" width="316" height="94" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <g class="mono" font-size="11.5" fill="#1e293b">
+      <text x="50" y="100">resources → {</text>
+      <text x="62" y="122">HikariDataSource@1a2b</text>
+      <text x="74" y="142">: ConnectionHolder(Connection#7)</text>
+      <text x="50" y="162">}</text>
+    </g>
+    <rect x="36" y="186" width="316" height="96" rx="8" fill="#dcfce7" stroke="#bbf7d0"/>
+    <text x="50" y="208" font-size="12" font-weight="700" fill="#166534">가장 흔한 상태</text>
+    <text x="50" y="230" font-size="11.5" fill="#15803d">JdbcTemplate · JPA · MyBatis가 전부</text>
+    <text x="50" y="248" font-size="11.5" fill="#15803d">이 키를 찾아 <tspan font-weight="700">Connection#7을 재사용</tspan>한다.</text>
+    <text x="50" y="270" font-size="11.5" fill="#15803d">"한 트랜잭션 = 한 커넥션"의 실체.</text>
+
+    <!-- panel 2 -->
+    <rect x="386" y="42" width="348" height="256" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="560" y="66" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">② 멀티 DS — @Transactional("statsTxManager")</text>
+    <rect x="402" y="78" width="316" height="94" rx="8" fill="#fff" stroke="#fecaca"/>
+    <g class="mono" font-size="11.5" fill="#1e293b">
+      <text x="416" y="100">resources → {</text>
+      <text x="428" y="122">HikariDataSource(stats)@3c4d</text>
+      <text x="440" y="142">: ConnectionHolder(Connection#12)</text>
+      <text x="416" y="162">}</text>
+    </g>
+    <text x="416" y="182" font-size="11" font-weight="700" fill="#b91c1c">↑ main 데이터소스는 키로 <tspan text-decoration="underline">존재하지 않는다</tspan></text>
+    <rect x="402" y="192" width="316" height="90" rx="8" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="416" y="214" font-size="12" font-weight="700" fill="#b91c1c">그래서 mainJdbcTemplate은</text>
+    <text x="416" y="234" font-size="11.5" fill="#7f1d1d">"내 것이 없네" 하고 <tspan font-weight="700">풀에서 새로 꺼내</tspan></text>
+    <text x="416" y="252" font-size="11.5" fill="#7f1d1d"><tspan font-weight="700">auto-commit으로 즉시 확정</tspan>한다.</text>
+    <text x="416" y="272" font-size="11.5" font-weight="700" fill="#b91c1c">→ 이 트랜잭션이 롤백돼도 그 쓰기는 남는다.</text>
+
+    <!-- panel 3 -->
+    <rect x="752" y="42" width="348" height="256" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="926" y="66" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">③ JPA + JdbcTemplate 혼용</text>
+    <rect x="768" y="78" width="316" height="112" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <g class="mono" font-size="11.5" fill="#1e293b">
+      <text x="782" y="98">resources → {</text>
+      <text x="794" y="118">EntityManagerFactory@aa</text>
+      <text x="806" y="136">: EntityManagerHolder(EM@x),</text>
+      <text x="794" y="156">HikariDataSource@1a2b</text>
+      <text x="806" y="174">: ConnectionHolder(Connection#7)</text>
+    </g>
+    <rect x="768" y="200" width="316" height="82" rx="8" fill="#dbeafe" stroke="#bfdbfe"/>
+    <text x="782" y="222" font-size="12" font-weight="700" fill="#1d4ed8">이중 바인딩 — 키는 둘, 커넥션은 하나</text>
+    <text x="782" y="242" font-size="11.5" fill="#1e3a8a">EM이 쓰는 그 커넥션이 <tspan font-weight="700">DataSource 키로도</tspan></text>
+    <text x="782" y="260" font-size="11.5" fill="#1e3a8a">함께 걸린다 → 두 기술이 <tspan font-weight="700">한 트랜잭션</tspan>.</text>
+    <text x="782" y="276" font-size="11" fill="#64748b">(7절에서 상세 — 단, flush 함정이 따라온다)</text>
+
+    <text x="560" y="322" font-size="12.5" fill="#374151" text-anchor="middle">키가 <tspan font-weight="700">문자열이나 상수가 아니라 <tspan class="mono">DataSource</tspan> 객체 자체</tspan>인 이유가 ②에 있다 — <tspan font-weight="700">데이터소스마다 따로 바인딩</tspan>하기 위해서다.</text>
+  </svg>
+  <figcaption>세 그림에서 <b>읽어야 할 것은 "무엇이 있는가"가 아니라 "무엇이 없는가"</b>다. ②에서 <code>main</code> 키가 없다는 사실 하나가 <b>"롤백해도 감사 로그는 남는다"</b>는 실무 현상 전체를 설명한다.</figcaption>
+</figure>
+
+<div class="callout info">
+  <span class="t"><code>ConnectionHolder</code>는 왜 커넥션을 한 겹 감싸는가 — 참조 카운트</span>
+  홀더는 <b>참조 카운트</b>를 들고 있어서, 같은 트랜잭션 안에서 여러 번 <code>getConnection()</code>이 불려도 <b>"몇 명이 이 커넥션을 쓰고 있는지"</b>를 센다. 이 카운트가 있어야 <b>5-2절의 "쿼리마다 <code>close()</code>를 불러도 실제로 닫히지 않는" 동작</b>이 가능해진다. 즉 홀더는 <b>커넥션의 소유권 관리자</b>다.
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 커넥션의 일생 — <code>@Transactional</code> 진입과 종료</h2>
+
+<p><code>@Transactional</code>이 붙은 메서드에 <b>프록시를 통해</b> 들어가면(프록시를 통하지 않으면 아무 일도 안 일어난다 — <code>11-transactional-self-invocation.md</code>), 트랜잭션 매니저의 <code>doBegin()</code>이 순서대로 네 가지 일을 한다. 그리고 끝날 때는 <b>정확히 역순으로</b> 정리된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 424" role="img" aria-label="트랜잭션 진입과 종료의 타임라인. 진입은 네 단계로 풀에서 커넥션 획득, autoCommit false 설정, 스레드에 바인딩, 메타 정보와 동기화 초기화 순이다. 그 다음 메서드 본문에서 모든 쿼리가 같은 커넥션을 재사용한다. 종료는 다섯 단계로 커밋 또는 롤백, 동기화 콜백 실행, 언바인딩, 커넥션 상태 복원, 풀로 반환 순이다. 아래에는 커넥션 점유 구간이 막대로 표시된다.">
+    <defs>
+      <marker id="t3a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="t3g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <text x="30" y="26" font-size="13" font-weight="700" fill="#1d4ed8">진입 — <tspan class="mono">doBegin()</tspan>이 하는 일 (암기: 획 · 준 · 바 · 메)</text>
+
+    <g>
+      <rect x="30"  y="38" width="240" height="80" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+      <rect x="286" y="38" width="240" height="80" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="542" y="38" width="240" height="80" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+      <rect x="798" y="38" width="240" height="80" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    </g>
+    <g font-size="12.5" font-weight="700" fill="#1d4ed8">
+      <text x="44" y="58">① 획득 — 풀에서 커넥션</text>
+      <text x="300" y="58">② 준비 — 트랜잭션 설정</text>
+      <text x="556" y="58">③ 바인딩 — 스레드에 건다</text>
+      <text x="812" y="58">④ 메타 — 플래그·콜백함</text>
+    </g>
+    <g font-size="10.8" class="mono" fill="#334155">
+      <text x="44" y="78">dataSource.getConnection()</text>
+      <text x="300" y="78">con.setAutoCommit(false)</text>
+      <text x="300" y="94">con.setTransactionIsolation(..)</text>
+      <text x="300" y="110">con.setReadOnly(true)</text>
+      <text x="556" y="78">holder = new ConnectionHolder(con)</text>
+      <text x="556" y="94" font-size="10">TSM.bindResource(dataSource, holder)</text>
+      <text x="812" y="78" font-size="10">TSM.setActualTransactionActive(true)</text>
+      <text x="812" y="94">TSM.setCurrentTransactionName(..)</text>
+      <text x="812" y="110">TSM.initSynchronization()</text>
+    </g>
+    <text x="44" y="98" font-size="11.5" font-weight="700" fill="#b91c1c">★ 이 줄부터 커넥션 점유가 시작된다</text>
+    <text x="44" y="113" font-size="10.8" fill="#7f1d1d">(22번 문서의 계산이 시작되는 지점)</text>
+    <text x="556" y="112" font-size="11.5" font-weight="700" fill="#166534">★ 여기서 resources 맵에 들어간다</text>
+
+    <g stroke="#2563eb" stroke-width="1.6" marker-end="url(#t3a)" fill="none">
+      <path d="M270 78 L282 78"/><path d="M526 78 L538 78"/><path d="M782 78 L794 78"/>
+    </g>
+
+    <rect x="30" y="134" width="1008" height="50" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="534" y="154" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">메서드 본문 실행 — JdbcTemplate · JPA · MyBatis가 전부 <tspan class="mono">DataSourceUtils</tspan>를 경유해 <tspan text-decoration="underline">같은 Connection#7</tspan>을 재사용한다</text>
+    <text x="534" y="173" font-size="11.5" fill="#15803d" text-anchor="middle">쿼리마다 얻고 반납하지만 실제로는 <tspan font-weight="700">참조 카운트만 오르내린다</tspan> (5절)</text>
+
+    <text x="30" y="212" font-size="13" font-weight="700" fill="#1d4ed8">종료 — 정확히 역순으로 정리된다</text>
+    <g>
+      <rect x="30"  y="222" width="196" height="86" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="236" y="222" width="196" height="86" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+      <rect x="442" y="222" width="196" height="86" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+      <rect x="648" y="222" width="196" height="86" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="854" y="222" width="196" height="86" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    </g>
+    <g font-size="12" font-weight="700" fill="#1d4ed8">
+      <text x="44" y="242">① 커밋 또는 롤백</text>
+      <text x="250" y="242" fill="#92400e">② 동기화 콜백 실행</text>
+      <text x="456" y="242">③ 언바인딩</text>
+      <text x="662" y="242">④ 커넥션 상태 복원</text>
+      <text x="868" y="242">⑤ 풀로 반환</text>
+    </g>
+    <g font-size="10.8" class="mono" fill="#334155">
+      <text x="44" y="262">con.commit()</text>
+      <text x="44" y="278">con.rollback()</text>
+      <text x="250" y="262">afterCommit()</text>
+      <text x="250" y="278">afterCompletion()</text>
+      <text x="456" y="262" font-size="10">TSM.unbindResource(dataSource)</text>
+      <text x="662" y="262">con.setAutoCommit(true)</text>
+      <text x="662" y="278">isolation · readOnly 되돌리기</text>
+      <text x="868" y="262">con.close()</text>
+    </g>
+    <text x="250" y="298" font-size="10.8" font-weight="700" fill="#92400e">★ 이때도 아직 바인딩돼 있다</text>
+    <text x="456" y="280" font-size="10.8" font-weight="700" fill="#166534">여기서 비로소 맵에서 빠진다</text>
+    <text x="868" y="280" font-size="10.8" fill="#7f1d1d">= 끊는 게 아니라 <tspan font-weight="700">풀에 반납</tspan></text>
+    <text x="868" y="296" font-size="10.8" font-weight="700" fill="#b91c1c">★ 점유 끝</text>
+
+    <rect x="30" y="326" width="1020" height="30" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="540" y="346" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">커넥션 점유 구간 — 진입 ①부터 종료 ⑤까지. 이 막대가 길어지면 풀이 마른다.</text>
+    <path d="M40 341 L58 341" stroke="#b91c1c" stroke-width="2"/><path d="M1022 341 L1040 341" stroke="#b91c1c" stroke-width="2"/>
+
+    <text x="540" y="380" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">★ 이 그림의 결정적 디테일: <tspan fill="#b91c1c">언바인딩(③)은 콜백(②)이 전부 끝난 뒤</tspan>다 —</text>
+    <text x="540" y="400" font-size="12.5" fill="#374151" text-anchor="middle"><tspan class="mono">afterCommit</tspan> 안에서는 <tspan font-weight="700">아직 커넥션이 스레드에 붙어 있어서</tspan> 코드가 에러 없이 돌지만, 커밋할 트랜잭션은 이미 없다 (9절의 함정).</text>
+  </svg>
+  <figcaption><b><code>close()</code>가 실제로 커넥션을 끊지 않는다</b>는 점을 짚어 두자. 풀이 내주는 커넥션은 <b>실제 커넥션을 감싼 프록시</b>라, <code>close()</code>를 호출하면 물리적 연결을 끊는 대신 <b>풀로 돌아간다.</b> 커넥션풀의 핵심 아이디어가 이 프록시에 있다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>암기 장치 — 진입 4단계는 "획 · 준 · 바 · 메"</h4>
+  <div class="rule"><b>획</b>득(풀에서 커넥션) → <b>준</b>비(<code>setAutoCommit(false)</code>) → <b>바</b>인딩(<code>bindResource</code>) → <b>메</b>타(플래그 + <code>initSynchronization</code>)</div>
+  <p style="margin-bottom:0" class="sub">이 네 글자를 쥐고 있으면 <b>"어느 단계가 안 일어났는가"</b>로 문제를 나눌 수 있다 — 프록시를 안 타면 <b>1단계부터 아예 없고</b>, 스레드가 바뀌면 <b>3단계의 결과가 안 보이며</b>, 매니저가 다른 <code>DataSource</code>를 보고 있으면 <b>3단계가 엉뚱한 키로 들어간다</b>(4절).</p>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 왜 키가 <code>DataSource</code> 객체인가 — 멀티 데이터소스</h2>
+
+<p>리소스 맵의 키를 문자열이나 상수로 두지 않고 <b><code>DataSource</code> 객체 자체</b>로 둔 이유는 하나다. <b>데이터소스가 여러 개인 환경에서 각각 따로 바인딩하기 위해서다.</b> 주 DB와 통계 DB를 함께 쓰는 구성을 보자.</p>
+
+<div class="codehead plain"><span class="tag">설정</span> 트랜잭션 매니저는 <code>DataSource</code> 하나에 하나씩 붙는다</div>
+<pre><code><span class="kw">@Configuration</span>
+<span class="kw">public class</span> <span class="fn">DataSourceConfig</span> {
+
+    <span class="kw">@Bean @Primary</span>
+    <span class="kw">public</span> DataSource <span class="fn">mainDataSource</span>() { <span class="cm">/* 주문·회원 DB */</span> }
+
+    <span class="kw">@Bean</span>
+    <span class="kw">public</span> DataSource <span class="fn">statsDataSource</span>() { <span class="cm">/* 통계 DB */</span> }
+
+    <span class="cm">// 매니저는 자기가 아는 DataSource "하나만" 트랜잭션으로 관리한다.</span>
+    <span class="kw">@Bean @Primary</span>
+    <span class="kw">public</span> PlatformTransactionManager <span class="fn">mainTxManager</span>(DataSource mainDataSource) {
+        <span class="kw">return new</span> <span class="fn">DataSourceTransactionManager</span>(mainDataSource);
+    }
+
+    <span class="kw">@Bean</span>
+    <span class="kw">public</span> PlatformTransactionManager <span class="fn">statsTxManager</span>(DataSource statsDataSource) {
+        <span class="kw">return new</span> <span class="fn">DataSourceTransactionManager</span>(statsDataSource);
+    }
+}</code></pre>
+
+<div class="codehead bad"><span class="tag">before</span> 롤백해도 <code>audit_log</code>는 남는다 — 원인은 "키가 없다"는 사실 하나</div>
+<pre><code><span class="kw">@Service @RequiredArgsConstructor</span>
+<span class="kw">public class</span> <span class="fn">StatsService</span> {
+
+    <span class="cm">// @Transactional의 value는 "어느 트랜잭션 매니저를 쓸 것인가"다.</span>
+    <span class="cm">// 생략하면 @Primary 매니저(= mainTxManager)가 선택되므로,</span>
+    <span class="cm">// 통계 DB에 쓰면서 이 값을 빼먹으면 트랜잭션이 엉뚱한 DB에 열린다.</span>
+    <span class="kw">@Transactional</span>(<span class="st">"statsTxManager"</span>)
+    <span class="kw">public void</span> <span class="fn">writeDailyStats</span>(DailyStats stats) {
+        statsJdbcTemplate.<span class="fn">update</span>(<span class="st">"INSERT INTO daily_stats ..."</span>, ...);   <span class="cm">// 바인딩된 #12 재사용 ✓</span>
+
+<span class="ln-bad">        mainJdbcTemplate.<span class="fn">update</span>(<span class="st">"INSERT INTO audit_log ..."</span>, ...);<span class="note">main 키가 맵에 없다</span></span>
+        <span class="cm">// → 풀에서 새 커넥션을 꺼내 auto-commit으로 즉시 확정된다.</span>
+        <span class="cm">//   이 메서드가 아래에서 예외로 롤백돼도 이 INSERT는 남는다.</span>
+    }
+}</code></pre>
+
+<div class="memo red">
+  <h4>멀티 DS의 단일 규칙 — "매니저가 모르는 <code>DataSource</code>는 트랜잭션 밖이다"</h4>
+  <div class="rule red"><code>@Transactional</code>이 관리하는 것은 <b>지정된 매니저의 <code>DataSource</code> 하나뿐</b>이다</div>
+  <p>나머지 데이터소스로 나가는 쿼리는 <b>바인딩이 없으므로 auto-commit으로 즉시 확정</b>된다. 여기에 <b>매니저 이름을 빼먹으면 <code>@Primary</code>가 선택</b>되어 <b>"엉뚱한 DB에 트랜잭션이 열리는"</b> 두 번째 사고가 겹친다.</p>
+  <p style="margin-bottom:0"><b>두 DB를 하나의 원자적 단위로 묶으려면</b> 선택지는 둘뿐이고 둘 다 대가가 있다.</p>
+</div>
+
+<div class="split">
+  <div class="pane r">
+    <h4><code>ChainedTransactionManager</code> — 원자성이 없다</h4>
+    <ul>
+      <li>여러 매니저를 <b>순서대로 커밋</b>한다.</li>
+      <li>첫 번째가 커밋된 뒤 두 번째가 실패하면 <b>첫 번째는 이미 확정</b>이라 되돌릴 수 없다.</li>
+      <li>즉 <b>최선 노력(best-effort) 순차 커밋</b>일 뿐이고, 그래서 Spring Data에서 <b>deprecated</b> 됐다.</li>
+    </ul>
+  </div>
+  <div class="pane b">
+    <h4>JTA / XA — 진짜 2단계 커밋, 대신 비싸다</h4>
+    <ul>
+      <li>prepare → commit의 <b>2단계 커밋</b>으로 진짜 원자성을 얻는다.</li>
+      <li>대신 <b>가용성이 두 시스템의 곱</b>으로 떨어지고, <b>prepare 이후 잠금 블로킹</b>이 생긴다.</li>
+      <li>상세는 <code>23-transactional-outbox-pattern.md</code> 1-5.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">실무의 현실적인 답 — "묶지 않는 설계"</span>
+  감사 로그처럼 <b>정확성 요구가 다른 쓰기</b>는 애초에 원자적으로 묶을 필요가 없는 경우가 많고, <b>정말 묶여야 하는 데이터라면 같은 DB에 있어야 한다는 신호</b>로 읽는 편이 낫다. 면접에서는 <b>"기술적으로 묶는 두 방법 + 각각의 대가 + 그래서 대개는 설계로 푼다"</b> 순서로 답하면 균형이 잡힌다.
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. <code>DataSourceUtils</code> — 분기 하나가 전부다</h2>
+
+<p>3절에서 커넥션을 스레드에 걸어 뒀다. 이제 <b>JdbcTemplate이 그것을 어떻게 찾아 쓰는지</b>가 이 문서의 본론이다. 결론부터 말하면 <b>JdbcTemplate은 <code>dataSource.getConnection()</code>을 부르지 않는다.</b> 대신 <code>DataSourceUtils.getConnection(dataSource)</code>를 부르고, 그 안에는 <b>분기가 딱 하나</b> 있다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 434" role="img" aria-label="DataSourceUtils의 획득과 반납 분기 도식. 왼쪽 획득 경로에서는 내 스레드에 바인딩된 홀더가 있는지 판단해, 있으면 참조 카운트를 올리고 같은 커넥션을 재사용하고, 없으면 풀에서 새 커넥션을 꺼내 auto-commit으로 실행한다. 오른쪽 반납 경로에서는 그 커넥션이 바인딩된 홀더의 것이면 참조 카운트만 내리고 닫지 않으며, 아니면 즉시 풀로 반납한다.">
+    <defs>
+      <marker id="t5b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="t5g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="t5r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <!-- LEFT: acquire -->
+    <rect x="20" y="36" width="530" height="364" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="285" y="60" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">① 얻을 때 — <tspan class="mono">DataSourceUtils.getConnection(ds)</tspan></text>
+
+    <rect x="170" y="76" width="230" height="34" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="285" y="98" font-size="12" fill="#334155" text-anchor="middle">쿼리 실행 → 커넥션이 필요하다</text>
+    <path d="M285 110 L285 122" stroke="#2563eb" stroke-width="1.6" marker-end="url(#t5b)" fill="none"/>
+
+    <polygon points="285,124 435,166 285,208 135,166" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="285" y="160" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">내 스레드에 이 DataSource로</text>
+    <text x="285" y="178" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">바인딩된 홀더가 있나?</text>
+
+    <path d="M135 166 L152 166 L152 238" stroke="#16a34a" stroke-width="1.8" marker-end="url(#t5g)" fill="none"/>
+    <path d="M435 166 L418 166 L418 238" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#t5r)" fill="none"/>
+    <text x="168" y="212" font-size="11.5" font-weight="700" fill="#166534">있다 = 트랜잭션 안</text>
+    <text x="402" y="212" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">없다 = 트랜잭션 밖</text>
+
+    <rect x="36" y="244" width="232" height="98" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="48" y="266" font-size="10.6" class="mono" fill="#166534">holder.requested();  <tspan fill="#15803d">// 카운트 +1</tspan></text>
+    <text x="48" y="284" font-size="10.6" class="mono" fill="#166534">return holder.getConnection();</text>
+    <text x="48" y="310" font-size="12" font-weight="700" fill="#166534">★ Connection#7 그대로 재사용</text>
+    <text x="48" y="330" font-size="11.5" fill="#15803d">= "한 트랜잭션 = 한 커넥션"의 실체</text>
+
+    <rect x="302" y="244" width="232" height="98" rx="9" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="314" y="266" font-size="10.6" class="mono" fill="#334155">dataSource.getConnection();</text>
+    <text x="314" y="286" font-size="11.5" font-weight="700" fill="#92400e">풀에서 새 커넥션 → auto-commit</text>
+    <text x="314" y="310" font-size="11" fill="#64748b">동기화만 활성이면(OSIV 등)</text>
+    <text x="314" y="328" font-size="11" fill="#64748b">바인딩 + 정리 콜백까지 등록한다</text>
+
+    <rect x="36" y="352" width="498" height="34" rx="8" fill="#dbeafe" stroke="#bfdbfe"/>
+    <text x="285" y="374" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">★ 이 분기 한 줄이 질문의 답 전체다 — JPA · MyBatis · 배치가 전부 이 경로를 지난다</text>
+
+    <!-- RIGHT: release -->
+    <rect x="570" y="36" width="530" height="364" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="835" y="60" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">② 반납할 때 — <tspan class="mono">releaseConnection(con, ds)</tspan></text>
+
+    <rect x="720" y="76" width="230" height="34" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="835" y="98" font-size="12" fill="#334155" text-anchor="middle">쿼리 하나 종료 → 반납 요청</text>
+    <path d="M835 110 L835 122" stroke="#2563eb" stroke-width="1.6" marker-end="url(#t5b)" fill="none"/>
+
+    <polygon points="835,124 985,166 835,208 685,166" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="835" y="160" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">이 커넥션이 바인딩된</text>
+    <text x="835" y="178" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">홀더의 그 커넥션인가?</text>
+
+    <path d="M685 166 L702 166 L702 238" stroke="#16a34a" stroke-width="1.8" marker-end="url(#t5g)" fill="none"/>
+    <path d="M985 166 L968 166 L968 238" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#t5r)" fill="none"/>
+    <text x="718" y="212" font-size="11.5" font-weight="700" fill="#166534">맞다 = 트랜잭션 소속</text>
+    <text x="952" y="212" font-size="11.5" font-weight="700" fill="#64748b" text-anchor="end">아니다 = 빌려온 것</text>
+
+    <rect x="586" y="244" width="232" height="98" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="598" y="266" font-size="10.6" class="mono" fill="#166534">holder.released();  <tspan fill="#15803d">// 카운트 -1</tspan></text>
+    <text x="598" y="286" font-size="12" font-weight="700" fill="#166534">close()를 부르지 않는다</text>
+    <text x="598" y="310" font-size="11.5" fill="#15803d">★ 트랜잭션 소속 커넥션은</text>
+    <text x="598" y="328" font-size="11.5" fill="#15803d">트랜잭션이 끝날 때 <tspan font-weight="700">딱 한 번</tspan> 반환</text>
+
+    <rect x="852" y="244" width="232" height="98" rx="9" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="864" y="266" font-size="10.6" class="mono" fill="#334155">con.close();</text>
+    <text x="864" y="286" font-size="11.5" font-weight="700" fill="#92400e">여기서 즉시 풀로 반납</text>
+    <text x="864" y="312" font-size="11" fill="#64748b">트랜잭션 밖 쿼리의 정상 경로 —</text>
+    <text x="864" y="330" font-size="11" fill="#64748b">점유 시간이 <tspan font-weight="700">최소</tspan>가 된다</text>
+
+    <rect x="586" y="352" width="498" height="34" rx="8" fill="#dbeafe" stroke="#bfdbfe"/>
+    <text x="835" y="374" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">획득과 반납이 <tspan text-decoration="underline">같은 조건으로 대칭</tspan>이라는 점이 핵심이다</text>
+
+    <text x="560" y="422" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">프레임워크가 감춰 준 것이 정확히 이 두 분기다 — 그래서 데이터 접근 코드는 "얻고 쓰고 반납한다"만 지키면 안팎을 몰라도 된다.</text>
+  </svg>
+  <figcaption>왼쪽 <b>①의 판단</b>과 오른쪽 <b>②의 판단</b>은 <b>같은 질문</b>이다 — "이건 내 트랜잭션의 커넥션인가?". 이 대칭이 무너지는 순간(= 커넥션을 직접 꺼내 직접 닫는 순간) 6절의 사고가 난다.</figcaption>
+</figure>
+
+<h3>5-1. 의사코드로 펼쳐 보기</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead plain"><span class="tag">얻을 때</span> <code>getConnection</code></div>
+<pre><code>Connection <span class="fn">getConnection</span>(DataSource dataSource) {
+
+<span class="ln-good">    <span class="cm">// ① "내 스레드에 이 DataSource로 바인딩된 커넥션이 있나?"</span>
+    ConnectionHolder holder = (ConnectionHolder)
+        TransactionSynchronizationManager.<span class="fn">getResource</span>(dataSource);
+
+    <span class="kw">if</span> (holder != <span class="kw">null</span> &amp;&amp; holder.<span class="fn">hasConnection</span>()) {
+        holder.<span class="fn">requested</span>();              <span class="cm">// 참조 카운트 +1</span>
+        <span class="kw">return</span> holder.<span class="fn">getConnection</span>();   <span class="cm">// ★ 그대로 재사용</span>
+    }<span class="note">여기가 답의 전부</span></span>
+
+    <span class="cm">// ② 바인딩이 없다 = 트랜잭션 밖이다 → 풀에서 새로</span>
+    Connection con = dataSource.<span class="fn">getConnection</span>();
+
+    <span class="cm">// ③ 트랜잭션은 없고 "동기화만" 활성이면(OSIV 등)</span>
+    <span class="cm">//    이 커넥션도 걸어 두고 정리 콜백을 등록한다</span>
+    <span class="kw">if</span> (TSM.<span class="fn">isSynchronizationActive</span>()) {
+        holder = <span class="kw">new</span> <span class="fn">ConnectionHolder</span>(con);
+        TSM.<span class="fn">bindResource</span>(dataSource, holder);
+        TSM.<span class="fn">registerSynchronization</span>(
+            <span class="kw">new</span> <span class="fn">ConnectionSynchronization</span>(holder, dataSource));
+    }
+    <span class="kw">return</span> con;
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead plain"><span class="tag">반납할 때</span> <code>releaseConnection</code></div>
+<pre><code><span class="kw">void</span> <span class="fn">releaseConnection</span>(Connection con, DataSource dataSource) {
+
+<span class="ln-good">    ConnectionHolder holder = (ConnectionHolder)
+        TransactionSynchronizationManager.<span class="fn">getResource</span>(dataSource);
+
+    <span class="kw">if</span> (holder != <span class="kw">null</span> &amp;&amp; <span class="fn">connectionEquals</span>(holder, con)) {
+        holder.<span class="fn">released</span>();   <span class="cm">// 참조 카운트 -1만 하고 끝</span>
+        <span class="kw">return</span>;              <span class="cm">// close()를 부르지 않는다</span>
+    }<span class="note">그래서 close()가 안전하다</span></span>
+
+    con.<span class="fn">close</span>();             <span class="cm">// 트랜잭션 밖이면 여기서 풀로 반납</span>
+}
+
+<span class="cm">/* ─────────────────────────────────────────────
+   이 대칭 덕분에 데이터 접근 코드는 자기가
+   트랜잭션 안인지 밖인지 신경 쓰지 않아도 된다.
+
+   항상 "얻고 → 쓰고 → 반납한다"고만 쓰면
+     · 트랜잭션 안이면 재사용되고
+     · 트랜잭션 밖이면 즉시 반납된다.
+   ───────────────────────────────────────────── */</span></code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>커넥션을 얻는 유일한 규칙</h4>
+  <div class="rule ok">풀에 <b>직접 손대지 않는다.</b> 반드시 <code>DataSourceUtils</code>(또는 그것을 쓰는 JdbcTemplate·JPA·MyBatis)를 <b>경유</b>한다</div>
+  <p style="margin-bottom:0" class="sub">리뷰에서 <b><code>dataSource.getConnection()</code>이라는 문자열 자체를 의심 신호</b>로 삼으면 된다. 정상적인 애플리케이션 코드에는 이 호출이 거의 등장하지 않는다.</p>
+</div>
+
+<div class="scroll">
+<table>
+  <caption>같은 코드가 트랜잭션 안팎에서 어떻게 다르게 도는가</caption>
+  <thead><tr><th style="width:210px"></th><th><code>@Transactional</code> 안</th><th>트랜잭션 밖 (JdbcTemplate만)</th></tr></thead>
+  <tbody>
+    <tr><td>커넥션 출처</td><td class="good">스레드에 바인딩된 것 재사용</td><td>쿼리마다 풀에서 새로 꺼냄</td></tr>
+    <tr><td>커밋 방식</td><td>메서드 종료 시 한 번 <code>commit()</code></td><td class="bad">쿼리마다 auto-commit으로 즉시 확정</td></tr>
+    <tr><td>여러 쿼리의 원자성</td><td class="good">있다 (전부 성공 또는 전부 롤백)</td><td class="bad">없다 (쿼리 하나가 곧 트랜잭션)</td></tr>
+    <tr><td>쿼리 종료 시 <code>close()</code></td><td>참조 카운트 -1만 (실제로 안 닫힘)</td><td>즉시 풀로 반납</td></tr>
+    <tr class="hl"><td>커넥션 점유 시간</td><td class="bad">메서드 전 구간 — <b>길다</b></td><td class="good">쿼리 실행 순간만 — <b>최소</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout warn">
+  <span class="t">표의 마지막 줄이 던지는 실무 질문 — 조회에도 <code>@Transactional</code>을 붙여야 하나</span>
+  트랜잭션 밖 실행은 <b>점유 시간이 최소</b>라 <b>읽기 전용 단순 조회에서는 오히려 효율적</b>이다. 조회만 하는 메서드에 습관적으로 <code>@Transactional</code>을 붙이면 <b>점유 구간만 길어지는 경우</b>가 있으니, <b>"여러 쿼리가 하나의 일관된 스냅샷을 봐야 하는가"</b>를 따져 보고 붙이는 것이 맞다. (<code>readOnly</code>의 효과는 <code>13-transactional-readonly-optimization.md</code>)
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 함정 — <code>dataSource.getConnection()</code>을 직접 부르면</h2>
+
+<p>이 규칙을 우회하는 코드는 생각보다 자주 나온다. <b>레거시 JDBC 코드를 옮겨 올 때</b>, <b>배치에서 대량 처리를 하려고 커넥션을 직접 다룰 때</b>, <b>생성 도구가 만들어 준 코드를 그대로 쓸 때</b>다.</p>
+
+<div class="codehead bad"><span class="tag">before</span> 같은 메서드 안인데 <b>방금 쓴 데이터가 안 보인다</b></div>
+<pre><code><span class="kw">@Service @RequiredArgsConstructor</span>
+<span class="kw">public class</span> <span class="fn">OrderService</span> {
+
+    <span class="kw">private final</span> DataSource dataSource;
+    <span class="kw">private final</span> JdbcTemplate jdbcTemplate;
+
+    <span class="kw">@Transactional</span>
+    <span class="kw">public void</span> <span class="fn">payAndVerify</span>(Long orderId) {
+        <span class="cm">// ① 트랜잭션 커넥션(#7)으로 UPDATE. 아직 커밋 전이다.</span>
+        jdbcTemplate.<span class="fn">update</span>(<span class="st">"UPDATE orders SET status='PAID' WHERE id=?"</span>, orderId);
+
+<span class="ln-bad">        <span class="kw">try</span> (Connection con = dataSource.<span class="fn">getConnection</span>();<span class="note">별개 커넥션 #19가 나온다</span></span>
+             PreparedStatement ps = con.<span class="fn">prepareStatement</span>(
+                     <span class="st">"SELECT status FROM orders WHERE id=?"</span>)) {
+            ps.<span class="fn">setLong</span>(<span class="st">1</span>, orderId);
+            ResultSet rs = ps.<span class="fn">executeQuery</span>();
+            rs.<span class="fn">next</span>();
+            String status = rs.<span class="fn">getString</span>(<span class="st">"status"</span>);
+            <span class="cm">// ② 'PAID'가 아니라 'PENDING'이 나온다.</span>
+            <span class="cm">//    #7의 UPDATE는 아직 커밋 전이고, PostgreSQL 기본 격리 수준</span>
+            <span class="cm">//    READ COMMITTED에서 #19는 "커밋된 것만" 볼 수 있다.</span>
+<span class="ln-bad">            <span class="kw">if</span> (!<span class="st">"PAID"</span>.<span class="fn">equals</span>(status)) {
+                <span class="kw">throw new</span> <span class="fn">IllegalStateException</span>(<span class="st">"결제 반영 실패"</span>);  <span class="cm">// 항상 터진다</span>
+            }</span>
+        }
+    }
+}</code></pre>
+
+<div class="memo red">
+  <h4>증상 3종 — 암기: "안 · 둘 · 락"</h4>
+  <div class="grid g3" style="margin-top:6px">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 안 보인다</div><div class="d"><b>방금 쓴 데이터가 조회되지 않는다.</b> "분명히 UPDATE했는데 SELECT하면 옛날 값"이라는 신고의 전형. 원인이 <b>격리 수준</b>이라 코드만 봐서는 잘 안 보인다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② 둘을 점유한다</div><div class="d">#7을 쥔 채 #19를 추가로 빌린다. <b>요청당 필요 커넥션이 2배</b> → 풀이 <b>절반의 트래픽에서 고갈</b>. 더 나쁜 것은 <b>자기 교착</b>(아래 참조).</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ 락 대기에 걸린다</div><div class="d">#19가 #7이 이미 잠근 행을 갱신하려 하면 <b>같은 스레드가 만든 두 트랜잭션이 서로를 기다린다.</b> DB는 둘이 같은 스레드에서 왔음을 모르므로 <b>데드락 탐지에도 안 걸리고</b> 락 타임아웃까지 멈춰 있다.</div></div>
+  </div>
+</div>
+
+<div class="callout trap">
+  <span class="t">자기 교착(self-deadlock)이 왜 특히 위험한가</span>
+  동시 요청 수가 풀 크기와 비슷해지면, <b>모든 요청이 첫 번째 커넥션을 쥔 채 두 번째 커넥션을 기다린다.</b> 아무도 커넥션을 놓지 않으므로 <b>누구도 진행하지 못하고</b>, 타임아웃이 날 때까지 전체가 멈춘다. 부하가 낮을 때는 멀쩡하다가 <b>임계점을 넘는 순간 전면 장애로 바뀌는</b>, 재현이 어려운 형태의 사고다.
+</div>
+
+<div class="codehead good"><span class="tag">after</span> <code>DataSourceUtils</code>를 경유해 <b>트랜잭션 커넥션에 합류</b>한다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">payAndVerify</span>(Long orderId) {
+    jdbcTemplate.<span class="fn">update</span>(<span class="st">"UPDATE orders SET status='PAID' WHERE id=?"</span>, orderId);
+
+<span class="ln-good">    <span class="cm">// 바인딩된 커넥션(#7)을 그대로 돌려받는다 — 같은 트랜잭션이므로</span>
+    <span class="cm">// 커밋 전 변경이 그대로 보인다.</span>
+    Connection con = DataSourceUtils.<span class="fn">getConnection</span>(dataSource);<span class="note">경유하면 합류한다</span></span>
+    <span class="kw">try</span> (PreparedStatement ps = con.<span class="fn">prepareStatement</span>(
+             <span class="st">"SELECT status FROM orders WHERE id=?"</span>)) {
+        ...
+    } <span class="kw">finally</span> {
+<span class="ln-good">        <span class="cm">// 중요: try-with-resources로 con을 닫으면 안 된다.</span>
+        <span class="cm">// con.close()는 HikariCP 프록시에서 "풀에 반납"이라, 트랜잭션이</span>
+        <span class="cm">// 아직 안 끝났는데 반납되어 이후 커밋이 실패한다.</span>
+        <span class="cm">// releaseConnection은 5절의 분기 덕분에 트랜잭션 커넥션이면 아무것도 안 한다.</span>
+        DataSourceUtils.<span class="fn">releaseConnection</span>(con, dataSource);</span>
+    }
+}</code></pre>
+
+<div class="callout ok">
+  <span class="t">그리고 애초에 — JdbcTemplate을 쓰면 이 문제가 생기지 않는다</span>
+  <b>JdbcTemplate이 하는 일이 정확히 이 획득·반납 처리</b>이기 때문이다. 위 <code>after</code>는 <b>"어쩔 수 없이 raw JDBC를 써야 할 때의 최소 안전 코드"</b>이지 권장 형태가 아니다. <b>커넥션을 직접 만지는 코드를 발견하면 그 자체를 의심 신호로 삼는 것</b>이 리뷰 관점이다.
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. JPA와 JdbcTemplate을 한 트랜잭션에서 섞어 쓸 수 있는 이유</h2>
+
+<p>같은 메커니즘이 JPA에도 적용되는데, <b>바인딩되는 것이 하나 더 있다.</b></p>
+
+<p><code>JpaTransactionManager</code>는 <b><code>EntityManagerFactory</code>를 키로 <code>EntityManagerHolder</code>를 바인딩</b>한다. 그리고 여기에 더해, JPA 구현체가 자기가 쓰는 JDBC 커넥션을 노출할 수 있으면(Hibernate의 <code>HibernateJpaDialect</code>가 그렇다) <b>같은 커넥션을 <code>DataSource</code> 키로 <code>ConnectionHolder</code>로도 함께 바인딩</b>한다. <a href="#s2">2-1절 그림의 세 번째 패널</a>이 그 상태다.</p>
+
+<div class="chain">
+  <span class="chip b">JPA로 저장</span><span class="arrow">→</span>
+  <span class="chip g">EntityManagerHolder</span><span class="arrow">+</span>
+  <span class="chip g">ConnectionHolder(같은 #7)</span><span class="arrow">→</span>
+  <span class="chip b">JdbcTemplate으로 조회</span><span class="arrow">=</span>
+  <span class="chip w">같은 커넥션 · 같은 트랜잭션</span>
+</div>
+
+<p>그래서 <b>마이그레이션 중인 프로젝트에서 두 기술이 공존할 수 있는 근거</b>가 이 이중 바인딩이다. <b>다만 여기에 실무에서 자주 걸리는 함정이 하나 있다.</b></p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> <code>count == 0</code>이 나온다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">register</span>(Member member) {
+<span class="ln-bad">    memberRepository.<span class="fn">save</span>(member);<span class="note">INSERT는 아직 안 나갔다</span></span>
+    <span class="cm">// 영속성 컨텍스트에만 들어갔다.</span>
+
+    <span class="cm">// 쓰기 지연 때문에 INSERT SQL이 아직 DB로</span>
+    <span class="cm">// 전송되지 않았다. 커넥션은 같지만</span>
+    <span class="cm">// DB 입장에서는 그 행이 존재하지 않는다.</span>
+    Integer count = jdbcTemplate.<span class="fn">queryForObject</span>(
+        <span class="st">"SELECT count(*) FROM member WHERE email=?"</span>,
+        Integer.class, member.<span class="fn">getEmail</span>());
+<span class="ln-bad">    <span class="cm">// count == 0</span></span>
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 지금 SQL을 보내라고 지시한다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">register</span>(Member member) {
+    memberRepository.<span class="fn">save</span>(member);
+
+<span class="ln-good">    entityManager.<span class="fn">flush</span>();<span class="note">쌓인 INSERT를 DB로 전송</span></span>
+    <span class="cm">// 커밋이 아니다. 트랜잭션은 여전히 열려 있고</span>
+    <span class="cm">// 롤백하면 함께 사라진다.</span>
+
+    Integer count = jdbcTemplate.<span class="fn">queryForObject</span>(
+        <span class="st">"SELECT count(*) FROM member WHERE email=?"</span>,
+        Integer.class, member.<span class="fn">getEmail</span>());
+<span class="ln-good">    <span class="cm">// count == 1</span></span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>"같은 커넥션"과 "같은 시야"는 다르다</h4>
+  <div class="rule red">커넥션이 같아도 <b>SQL이 아직 전송되지 않았으면</b> JdbcTemplate에는 안 보인다</div>
+  <p style="margin-bottom:0">JPA는 <b>쓰기 지연(write-behind)</b>으로 SQL을 모아 뒀다가 <b>flush 시점</b>에 보낸다. <b><code>flush()</code>는 커밋이 아니다</b> — 모아 둔 SQL을 <b>지금 DB로 보내는 것일 뿐</b>이고 트랜잭션은 여전히 열려 있어 <b>롤백하면 함께 사라진다.</b> 상세는 <code>03-jpa-orm/15-flush-timing-and-sql-ordering.md</code>.</p>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 비동기 경계 — 왜 안 타고, 왜 물려줄 수도 없는가</h2>
+
+<p>지금까지 본 것을 한 문장으로 줄이면 <b>"트랜잭션 리소스는 스레드에 걸려 있다"</b>이다. <b>이 문장 하나에서 비동기 경계의 모든 현상이 따라 나온다.</b></p>
+
+<div class="rule">새 스레드는 <b>빈 <code>ThreadLocalMap</code></b>을 갖고 시작한다 — <a href="#s1">1절 그림의 Thread B</a>가 그것이다</div>
+
+<p>그래서 비동기 스레드에서 <code>DataSourceUtils.getConnection()</code>을 부르면 <a href="#s5">5절의 ①</a>이 실패하고 ②로 간다 — <b>풀에서 완전히 새 커넥션을 꺼낸다.</b> 이 커넥션은 원래 트랜잭션과 아무 관계가 없어서, <code>@Transactional</code>이 없으면 <b>auto-commit으로 쿼리마다 즉시 확정</b>되고 <code>@Transactional</code>이 있으면 <b>참여가 아니라 완전히 별개인 새 트랜잭션</b>이 열린다.</p>
+
+<div class="codehead bad"><span class="tag">before</span> 트랜잭션 안에서 <code>@Async</code>를 직접 호출 — <b>레이스가 생기고 에러도 안 난다</b></div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public</span> Order <span class="fn">complete</span>(Long orderId) {
+    Order order = orderRepository.<span class="fn">findById</span>(orderId).<span class="fn">orElseThrow</span>();
+    order.<span class="fn">complete</span>();                            <span class="cm">// 아직 커밋 전이다</span>
+
+<span class="ln-bad">    statisticsService.<span class="fn">aggregateAsync</span>(orderId);   <span class="cm">// @Async — 새 스레드가 즉시 출발</span><span class="note">여기서 레이스</span></span>
+    <span class="kw">return</span> order;
+}   <span class="cm">// 커밋은 여기서 일어난다 — 비동기 스레드보다 늦을 수 있다</span>
+
+<span class="cm">// 비동기 스레드는 별개 커넥션·별개 트랜잭션이므로, 커밋 전에 조회하면</span>
+<span class="cm">// 완료 처리 이전 상태를 읽는다. 조용히 잘못된 집계가 만들어지고 에러도 안 난다.</span></code></pre>
+
+<div class="codehead good"><span class="tag">after</span> <b>실행 시작 시점 자체를 커밋 뒤로 보장</b>한다 (9절의 콜백 기계를 이용)</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public</span> Order <span class="fn">complete</span>(Long orderId) {
+    Order order = orderRepository.<span class="fn">findById</span>(orderId).<span class="fn">orElseThrow</span>();
+    order.<span class="fn">complete</span>();
+<span class="ln-good">    eventPublisher.<span class="fn">publishEvent</span>(<span class="kw">new</span> <span class="fn">OrderCompletedEvent</span>(orderId));<span class="note">지금 실행되지 않는다</span></span>
+    <span class="kw">return</span> order;
+}   <span class="cm">// 커밋 → 그 다음에 아래 리스너가 불린다</span>
+
+<span class="ln-good"><span class="kw">@Async</span>                                              <span class="cm">// ① 새 스레드에서 실행</span>
+<span class="kw">@TransactionalEventListener</span>(phase = AFTER_COMMIT)   <span class="cm">// ② 커밋된 뒤에만</span>
+<span class="kw">@Transactional</span>                                      <span class="cm">// ③ 새 스레드엔 바인딩이 없으므로</span></span>
+<span class="kw">public void</span> <span class="fn">on</span>(OrderCompletedEvent event) {       <span class="cm">//    REQUIRED로도 새 트랜잭션이 열린다</span>
+    statisticsService.<span class="fn">aggregate</span>(event.<span class="fn">orderId</span>());   <span class="cm">// 이제 커밋된 데이터를 읽는다</span>
+}
+<span class="cm">// 주의: 이 리스너의 실패는 원 트랜잭션을 되돌리지 못한다.</span>
+<span class="cm">//      실패해도 되는 일인지, 재시도·보상이 필요한 일인지 먼저 판단해야 한다.</span></code></pre>
+
+<h3>8-1. "그러면 리소스 맵을 물려주면 되지 않나요?" — 절대 안 된다 <span class="badge senior">시니어 변별</span></h3>
+
+<p><code>TaskDecorator</code>(비동기 작업 실행 전후에 훅을 거는 스프링 인터페이스)로 요청 스레드의 <code>ThreadLocal</code> 값을 복사해 넘기는 기법이 있다. <b>MDC나 <code>SecurityContext</code>를 전파할 때 실제로 쓴다.</b> 그러면 트랜잭션 리소스도 그렇게 넘기면 되지 않을까. <b>안 된다. 두 가지가 동시에 깨진다.</b></p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>① JDBC <code>Connection</code>은 스레드세이프하지 않다</h4>
+    <ul>
+      <li>두 스레드가 같은 커넥션에 동시에 statement를 날리면 <b>프로토콜 수준에서 깨진다.</b></li>
+      <li>응답이 뒤섞이거나, 드라이버가 예외를 던지거나, <b>최악의 경우 조용히 잘못된 결과</b>를 돌려준다.</li>
+      <li>두 스레드가 같은 커넥션을 쥔 순간 <b>이미 깨진 설계</b>다.</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>② 라이프사이클이 붕괴한다 — 이쪽이 더 위험하다</h4>
+    <ul>
+      <li>원 트랜잭션이 끝나면 커넥션은 <b>풀로 반환</b>된다.</li>
+      <li>풀은 그것을 <b>다음 요청에 그대로 빌려준다.</b></li>
+      <li>비동기 스레드가 아직 쓰고 있으면 <b>서로 다른 요청의 쿼리가 한 트랜잭션에 섞인다.</b></li>
+    </ul>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 348" role="img" aria-label="리소스를 물려줬을 때의 풀 재대여 오염 타임라인. 요청 A 스레드가 트랜잭션을 시작해 커넥션 7번을 바인딩하고 비동기 스레드에 리소스 맵을 복사해 전달한다. 요청 A가 커밋하고 7번을 풀에 반환한 뒤에도 비동기 스레드는 계속 7번으로 작업 중이고, 그 사이 풀은 7번을 요청 B에게 다시 빌려준다. 결과적으로 A의 비동기 작업과 B의 처리가 같은 커넥션 같은 트랜잭션에 섞인다.">
+    <defs>
+      <marker id="t8r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="t8b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="14.5" font-weight="700" fill="#b91c1c" text-anchor="middle">리소스 맵을 물려줬을 때 — 풀이 커넥션을 재대여하는 순간 벌어지는 일</text>
+
+    <g font-size="11.5" font-weight="700" fill="#334155">
+      <text x="20" y="84">요청 A 스레드</text>
+      <text x="20" y="144">비동기 스레드</text>
+      <text x="20" y="204">Connection#7의</text>
+      <text x="20" y="220">소유권</text>
+      <text x="20" y="274">요청 B 스레드</text>
+    </g>
+
+    <rect x="150" y="52" width="940" height="52" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+    <rect x="150" y="112" width="940" height="52" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+    <rect x="150" y="180" width="940" height="46" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+    <rect x="150" y="242" width="940" height="52" rx="8" fill="#f8fafc" stroke="#e5e7eb"/>
+
+    <!-- request A -->
+    <rect x="164" y="62" width="176" height="32" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="252" y="83" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">tx 시작 · #7 바인딩</text>
+    <rect x="470" y="62" width="96" height="32" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="518" y="83" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">커밋 완료</text>
+    <rect x="576" y="62" width="150" height="32" rx="7" fill="#fffbeb" stroke="#d97706" stroke-width="1.4"/>
+    <text x="651" y="83" font-size="11.5" font-weight="700" fill="#92400e" text-anchor="middle">#7을 풀에 반환</text>
+
+    <!-- copy arrow -->
+    <path d="M280 96 L280 118" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#t8r)" fill="none"/>
+    <text x="292" y="112" font-size="11" font-weight="700" fill="#b91c1c">리소스 맵 복사 전달</text>
+
+    <!-- async lane -->
+    <rect x="280" y="122" width="600" height="32" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="580" y="143" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">#7을 쥐고 계속 작업 중 — 원 트랜잭션이 끝나도 멈추지 않는다 ───────►</text>
+
+    <!-- ownership lane -->
+    <rect x="164" y="190" width="562" height="28" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="445" y="209" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">요청 A의 트랜잭션이 소유</text>
+    <rect x="726" y="190" width="350" height="28" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="901" y="209" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">풀 → 요청 B에게 다시 대여됨</text>
+    <path d="M726 176 L726 232" stroke="#d97706" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>
+
+    <!-- request B -->
+    <rect x="740" y="252" width="240" height="32" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="860" y="273" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">#7 대여 → 자기 트랜잭션 시작</text>
+
+    <!-- overlap highlight -->
+    <rect x="726" y="112" width="154" height="52" rx="8" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="6 3"/>
+    <path d="M803 164 L803 186" stroke="#dc2626" stroke-width="1.6" marker-end="url(#t8r)" fill="none"/>
+
+    <text x="560" y="320" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="middle">★ 겹치는 구간에서 A의 비동기 작업과 B의 처리가 <tspan text-decoration="underline">같은 커넥션 · 같은 트랜잭션</tspan>에 들어간다 —</text>
+    <text x="560" y="340" font-size="12.5" fill="#7f1d1d" text-anchor="middle">B가 롤백하면 A의 작업까지 사라지고, A가 커밋하면 B의 중간 상태가 확정된다. <tspan font-weight="700">재현도 안 되고 로그로도 안 잡히는, 가장 나쁜 종류의 버그다.</tspan></text>
+  </svg>
+  <figcaption>이 그림이 <b>"물려주면 되지 않나"에 대한 최종 반박</b>이다. 문제는 <b>동시성만이 아니라 소유권과 수명</b>이다 — 커넥션에는 <b>"언제 반납되는가"라는 수명</b>이 있고, 그 수명을 모르는 스레드에게 넘기는 순간 통제가 끝난다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>전파해도 되는 것과 안 되는 것 — 판단 기준 한 줄</h4>
+  <div class="rule ok"><b>읽기 전용 컨텍스트</b>는 물려줘도 되고, <b>소유권과 수명이 있는 리소스</b>는 안 된다</div>
+  <div class="grid g2" style="margin-top:6px">
+    <div class="tile ok"><div class="k" style="font-family:inherit">물려줘도 되는 것</div><div class="d">MDC(로그 추적 ID), <code>SecurityContext</code> — <b>복사본을 읽기만</b> 하고 반납할 대상이 없다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">물려주면 안 되는 것</div><div class="d">트랜잭션 리소스(<code>ConnectionHolder</code>·<code>EntityManagerHolder</code>) — <b>스레드세이프하지 않고 반납 시점이 있다.</b></div></div>
+  </div>
+  <p style="margin-bottom:0"><b>경계를 넘어야 하는 작업은 리소스를 물려받는 것이 아니라 <span style="color:#16a34a">자기 트랜잭션을 새로 여는 것</span>이 정석이다.</b></p>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 동기화 콜백 — <code>synchronizations</code> 저장소가 하는 일</h2>
+
+<p><a href="#s2">2절에서 본 두 번째 저장소</a>가 이제 등장한다. 여기에는 <b>트랜잭션의 특정 시점에 불릴 콜백</b>이 등록된다.</p>
+
+<div class="codehead plain"><span class="tag">직접 등록</span> 등록만 하고 <b>지금 실행되지는 않는다</b></div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">placeOrder</span>(OrderRequest request) {
+    Order order = orderRepository.<span class="fn">save</span>(Order.<span class="fn">of</span>(request));
+
+    <span class="cm">// isSynchronizationActive()가 false면(= 트랜잭션 밖이면) IllegalStateException이 난다.</span>
+    TransactionSynchronizationManager.<span class="fn">registerSynchronization</span>(
+        <span class="kw">new</span> <span class="fn">TransactionSynchronization</span>() {
+
+            <span class="kw">@Override public void</span> <span class="fn">beforeCommit</span>(<span class="kw">boolean</span> readOnly) {
+                <span class="cm">// 아직 커밋 전이다. 여기서 하는 DB 쓰기는 원 트랜잭션에 그대로 포함된다.</span>
+                <span class="cm">// "커밋 직전에 마지막으로 검증하거나 파생 데이터를 남기는" 자리다.</span>
+            }
+
+            <span class="kw">@Override public void</span> <span class="fn">afterCommit</span>() {
+                <span class="cm">// 커밋이 성공했을 때만 불린다. 캐시 무효화·알림 발송처럼</span>
+                <span class="cm">// "확정된 뒤에만 해야 하는" 일의 자리다.</span>
+                <span class="cm">// 여기서 예외를 던져도 커밋은 이미 끝나서 롤백되지 않는다.</span>
+                cacheManager.<span class="fn">evict</span>(<span class="st">"orders"</span>, order.<span class="fn">getId</span>());
+            }
+
+            <span class="kw">@Override public void</span> <span class="fn">afterCompletion</span>(<span class="kw">int</span> status) {
+                <span class="cm">// 커밋이든 롤백이든 항상 불린다. try-finally의 finally에 해당한다.</span>
+                <span class="kw">if</span> (status == STATUS_ROLLED_BACK) metrics.<span class="fn">increment</span>(<span class="st">"order.rollback"</span>);
+            }
+        });
+}</code></pre>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 360" role="img" aria-label="동기화 콜백의 호출 순서 타임라인. 커밋 경로는 beforeCommit, beforeCompletion, 실제 커밋, afterCommit, afterCompletion, 리소스 언바인딩과 풀 반환 순으로 진행된다. 롤백 경로에서는 이름에 Commit이 든 beforeCommit과 afterCommit이 호출되지 않고 beforeCompletion, 실제 롤백, afterCompletion 순으로 진행된다.">
+    <defs>
+      <marker id="t9b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker>
+      <marker id="t9g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#cbd5e1"/></marker>
+    </defs>
+
+    <text x="30" y="26" font-size="13" font-weight="700" fill="#166534">커밋 경로 — <tspan class="mono">@Transactional</tspan> 메서드가 정상 종료했을 때</text>
+
+    <g>
+      <rect x="30"  y="38" width="158" height="94" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="206" y="38" width="158" height="94" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="382" y="38" width="158" height="94" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="2.5"/>
+      <rect x="558" y="38" width="158" height="94" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="734" y="38" width="158" height="94" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="910" y="38" width="158" height="94" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    </g>
+    <g stroke="#2563eb" stroke-width="1.6" marker-end="url(#t9b)" fill="none">
+      <path d="M188 85 L202 85"/><path d="M364 85 L378 85"/><path d="M540 85 L554 85"/>
+      <path d="M716 85 L730 85"/><path d="M892 85 L906 85"/>
+    </g>
+    <g font-size="11.5" font-weight="700" class="mono" fill="#1d4ed8" text-anchor="middle">
+      <text x="109" y="60">beforeCommit</text>
+      <text x="285" y="60">beforeCompletion</text>
+      <text x="637" y="60">afterCommit</text>
+      <text x="813" y="60">afterCompletion</text>
+    </g>
+    <text x="461" y="60" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">★ 실제 COMMIT</text>
+    <text x="989" y="60" font-size="12" font-weight="700" fill="#92400e" text-anchor="middle">언바인딩 + 풀 반환</text>
+
+    <g font-size="10.8" fill="#475569" text-anchor="middle">
+      <text x="109" y="84">아직 커밋 전</text>
+      <text x="109" y="102" font-weight="700" fill="#166534">여기서의 DB 쓰기는</text>
+      <text x="109" y="118" font-weight="700" fill="#166534">같은 트랜잭션에 포함</text>
+
+      <text x="285" y="84">커밋/롤백 공통의</text>
+      <text x="285" y="102">사전 정리</text>
+      <text x="285" y="118">결과는 아직 미확정</text>
+
+      <text x="461" y="84" class="mono">con.commit()</text>
+      <text x="461" y="104" font-weight="700" fill="#166534">여기서 DB에</text>
+      <text x="461" y="120" font-weight="700" fill="#166534">확정된다</text>
+
+      <text x="637" y="84">커밋 성공 시에만</text>
+      <text x="637" y="102" font-weight="700" fill="#b91c1c">예외를 던져도</text>
+      <text x="637" y="118" font-weight="700" fill="#b91c1c">되돌릴 수 없다</text>
+
+      <text x="813" y="84">커밋/롤백 공통의</text>
+      <text x="813" y="102">사후 정리</text>
+      <text x="813" y="118" class="mono">status로 구분</text>
+
+      <text x="989" y="84" font-weight="700" fill="#92400e">★ 콜백이 전부</text>
+      <text x="989" y="102" font-weight="700" fill="#92400e">끝난 뒤에 일어난다</text>
+      <text x="989" y="120">여기까지 리소스가 붙어 있다</text>
+    </g>
+
+    <text x="30" y="176" font-size="13" font-weight="700" fill="#b91c1c">롤백 경로 — 이름에 <tspan class="mono">Commit</tspan>이 든 둘이 빠진다</text>
+    <g>
+      <rect x="30"  y="188" width="158" height="70" rx="9" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <rect x="206" y="188" width="158" height="70" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="382" y="188" width="158" height="70" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="2.5"/>
+      <rect x="558" y="188" width="158" height="70" rx="9" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <rect x="734" y="188" width="158" height="70" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="910" y="188" width="158" height="70" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    </g>
+    <g stroke="#cbd5e1" stroke-width="1.6" marker-end="url(#t9g)" fill="none">
+      <path d="M188 223 L202 223"/><path d="M540 223 L554 223"/>
+    </g>
+    <g stroke="#2563eb" stroke-width="1.6" marker-end="url(#t9b)" fill="none">
+      <path d="M364 223 L378 223"/><path d="M716 223 L730 223"/><path d="M892 223 L906 223"/>
+    </g>
+    <g class="mono" font-size="11.5" font-weight="700" text-anchor="middle">
+      <text x="109" y="212" fill="#94a3b8" text-decoration="line-through">beforeCommit</text>
+      <text x="285" y="212" fill="#1d4ed8">beforeCompletion</text>
+      <text x="637" y="212" fill="#94a3b8" text-decoration="line-through">afterCommit</text>
+      <text x="813" y="212" fill="#1d4ed8">afterCompletion</text>
+    </g>
+    <text x="461" y="212" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">★ 실제 ROLLBACK</text>
+    <text x="989" y="212" font-size="12" font-weight="700" fill="#92400e" text-anchor="middle">언바인딩 + 풀 반환</text>
+    <g font-size="10.8" text-anchor="middle">
+      <text x="109" y="236" fill="#94a3b8" font-weight="700">불리지 않는다</text>
+      <text x="285" y="236" fill="#475569">그대로 불린다</text>
+      <text x="461" y="236" fill="#7f1d1d" class="mono">con.rollback()</text>
+      <text x="637" y="236" fill="#94a3b8" font-weight="700">불리지 않는다</text>
+      <text x="813" y="236" fill="#475569" class="mono">STATUS_ROLLED_BACK</text>
+      <text x="989" y="236" fill="#92400e">순서는 동일</text>
+    </g>
+
+    <rect x="30" y="284" width="1038" height="56" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="549" y="308" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">암기 규칙 — 이름에 <tspan class="mono">Commit</tspan>이 든 콜백(<tspan class="mono">beforeCommit · afterCommit</tspan>)은 <tspan text-decoration="underline">커밋 경로에만</tspan>,</text>
+    <text x="549" y="330" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">이름에 <tspan class="mono">Completion</tspan>이 든 콜백(<tspan class="mono">beforeCompletion · afterCompletion</tspan>)은 <tspan text-decoration="underline">언제나</tspan> 불린다</text>
+  </svg>
+  <figcaption><b>이 순서를 외우고 있는지가 이 문서의 실질적 변별점</b>이다. 순서만 말하지 말고 <b>각 자리의 성격</b>(커밋 전인가 후인가, 되돌릴 수 있는가)까지 붙여 말하면 구조를 이해한 것으로 읽힌다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>암기 장치 — 6단계를 한 줄로</h4>
+  <div class="chain" style="justify-content:center">
+    <span class="chip b">beforeCommit</span><span class="arrow">→</span>
+    <span class="chip b">beforeCompletion</span><span class="arrow">→</span>
+    <span class="chip g">★ 커밋</span><span class="arrow">→</span>
+    <span class="chip b">afterCommit</span><span class="arrow">→</span>
+    <span class="chip b">afterCompletion</span><span class="arrow">→</span>
+    <span class="chip w">언바인딩 + 반환</span>
+  </div>
+  <div class="rule">앞뒤가 <b>커밋을 기준으로 대칭</b>이고, <b>맨 끝의 언바인딩만 콜백 바깥</b>에 있다</div>
+</div>
+
+<div class="memo red">
+  <h4>가장 잘 나오는 함정 — <code>afterCommit</code>에서의 DB 쓰기는 <b>조용히 사라진다</b></h4>
+  <p><code>afterCommit</code>이 실행되는 시점에도 <b>커넥션은 아직 스레드에 바인딩된 채</b>다(언바인딩은 콜백이 전부 끝난 뒤). 그래서 여기서 JPA로 엔티티를 수정하면 <a href="#s5">5절의 분기</a>가 여전히 리소스를 찾아 주므로 <b>코드는 에러 없이 잘 돈다.</b></p>
+  <div class="rule red">그런데 트랜잭션은 이미 커밋이 끝났으므로 그 변경은 <b>flush될 기회를 얻지 못하고 사라진다</b> — <b>에러가 안 나는 것이 이 버그의 가장 나쁜 점</b></div>
+  <p style="margin-bottom:0">확실히 저장하려면 <code>@Transactional(propagation = REQUIRES_NEW)</code>로 <b>새 트랜잭션을 열어야</b> 한다(<code>12-transaction-propagation-required-vs-requires-new.md</code>). 다만 <code>REQUIRES_NEW</code>는 기존 트랜잭션을 <b>보류하고 새로 여는</b> 것이라 그동안 <b>커넥션을 2개 점유</b>한다는 대가가 따른다.</p>
+</div>
+
+<h3>9-1. <code>@TransactionalEventListener</code>는 이 기계 위에 얹힌 것이다</h3>
+
+<p>콜백을 직접 등록하는 코드를 실무에서 자주 쓰지는 않는다. <b><code>@TransactionalEventListener</code>가 그것을 감싼 편의 장치</b>이기 때문이다.</p>
+
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">complete</span>(Long orderId) {
+    ...
+<span class="ln-good">    eventPublisher.<span class="fn">publishEvent</span>(<span class="kw">new</span> <span class="fn">OrderCompletedEvent</span>(orderId));<span class="note">즉시 전달되지 않는다</span></span>
+    <span class="cm">// 스프링은 이 이벤트를 즉시 리스너에 전달하지 않고,</span>
+    <span class="cm">// registerSynchronization()으로 콜백에 등록해 뒀다가 지정된 phase에 실행한다.</span>
+}
+
+<span class="kw">@TransactionalEventListener</span>(phase = TransactionPhase.AFTER_COMMIT)
+<span class="kw">public void</span> <span class="fn">on</span>(OrderCompletedEvent event) { ... }</code></pre>
+
+<div class="scroll">
+<table>
+  <caption>phase와 콜백의 대응은 그대로 1:1이다 — 편의 장치의 아래에 무엇이 있는지 보여주는 표</caption>
+  <thead><tr><th style="width:250px"><code>TransactionPhase</code></th><th style="width:280px">실제로 불리는 콜백</th><th>그 자리의 성격</th></tr></thead>
+  <tbody>
+    <tr><td><code>BEFORE_COMMIT</code></td><td><code>beforeCommit()</code></td><td>아직 커밋 전 — <b>여기서의 DB 쓰기는 원 트랜잭션에 포함</b>된다</td></tr>
+    <tr class="hl"><td><code>AFTER_COMMIT</code> <span class="badge core">기본값</span></td><td><code>afterCommit()</code></td><td>확정 후 — <b>DB 쓰기는 조용히 사라진다.</b> 캐시 무효화·알림 발송의 자리</td></tr>
+    <tr><td><code>AFTER_ROLLBACK</code></td><td><code>afterCompletion(STATUS_ROLLED_BACK)</code></td><td>롤백된 경우에만</td></tr>
+    <tr><td><code>AFTER_COMPLETION</code></td><td><code>afterCompletion(...)</code></td><td>커밋·롤백 공통의 <code>finally</code> 자리</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout warn">
+  <span class="t">그래서 앞의 함정이 <code>@TransactionalEventListener</code>에도 그대로 적용된다</span>
+  <code>AFTER_COMMIT</code> 리스너에서의 <b>DB 쓰기가 조용히 사라지는 현상</b>, <code>@Async</code>를 붙이면 <b>새 스레드라 바인딩이 없어져 일반 <code>@Transactional</code>로도 저장되는 차이</b> — 전부 이 절의 구조에서 나온다. 사용법·phase 선택·실패 경로 설계는 <code>16-spring-event-transactional-event-listener.md</code>가 본론이고, <b>여기서 기억할 것은 "그 편의 장치의 아래에 <code>synchronizations</code> 저장소와 네 개의 콜백이 있다"는 연결</b>이다.
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. OSIV — 같은 바인딩 구조의 수명을 늘려 놓은 것 <span class="badge bonus">가산점</span></h2>
+
+<p>이 구조를 알면 OSIV(Open Session In View)가 무엇을 하는 장치인지도 <b>한 문장으로</b> 설명된다.</p>
+
+<div class="rule">OSIV는 트랜잭션이 끝나도 <code>EntityManagerHolder</code>의 <b>바인딩을 풀지 않고 HTTP 응답이 끝날 때까지 유지</b>하는 장치다</div>
+
+<p>스프링 부트의 <code>spring.jpa.open-in-view</code> 기본값이 <code>true</code>라 <b>기본으로 켜져 있고</b>, 구현은 <code>OpenEntityManagerInViewInterceptor</code>가 <b>요청 시작 시 <code>EntityManager</code>를 만들어 <a href="#s2">2절에서 본 바로 그 리소스 맵</a>에 바인딩하고 응답 완료 시 언바인딩</b>하는 것이다. 즉 <b>트랜잭션 경계와 영속성 컨텍스트 경계를 일부러 어긋나게 만든다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="OSIV의 경계 어긋남 타임라인. HTTP 요청 구간 전체에 걸쳐 EntityManager가 바인딩되어 있고, 트랜잭션은 그 안의 짧은 구간에만 존재한다. 커넥션 점유는 트랜잭션 구간에서 한 번 있고, 트랜잭션이 끝난 뒤 컨트롤러나 직렬화 단계의 지연 로딩이 일어나면 다시 커넥션을 잡아 요청이 끝날 때까지 붙잡는다.">
+    <text x="560" y="24" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">트랜잭션 경계와 영속성 컨텍스트 경계가 <tspan fill="#b91c1c">일부러 어긋나 있다</tspan></text>
+
+    <g font-size="11.5" font-weight="700" fill="#334155">
+      <text x="20" y="66">HTTP 요청</text>
+      <text x="20" y="116">EntityManager<tspan x="20" y="132">바인딩 (OSIV)</tspan></text>
+      <text x="20" y="182">@Transactional</text>
+      <text x="20" y="232">커넥션 점유</text>
+    </g>
+
+    <rect x="150" y="46" width="910" height="30" rx="6" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="605" y="66" font-size="11.5" fill="#475569" text-anchor="middle">요청 수신 ────────────────────────────────────────────────────► 응답 완료</text>
+
+    <rect x="160" y="104" width="890" height="30" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="605" y="124" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">EntityManagerHolder가 리소스 맵에 계속 걸려 있다 — 그래서 컨트롤러·JSON 직렬화에서도 지연 로딩이 통과한다</text>
+
+    <rect x="330" y="164" width="250" height="30" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="455" y="184" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">서비스 트랜잭션 (짧다)</text>
+
+    <rect x="330" y="222" width="250" height="30" rx="6" fill="#fed7aa" stroke="#d97706" stroke-width="1.5"/>
+    <text x="455" y="242" font-size="11.5" font-weight="700" fill="#92400e" text-anchor="middle">① tx 구간 점유</text>
+    <rect x="700" y="222" width="350" height="30" rx="6" fill="#fecaca" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="875" y="242" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">② 지연 로딩 시점에 재획득 → 요청 끝까지 붙잡힘</text>
+    <text x="640" y="242" font-size="11" fill="#64748b" text-anchor="middle">(반환)</text>
+
+    <path d="M700 200 L700 218" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3" fill="none"/>
+    <text x="712" y="212" font-size="11" font-weight="700" fill="#b91c1c">컨트롤러·직렬화의 지연 로딩</text>
+
+    <rect x="820" y="258" width="230" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-dasharray="5 4"/>
+    <text x="935" y="276" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">여기에 외부 API 호출이 끼면?</text>
+    <text x="400" y="276" font-size="12" font-weight="700" fill="#374151" text-anchor="middle">★ 아무 일도 하지 않는 커넥션이 그 시간만큼 점유된다 → 22번 문서와 정확히 같은 형태로 풀이 마른다</text>
+  </svg>
+  <figcaption>OSIV의 대가는 <b>커넥션 반환 시점</b>이다. 트랜잭션이 끝나 커넥션이 한 번 반환되더라도, <b>컨트롤러나 응답 단계에서 지연 로딩이 일어나면 그 시점에 다시 커넥션이 필요해지고 그것은 요청이 끝날 때까지 붙잡힌다.</b> 트레이드오프 전체와 이미 돌아가는 서비스에서 이 값을 안전하게 끄는 절차는 <code>03-jpa-orm/09-osiv-tradeoff-and-migration.md</code>가 본론이다.</figcaption>
+</figure>
+
+<div class="callout info">
+  <span class="t">이 문서에서 얻을 것 — OSIV는 별도의 마법이 아니다</span>
+  <b>지금까지 본 바인딩 구조의 수명을 늘린 것뿐</b>이다. 면접에서 이렇게 연결해 말하면 <b>"OSIV를 따로 외운 사람"이 아니라 "구조에서 연역한 사람"</b>으로 읽힌다.
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>11-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">무엇이 어디에 바인딩되나?</div><div class="d"><code>TransactionSynchronizationManager</code>의 <b>ThreadLocal 리소스 맵</b>에 <b>키 = <code>DataSource</code> 객체</b>, <b>값 = <code>ConnectionHolder</code></b>(참조 카운트 보유).</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">"한 트랜잭션 = 한 커넥션"의 실체는?</div><div class="d"><code>DataSourceUtils.getConnection()</code>의 <b>분기 한 줄</b> — 바인딩된 홀더가 있으면 <b>그대로 재사용</b>, 없으면 풀에서 새로.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">쿼리마다 <code>close()</code>해도 안전한 이유?</div><div class="d">반납도 <b>대칭</b>이라, 트랜잭션 소속 커넥션이면 <code>released()</code>로 <b>카운트만 -1</b>하고 닫지 않는다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">진입 4단계는?</div><div class="d"><b>획 · 준 · 바 · 메</b> — 획득 → 준비(<code>setAutoCommit(false)</code>) → 바인딩 → 메타·<code>initSynchronization</code>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">직접 <code>getConnection()</code>의 증상 3종은?</div><div class="d"><b>안 · 둘 · 락</b> — 방금 쓴 게 <b>안</b> 보인다 / 커넥션 <b>둘</b>을 점유(자기 교착) / <b>락</b> 대기.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">콜백 순서는?</div><div class="d"><code>beforeCommit → beforeCompletion → ★커밋 → afterCommit → afterCompletion → <b>언바인딩</b></code>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">롤백 경로에서 빠지는 것은?</div><div class="d">이름에 <b><code>Commit</code>이 든 둘</b>(<code>beforeCommit</code>·<code>afterCommit</code>). <code>Completion</code>이 든 둘은 <b>언제나</b> 불린다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>afterCommit</code>에서 JPA 쓰기를 하면?</div><div class="d"><b>에러 없이 돌지만 조용히 사라진다.</b> 언바인딩이 콜백 뒤라 리소스는 찾아지는데, 커밋할 트랜잭션이 없다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>@Async</code> + <code>@Transactional</code>은?</div><div class="d"><b>참여가 아니라 분리.</b> 새 스레드의 맵이 비어 있어 <b>완전히 별개인 새 트랜잭션</b>이 열린다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">리소스를 물려주면 안 되는 이유 2종?</div><div class="d">① <b>JDBC 커넥션은 스레드세이프하지 않다</b> ② <b>풀 재대여 오염</b> — 반환된 커넥션을 제3의 요청과 나눠 쓴다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">멀티 DS에서 매니저가 모르는 DS는?</div><div class="d">키가 없으니 <b>풀에서 새 커넥션 + auto-commit</b>. <b>롤백돼도 그 쓰기는 남는다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">OSIV를 한 줄로?</div><div class="d"><b>같은 바인딩의 수명을 응답 끝까지 늘린 것.</b> 대가는 <b>커넥션 반환 지연</b>.</div></div>
+</div>
+
+<h3>11-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>멀티 데이터소스 환경에서는 어떻게 동작하나요? <span class="badge core">필수</span><span class="hint">힌트: "키가 무엇인가"에서 출발하면 "문제가 없다 → 그런데 이 경우엔 있다"로 자연스럽게 이어진다</span></summary><div class="a">
+  <p>리소스 맵의 <b>키가 <code>DataSource</code> 객체</b>이므로 <b>데이터소스마다 따로 바인딩된다.</b> 그래서 두 DB를 동시에 쓰는 것 자체는 아무 문제가 없다.</p>
+  <p>문제는 <b><code>@Transactional</code>이 관리하는 것은 지정된 트랜잭션 매니저의 <code>DataSource</code> 하나뿐</b>이라는 점이다. <code>@Transactional("statsTxManager")</code> 안에서 main 데이터소스에 쿼리를 날리면 <b>main 쪽에는 바인딩이 없으므로 풀에서 새 커넥션을 꺼내 auto-commit으로 즉시 확정</b>된다 — <b>트랜잭션이 롤백돼도 그 쓰기는 남는다.</b> 여기에 <b>매니저 이름을 빼먹으면 <code>@Primary</code> 매니저가 선택</b>되므로 <b>엉뚱한 DB에 트랜잭션이 열리는</b> 사고도 흔하다.</p>
+  <p style="margin-bottom:0">둘을 원자적으로 묶으려면 <code>ChainedTransactionManager</code>(<b>순차 커밋일 뿐 원자성이 없어 deprecated</b>)나 <b>JTA/XA</b>인데, 실무의 답은 대개 <b>"묶어야 한다면 같은 DB에 있어야 한다"는 설계 신호로 읽는 것</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>트랜잭션 없이 JdbcTemplate만 쓰면 어떻게 되나요? <span class="badge core">필수</span><span class="hint">힌트: 5절 분기의 ②로 간다. 나쁜 점만 말하지 말고 "그래서 좋은 경우"까지</span></summary><div class="a">
+  <p>5절 ①에서 <b>바인딩을 못 찾으므로 ②로 간다.</b> <b>쿼리마다 풀에서 커넥션을 꺼내 auto-commit으로 실행하고 즉시 반납한다.</b></p>
+  <p>함의가 둘이다. <b>첫째, 쿼리 하나하나가 각각의 트랜잭션</b>이므로 여러 쿼리 사이의 <b>원자성이 없다.</b> <b>둘째, 커넥션 점유 시간이 최소</b>라 <b>읽기 전용 단순 조회에서는 오히려 효율적</b>이다.</p>
+  <p style="margin-bottom:0">그래서 <b>조회만 하는 메서드에 습관적으로 <code>@Transactional</code>을 붙이면 점유 구간만 길어지는 경우</b>가 있다. <b>"여러 쿼리가 하나의 일관된 스냅샷을 봐야 하는가"</b>를 따져 보고 붙이는 것이 맞다.</p>
+</div></details>
+
+<details class="q"><summary><code>@Async</code> 메서드에 <code>@Transactional</code>을 붙이면 어떻게 되나요? <span class="badge trap">함정</span><span class="hint">힌트: "참여 / 분리" 중 하나를 먼저 못 박고, 자기 호출 함정을 겹쳐 말한다</span></summary><div class="a">
+  <p><b>참여가 아니라 분리다.</b> 새 스레드의 리소스 맵이 비어 있으므로 <b>원 트랜잭션에 합류할 방법이 없고</b>, 풀에서 새 커넥션을 꺼내 <b>완전히 별개인 새 트랜잭션</b>이 열린다. <b>원 트랜잭션이 롤백돼도 이쪽은 이미 커밋됐을 수 있다.</b></p>
+  <p>여기에 <b>별개의 함정이 하나 더 겹친다.</b> 같은 클래스 안에서 <code>this.asyncMethod()</code>처럼 자기 자신을 호출하면 <b>프록시를 타지 않아 <code>@Async</code>와 <code>@Transactional</code>이 둘 다 무시된다.</b> <code>@Async</code>가 무시되면 <b>동기 실행이 되어 원 스레드에서 도는데, 이 경우엔 오히려 트랜잭션에 참여</b>하게 되므로 <b>"어떤 날은 되고 어떤 날은 안 되는" 것처럼 보이는 혼란</b>이 생긴다.</p>
+  <p style="margin-bottom:0"><b>진단의 첫걸음은 호출 경로가 프록시를 지나는지 확인하는 것</b>이다(<code>11-transactional-self-invocation.md</code>). 그 다음이 "스레드가 바뀌었는가"다.</p>
+</div></details>
+
+<details class="q"><summary><code>AFTER_COMMIT</code>인데 롤백일 때도 남아야 하는 기록(감사 로그, 시도 이력)은 어떻게 하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 선택지는 둘이고, 둘 다 "새 트랜잭션"이라는 같은 결론으로 수렴한다</span></summary><div class="a">
+  <p><code>AFTER_COMMIT</code>은 <b>롤백 시 아예 실행되지 않으므로</b> 그 자리에 둘 수 없다. 선택지는 둘이다.</p>
+  <p><b>① <code>AFTER_COMPLETION</code>으로 옮긴다.</b> 커밋이든 롤백이든 실행되고 <code>status</code> 인자로 어느 쪽인지 알 수 있다. 다만 이 시점은 <b>원 트랜잭션이 이미 끝난 뒤</b>라 여기서의 DB 쓰기는 9절의 함정에 걸린다 — <b><code>REQUIRES_NEW</code>로 새 트랜잭션을 열어야 실제로 저장된다.</b></p>
+  <p><b>② <code>REQUIRES_NEW</code>로 선커밋(write-ahead)한다.</b> 작업을 시작하기 <b>전에</b> 별도 트랜잭션으로 <b>"시도했다"는 기록을 먼저 커밋</b>해 두는 방식이다. 본 트랜잭션이 롤백돼도 그 기록은 남는다. <b>시도 이력이나 외부 호출 로그처럼 실패 자체를 남겨야 하는 데이터에는 이쪽이 정석</b>이다.</p>
+  <p style="margin-bottom:0"><b>주의할 점</b>은 <code>REQUIRES_NEW</code>가 기존 트랜잭션을 <b>끝내는 것이 아니라 잠시 보류하고 새 트랜잭션을 여는</b> 것이라, 그동안 <b>커넥션을 2개 점유</b>한다는 사실이다. <b>풀 크기가 동시 요청 수보다 작으면 자기 교착이 생길 수 있다.</b></p>
+</div></details>
+
+<details class="q"><summary><code>TransactionSynchronization</code>을 직접 등록해 본 적이 있나요? 콜백 순서를 말해주세요. <span class="badge senior">시니어 변별</span><span class="hint">힌트: 순서만 읊으면 절반이다. 각 자리의 "성격"과 마지막 언바인딩까지 붙여야 한다</span></summary><div class="a">
+  <p>순서는 <b><code>beforeCommit → beforeCompletion → 실제 커밋 → afterCommit → afterCompletion → 리소스 언바인딩</code></b>이고, <b>롤백 경로에서는 <code>beforeCommit</code>과 <code>afterCommit</code>이 빠진다</b>(이름에 <code>Commit</code>이 든 것들).</p>
+  <p>각 자리의 성격을 함께 말하면 좋다. <b><code>beforeCommit</code>은 아직 커밋 전이라 여기서의 DB 쓰기가 같은 트랜잭션에 포함</b>되고, <b><code>afterCommit</code>은 확정 후라 여기서 예외를 던져도 되돌릴 수 없으며</b>, <b><code>afterCompletion</code>은 커밋·롤백 공통의 <code>finally</code> 자리</b>다.</p>
+  <p><b>가장 중요한 디테일은 언바인딩이 콜백 전부가 끝난 뒤에 일어난다</b>는 것이다. 그래서 <code>afterCommit</code>에서 JPA 쓰기를 하면 <b>리소스가 아직 붙어 있어 에러 없이 실행되지만, 커밋할 트랜잭션이 없어 조용히 사라진다.</b> 이 함정을 설명할 수 있으면 <b>구조를 실제로 이해한 것</b>으로 읽힌다.</p>
+  <p style="margin-bottom:0"><b>실무에서 직접 등록이 필요한 경우</b>도 짚어 두면 좋다. <code>@TransactionalEventListener</code>는 <b>이벤트 객체를 만들어 발행</b>해야 하는데, <b>한 메서드 안에서 로컬 변수를 붙잡아 커밋 후에 쓰고 싶은 정도의 일</b>이라면 익명 클래스로 <code>registerSynchronization</code>을 부르는 편이 짧다. <b>파일 업로드 후 커밋 실패 시 업로드된 파일을 지우는 정리 작업</b>이 전형적인 예다 — <code>afterCompletion</code>에서 <code>status</code>를 보고 롤백이면 지운다.</p>
+</div></details>
+
+<details class="q"><summary>OSIV는 이 구조와 어떤 관계인가요? <span class="badge bonus">가산점</span><span class="hint">힌트: "별도의 장치가 아니라 같은 구조의 수명 연장"이라는 한 문장으로 시작한다</span></summary><div class="a">
+  <p><b>OSIV는 같은 바인딩 구조의 수명을 요청 끝까지 늘려 놓은 것</b>이다. <code>OpenEntityManagerInViewInterceptor</code>가 <b>요청 시작 시 <code>EntityManager</code>를 만들어 리소스 맵에 바인딩하고 응답 완료 시 언바인딩</b>하므로, 서비스 트랜잭션이 끝난 뒤에도 <b>영속성 컨텍스트는 살아 있다.</b> 그래서 컨트롤러와 JSON 직렬화 단계의 지연 로딩이 통과한다.</p>
+  <p>여기서 정확히 말해야 하는 것은 <b>트랜잭션 경계와 영속성 컨텍스트 경계가 별개</b>라는 점이다. <b>OSIV는 둘을 일부러 어긋나게 만드는 장치</b>다.</p>
+  <p style="margin-bottom:0"><b>대가는 커넥션 반환 시점</b>이다. 컨트롤러·응답 단계의 지연 로딩이 <b>커넥션을 다시 요구하고, 그 커넥션이 요청 끝까지 붙잡힌다.</b> 그 구간에 외부 API 호출 같은 느린 I/O가 있으면 <b>아무 일도 하지 않는 커넥션을 그 시간만큼 점유</b>하게 되어 풀이 마른다. 트레이드오프와 안전한 전환 절차는 <code>03-jpa-orm/09-osiv-tradeoff-and-migration.md</code>에 있다.</p>
+</div></details>
+
+<details class="q"><summary><code>isActualTransactionActive()</code>와 <code>isSynchronizationActive()</code>는 뭐가 다른가요? <span class="badge bonus">가산점</span><span class="hint">힌트: 2절의 저장소 두 칸이 각각 켜지는 조건이 다르다</span></summary><div class="a">
+  <p><b>두 플래그는 서로 다른 것을 묻는다.</b> <code>isActualTransactionActive()</code>는 <b>"진짜 트랜잭션이 열려 있는가"</b>(커넥션이 잡히고 <code>setAutoCommit(false)</code>가 된 상태인가)이고, <code>isSynchronizationActive()</code>는 <b>"동기화 기계가 켜져 있는가"</b>(리소스 바인딩과 콜백 등록이 가능한 상태인가)다.</p>
+  <p><b>둘이 어긋나는 경우가 실제로 있다.</b> <code>propagation = SUPPORTS</code>처럼 <b>"트랜잭션이 있으면 참여하고 없으면 없는 대로 진행"</b>하는 설정에서 바깥에 트랜잭션이 없으면, 스프링은 <b>실제 트랜잭션 없이 동기화만 활성인 상태</b>로 진행할 수 있다. 5절 의사코드의 <b>③번 분기</b>(트랜잭션은 없는데 바인딩과 정리 콜백을 등록하는 자리)와 <b>OSIV</b>가 이 상태를 쓴다.</p>
+  <p style="margin-bottom:0"><b>실무적 함의</b>는 이렇다 — <code>registerSynchronization()</code>은 <b>동기화가 활성이어야</b> 부를 수 있고(아니면 <code>IllegalStateException</code>), 같은 이유로 <b><code>@TransactionalEventListener</code>는 트랜잭션 밖에서 발행된 이벤트를 기본적으로 처리하지 않는다</b>(<code>fallbackExecution</code> 기본값이 꺼져 있어 <b>조용히 건너뛴다</b>). <b>"이벤트가 안 왔어요"의 첫 번째 확인 지점</b>이 여기다.</p>
+</div></details>
+
+<details class="q"><summary>커넥션은 <code>@Transactional</code> 진입 즉시 잡히나요? 그 시점을 미룰 수는 없나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 3절 타임라인의 ①을 오른쪽으로 밀 수 있는가</span></summary><div class="a">
+  <p><b>기본 구성(<code>DataSourceTransactionManager</code> + 평범한 <code>DataSource</code>)에서는 진입 즉시 잡힌다.</b> 3절 타임라인의 ①이 <code>doBegin()</code>의 첫 줄이고, <b>그 순간부터 점유 막대가 시작된다.</b> 그래서 <b>메서드 앞부분에 느린 계산이나 외부 호출이 있으면 그 시간만큼 아무 일도 안 하는 커넥션이 잡혀 있다</b>(22번 문서의 주제).</p>
+  <p>미루는 장치가 있다. <b><code>LazyConnectionDataSourceProxy</code></b>는 <code>DataSource</code>를 한 겹 감싸서 <b>바인딩 시점에는 실제 커넥션을 잡지 않고, 첫 쿼리가 실제로 나갈 때 비로소 풀에서 꺼내오게</b> 한다. 점유 구간을 <b>"메서드 전 구간"에서 "첫 쿼리 이후"로</b> 줄일 수 있고, <b>읽기/쓰기 라우팅 데이터소스와 함께 쓸 때 트랜잭션 속성이 정해진 뒤에 실제 커넥션을 고르게 하려는 목적</b>으로도 쓴다.</p>
+  <p style="margin-bottom:0">다만 <b>도입 전에 정확히 알아야 할 것</b>이 있다 — 이건 <b>구조를 바꾸는 최적화</b>라 <b>커넥션 획득 실패가 메서드 진입이 아니라 첫 쿼리 시점으로 밀리는 등</b> 실패 지점이 달라진다. <b>먼저 시도할 것은 "트랜잭션 경계 안에서 느린 일을 빼는" 설계 수정</b>이고, 이 프록시는 그 다음이다.</p>
+</div></details>
+
+<details class="q"><summary>스레드풀은 스레드를 재사용하는데, 이전 요청의 바인딩이 남아 있을 위험은 없나요? <span class="badge trap">함정</span><span class="hint">힌트: 정상 경로에서는 왜 안전한가 → 그럼 언제 위험해지는가</span></summary><div class="a">
+  <p><b>정상 경로에서는 안전하다.</b> 트랜잭션 매니저가 <b><code>finally</code>에 해당하는 정리 단계에서 반드시 <code>unbindResource</code>와 플래그 초기화</b>를 수행하기 때문이다(3절 종료 ③·④). 예외로 끝나도 이 정리는 실행된다.</p>
+  <p><b>위험해지는 것은 이 대칭을 사람이 깨뜨렸을 때</b>다. <code>TransactionSynchronizationManager.bindResource()</code>를 <b>직접 호출해 놓고 <code>unbindResource()</code>를 빠뜨리면</b>, 그 값은 <b>스레드가 풀로 돌아간 뒤에도 남아</b> 다음 요청이 <b>"내 것이 아닌 커넥션"을 재사용</b>하게 된다. 같은 이유로 커스텀 <code>ThreadLocal</code>(사용자 컨텍스트 등)도 <b>반드시 <code>finally</code>에서 <code>remove()</code></b> 해야 한다.</p>
+  <p style="margin-bottom:0">이 계열의 위험(<b>메모리 누수와 이전 요청 정보 유출</b>) 전체는 <code>01-java-kotlin/16-threadlocal-thread-pool-risks.md</code>가 본론이다. 요약하면 <b>"스레드풀에서 <code>ThreadLocal</code>은 반드시 짝을 맞춰 지운다"</b>가 규칙이다.</p>
+</div></details>
+
+<details class="q"><summary>같은 트랜잭션·같은 커넥션인데 JPA로 저장한 데이터가 JdbcTemplate 조회에서 안 나옵니다. 왜죠? <span class="badge trap">함정</span><span class="hint">힌트: "같은 커넥션"과 "이미 DB로 보냈다"는 다른 말이다</span></summary><div class="a">
+  <p><b>커넥션은 같지만 SQL이 아직 DB로 전송되지 않았기 때문</b>이다. JPA는 <b>쓰기 지연</b>으로 변경을 영속성 컨텍스트에 모아 뒀다가 <b>flush 시점</b>에 한꺼번에 보낸다. <code>save()</code>만 부른 상태에서는 <b>DB 입장에서 그 행이 아직 존재하지 않는다.</b></p>
+  <p><b>해법은 <code>entityManager.flush()</code></b>로 <b>"지금 SQL을 보내라"</b>고 지시하는 것이다. <b><code>flush()</code>는 커밋이 아니다</b> — 트랜잭션은 여전히 열려 있고 <b>롤백하면 함께 사라진다.</b></p>
+  <p style="margin-bottom:0">한 걸음 더 나가면 좋다. <b>이 함정은 "이중 바인딩 덕분에 두 기술을 섞을 수 있다"는 사실의 이면</b>이다 — <b>커넥션 공유는 프레임워크가 보장하지만, 무엇이 이미 DB에 갔는지는 보장하지 않는다.</b> 그래서 두 기술을 섞는 코드에서는 <b>flush 시점을 의식적으로 관리</b>해야 한다(<code>03-jpa-orm/15-flush-timing-and-sql-ordering.md</code>).</p>
+</div></details>
+
+<details class="q"><summary><code>REQUIRES_NEW</code>가 커넥션을 2개 쓴다면, 풀 크기를 키우면 해결되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 완화책과 근본 해결을 나눠 말한다</span></summary><div class="a">
+  <p><b>완화는 되지만 해결은 아니다.</b> 문제의 본질은 <b>"한 요청이 동시에 몇 개의 커넥션을 쥐는가"</b>이고, 그 값이 1보다 크면 <b>동시 요청 수가 늘어날 때 서로가 서로를 막는 구간</b>이 반드시 생긴다.</p>
+  <p>널리 인용되는 <b>교착 회피 하한식</b>이 이 관계를 잘 보여준다 — <b>풀 크기 ≥ 동시 스레드 수 × (한 스레드가 동시에 쥐는 커넥션 수 − 1) + 1</b>. 한 스레드가 커넥션을 <b>하나만</b> 쥔다면 이 식은 <b>1</b>이 되어 교착 자체가 성립하지 않는다. <b>즉 근본 해결은 "동시에 쥐는 수를 1로 되돌리는 것"</b>이다.</p>
+  <p style="margin-bottom:0">실무 순서는 이렇다 — <b>① <code>REQUIRES_NEW</code>가 정말 필요한지 재검토</b>(대개는 "실패해도 남아야 하는 기록"이라는 요구에서 나온다) <b>② 필요하면 그 구간을 최대한 짧게</b> <b>③ 풀 크기는 그 다음</b>. 풀만 키우면 <b>DB 쪽 커넥션 상한과 컨텍스트 스위칭 비용으로 문제가 옮겨갈 뿐</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>WebFlux(리액티브)나 가상 스레드에서도 이 구조가 그대로 성립하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 두 경우의 답이 다르다 — "스레드가 유지되는가"가 갈림길이다</span></summary><div class="a">
+  <p><b>가상 스레드(virtual thread)에서는 그대로 성립한다.</b> 가상 스레드도 <b>각자 자기 <code>ThreadLocal</code> 저장소를 갖기</b> 때문에, 1절 그림의 구조가 바뀌지 않는다. 다만 <b>"스레드가 싸졌다고 커넥션도 싸지는 것은 아니다"</b>가 중요한 단서다 — <b>동시 처리량의 상한은 여전히 커넥션 풀 크기</b>이고, 오히려 <b>스레드가 많아진 만큼 커넥션 대기가 병목으로 드러나기 쉽다.</b></p>
+  <p><b>리액티브에서는 성립하지 않는다.</b> 하나의 요청 처리가 <b>여러 스레드를 옮겨 다니므로</b> "현재 스레드 = 현재 요청"이라는 전제 자체가 깨진다. 그래서 스프링은 리액티브 트랜잭션에서 <b><code>ThreadLocal</code> 대신 리액티브 스트림을 따라 흐르는 컨텍스트(Reactor Context)에 트랜잭션 컨텍스트를 실어 나르는</b> 별도의 동기화 매니저를 쓴다.</p>
+  <p style="margin-bottom:0">면접에서 이 대비를 한 문장으로 정리하면 강하다 — <b>"바인딩의 매체가 스레드냐 구독 컨텍스트냐가 다를 뿐, '트랜잭션 리소스를 어딘가에 걸어 두고 데이터 접근 코드가 그것을 찾아 쓴다'는 설계는 같다."</b></p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  Spring 트랜잭션은 <b>"풀에서 얻은 커넥션을 <code>TransactionSynchronizationManager</code>의 ThreadLocal 리소스 맵에 <code>DataSource</code>를 키로 바인딩해 두고, 모든 데이터 접근이 <code>DataSourceUtils</code>를 경유해 그것을 재사용"</b>하는 구조라서 한 트랜잭션의 쿼리가 같은 커넥션을 타고 쿼리마다 <code>close()</code>를 불러도 안전하며, 이 규칙을 우회한 <code>dataSource.getConnection()</code>은 <b>별개 커넥션·별개 트랜잭션</b>을 만들어 방금 쓴 데이터가 안 보이고 커넥션도 두 개를 점유하게 만든다 — 저장소가 <b>ThreadLocal</b>이므로 스레드가 바뀌는 <code>@Async</code> 경계에서는 트랜잭션이 전파되지 않고 커넥션을 물려주는 것은 <b>비스레드세이프와 풀 재대여 오염</b> 때문에 금지이니 <b>새 트랜잭션으로 분리</b>해야 하며, 짝인 <code>synchronizations</code> 저장소의 <b><code>beforeCommit → beforeCompletion → 커밋 → afterCommit → afterCompletion → 언바인딩</code></b> 콜백 순서가 <code>@TransactionalEventListener</code>와 OSIV를 떠받치는 하부 기계다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/02-spring/24-transaction-synchronization-connection-binding.md</code> · 함께 볼 문서: 트랜잭션 안의 외부 API 호출(22) · 트랜잭셔널 아웃박스 패턴(23) · <code>@Transactional</code> 자기 호출(11) · 전파 옵션 REQUIRED vs REQUIRES_NEW(12) · <code>@Async</code>(15) · 스프링 이벤트와 <code>@TransactionalEventListener</code>(16) · <code>01-java-kotlin/16-threadlocal-thread-pool-risks</code> · <code>03-jpa-orm/09-osiv-tradeoff-and-migration</code> · <code>03-jpa-orm/15-flush-timing-and-sql-ordering</code></p>
+</main>
+</body>
+</html>

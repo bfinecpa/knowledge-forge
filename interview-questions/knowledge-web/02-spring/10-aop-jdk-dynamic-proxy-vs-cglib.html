@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AOP 동작 원리 — JDK Dynamic Proxy vs CGLIB</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">02 Spring / Spring Boot &nbsp;|&nbsp; 중급 ⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>AOP 동작 원리 — JDK Dynamic Proxy vs CGLIB<br><span class="sub">"붙였는데 동작 안 함"의 뿌리 하나</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"AOP의 동작 원리(JDK Dynamic Proxy vs CGLIB)를 설명해주세요."</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 스프링 AOP는 대상 빈을 그대로 등록하지 않고, <b>그 빈을 감싼 프록시 객체를 대신 등록한다.</b> 그래서 다른 빈이 주입받는 것은 원본이 아니라 <b>전부 프록시</b>다. 프록시가 "원본인 척"할 수 있는 방법은 자바에 정확히 두 가지뿐이다 — <b>원본의 인터페이스를 구현하거나(JDK 동적 프록시), 원본 클래스를 상속하거나(CGLIB).</b> 이 한 문장에서 실무 함정이 기계적으로 따라 나온다. JDK 방식은 <b>인터페이스 목록으로 클래스를 찍어내므로</b> 인터페이스가 없으면 만들 수가 없고, 만들어진 프록시는 구현 클래스의 자식이 아니라서 구현 클래스 타입으로 주입받으면 <code>BeanNotOfRequiredTypeException</code>이 난다 — <b>스프링 부트가 인터페이스가 있어도 CGLIB을 기본값(<code>proxyTargetClass=true</code>)으로 쓰는 이유</b>가 이것이다. 반대로 CGLIB은 상속이라서 <code>final</code> 클래스는 프록시 생성 자체가 실패해 <b>기동이 죽고(시끄럽다)</b>, <code>final</code> 메서드는 프록시는 만들어지되 <b>그 메서드만 조용히 부가 기능이 빠진다(조용하다)</b> — <b>장애의 악질성은 에러의 크기가 아니라 발견되기까지의 침묵으로 결정된다.</b> 그리고 양쪽 공통으로, <b>호출이 프록시를 통과하지 않으면 부가 기능은 걸리지 않는다.</b> <code>@Transactional</code>·<code>@Async</code>·<code>@Cacheable</code>이 "붙였는데 동작 안 하는" 상황은 전부 이 프록시 구조 하나로 설명된다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>구조부터 말한다</b> — 스프링 AOP는 <b>런타임 프록시</b> 방식이다. 컨테이너는 원본 빈을 만든 뒤 그것을 <b>감싼 별개의 객체(프록시)</b>를 만들어 <b>그쪽을 등록</b>하고, 다른 빈은 전부 프록시를 주입받는다. 결정적으로 <b>부가 기능 코드는 프록시에만 있고 원본에는 없다</b> — 그래서 실행 조건은 "애너테이션이 붙었는가"가 아니라 <b>"이 호출이 프록시를 통과했는가"</b>다.</div></li>
+    <li><span class="n">2</span><div><b>선택지가 둘인 이유는 스프링이 아니라 자바가 정했다</b> — 프록시가 원본 타입 변수에 담기려면 <b>인터페이스를 구현했거나 클래스를 상속했거나</b> 둘 중 하나여야 한다. 전자가 <b>JDK 동적 프록시</b>(<code>java.lang.reflect.Proxy</code>가 인터페이스 배열을 받아 클래스를 생성), 후자가 <b>CGLIB</b>(대상 클래스를 상속한 자식을 바이트코드로 생성)다. <b>스프링 부트의 기본값은 CGLIB</b>(<code>spring.aop.proxy-target-class=true</code>)이고, 그 이유는 JDK 프록시가 <b>구현 클래스 타입으로 주입되지 않아</b> <code>BeanNotOfRequiredTypeException</code>을 내기 때문이다.</div></li>
+    <li><span class="n">3</span><div><b>함정은 이 구조에서 기계적으로 따라 나온다</b> — <code>final</code> 클래스는 상속이 안 돼 <b>기동이 실패하고(fail-fast)</b>, <code>final</code>·<code>private</code> 메서드는 <b>프록시는 만들어지되 그 메서드만 조용히 새고</b>, 자기 호출(<code>this.method()</code>)은 <b>프록시를 우회해</b> 역시 조용히 샌다. 그래서 진단은 두 질문으로 끝난다 — <b>① 프록시가 이 메서드를 오버라이드할 수 있었는가, ② 이 호출이 프록시를 통과했는가.</b></div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 3부작 지도</a></li>
+    <li><a href="#s1">AOP가 푸는 문제 — 횡단 관심사</a></li>
+    <li><a href="#s2">스프링의 답 — 런타임 프록시</a></li>
+    <li><a href="#s3">지형도 — 프록시 방식 vs 위빙(AspectJ)</a></li>
+    <li><a href="#s4">"원본인 척"하는 방법은 둘뿐</a></li>
+    <li><a href="#s5">JDK 동적 프록시 — 인터페이스가 유일한 타입 통로</a></li>
+    <li><a href="#s6">CGLIB — 상속한 자식 클래스를 찍어낸다</a></li>
+    <li><a href="#s7">대조표 · 선택 규칙 · 부트 기본값</a></li>
+    <li><a href="#s8">함정 지도 — 시끄러운 실패와 조용한 실패</a></li>
+    <li><a href="#s9">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "AOP의 동작 원리(JDK Dynamic Proxy vs CGLIB)를 설명해주세요."</p>
+  <p><b>출제 의도</b>: 프록시 기반이라는 사실을 모르면 <code>@Transactional</code>·<code>@Async</code>·<code>@Cacheable</code>이 <b>"붙였는데 동작 안 하는"</b> 상황을 이해할 수 없다. 스프링의 마법 대부분이 <b>이 하나의 원리</b>로 설명되므로, 이걸 아는지가 스프링을 <b>"쓰는" 사람과 "이해하는" 사람의 분기점</b>이다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"프록시가 감싼다"를 비유로만 말하는 것</b> → 2절에서 <b>메모리에 객체가 두 개</b>라는 사실을 도식으로 못 박는다. "감싸는 코드"가 아니라 <b>별개의 인스턴스</b>다.<br>
+    ② <b>"JDK는 인터페이스, CGLIB은 상속"을 암기로만 아는 것</b> → 5절에서 <b>왜 인터페이스가 필수인지</b>를 <code>newProxyInstance</code>의 파라미터에서, 4절에서 <b>왜 선택지가 둘뿐인지</b>를 자바 타입 시스템에서 유도한다.<br>
+    ③ <b>함정을 나열만 하고 등급을 못 매기는 것</b> → 8절에서 <b>기동에서 죽는 실패</b>와 <b>운영에서야 드러나는 침묵</b>을 타임라인으로 갈라 <b>"어느 쪽이 더 악질인가"</b>에 답할 수 있게 한다.
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">이 문서의 자리 — 스프링 프록시 3부작의 "원리 편"</span>
+  <div class="chain" style="margin:8px 0 0">
+    <span class="chip b">07 <code>@Transactional</code> 기본 동작·롤백 규칙</span><span class="arrow">·</span>
+    <span class="chip g" style="background:#dbeafe;border-color:#2563eb;color:#1d4ed8">10 <b>이 문서</b> — 프록시가 어떻게 만들어지고 무엇이 그 생성을 방해하는가</span><span class="arrow">·</span>
+    <span class="chip b">11 자기 호출 함정의 진단과 해법</span>
+  </div>
+  <p style="margin:8px 0 0" class="sub">버전에 따라 갈리는 서술은 <b>스프링 프레임워크 6.x / 스프링 부트 3.x 기준</b>으로 쓴다.</p>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 전제 — AOP가 풀려는 문제는 무엇인가</h2>
+
+<p>AOP를 <b>"관점 지향 프로그래밍"</b>이라고 번역해 놓으면 아무것도 설명되지 않는다. <b>무엇을 풀려는 기법인지</b>부터 본다.</p>
+
+<p>서비스 코드에는 두 종류의 관심사가 섞여 있다. 하나는 그 메서드가 존재하는 이유인 <b>비즈니스 로직</b>(주문을 만든다, 재고를 깎는다)이고, 다른 하나는 그 로직이 무엇이든 상관없이 똑같이 필요한 <b>부가 관심사</b>(트랜잭션을 열고 닫는다, 실행 시간을 로그로 남긴다, 권한을 확인한다, 결과를 캐시에 넣는다)다.</p>
+
+<p>문제는 부가 관심사가 <b>여러 클래스에 똑같은 모양으로 흩어진다</b>는 것이다. 서비스가 50개면 트랜잭션 시작·커밋·롤백 코드가 <b>50벌 복제</b>된다. <b>한 곳을 고치면 49곳을 놓친다.</b></p>
+
+<div class="codehead bad"><span class="tag">before</span> 부가 관심사가 비즈니스 로직에 얽혀 모든 메서드에 복제된다</div>
+<pre><code><span class="kw">public</span> Order <span class="fn">order</span>(OrderRequest request) {
+<span class="ln-bad">    Connection conn = dataSource.getConnection();
+    conn.setAutoCommit(<span class="kw">false</span>);          <span class="cm">// 트랜잭션 시작 — 이 서비스와 아무 상관 없는 코드</span>
+    <span class="kw">long</span> start = System.nanoTime();     <span class="cm">// 로깅 — 역시 상관 없다</span></span>
+    <span class="kw">try</span> {
+        Order result = doOrder(request, conn);   <span class="cm">// 이 한 줄만이 이 메서드의 존재 이유다</span>
+<span class="ln-bad">        conn.commit();</span>
+        <span class="kw">return</span> result;
+    } <span class="kw">catch</span> (Exception e) {
+<span class="ln-bad">        conn.rollback();</span>
+        <span class="kw">throw</span> e;
+    } <span class="kw">finally</span> {
+<span class="ln-bad">        log.info(<span class="st">"order took {}ms"</span>, (System.nanoTime() - start) / 1_000_000);
+        conn.close();</span>
+    }
+}<span class="note">붉은 줄 전부가 이 서비스 50개에 똑같이 복제된다</span></code></pre>
+
+<p>이렇게 <b>여러 모듈을 가로질러(cross-cutting) 반복되는 부가 관심사</b>를 <b>횡단 관심사(cross-cutting concern)</b>라 부른다. AOP는 이 횡단 관심사를 <b>한 곳에 모아 정의해 두고, 대상 코드를 한 글자도 건드리지 않은 채 실행 시점에 끼워 넣는</b> 기법이다.</p>
+
+<div class="codehead good"><span class="tag">after</span> 부가 관심사는 사라지고 "존재 이유"만 남는다</div>
+<pre><code><span class="ln-good">@Transactional</span>
+<span class="kw">public</span> Order <span class="fn">order</span>(OrderRequest request) {
+    <span class="kw">return</span> doOrder(request);
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">왜 하필 "관점(aspect)"인가 — 이름의 유래</span>
+  기존의 객체 지향은 시스템을 <b>"주문"·"재고"·"회원" 같은 명사(객체) 단위</b>로 자른다. 그런데 <b>"트랜잭션"이나 "감사 로깅"은 그 어느 명사에도 속하지 않고 전부를 가로지른다</b> — 시스템을 자르는 <b>또 다른 관점(측면)</b>인 것이다. 그 관점 하나를 독립된 모듈로 떼어낸 것이 <b>aspect</b>이고, 그렇게 자르는 프로그래밍이 <b>aspect-oriented programming</b>이다.
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 스프링의 구현 방식 — 런타임 프록시</h2>
+
+<p>그렇다면 <code>@Transactional</code> 한 줄이 어떻게 위의 try-catch-finally를 대신하는가. 스프링이 고른 방법은 <b>런타임 프록시</b>다.</p>
+
+<div class="memo">
+  <h4>프록시의 정의 — 영문 병기가 아니라 이 문장을 외운다</h4>
+  <div class="rule">프록시는 <b>원본 객체인 척하면서 호출을 먼저 받아 부가 작업을 한 뒤 원본에 넘기는 대리인 객체</b>다</div>
+  <p style="margin-bottom:0">여기서 놓치면 안 되는 단어가 <b>"객체"</b>다. 프록시는 <b>"감싸는 코드"가 아니라 메모리에 따로 존재하는 별개의 인스턴스</b>다. 이 한 단어가 8절 자기 호출 함정의 전부를 설명한다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 410" role="img" aria-label="스프링 컨테이너가 프록시를 등록하는 5단계 흐름도. 1번 원본 빈을 생성하고, 2번 AOP 대상인지 검사하고, 3번 원본을 감싼 프록시 객체를 만들고, 4번 컨테이너에 등록하는 것은 프록시이며, 5번 다른 빈은 전부 프록시를 주입받는다. 아래 메모리 그림에는 인스턴스 1번 원본과 인스턴스 2번 프록시가 별개의 객체로 존재하고, 프록시의 target 필드가 원본을 가리키며, 컨테이너 맵에 들어간 것은 프록시임을 보여준다.">
+    <defs>
+      <marker id="f1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="f1g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+      <marker id="f1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">기동 중에 컨테이너가 하는 일 — 등록되는 것은 원본이 아니다</text>
+
+    <g>
+      <rect x="24"  y="42" width="196" height="52" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="240" y="42" width="196" height="52" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="456" y="42" width="196" height="52" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+      <rect x="672" y="42" width="196" height="52" rx="9" fill="#dbeafe" stroke="#2563eb" stroke-width="2.4"/>
+      <rect x="888" y="42" width="196" height="52" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    </g>
+    <g font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">
+      <text x="122" y="64">① 원본 생성</text>
+      <text x="338" y="64">② 대상 검사</text>
+      <text x="554" y="64">③ 프록시 생성</text>
+      <text x="770" y="64">④ 컨테이너 등록</text>
+      <text x="986" y="64">⑤ 주입</text>
+    </g>
+    <g font-size="11" fill="#475569" text-anchor="middle">
+      <text x="122" y="83">평범하게 new 한다</text>
+      <text x="338" y="83">AOP 애너테이션이 있나</text>
+      <text x="554" y="83">원본을 감싼 새 객체</text>
+      <text x="770" y="83" font-weight="700" fill="#1d4ed8">여기가 핵심 — 프록시를 넣는다</text>
+      <text x="986" y="83">받는 쪽은 전부 프록시</text>
+    </g>
+    <g stroke="#2563eb" stroke-width="1.6" marker-end="url(#f1a)" fill="none">
+      <path d="M220 68 L236 68"/><path d="M436 68 L452 68"/><path d="M652 68 L668 68"/><path d="M868 68 L884 68"/>
+    </g>
+    <g font-size="11.5" class="mono" fill="#334155" text-anchor="middle">
+      <text x="122" y="110">OrderService #1</text>
+      <text x="338" y="110">@Transactional ✓</text>
+      <text x="554" y="110">OrderService$$SpringCGLIB #2</text>
+      <text x="770" y="110">map.put("orderService", #2)</text>
+      <text x="986" y="110">controller.service = #2</text>
+    </g>
+
+    <rect x="24" y="132" width="1060" height="176" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="5 4"/>
+    <text x="44" y="156" font-size="12.5" font-weight="700" fill="#334155">기동이 끝난 뒤 메모리 — 객체는 하나가 아니라 <tspan fill="#b91c1c">두 개</tspan>다</text>
+
+    <rect x="600" y="172" width="300" height="112" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="750" y="194" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">인스턴스 #2 — 프록시</text>
+    <text x="750" y="214" font-size="11.5" class="mono" fill="#1e3a8a" text-anchor="middle">OrderService$$SpringCGLIB$$0</text>
+    <text x="750" y="236" font-size="11.5" fill="#1e3a8a" text-anchor="middle"><tspan font-weight="700">부가 기능 코드가 있는 쪽</tspan> (트랜잭션 열고 닫기)</text>
+    <text x="750" y="256" font-size="11.5" fill="#64748b" text-anchor="middle">자기 필드는 대부분 비어 있다 (주입은 #1에 됐다)</text>
+    <text x="750" y="274" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">private Object target; ─┐</text>
+
+    <rect x="140" y="172" width="300" height="112" rx="10" fill="#fff" stroke="#64748b" stroke-width="1.6"/>
+    <text x="290" y="194" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">인스턴스 #1 — 원본(target)</text>
+    <text x="290" y="214" font-size="11.5" class="mono" fill="#334155" text-anchor="middle">OrderService</text>
+    <text x="290" y="236" font-size="11.5" fill="#7f1d1d" text-anchor="middle"><tspan font-weight="700">부가 기능 코드가 없는 쪽</tspan> (순수 비즈니스 로직)</text>
+    <text x="290" y="256" font-size="11.5" fill="#166534" text-anchor="middle">리포지토리 등 의존성은 <tspan font-weight="700">이쪽에</tspan> 주입돼 있다</text>
+
+    <path d="M596 250 L446 250" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f1a)" fill="none"/>
+    <text x="521" y="242" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">target 위임</text>
+
+    <rect x="944" y="172" width="128" height="112" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-dasharray="4 3"/>
+    <text x="1008" y="200" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">컨테이너</text>
+    <text x="1008" y="222" font-size="11.5" fill="#1e3a8a" text-anchor="middle">Map에 담긴 것</text>
+    <text x="1008" y="244" font-size="15" font-weight="700" fill="#1d4ed8" text-anchor="middle">#2</text>
+    <text x="1008" y="266" font-size="11" fill="#64748b" text-anchor="middle">#1은 숨는다</text>
+    <path d="M904 228 L940 228" stroke="#2563eb" stroke-width="1.6" marker-end="url(#f1a)" fill="none"/>
+
+    <rect x="24" y="322" width="1060" height="66" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="44" y="346" font-size="12.5" font-weight="700" fill="#b91c1c">부가 기능 코드는 #2에만 있고 #1에는 없다 — 그래서 실행 조건은 "애너테이션이 붙었는가"가 아니다.</text>
+    <text x="44" y="368" font-size="12.5" fill="#7f1d1d">#1의 참조를 손에 쥔 것은 <tspan font-weight="700">프록시뿐</tspan>이므로, <tspan font-weight="700">#1 내부에서 시작된 호출은 영원히 #2를 만나지 못한다</tspan> — 이것이 자기 호출 함정의 전부다(8-5절).</text>
+  </svg>
+  <figcaption><b>"프록시가 감싼다"는 표현이 만드는 오해</b>가 여기서 풀린다. 감싼다고 해서 원본이 프록시 안에 흡수되는 것이 아니라, <b>서로를 참조하는 두 객체가 나란히 존재</b>하고 그중 <b>바깥 세계에 노출되는 것은 프록시 하나뿐</b>이다.</figcaption>
+</figure>
+
+<h3>2-1. 프록시 안에서 벌어지는 일 (의사코드)</h3>
+
+<pre><code><span class="cm">// 프록시 객체 안에서 개념적으로 벌어지는 일</span>
+<span class="kw">public</span> Order <span class="fn">order</span>(OrderRequest request) {
+<span class="ln-good">    <span class="cm">// ① 전작업 — 트랜잭션 시작 / 캐시 조회 / 시작 시각 기록 / 권한 검사</span></span>
+    Order result = target.order(request);   <span class="cm">// ② target은 원본 인스턴스 #1을 가리키는 필드다</span>
+<span class="ln-good">    <span class="cm">// ③ 후작업 — 커밋 / 캐시 저장 / 소요 시간 로깅</span></span>
+    <span class="kw">return</span> result;                          <span class="cm">// ④ 리턴값은 손대지 않고 그대로 돌려준다</span>
+}</code></pre>
+
+<div class="memo green">
+  <h4>이 문서 전체를 지탱하는 한 문장</h4>
+  <div class="rule ok">부가 기능이 실행될 조건은 <b>"그 메서드에 애너테이션이 붙어 있는가"가 아니라 "이 호출이 프록시 객체를 통과했는가"</b>다</div>
+  <p style="margin-bottom:0" class="sub">8절의 함정 다섯 개가 전부 이 문장의 <b>따름정리</b>다. 면접에서 함정을 나열하기 전에 이 문장을 먼저 말하면, 나열이 아니라 <b>유도</b>로 들린다.</p>
+</div>
+
+<div class="callout info">
+  <span class="t">비유 — 사무실 앞 안내데스크</span>
+  프록시는 <b>담당자 앞에 앉힌 안내원</b>이다. 방문객이 <b>데스크를 통과해</b> 들어가면 방명록에 기록이 남는다(부가 기능). 그런데 <b>담당자가 옆방 동료에게 직접 걸어가면</b> 데스크를 지나지 않으므로 <b>아무 기록도 남지 않는다</b> — 담당자가 규칙을 어긴 것도, 방명록이 고장 난 것도 아니다. <b>동선이 데스크를 비껴갔을 뿐</b>이다. 스프링에서 <code>@Transactional</code>이 "조용히 안 먹는" 상황은 거의 전부 <b>이 동선 문제</b>다.
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 지도 — AOP 구현 방법은 프록시만이 아니다</h2>
+
+<p>AOP를 구현하는 방법이 프록시뿐인 것은 아니다. <b>전체 지형을 한 번 그려두면 이 문서가 다루는 범위가 분명해지고, 앞으로 볼 함정들의 정확한 원인도 지목할 수 있다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 960 336" role="img" aria-label="AOP 구현 방법의 지형도. 크게 프록시 방식과 바이트코드 위빙 방식으로 나뉜다. 프록시 방식은 스프링 AOP가 쓰며 JDK 동적 프록시와 CGLIB 두 갈래가 있고 이 문서의 주제다. 바이트코드 위빙 방식은 AspectJ가 쓰며 컴파일 타임 위빙과 로드 타임 위빙이 있고, 원본 클래스 자체를 고치므로 프록시 방식의 제약이 없다.">
+    <defs>
+      <marker id="f2a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#64748b"/></marker>
+    </defs>
+    <rect x="356" y="14" width="248" height="42" rx="10" fill="#f1f5f9" stroke="#334155" stroke-width="1.6"/>
+    <text x="480" y="41" font-size="14" font-weight="700" fill="#334155" text-anchor="middle">AOP를 구현하는 방법</text>
+    <path d="M480 56 L480 74" stroke="#64748b" stroke-width="1.5" fill="none"/>
+    <path d="M240 74 L720 74" stroke="#64748b" stroke-width="1.5" fill="none"/>
+    <path d="M240 74 L240 96" stroke="#64748b" stroke-width="1.5" marker-end="url(#f2a)" fill="none"/>
+    <path d="M720 74 L720 96" stroke="#64748b" stroke-width="1.5" marker-end="url(#f2a)" fill="none"/>
+
+    <rect x="30" y="100" width="420" height="196" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="240" y="126" font-size="14" font-weight="700" fill="#1d4ed8" text-anchor="middle">① 프록시 방식 — 스프링 AOP</text>
+    <text x="240" y="147" font-size="11.5" fill="#1e3a8a" text-anchor="middle">원본은 그대로 두고 <tspan font-weight="700">앞에 대리인을 세운다</tspan></text>
+    <rect x="52" y="160" width="180" height="62" rx="9" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="142" y="182" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">JDK 동적 프록시</text>
+    <text x="142" y="202" font-size="11.5" fill="#334155" text-anchor="middle">인터페이스를 <tspan font-weight="700">구현</tspan>해서</text>
+    <text x="142" y="216" font-size="11.5" fill="#334155" text-anchor="middle">원본인 척</text>
+    <rect x="248" y="160" width="180" height="62" rx="9" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="338" y="182" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">CGLIB</text>
+    <text x="338" y="202" font-size="11.5" fill="#334155" text-anchor="middle">원본 클래스를 <tspan font-weight="700">상속</tspan>해서</text>
+    <text x="338" y="216" font-size="11.5" fill="#334155" text-anchor="middle">원본인 척</text>
+    <rect x="52" y="234" width="376" height="46" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="240" y="254" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">제약: final · private · 자기 호출 · 스프링 빈에만 · 메서드 실행 지점만</text>
+    <text x="240" y="272" font-size="11.5" fill="#7f1d1d" text-anchor="middle">← 이것은 "AOP의 한계"가 아니라 <tspan font-weight="700">"프록시 방식의 한계"</tspan>다</text>
+
+    <rect x="510" y="100" width="420" height="196" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="720" y="126" font-size="14" font-weight="700" fill="#334155" text-anchor="middle">② 바이트코드 위빙 방식 — AspectJ</text>
+    <text x="720" y="147" font-size="11.5" fill="#475569" text-anchor="middle">원본 클래스의 <tspan font-weight="700">코드 자체를 고친다</tspan> (프록시가 없다)</text>
+    <rect x="532" y="160" width="180" height="62" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="622" y="182" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">컴파일 타임 위빙</text>
+    <text x="622" y="202" font-size="11.5" fill="#475569" text-anchor="middle">전용 컴파일러(ajc)로</text>
+    <text x="622" y="216" font-size="11.5" fill="#475569" text-anchor="middle">빌드할 때 박아 넣는다</text>
+    <rect x="728" y="160" width="180" height="62" rx="9" fill="#fff" stroke="#94a3b8"/>
+    <text x="818" y="182" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">로드 타임 위빙(LTW)</text>
+    <text x="818" y="202" font-size="11.5" fill="#475569" text-anchor="middle">클래스 로딩 시점에</text>
+    <text x="818" y="216" font-size="11.5" fill="#475569" text-anchor="middle">변조한다</text>
+    <rect x="532" y="234" width="376" height="46" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="720" y="254" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">프록시를 거칠 필요가 없으므로 왼쪽 제약이 전부 사라진다</text>
+    <text x="720" y="272" font-size="11.5" fill="#166534" text-anchor="middle">대가: 전용 컴파일러·에이전트가 필요해 <tspan font-weight="700">빌드·실행 파이프라인이 복잡해진다</tspan></text>
+
+    <text x="480" y="322" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">이 문서의 주제는 ①번 안에서의 두 선택지다. AspectJ는 계열 자체가 다른 <tspan fill="#b91c1c">대조군</tspan>으로 쓴다.</text>
+  </svg>
+  <figcaption><b>대조군이 있어야 진단이 완성된다.</b> "AOP는 원래 <code>final</code>에 안 걸린다"가 아니라 <b>"프록시 방식이라서 안 걸린다 — 위빙 방식에는 그 제약이 없다"</b>고 말할 수 있어야 원인을 지목한 것이 된다.</figcaption>
+</figure>
+
+<div class="callout info">
+  <span class="t">비유 — 안내원 vs 담당자 교육</span>
+  <b>프록시는 담당자 앞에 안내원을 앉히는 방식</b>이고, <b>AspectJ는 담당자 본인을 교육시켜 스스로 기록하게 만드는 방식</b>이다. 안내원 방식의 약점(<b>담당자에게 직접 말을 걸면 기록이 안 남는다</b>)이 후자에는 <b>애초에 존재하지 않는다.</b>
+</div>
+
+<div class="callout trap">
+  <span class="t">가장 자주 나오는 혼동 — <code>@Aspect</code>를 쓰면 AspectJ를 쓰는 것인가</span>
+  <b>아니다.</b> 스프링 AOP는 AspectJ의 <b>애너테이션과 포인트컷 표현식 문법만 빌려왔다.</b> <code>@Aspect</code>, <code>@Around("execution(...)")</code>를 쓰고 있어도 <b>실제 엔진은 여전히 런타임 프록시</b>다 — <b>문법은 AspectJ, 동작은 프록시</b>라는 조합이다. 그래서 <code>@Aspect</code>를 쓰는 코드에도 <b>자기 호출·<code>final</code>·<code>private</code> 함정이 그대로 적용된다.</b>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. "원본인 척"하는 방법 — 자바에는 둘뿐이다</h2>
+
+<p>프록시가 성립하려면 반드시 만족해야 하는 조건이 하나 있다. <b>원본과 같은 타입으로 취급될 수 있어야 한다.</b> 이유는 단순하다 — <b>주입받는 쪽 코드가 이렇게 생겼기 때문</b>이다.</p>
+
+<pre><code><span class="kw">public class</span> OrderController {
+    <span class="kw">private final</span> OrderService orderService;   <span class="cm">// 이 변수에 "프록시"가 담겨야 한다</span>
+}</code></pre>
+
+<p>컨테이너가 프록시를 이 필드에 넣으려면 <b>프록시가 <code>OrderService</code>로 대입 가능</b>해야 한다. 자바에서 어떤 객체가 다른 타입으로 대입될 수 있는 경우는 <b>정확히 둘뿐</b>이다.</p>
+
+<figure>
+  <svg viewBox="0 0 960 258" role="img" aria-label="자바 타입 시스템에서 대입 가능한 경우가 둘뿐임을 보여주는 도식. 프록시가 OrderService 타입 변수에 담기려면 그 타입을 구현했거나 상속했거나 둘 중 하나여야 하며, 각각이 JDK 동적 프록시와 CGLIB에 대응한다.">
+    <defs>
+      <marker id="f3a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+    <rect x="300" y="16" width="360" height="52" rx="10" fill="#f1f5f9" stroke="#334155" stroke-width="1.6"/>
+    <text x="480" y="38" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">프록시가 <tspan class="mono">OrderService</tspan> 타입 변수에 담기려면?</text>
+    <text x="480" y="58" font-size="11.5" fill="#475569" text-anchor="middle">= 자바에서 "대입 가능(assignable)"해야 한다</text>
+
+    <path d="M420 68 L280 92" stroke="#2563eb" stroke-width="1.6" marker-end="url(#f3a)" fill="none"/>
+    <path d="M540 68 L680 92" stroke="#2563eb" stroke-width="1.6" marker-end="url(#f3a)" fill="none"/>
+
+    <rect x="60" y="98" width="380" height="120" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="250" y="124" font-size="14" font-weight="700" fill="#1d4ed8" text-anchor="middle">경우 ① 그 타입을 <tspan text-decoration="underline">구현</tspan>했다</text>
+    <text x="250" y="148" font-size="12" class="mono" fill="#1e3a8a" text-anchor="middle">class $Proxy0 implements OrderService</text>
+    <rect x="96" y="162" width="308" height="42" rx="8" fill="#fff" stroke="#2563eb"/>
+    <text x="250" y="182" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">JDK 동적 프록시</text>
+    <text x="250" y="198" font-size="11.5" fill="#475569" text-anchor="middle">인터페이스가 <tspan font-weight="700">반드시</tspan> 있어야 한다</text>
+
+    <rect x="520" y="98" width="380" height="120" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="710" y="124" font-size="14" font-weight="700" fill="#1d4ed8" text-anchor="middle">경우 ② 그 타입을 <tspan text-decoration="underline">상속</tspan>했다</text>
+    <text x="710" y="148" font-size="12" class="mono" fill="#1e3a8a" text-anchor="middle">class OrderService$$SpringCGLIB extends OrderService</text>
+    <rect x="556" y="162" width="308" height="42" rx="8" fill="#fff" stroke="#2563eb"/>
+    <text x="710" y="182" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">CGLIB</text>
+    <text x="710" y="198" font-size="11.5" fill="#475569" text-anchor="middle">클래스가 <tspan font-weight="700">상속 가능</tspan>해야 한다 (<tspan class="mono">final</tspan> 금지)</text>
+
+    <text x="480" y="242" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">선택지가 왜 하필 이 둘인지는 <tspan fill="#b91c1c">스프링이 정한 것이 아니라 자바 타입 시스템이 정한 것</tspan>이다.</text>
+  </svg>
+  <figcaption>이 도식이 <b>이 문서의 축</b>이다. 두 기술의 차이도, 두 기술의 함정도 전부 <b>"구현이냐 상속이냐"</b> 한 갈래에서 갈라져 나온다 — <b>구현 쪽은 "인터페이스가 없으면"</b>이 문제가 되고, <b>상속 쪽은 "<code>final</code>이면"</b>이 문제가 된다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>암기 장치 — "척하는 법은 둘뿐: 구현 아니면 상속"</h4>
+  <div class="rule"><b>구</b>현 → JDK 동적 프록시 (인터페이스 필요) &nbsp;·&nbsp; <b>상</b>속 → CGLIB (<code>final</code> 금지)</div>
+  <p style="margin-bottom:0" class="sub">면접에서 이 문장으로 시작하면 그다음 질문(<b>왜 인터페이스가 필수인가 / 왜 <code>final</code>이 문제인가</b>)에 <b>암기가 아니라 유도로</b> 답하게 된다.</p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. JDK 동적 프록시 — 인터페이스가 유일한 타입 통로</h2>
+
+<p>JDK 동적 프록시는 JDK에 내장된 <code>java.lang.reflect.Proxy</code>를 쓴다. 핵심 메서드는 <b>이것 하나</b>다.</p>
+
+<pre><code>OrderService proxy = (OrderService) Proxy.<span class="fn">newProxyInstance</span>(
+    classLoader,                       <span class="cm">// ① 만들어낸 클래스를 어디에 적재할지</span>
+<span class="ln-good">    <span class="kw">new</span> Class[]{OrderService.class},   <span class="cm">// ② "이 인터페이스들을 구현한 클래스를 만들어라"</span><span class="note">타입 정보는 여기서만 온다</span></span>
+    invocationHandler                  <span class="cm">// ③ 가로챈 호출을 어떻게 처리할지</span>
+);</code></pre>
+
+<p><code>newProxyInstance</code>는 <b>런타임에 새 클래스를 바이트코드로 찍어내는</b> 메서드다. 그리고 <b>그 클래스가 무슨 타입인지를 결정하는 정보는 ②번 인터페이스 배열이 유일하다.</b> 그러니 인과가 명확해진다.</p>
+
+<div class="memo green">
+  <h4>"인터페이스가 필수"의 진짜 이유 — 규칙이 아니라 인과</h4>
+  <div class="rule ok">인터페이스가 없다 → 배열이 빈다 → <b>아무 타입도 아닌 클래스</b>가 만들어진다 → <code>OrderService</code> 자리에 담길 수 없다</div>
+  <p style="margin-bottom:0"><b>"스프링이 그렇게 정해서"가 아니라, 타입 정보를 얻을 통로가 그것뿐이기 때문이다.</b> 이 차이를 말할 수 있으면 암기한 사람과 구분된다.</p>
+</div>
+
+<div class="codehead plain"><span class="tag">생성 결과</span> <code>Proxy.newProxyInstance</code>가 런타임에 만들어내는 클래스 (개념적 형태)</div>
+<pre><code><span class="ln-bad"><span class="kw">public final class</span> $Proxy0 <span class="kw">extends</span> java.lang.reflect.Proxy <span class="kw">implements</span> OrderService {<span class="note">이미 Proxy를 상속했다</span></span>
+
+    @Override
+    <span class="kw">public</span> Order <span class="fn">order</span>(OrderRequest request) {
+        <span class="cm">// 모든 메서드가 이 한 줄로 수렴한다 — 어떤 메서드가 불렸는지를</span>
+        <span class="cm">// Method 객체로 넘겨주고, 실제 처리는 핸들러에 위임한다.</span>
+        <span class="kw">return</span> (Order) h.invoke(<span class="kw">this</span>, ORDER_METHOD, <span class="kw">new</span> Object[]{request});
+    }
+}</code></pre>
+
+<div class="callout trap">
+  <span class="t">여기서 7절의 함정이 이미 결정된다 — 단일 상속의 벽</span>
+  생성된 클래스는 <b>이미 <code>java.lang.reflect.Proxy</code>를 상속하고 있다.</b> 자바는 <b>단일 상속</b>이므로, 이 클래스가 <code>OrderServiceImpl</code>을 추가로 상속할 자리는 <b>구조적으로 남아 있지 않다.</b> 즉 <b>JDK 프록시는 인터페이스의 형제일 뿐, 구현 클래스와는 아무 혈연이 없는 남남</b>이다.
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. CGLIB — 원본을 상속한 자식 클래스를 찍어낸다</h2>
+
+<p>CGLIB은 <b>바이트코드 조작 라이브러리</b>다. 원래는 별도 의존성이었지만, <b>스프링이 이것을 자기 안에 재패키징해 넣었으므로 따로 추가할 필요가 없다.</b> CGLIB이 만드는 것은 <b>원본 클래스를 상속한 자식 클래스</b>다.</p>
+
+<div class="codehead plain"><span class="tag">생성 결과</span> CGLIB이 런타임에 생성하는 클래스 (개념적 형태)</div>
+<pre><code><span class="cm">// 실제 이름은 OrderService$$SpringCGLIB$$0 처럼 붙는다 (스프링 6 기준).</span>
+<span class="ln-good"><span class="kw">public class</span> OrderService$$SpringCGLIB$$0 <span class="kw">extends</span> OrderService {<span class="note">대상 클래스를 그대로 extends</span></span>
+
+    <span class="kw">private final</span> Object target;   <span class="cm">// 원본 인스턴스 — super가 아니라 별도 객체다</span>
+
+    @Override
+    <span class="kw">public</span> Order <span class="fn">order</span>(OrderRequest request) {
+        <span class="cm">// 전작업 → 원본 호출 → 후작업</span>
+        <span class="kw">return</span> (Order) interceptor.intercept(target, ORDER_METHOD, <span class="kw">new</span> Object[]{request});
+    }
+}</code></pre>
+
+<div class="memo red">
+  <h4>오해 방지 — 상속은 "타입을 맞추기 위한 수단"일 뿐이다</h4>
+  <p style="margin-bottom:0">CGLIB 프록시가 <code>extends</code>를 쓴다고 해서 실제 실행이 <code>super.order()</code>인 것이 <b>아니다.</b> 실행은 <b>별도로 존재하는 원본 인스턴스(<code>target</code>)에 대한 위임</b>이다. <b>상속은 "같은 타입인 척"하기 위한 수단</b>일 뿐이라는 이 구분이, <b>"CGLIB은 상속이니 자기 호출도 잡히지 않나?"</b>라는 재반문을 끊는 결정적 근거가 된다(8-5절 · 11번 문서).</p>
+</div>
+
+<h3>6-1. 생성자는 몇 번 호출되나 <span class="badge bonus">가산점</span></h3>
+
+<p>CGLIB이 자식 클래스를 만든다는 사실에서 자연스럽게 나오는 의문이 있다. <b>자식 인스턴스를 만들려면 부모 생성자가 먼저 돌아야 하는데, 그러면 원본 생성자가 두 번 실행되는 것 아닌가?</b> 원본 인스턴스 #1을 만들 때 한 번, 프록시 인스턴스 #2를 만들 때 또 한 번.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>스프링 4.0 이전 — 실제로 그랬다</h4>
+    <ul>
+      <li>프록시 대상 클래스에 <b>기본 생성자가 반드시 있어야</b> 했다</li>
+      <li>생성자에 <b>로깅·카운터 증가 같은 부수 효과</b>를 넣어두면 그것이 <b>두 번 실행</b>됐다</li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>스프링 4.0부터 — Objenesis로 우회</h4>
+    <ul>
+      <li><b>Objenesis</b>(역시 스프링에 재패키징돼 내장)는 <b>생성자를 거치지 않고 인스턴스만 확보</b>하는 JVM별 우회 기법 모음이다</li>
+      <li>덕분에 프록시를 만들 때 <b>생성자가 아예 한 번도 호출되지 않고</b>, 기본 생성자 요구도 사라졌다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout warn">
+  <span class="t">단서를 함께 말해야 답이 완성된다</span>
+  공식 문서는 <b>"JVM이 생성자 우회를 허용하지 않는 환경에서는 여전히 두 번 호출될 수 있고, 그 경우 스프링 AOP가 디버그 로그를 남긴다"</b>는 단서를 달아둔다. 그래서 결론은 <b>"생성자는 절대 두 번 안 불린다"가 아니라 "생성자에 부수 효과를 두지 않는 것이 안전하다"</b>가 된다.
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 대조표 · 선택 규칙 · 부트가 CGLIB으로 갈아탄 이유</h2>
+
+<h3>7-1. 한눈에 보는 대조표</h3>
+
+<div class="scroll">
+<table>
+  <caption>모든 행이 <b>"구현이냐 상속이냐"</b> 한 갈래에서 파생된다. 표를 외우는 것이 아니라 <b>1행에서 나머지를 유도</b>할 수 있어야 한다.</caption>
+  <thead><tr><th style="width:210px"></th><th>JDK 동적 프록시</th><th>CGLIB</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td>같은 타입인 척하는 방법</td><td>대상의 <b>인터페이스를 구현</b></td><td>대상 클래스를 <b>상속</b>한 자식 생성</td></tr>
+    <tr><td>타입 정보를 어디서 얻나</td><td><code>newProxyInstance</code>에 넘긴 <b>인터페이스 배열</b></td><td><b>대상 클래스 그 자체</b></td></tr>
+    <tr><td>필요한 것</td><td>인터페이스가 <b>반드시</b> 있어야 함</td><td>클래스만 있으면 됨</td></tr>
+    <tr><td>구현 수단</td><td>JDK 내장 (<code>java.lang.reflect.Proxy</code>)</td><td>바이트코드 생성 (스프링이 재패키징해 내장)</td></tr>
+    <tr><td>캐스팅 가능한 타입</td><td class="bad">인터페이스 타입으로만</td><td class="good">인터페이스 + 구체 클래스 타입</td></tr>
+    <tr><td>못 만드는 경우</td><td class="bad">인터페이스가 없을 때</td><td class="bad"><code>final</code> 클래스일 때</td></tr>
+    <tr><td>부가 기능이 빠지는 메서드</td><td>인터페이스에 <b>선언되지 않은</b> 메서드</td><td><code>final</code> · <code>private</code> 메서드</td></tr>
+    <tr><td>런타임 클래스 이름 (진단용)</td><td><code>jdk.proxy2.$Proxy123</code> 형태</td><td><code>OrderService$$SpringCGLIB$$0</code> 형태</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>7-2. 선택 규칙과 스프링 부트의 기본값</h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4>스프링 프레임워크의 원래 규칙</h4>
+    <ul>
+      <li>대상 빈이 <b>인터페이스를 하나라도 구현</b>하면 → <b>JDK 동적 프록시</b></li>
+      <li>하나도 구현하지 않으면 → <b>CGLIB</b></li>
+      <li><code>proxyTargetClass = true</code>를 주면 <b>인터페이스가 있어도 CGLIB 강제</b></li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>스프링 부트 — 이 값을 처음부터 <code>true</code>로 켜둔다</h4>
+    <ul>
+      <li>설정 키: <code>spring.aop.proxy-target-class=true</code> <b>(부트 기본값)</b></li>
+      <li>즉 부트 애플리케이션에서 만나는 프록시는 <b>인터페이스가 있든 없든 거의 전부 CGLIB</b>이다</li>
+    </ul>
+  </div>
+</div>
+
+<pre><code>@EnableAspectJAutoProxy(proxyTargetClass = <span class="kw">true</span>)      <span class="cm">// AOP 전반</span>
+@EnableTransactionManagement(proxyTargetClass = <span class="kw">true</span>)  <span class="cm">// 트랜잭션</span></code></pre>
+
+<h3>7-3. 부트가 프레임워크 기본값을 뒤집은 이유 — 타입 관계 하나 때문이다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 448" role="img" aria-label="JDK 프록시와 CGLIB 프록시의 타입 관계 비교 도식. 왼쪽 JDK 프록시는 java.lang.reflect.Proxy를 상속하고 OrderService 인터페이스를 구현하므로 OrderServiceImpl과는 형제 관계이며 구현 클래스 타입으로 대입할 수 없어 BeanNotOfRequiredTypeException과 ClassCastException이 난다. 오른쪽 CGLIB 프록시는 대상 클래스를 상속한 자식이므로 인터페이스 타입으로도 구체 클래스 타입으로도 대입된다.">
+    <defs>
+      <marker id="f4r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="f4g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="f4s" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="none" stroke="#64748b" stroke-width="1.2"/></marker>
+    </defs>
+
+    <rect x="16" y="34" width="536" height="398" rx="14" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="284" y="60" font-size="14.5" font-weight="700" fill="#b91c1c" text-anchor="middle">JDK 동적 프록시 — 인터페이스만 공유하는 "형제"</text>
+
+    <rect x="180" y="76" width="208" height="46" rx="9" fill="#fff" stroke="#64748b" stroke-width="1.6"/>
+    <text x="284" y="94" font-size="11.5" fill="#475569" text-anchor="middle">«interface»</text>
+    <text x="284" y="112" font-size="12.5" font-weight="700" class="mono" fill="#334155" text-anchor="middle">OrderService</text>
+
+    <rect x="44" y="182" width="200" height="54" rx="9" fill="#fff" stroke="#64748b" stroke-width="1.6"/>
+    <text x="144" y="204" font-size="12.5" font-weight="700" class="mono" fill="#334155" text-anchor="middle">OrderServiceImpl</text>
+    <text x="144" y="222" font-size="11" fill="#64748b" text-anchor="middle">내가 만든 구현 클래스</text>
+
+    <rect x="316" y="170" width="220" height="78" rx="9" fill="#fff" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="426" y="190" font-size="12.5" font-weight="700" class="mono" fill="#b91c1c" text-anchor="middle">jdk.proxy2.$Proxy123</text>
+    <text x="426" y="210" font-size="11" class="mono" fill="#475569" text-anchor="middle">extends java.lang.reflect.Proxy</text>
+    <text x="426" y="228" font-size="11" class="mono" fill="#475569" text-anchor="middle">implements OrderService</text>
+    <text x="426" y="243" font-size="10.5" fill="#b91c1c" text-anchor="middle">단일 상속 — Impl을 상속할 자리가 없다</text>
+
+    <path d="M164 182 L232 126" stroke="#64748b" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#f4s)" fill="none"/>
+    <path d="M406 170 L336 126" stroke="#64748b" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#f4s)" fill="none"/>
+    <text x="176" y="152" font-size="11" fill="#475569">implements</text>
+    <text x="352" y="150" font-size="11" fill="#475569">implements</text>
+
+    <path d="M250 210 L310 210" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" fill="none"/>
+    <text x="280" y="200" font-size="18" font-weight="700" fill="#dc2626" text-anchor="middle">✕</text>
+    <text x="284" y="272" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">부모-자식이 아니라 <tspan text-decoration="underline">형제</tspan> — 서로 대입되지 않는다</text>
+
+    <rect x="44" y="288" width="492" height="126" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="60" y="310" font-size="11.5" class="mono" fill="#334155">private final OrderServiceImpl orderService;  <tspan fill="#b91c1c" font-weight="700">// 구현 클래스로 주입</tspan></text>
+    <text x="60" y="332" font-size="11.5" font-weight="700" fill="#b91c1c">→ BeanNotOfRequiredTypeException (기동 실패)</text>
+    <text x="60" y="360" font-size="11.5" class="mono" fill="#334155">(OrderServiceImpl) context.getBean(OrderService.class)</text>
+    <text x="60" y="382" font-size="11.5" font-weight="700" fill="#b91c1c">→ ClassCastException</text>
+    <text x="60" y="404" font-size="11.5" fill="#7f1d1d">해법: 인터페이스 타입으로 받거나, <tspan font-weight="700">proxyTargetClass=true</tspan></text>
+
+    <rect x="568" y="34" width="536" height="398" rx="14" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.6"/>
+    <text x="836" y="60" font-size="14.5" font-weight="700" fill="#166534" text-anchor="middle">CGLIB — 대상 클래스를 상속한 "자식"</text>
+
+    <rect x="716" y="88" width="240" height="60" rx="9" fill="#fff" stroke="#64748b" stroke-width="1.6"/>
+    <text x="836" y="110" font-size="12.5" font-weight="700" class="mono" fill="#334155" text-anchor="middle">OrderService</text>
+    <text x="836" y="130" font-size="11" fill="#64748b" text-anchor="middle">인터페이스여도 되고, 구체 클래스여도 된다</text>
+
+    <rect x="686" y="212" width="300" height="62" rx="9" fill="#fff" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="836" y="234" font-size="12" font-weight="700" class="mono" fill="#166534" text-anchor="middle">OrderService$$SpringCGLIB$$0</text>
+    <text x="836" y="256" font-size="11" class="mono" fill="#475569" text-anchor="middle">extends OrderService</text>
+
+    <path d="M836 212 L836 152" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f4g)" fill="none"/>
+    <text x="852" y="186" font-size="11.5" font-weight="700" fill="#166534">extends (자식이 된다)</text>
+
+    <text x="836" y="300" font-size="12" font-weight="700" fill="#166534" text-anchor="middle">자식이므로 <tspan text-decoration="underline">부모 타입 변수에 그대로 대입된다</tspan></text>
+
+    <rect x="596" y="316" width="480" height="98" rx="10" fill="#fff" stroke="#bbf7d0"/>
+    <text x="612" y="338" font-size="11.5" class="mono" fill="#334155">private final OrderService orderService;      <tspan fill="#166534" font-weight="700">// OK</tspan></text>
+    <text x="612" y="360" font-size="11.5" class="mono" fill="#334155">private final OrderServiceImpl orderService;  <tspan fill="#166534" font-weight="700">// OK</tspan></text>
+    <text x="612" y="386" font-size="11.5" font-weight="700" fill="#166534">→ 타입 주입 사고가 원천적으로 사라진다 (부트 기본값의 근거 ①)</text>
+    <text x="612" y="406" font-size="11.5" fill="#b45309">대가: 상속이므로 <tspan font-weight="700" class="mono">final</tspan>이면 막힌다 → 8절</text>
+  </svg>
+  <figcaption><b>부트가 기본값을 바꾼 덕분에 왼쪽 사고가 "사라진 것"이지, 프록시 구조가 바뀐 것이 아니다.</b> 지금도 왼쪽을 만나는 경우는 셋이다 — <b><code>spring.aop.proxy-target-class=false</code>로 되돌린 프로젝트</b>, <b>부트 없이 프레임워크만 쓰면서 <code>proxyTargetClass</code>를 지정하지 않은 설정</b>, <b>일부 라이브러리가 자기 기능을 위해 JDK 방식으로 프록시를 따로 씌우는 경우.</b></figcaption>
+</figure>
+
+<div class="codehead bad"><span class="tag">함정</span> 주니어가 반드시 한 번은 밟는다 — 코드는 멀쩡한데 기동이 실패한다</div>
+<pre><code>@RestController
+@RequiredArgsConstructor
+<span class="kw">public class</span> OrderController {
+
+    <span class="cm">// "구현체가 하나뿐이니 구체 타입이 더 명확하지 않나?"는 자연스러운 판단이고,</span>
+    <span class="cm">// 프록시가 없다면 실제로 아무 문제가 없다.</span>
+<span class="ln-bad">    <span class="kw">private final</span> OrderServiceImpl orderService;   <span class="cm">// 인터페이스가 아니라 구현 클래스 타입</span><span class="note">JDK 프록시면 여기서 터진다</span></span>
+}</code></pre>
+<pre><code><span class="cm">org.springframework.beans.factory.BeanNotOfRequiredTypeException:</span>
+  Bean named <span class="st">'orderServiceImpl'</span> is expected to be of type
+  <span class="st">'com.example.OrderServiceImpl'</span> but was actually of type <span class="st">'jdk.proxy2.$Proxy123'</span></code></pre>
+
+<div class="memo green">
+  <h4>부트가 <code>proxyTargetClass=true</code>를 기본값으로 삼은 근거는 둘이다</h4>
+  <div class="grid g2" style="margin-top:6px">
+    <div class="tile ok"><div class="k" style="font-family:inherit">① 타입 주입 사고를 원천 차단</div><div class="d">CGLIB 프록시는 <code>OrderServiceImpl</code>의 <b>자식</b>이므로 <b>인터페이스 타입으로도, 구현 클래스 타입으로도</b> 주입된다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">② 인터페이스 없는 빈도 프록시해야 한다</div><div class="d">요즘 실무는 <b>구현체가 하나뿐인 서비스에 인터페이스를 억지로 만들지 않는</b> 쪽으로 기울었다. JDK 방식만 쓴다면 그런 빈에는 <code>@Transactional</code>을 <b>아예 걸 수 없다.</b></div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">함정을 아는 것과, <b>그 함정이 프레임워크 기본값을 바꿔놓은 역사를 아는 것</b>은 다르다. 후자까지 말하면 답이 한 칸 올라간다.</p>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 함정 지도 — 시끄러운 실패와 조용한 실패</h2>
+
+<p>부트가 CGLIB으로 갈아탄 대가는 분명하다. <b>상속으로 동작하니, 상속을 막는 키워드가 곧 함정</b>이 된다. 다만 함정을 <b>나열</b>하는 것과 <b>유도</b>하는 것은 다르다 — 아래 플로우차트는 2절의 한 문장에서 <b>모든 함정을 기계적으로 뽑아낸 것</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 420" role="img" aria-label="부가 기능이 안 걸릴 때의 진단 플로우차트. 첫째 프록시가 만들어졌는가를 묻고 아니면 final 클래스나 빈이 아닌 객체가 원인으로 기동 시점에 드러난다. 둘째 프록시가 그 메서드를 오버라이드했는가를 묻고 아니면 final 메서드, private 메서드, 다른 패키지의 패키지 프라이빗 메서드, JDK 프록시에서 인터페이스에 선언되지 않은 메서드가 원인이며 조용히 미적용된다. 셋째 이 호출이 프록시를 통과했는가를 묻고 아니면 자기 호출이 원인이며 역시 조용히 미적용된다. 셋 다 통과해야 부가 기능이 적용된다.">
+    <defs>
+      <marker id="f5a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="f5r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="f5g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"@Transactional을 붙였는데 안 먹는다" — 세 질문으로 끝나는 진단</text>
+
+    <rect x="16" y="146" width="152" height="72" rx="10" fill="#f1f5f9" stroke="#334155" stroke-width="1.6"/>
+    <text x="92" y="176" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">부가 기능이</text>
+    <text x="92" y="196" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">안 걸린다</text>
+
+    <rect x="206" y="140" width="196" height="84" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="304" y="168" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">① 프록시가</text>
+    <text x="304" y="188" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">만들어졌는가?</text>
+    <text x="304" y="208" font-size="11" fill="#64748b" text-anchor="middle">= 컨테이너가 만든 빈인가</text>
+
+    <rect x="442" y="140" width="196" height="84" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="540" y="164" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">② 프록시가 이 메서드를</text>
+    <text x="540" y="184" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">오버라이드했는가?</text>
+    <text x="540" y="206" font-size="11" fill="#64748b" text-anchor="middle">= 가로챌 통로가 있는가</text>
+
+    <rect x="678" y="140" width="196" height="84" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="776" y="164" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">③ 이 호출이 프록시를</text>
+    <text x="776" y="184" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">통과했는가?</text>
+    <text x="776" y="206" font-size="11" fill="#64748b" text-anchor="middle">= 동선이 데스크를 지났는가</text>
+
+    <rect x="914" y="146" width="184" height="72" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="1006" y="176" font-size="13" font-weight="700" fill="#166534" text-anchor="middle">부가 기능 적용 ✓</text>
+    <text x="1006" y="198" font-size="11" fill="#166534" text-anchor="middle">셋 다 "예"일 때만</text>
+
+    <g stroke="#2563eb" stroke-width="1.8" marker-end="url(#f5a)" fill="none">
+      <path d="M168 182 L202 182"/><path d="M402 182 L438 182"/><path d="M638 182 L674 182"/>
+    </g>
+    <path d="M874 182 L910 182" stroke="#16a34a" stroke-width="1.8" marker-end="url(#f5g)" fill="none"/>
+    <g font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">
+      <text x="420" y="174">예</text><text x="656" y="174">예</text>
+    </g>
+    <text x="892" y="174" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">예</text>
+
+    <g stroke="#dc2626" stroke-width="1.8" marker-end="url(#f5r)" fill="none">
+      <path d="M304 224 L304 256"/><path d="M540 224 L540 256"/><path d="M776 224 L776 256"/>
+    </g>
+    <g font-size="11.5" font-weight="700" fill="#dc2626">
+      <text x="312" y="246">아니오</text><text x="548" y="246">아니오</text><text x="784" y="246">아니오</text>
+    </g>
+
+    <rect x="190" y="260" width="230" height="140" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="305" y="282" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">원인</text>
+    <text x="305" y="302" font-size="11.5" fill="#7f1d1d" text-anchor="middle"><tspan class="mono" font-weight="700">final</tspan> 클래스 (상속 불가)</text>
+    <text x="305" y="320" font-size="11.5" fill="#7f1d1d" text-anchor="middle"><tspan class="mono" font-weight="700">new</tspan>로 만든 객체 (빈이 아님)</text>
+    <rect x="206" y="332" width="198" height="54" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="305" y="352" font-size="12" font-weight="700" fill="#166534" text-anchor="middle">시끄러운 실패</text>
+    <text x="305" y="372" font-size="11" fill="#475569" text-anchor="middle">기동 즉시 중단 — 배포될 기회가 없다</text>
+
+    <rect x="425" y="260" width="230" height="140" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="540" y="282" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">원인</text>
+    <text x="540" y="300" font-size="11.5" fill="#7f1d1d" text-anchor="middle"><tspan class="mono" font-weight="700">final</tspan> 메서드 · <tspan class="mono" font-weight="700">private</tspan> 메서드</text>
+    <text x="540" y="316" font-size="11.5" fill="#7f1d1d" text-anchor="middle">다른 패키지의 패키지 프라이빗</text>
+    <text x="540" y="332" font-size="11.5" fill="#7f1d1d" text-anchor="middle">(JDK면) 인터페이스 미선언 메서드</text>
+    <rect x="441" y="340" width="198" height="46" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="540" y="358" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">조용한 실패</text>
+    <text x="540" y="376" font-size="11" fill="#475569" text-anchor="middle">기동 OK · 테스트 OK · 그 메서드만 샌다</text>
+
+    <rect x="661" y="260" width="230" height="140" rx="10" fill="#fef2f2" stroke="#fecaca" stroke-width="1.6"/>
+    <text x="776" y="282" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">원인</text>
+    <text x="776" y="302" font-size="11.5" fill="#7f1d1d" text-anchor="middle">자기 호출 <tspan class="mono" font-weight="700">this.inner()</tspan></text>
+    <text x="776" y="320" font-size="11.5" fill="#7f1d1d" text-anchor="middle">프록시가 호출 경로에서 빠진다</text>
+    <rect x="677" y="332" width="198" height="54" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="776" y="352" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">조용한 실패</text>
+    <text x="776" y="372" font-size="11" fill="#475569" text-anchor="middle">실무 사고 빈도는 이쪽이 가장 높다</text>
+
+    <rect x="914" y="260" width="190" height="140" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="5 4"/>
+    <text x="1009" y="284" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">①은 "만들 수 있나"</text>
+    <text x="1009" y="306" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">②는 "감쌀 수 있나"</text>
+    <text x="1009" y="328" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">③은 "지나갔나"</text>
+    <text x="1009" y="356" font-size="11" fill="#64748b" text-anchor="middle">①②는 <tspan font-weight="700">CGLIB의 상속 제약</tspan></text>
+    <text x="1009" y="374" font-size="11" fill="#64748b" text-anchor="middle">③은 <tspan font-weight="700">양쪽 공통</tspan></text>
+  </svg>
+  <figcaption>실무에서 <b>"<code>@Transactional</code>이 안 먹어요"</b>를 받으면 이 순서로 좁힌다. <b>①은 기동 로그가 답해주고</b>, <b>②는 클래스·메서드 선언부를 보면 즉시 판정</b>되며, <b>③은 호출부를 따라가야</b> 보인다 — 그래서 <b>③이 가장 늦게 발견된다.</b></figcaption>
+</figure>
+
+<h3>8-1. 상속의 대가 ① — <code>final</code> 클래스는 시끄럽게 죽는다</h3>
+
+<p>자바에서 상속을 금지하는 키워드가 <code>final</code>이다. CGLIB이 상속으로 동작하므로, <code>final</code> 클래스는 <b>자식 클래스를 만들 수 없어 프록시 생성 자체가 실패한다.</b></p>
+
+<div class="codehead bad"><span class="tag">문제</span> 클래스에 <code>final</code> — CGLIB이 상속할 수 없다</div>
+<pre><code>@Service
+<span class="ln-bad"><span class="kw">public final class</span> SettlementService {<span class="note">여기 final 하나로 기동이 죽는다</span></span>
+
+    @Transactional
+    <span class="kw">public void</span> <span class="fn">settle</span>(Long orderId) { <span class="cm">/* ... */</span> }
+}
+<span class="cm">// 기동 시점에 프록시 생성이 실패하며 애플리케이션이 뜨지 않는다.</span></code></pre>
+
+<p>이 실패는 <b>기동 중에 즉시 드러난다.</b> 로컬에서 한 번 실행하면 바로 알 수 있고, CI에서도 <b>컨텍스트 로딩 테스트에 걸린다.</b> 고치는 방법도 <code>final</code>을 떼는 것 하나뿐이라 <b>고민할 여지가 없다.</b></p>
+
+<h3>8-2. 상속의 대가 ② — <code>final</code> 메서드는 조용히 샌다</h3>
+
+<p>같은 <code>final</code>인데 <b>붙는 위치가 메서드로 바뀌면 증상이 완전히 달라진다.</b> 클래스는 상속 가능하므로 <b>프록시는 정상적으로 만들어진다.</b> 다만 <b>그 메서드만 오버라이드할 수 없다.</b></p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">문제</span> 프록시는 만들어지는데 이 메서드만 샌다</div>
+<pre><code>@Service
+<span class="kw">public class</span> SettlementService {
+
+    @Transactional
+<span class="ln-bad">    <span class="kw">public final void</span> <span class="fn">settle</span>(Long orderId) {<span class="note">오버라이드 불가</span></span>
+        <span class="cm">// 컴파일도 되고 기동도 되고 실행도 된다.</span>
+        <span class="cm">// 트랜잭션만 없다.</span>
+    }
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">고침</span> <code>final</code>을 뗀다 — 그것뿐이다</div>
+<pre><code>@Service
+<span class="kw">public class</span> SettlementService {
+
+    @Transactional
+<span class="ln-good">    <span class="kw">public void</span> <span class="fn">settle</span>(Long orderId) { <span class="cm">/* ... */</span> }<span class="note">프록시가 오버라이드할 수 있다</span></span>
+}
+<span class="cm">// 프록시가 오버라이드할 수 있어야</span>
+<span class="cm">// 부가 기능이 걸린다.</span></code></pre>
+  </div>
+</div>
+
+<div class="scroll">
+<table>
+  <caption>같은 키워드, <b>붙는 위치만 다른데</b> 증상·발견 시점·위험도가 전부 갈린다.</caption>
+  <thead><tr><th style="width:150px">붙은 위치</th><th style="width:110px">프록시 생성</th><th style="width:150px">부가 기능</th><th style="width:170px">발견 시점</th><th>증상</th></tr></thead>
+  <tbody>
+    <tr><td><code>final</code> 클래스</td><td class="bad">실패</td><td class="dash">—</td><td class="good">기동 즉시</td><td>애플리케이션이 <b>아예 안 뜬다</b></td></tr>
+    <tr class="hl"><td><code>final</code> 메서드</td><td class="good">성공</td><td class="bad">그 메서드만 미적용</td><td class="bad">정합성 사고가 난 뒤</td><td><b>아무 신호 없이</b> 트랜잭션만 없다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 276" role="img" aria-label="발견 시점 타임라인. 왼쪽 기동 시점에서는 final 클래스로 인한 프록시 생성 실패와 JDK 프록시에서 구현 클래스 주입 실패가 즉시 드러난다. 가운데 CI 테스트와 운영 정상 경로 구간에서는 아무 신호가 없다. 오른쪽 운영 실패 경로에서야 final 메서드, private 메서드, 자기 호출로 인한 미적용이 데이터가 반쯤 커밋된 형태로 발견된다.">
+    <defs>
+      <marker id="f6a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker>
+      <marker id="f6r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 "미적용"인데 왜 위험도가 다른가 — 발견되기까지의 침묵</text>
+
+    <path d="M50 168 L1080 168" stroke="#334155" stroke-width="2" marker-end="url(#f6a)" fill="none"/>
+    <g stroke="#334155" stroke-width="1.5">
+      <path d="M180 160 L180 176"/><path d="M470 160 L470 176"/><path d="M720 160 L720 176"/><path d="M960 160 L960 176"/>
+    </g>
+    <g font-size="12" font-weight="700" fill="#334155" text-anchor="middle">
+      <text x="180" y="196">기동</text>
+      <text x="470" y="196">CI · 테스트</text>
+      <text x="720" y="196">운영 (정상 경로)</text>
+      <text x="960" y="196">운영 (실패 경로)</text>
+    </g>
+    <g font-size="10.5" fill="#64748b" text-anchor="middle">
+      <text x="470" y="212">통과한다</text>
+      <text x="720" y="212">결과가 같아 티가 안 난다</text>
+      <text x="960" y="212">롤백돼야 할 때 롤백이 안 된다</text>
+    </g>
+
+    <rect x="46" y="44" width="272" height="96" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="182" y="66" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">좋은 실패 (fail-fast)</text>
+    <text x="182" y="88" font-size="11.5" fill="#166534" text-anchor="middle"><tspan class="mono" font-weight="700">final</tspan> 클래스 → 프록시 생성 실패</text>
+    <text x="182" y="106" font-size="11.5" fill="#166534" text-anchor="middle">구현 클래스 주입(JDK) → <tspan class="mono">BeanNotOfRequiredType</tspan></text>
+    <text x="182" y="128" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">배포될 기회 자체가 없다</text>
+    <path d="M182 140 L182 160" stroke="#16a34a" stroke-width="1.6" fill="none"/>
+
+    <rect x="806" y="36" width="278" height="112" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="945" y="58" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">나쁜 실패 (조용한 미적용)</text>
+    <text x="945" y="78" font-size="11.5" fill="#7f1d1d" text-anchor="middle"><tspan class="mono" font-weight="700">final</tspan> 메서드 · <tspan class="mono" font-weight="700">private</tspan> 메서드 · <tspan font-weight="700">자기 호출</tspan></text>
+    <text x="945" y="98" font-size="11.5" fill="#7f1d1d" text-anchor="middle">컴파일 OK · 기동 OK · 테스트 OK</text>
+    <text x="945" y="120" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">데이터가 반쯤 커밋된 뒤에야 발견</text>
+    <text x="945" y="138" font-size="10.5" fill="#7f1d1d" text-anchor="middle">그때는 이미 복구 비용이 붙는다</text>
+    <path d="M945 148 L945 160" stroke="#dc2626" stroke-width="1.6" fill="none"/>
+
+    <path d="M330 118 L800 118" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#f6r)" fill="none"/>
+    <text x="565" y="108" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">침묵 구간 — 아무 신호가 없다</text>
+    <text x="565" y="136" font-size="11.5" fill="#7f1d1d" text-anchor="middle">예외가 나지 않는 정상 경로에서는 <tspan font-weight="700">트랜잭션 유무와 결과가 같다</tspan></text>
+
+    <text x="560" y="248" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">장애의 악질성은 에러의 크기가 아니라 <tspan text-decoration="underline">발견되기까지의 침묵</tspan>으로 결정된다.</text>
+    <text x="560" y="268" font-size="11.5" fill="#475569" text-anchor="middle">이 기준으로 보면 <tspan class="mono" font-weight="700">final</tspan> 클래스는 <tspan font-weight="700" fill="#166534">좋은 실패</tspan>, <tspan class="mono" font-weight="700">final</tspan> 메서드는 <tspan font-weight="700" fill="#b91c1c">나쁜 실패</tspan>다.</text>
+  </svg>
+  <figcaption><b>"둘 중 뭐가 더 위험한가"라는 질문의 정답이 직관과 반대인 이유</b>가 이 그림이다. <code>final</code> 클래스는 <b>기동이 실패하니 배포되지 못한다</b> — 즉 사고가 될 기회 자체가 없다. 반면 <code>final</code> 메서드는 <b>멀쩡히 배포되어 조용히 돈다.</b></figcaption>
+</figure>
+
+<h3>8-3. <code>private</code>·패키지 프라이빗, 그리고 코틀린</h3>
+
+<p>오버라이드가 안 되는 메서드는 <code>final</code>만이 아니다. <b>스프링 공식 문서가 CGLIB의 제약으로 명시하는 목록</b>은 다음과 같다.</p>
+
+<div class="memo red">
+  <h4>CGLIB 제약 4종 — 암기법 "클 · 메 · 프 · 패"</h4>
+  <div class="rule red"><b>클</b>래스 <code>final</code> · <b>메</b>서드 <code>final</code> · <b>프</b>라이빗 메서드 · <b>패</b>키지 프라이빗(다른 패키지의 부모 메서드)</div>
+  <div class="scroll" style="margin-bottom:0">
+  <table>
+    <thead><tr><th style="width:230px">제약</th><th style="width:130px">프록시 생성</th><th>왜 안 되나</th></tr></thead>
+    <tbody>
+      <tr><td><code>final</code> <b>클</b>래스</td><td class="bad">실패</td><td>상속 자체가 금지되어 <b>자식 클래스를 만들 수 없다</b></td></tr>
+      <tr><td><code>final</code> <b>메</b>서드</td><td class="good">성공</td><td>오버라이드할 수 없어 <b>그 메서드만 부가 기능이 빠진다</b></td></tr>
+      <tr><td><code>private</code> <b>메서드(프</b>라이빗)</td><td class="good">성공</td><td><b>오버라이드 대상이 아니므로</b> 가로챌 수 없다</td></tr>
+      <tr><td>다른 패키지의 <b>패</b>키지 프라이빗</td><td class="good">성공</td><td>사실상 <code>private</code>처럼 취급되어 <b>적용되지 않는다</b></td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="callout trap">
+  <span class="t"><code>private</code>은 어느 프록시 방식으로도 구제되지 않는다</span>
+  <code>private</code>은 <b>JDK 방식에서도 당연히 불가능</b>하다 — <b>인터페이스에 <code>private</code> 메서드를 선언할 수 없으니 프록시가 가로챌 통로 자체가 없다.</b> 그래서 <code>@Transactional</code>을 <code>private</code> 메서드에 붙이는 것은 <b>어떤 설정으로도 살릴 수 없는</b> 유일한 케이스다.
+</div>
+
+<div class="callout warn">
+  <span class="t">코틀린에서 이 함정이 유난히 자주 터지는 이유</span>
+  <b>코틀린은 클래스와 메서드가 기본적으로 <code>final</code>이다.</b> 자바에서 <code>final</code>을 붙이는 것은 <b>의식적인 행위</b>지만, 코틀린에서는 <b>아무것도 안 쓰면 <code>final</code>이 된다.</b> 그래서 <code>open</code> 키워드를 붙이거나, <b>스프링 애너테이션이 달린 클래스를 자동으로 열어주는 <code>kotlin-spring</code>(allopen) 컴파일러 플러그인</b>을 반드시 쓴다. 스프링 이니셜라이저가 코틀린 프로젝트에 이 플러그인을 <b>기본 포함</b>시키는 것도 이 때문이다.
+</div>
+
+<h3>8-4. 양쪽 공통의 대가 — 프록시를 통과하지 않은 호출</h3>
+
+<p>지금까지의 함정은 <b>"프록시가 그 메서드를 감쌀 수 있는가"</b>의 문제였다. 마지막 함정은 성격이 다르다. <b>프록시가 멀쩡히 그 메서드를 감쌌는데도 부가 기능이 안 걸리는 경우</b>가 있다.</p>
+
+<figure>
+  <svg viewBox="0 0 960 296" role="img" aria-label="자기 호출 도식. 컨트롤러가 프록시 객체의 order 메서드를 호출하면 부가 기능이 걸린 뒤 원본 객체에 위임된다. 그러나 원본 객체 안에서 this.inner를 호출하면 그 호출은 원본 객체 내부에서 원본 객체로 가므로 프록시를 통과하지 않고 부가 기능이 빠진다.">
+    <defs>
+      <marker id="f7a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="f7r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <rect x="16" y="118" width="106" height="60" rx="9" fill="#f1f5f9" stroke="#334155" stroke-width="1.5"/>
+    <text x="69" y="144" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">컨트롤러</text>
+    <text x="69" y="162" font-size="10.5" fill="#64748b" text-anchor="middle">외부 호출</text>
+
+    <rect x="168" y="72" width="266" height="150" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="301" y="96" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">프록시 객체 #2</text>
+    <rect x="190" y="110" width="222" height="38" rx="7" fill="#fff" stroke="#2563eb"/>
+    <text x="301" y="134" font-size="12" class="mono" fill="#1d4ed8" text-anchor="middle">order()  부가 기능 O</text>
+    <rect x="190" y="158" width="222" height="38" rx="7" fill="#fff" stroke="#2563eb"/>
+    <text x="301" y="182" font-size="12" class="mono" fill="#1d4ed8" text-anchor="middle">inner()  부가 기능 O</text>
+    <text x="301" y="212" font-size="10.5" fill="#64748b" text-anchor="middle">모든 대상 메서드를 실제로 감싸고 있다</text>
+
+    <rect x="600" y="72" width="266" height="150" rx="11" fill="#fff" stroke="#64748b" stroke-width="1.8"/>
+    <text x="733" y="96" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">원본 객체 #1</text>
+    <rect x="622" y="110" width="222" height="38" rx="7" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="733" y="134" font-size="12" class="mono" fill="#334155" text-anchor="middle">order()  순수 로직만</text>
+    <rect x="622" y="158" width="222" height="38" rx="7" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="733" y="182" font-size="12" class="mono" fill="#334155" text-anchor="middle">inner()  순수 로직만</text>
+
+    <path d="M122 148 L164 148" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f7a)" fill="none"/>
+    <text x="143" y="140" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">①</text>
+    <path d="M434 130 L596 130" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f7a)" fill="none"/>
+    <text x="515" y="122" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">② target 위임</text>
+    <text x="515" y="146" font-size="10.5" fill="#64748b" text-anchor="middle">여기서 실행 주체가 #1로 넘어간다</text>
+
+    <path d="M652 148 C 596 156, 596 176, 648 178" stroke="#dc2626" stroke-width="2" marker-end="url(#f7r)" fill="none"/>
+    <text x="733" y="240" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">③ <tspan class="mono">this.inner()</tspan> — 여기서 여기로 간다</text>
+    <text x="733" y="258" font-size="11.5" fill="#7f1d1d" text-anchor="middle"><tspan font-weight="700">프록시를 통과하지 않는다</tspan> → 부가 기능 없음</text>
+
+    <text x="301" y="262" font-size="11.5" fill="#1e3a8a" text-anchor="middle">부가 기능이 걸리는 경로는 <tspan font-weight="700">①→② 하나뿐</tspan>이다</text>
+    <text x="480" y="288" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">프록시는 <tspan text-decoration="underline">감싸는 데 성공했다</tspan>. 다만 그 경로로 <tspan text-decoration="underline">호출이 들어오지 않았을 뿐</tspan>이다.</text>
+  </svg>
+  <figcaption>원리는 2절의 한 문장으로 끝난다. 프록시가 원본에 위임한 순간부터 <b>실행 흐름은 원본 객체 안에 있고</b>, 그 안에서 부르는 <code>this.method()</code>의 <code>this</code>는 <b>원본 자신</b>이다. 이것을 <b>자기 호출(self-invocation)</b>이라 부르며, 증상은 <code>final</code> 메서드와 똑같은 <b>조용한 미적용</b>이고 <b>실무 사고 빈도는 이쪽이 훨씬 높다.</b> 진단 절차와 네 가지 해법은 <b>11번 문서</b>가 본론이다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>여기서 붙잡고 넘어갈 것 하나</h4>
+  <p style="margin-bottom:0"><b>원인은 애너테이션이 아니라 프록시 구조다.</b> "<code>@Transactional</code>이 자기 호출에서 안 되는 버그가 있다"가 아니라 <b>"프록시 방식이라서 자기 호출에는 구조적으로 걸릴 수 없다"</b>가 정확한 진술이고, 같은 이유로 <code>@Async</code>·<code>@Cacheable</code>도 <b>전부 똑같이 샌다.</b></p>
+</div>
+
+<h3>8-5. 실무 진단 팁 — 지금 이 빈이 어느 프록시인지 3초에 확인하기</h3>
+
+<pre><code><span class="cm">// ① 클래스 이름으로 즉시 구분된다 (디버거·로그 어디서나)</span>
+System.out.println(orderService.getClass().getName());
+<span class="cm">//  jdk.proxy2.$Proxy123            → JDK 동적 프록시</span>
+<span class="cm">//  ...OrderService$$SpringCGLIB$$0 → CGLIB 프록시</span>
+<span class="cm">//  com.example.OrderService        → 프록시가 아예 없다 (AOP 대상이 아니었다)</span>
+
+<span class="cm">// ② 스프링이 제공하는 판별 유틸 (org.springframework.aop.support.AopUtils)</span>
+AopUtils.isAopProxy(orderService);          <span class="cm">// 프록시이긴 한가</span>
+AopUtils.isJdkDynamicProxy(orderService);   <span class="cm">// JDK 방식인가</span>
+AopUtils.isCglibProxy(orderService);        <span class="cm">// CGLIB 방식인가</span></code></pre>
+
+<div class="callout ok">
+  <span class="t">이 확인이 왜 중요한가</span>
+  세 번째 출력(<b>프록시가 아예 없음</b>)이 나왔다면 <b>플로우차트의 ①에서 이미 실패</b>한 것이므로, <code>final</code>이나 자기 호출을 뒤질 필요가 없다 — <b>애초에 AOP 대상으로 잡히지 않은 것</b>이다. <b>진단의 첫 삽을 어디에 뜰지가 이 한 줄로 갈린다.</b>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>9-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">스프링 AOP의 한 문장은?</div><div class="d">컨테이너에 등록되는 것은 <b>원본이 아니라 원본을 감싼 프록시</b>이고, <b>부가 기능 코드는 프록시에만</b> 있다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">"원본인 척"하는 방법은?</div><div class="d"><b>구현(JDK 동적 프록시) 아니면 상속(CGLIB)</b> 둘뿐. <b>스프링이 아니라 자바 타입 시스템이 정한 것.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">JDK에 인터페이스가 필수인 이유?</div><div class="d"><code>newProxyInstance</code>에 넘기는 <b>인터페이스 배열이 타입 정보의 유일한 통로</b>라서. 배열이 비면 <b>아무 타입도 아닌 클래스</b>가 나온다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">스프링 부트의 기본값은?</div><div class="d"><b>CGLIB</b> — <code>spring.aop.proxy-target-class=true</code>. 자바 설정으론 <code>@EnableAspectJAutoProxy(proxyTargetClass = true)</code>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">JDK 프록시 + 구현 클래스 주입?</div><div class="d"><code>BeanNotOfRequiredTypeException</code>(기동 실패) · 캐스팅하면 <code>ClassCastException</code>. 원인은 <b>부모-자식이 아니라 형제</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">CGLIB 제약 4종은?</div><div class="d"><b>클·메·프·패</b> — <code>final</code> <b>클</b>래스 · <code>final</code> <b>메</b>서드 · <b>프</b>라이빗 메서드 · 다른 패키지의 <b>패</b>키지 프라이빗.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>final</code> 클래스 vs <code>final</code> 메서드?</div><div class="d">클래스는 <b>기동이 죽는 좋은 실패</b>, 메서드는 <b>운영에서야 드러나는 나쁜 실패</b>. <b>악질성은 침묵의 길이로 결정된다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">부가 기능의 실행 조건은?</div><div class="d">"애너테이션이 붙었는가"가 <b>아니라</b> <b>"이 호출이 프록시를 통과했는가"</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">진단 3질문은?</div><div class="d">① <b>프록시가 만들어졌나</b> ② <b>그 메서드를 오버라이드했나</b> ③ <b>호출이 프록시를 통과했나</b>.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">CGLIB이면 생성자가 두 번?</div><div class="d"><b>4.0 이전엔 그랬고 지금은 아니다</b>(Objenesis로 0회). 단, JVM 환경 단서가 있으니 <b>생성자에 부수 효과를 두지 않는다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>@Aspect</code>를 쓰면 AspectJ인가?</div><div class="d"><b>아니다.</b> <b>문법은 AspectJ, 동작은 프록시</b> — 그래서 <code>final</code>·<code>private</code>·자기 호출 함정이 그대로 있다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">어느 프록시인지 확인하려면?</div><div class="d"><code>getClass().getName()</code> — <code>$Proxy123</code>이면 JDK, <code>$$SpringCGLIB$$</code>면 CGLIB, <b>둘 다 아니면 프록시가 없는 것</b>. <code>AopUtils</code>도 있다.</div></div>
+</div>
+
+<h3>9-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>프록시는 원본과 '같은 타입인 척'해야 한다 — 자바에서 같은 타입인 척하는 방법은 몇 가지인가요? <span class="badge core">필수</span><span class="hint">힌트: 개수를 먼저 말하고, "누가 정했는가"를 덧붙이면 한 칸 올라간다</span></summary><div class="a">
+  <p><b>두 가지다. 인터페이스 구현과 상속.</b> 그리고 이것이 <b>스프링이 정한 것이 아니라 자바 타입 시스템이 정한 것</b>이라는 점을 짚으면 좋다 — 어떤 객체가 다른 타입 변수에 대입될 수 있는 경우가 그 둘뿐이므로, <b>프록시 기술도 그 둘뿐일 수밖에 없다.</b></p>
+  <p>각각이 <b>JDK 동적 프록시</b>(<code>java.lang.reflect.Proxy</code>가 인터페이스 배열을 받아 런타임에 클래스를 생성)와 <b>CGLIB</b>(대상 클래스를 상속한 자식 클래스를 바이트코드로 생성)이다.</p>
+  <p style="margin-bottom:0"><b>주의할 표현이 하나 있다.</b> CGLIB이 상속하는 것은 <b>추상 클래스가 아니라 평범한 구체 클래스 그 자체</b>다. "인터페이스 대신 추상 클래스를 쓴다"가 아니라 <b>"대상 클래스를 그대로 <code>extends</code> 한다"</b>가 정확한 설명이다.</p>
+</div></details>
+
+<details class="q"><summary>JDK 동적 프록시는 왜 인터페이스가 반드시 필요한가요? <span class="badge core">필수</span><span class="hint">힌트: "규칙이라서"가 아니라 메서드 시그니처에서 인과를 끌어낸다</span></summary><div class="a">
+  <p><code>Proxy.newProxyInstance(classLoader, interfaces, handler)</code>가 <b>인터페이스 배열만을 타입 정보로 받아 런타임에 클래스를 찍어내기 때문</b>이다. 이 배열이 비면 <b>아무 타입도 구현하지 않은 클래스</b>가 만들어지고, 그것은 <code>OrderService</code> 타입 변수에 담길 수 없다. <b>타입 정보를 얻을 통로가 인터페이스밖에 없다</b>는 것이 인과의 전부다.</p>
+  <p style="margin-bottom:0"><b>여기서 한 걸음 더 나가면 가산점이다.</b> 생성된 클래스는 <code>java.lang.reflect.Proxy</code>를 <b>이미 상속하고 있고</b>, 자바는 <b>단일 상속</b>이므로 <b>대상 구현 클래스를 추가로 상속할 자리가 구조적으로 없다.</b> 그래서 JDK 프록시는 <b>구현 클래스 타입으로 절대 캐스팅되지 않는다.</b></p>
+</div></details>
+
+<details class="q"><summary>JDK 프록시일 때 <code>@Autowired</code>로 구현 클래스 타입을 주입받으면 어떻게 되나요? <span class="badge trap">실무 함정</span><span class="hint">힌트: 예외 이름 → 원인 한 문장 → 그 함정이 바꿔놓은 프레임워크 기본값</span></summary><div class="a">
+  <p><b><code>BeanNotOfRequiredTypeException</code>이 나며 기동이 실패한다.</b> 메시지는 "빈 <code>orderServiceImpl</code>은 <code>OrderServiceImpl</code> 타입이어야 하는데 실제로는 <code>$Proxy123</code>이었다"는 형태이고, 스프링 부트는 여기에 <b>"이 빈은 <code>OrderService</code>만 구현한 JDK 동적 프록시라서 그렇다. 인터페이스로 주입받거나 <code>proxyTargetClass=true</code>를 켜라"</b>는 진단을 덧붙여 준다.</p>
+  <p>원인을 한 문장으로 답하면 이렇다 — <b>프록시는 인터페이스를 구현했을 뿐 구현 클래스를 상속한 적이 없어서, 둘은 부모-자식이 아니라 형제 관계다.</b></p>
+  <p style="margin-bottom:0">그리고 이 답의 진짜 값은 <b>다음 연결</b>에 있다. <b>스프링 부트가 <code>proxyTargetClass=true</code>를 기본값으로 삼은 이유가 바로 이 사고를 없애기 위해서다.</b> 함정을 아는 것과, <b>그 함정이 프레임워크 기본값을 바꿔놓은 역사를 아는 것</b>은 다르다.</p>
+</div></details>
+
+<details class="q"><summary>스프링 부트는 왜 CGLIB을 기본값으로 골랐나요? <span class="badge core">필수</span><span class="hint">힌트: 근거 둘 + 설정 키까지</span></summary><div class="a">
+  <p><b>① 타입 주입 사고 차단.</b> JDK 프록시는 구현 클래스 타입으로 주입·캐스팅되지 않아 <code>BeanNotOfRequiredTypeException</code>과 <code>ClassCastException</code>을 만든다. <b>CGLIB 프록시는 대상 클래스의 자식</b>이라 인터페이스로도 구체 클래스로도 받을 수 있다.</p>
+  <p><b>② 인터페이스 없는 빈도 프록시해야 한다.</b> 구현체가 하나뿐인 서비스에 인터페이스를 강제하지 않는 요즘 실무에서, JDK 방식만으로는 <b><code>@Transactional</code>을 걸 수 없는 빈이 대량으로 생긴다.</b></p>
+  <p style="margin-bottom:0">설정 키는 <code>spring.aop.proxy-target-class=true</code>(부트 기본값)이고, 자바 설정으로는 <code>@EnableAspectJAutoProxy(proxyTargetClass = true)</code>, <code>@EnableTransactionManagement(proxyTargetClass = true)</code>다.</p>
+</div></details>
+
+<details class="q"><summary><code>final</code>이 클래스에 붙었을 때와 메서드에 붙었을 때, 어느 쪽이 더 악질적인 장애인가요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 직관과 반대다. 판단 기준을 먼저 세우고 그 기준으로 답한다</span></summary><div class="a">
+  <p><b><code>final</code> 메서드 쪽이다.</b></p>
+  <p><b><code>final</code> 클래스</b>는 상속이 불가능해 <b>프록시 생성 자체가 실패</b>하고 애플리케이션이 뜨지 않는다. <b>시끄럽게 즉시 죽으므로 배포될 기회조차 없다</b> — fail-fast의 교과서적 사례다.</p>
+  <p><b><code>final</code> 메서드</b>는 클래스가 상속 가능하니 <b>프록시는 정상적으로 만들어진다.</b> 다만 그 메서드만 오버라이드되지 않아 부가 기능이 빠진다. <b>컴파일도 기동도 실행도 멀쩡하고, 예외가 나지 않는 정상 경로에서는 결과도 동일하므로 테스트까지 통과한다.</b> <code>@Transactional</code>이었다면 <b>트랜잭션 없이 돌다가 실패 경로에서 데이터가 반쯤 커밋된 뒤에야</b> 발견된다.</p>
+  <p style="margin-bottom:0">여기서 <b>관점 하나를 얹으면 답이 완성된다</b> — <b>장애의 악질성은 에러의 크기가 아니라 발견되기까지의 침묵으로 결정된다.</b> 같은 논리로 <b>자기 호출도 <code>final</code> 메서드와 같은 등급의 위험</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>그럼 대상 클래스가 이미 다른 클래스를 상속하고 있으면 CGLIB이 안 되나요? <span class="badge trap">함정</span><span class="hint">힌트: 상속하는 쪽과 상속당하는 쪽을 구분한다</span></summary><div class="a">
+  <p><b>함정이 아니다.</b> <b>상속하는 쪽은 프록시</b>이고 <b>상속당하는 쪽이 대상 클래스</b>이므로, 대상이 이미 부모를 갖고 있어도 <b><code>프록시 → 대상 → 대상의 부모</code>로 체인이 한 칸 늘어날 뿐</b>이다.</p>
+  <p style="margin-bottom:0">문제가 되는 것은 어디까지나 <b>대상 자신이 <code>final</code>이라 상속당할 수 없는 경우</b>다. "상속을 쓴다"는 말에서 <b>"다중 상속이 안 되니 문제 아닌가"로 넘어가는 오해</b>를 정확히 끊어주면 이해도가 드러난다.</p>
+</div></details>
+
+<details class="q"><summary>CGLIB 프록시를 만들면 원본 생성자가 두 번 호출되나요? <span class="badge bonus">가산점</span><span class="hint">힌트: "예전엔 그랬다"로 시작해 버전과 라이브러리 이름까지, 그리고 단서 한 줄</span></summary><div class="a">
+  <p><b>스프링 4.0 이전에는 그랬고, 지금은 아니다.</b> 스프링 4.0부터 CGLIB 프록시 인스턴스를 <b>Objenesis</b>로 생성한다. Objenesis는 <b>생성자를 거치지 않고 인스턴스만 확보하는 기법을 모아둔 라이브러리</b>이고, 그래서 프록시 생성 시 <b>대상 생성자가 한 번도 호출되지 않는다.</b> <b>기본 생성자가 반드시 있어야 한다는 옛 제약</b>도 이때 함께 사라졌다.</p>
+  <p style="margin-bottom:0">다만 공식 문서는 <b>"JVM이 생성자 우회를 허용하지 않는 환경에서는 여전히 두 번 호출되고 디버그 로그가 남을 수 있다"</b>는 단서를 남겨두었다. 그래서 실무 결론은 "절대 안 불린다"가 아니라 <b>"생성자에 부수 효과(로깅, 카운터 증가, 외부 호출)를 두지 않는다"</b>가 된다.</p>
+</div></details>
+
+<details class="q"><summary>스프링 AOP와 AspectJ의 차이는 무엇인가요?<span class="hint">힌트: 적용 "시점"과 "방식"으로 가른 뒤, 마지막에 판단을 얹는다</span></summary><div class="a">
+  <p><b>적용 시점과 적용 방식이 다르다.</b></p>
+  <p><b>스프링 AOP</b>는 <b>런타임에 프록시 객체를 세우는</b> 방식이라 제약이 셋이다 — <b>(1) 스프링 빈에만, (2) 메서드 실행 지점에만, (3) 프록시를 통과한 호출에만</b> 적용된다.</p>
+  <p><b>AspectJ</b>는 <b>컴파일 타임이나 클래스 로딩 시점에 바이트코드를 직접 수정(위빙)하는</b> 방식이라 <b>프록시가 아예 존재하지 않는다.</b> 그래서 <b>자기 호출·<code>final</code>·<code>private</code>·생성자·필드 접근까지 전부 잡을 수 있다.</b> 대가는 <b>전용 컴파일러(ajc)나 로드 타임 위빙 에이전트가 필요해 빌드·실행 파이프라인이 복잡해진다</b>는 것이다.</p>
+  <p style="margin-bottom:0"><b>여기에 판단을 얹으면 좋다</b> — <b>"제약을 만나면 AspectJ로 도망가는 것이 아니라, 대부분은 빈 분리 같은 설계로 푸는 것이 실무 관례"</b>다. 자기 호출 문제 하나를 풀자고 AspectJ를 도입하는 것은 <b>명백한 과잉</b>이다.</p>
+</div></details>
+
+<details class="q"><summary><code>@Aspect</code>, <code>@Around</code>를 쓰고 있으면 AspectJ를 쓰고 있는 것 아닌가요? <span class="badge trap">함정</span><span class="hint">힌트: "문법"과 "엔진"을 분리한다</span></summary><div class="a">
+  <p><b>아니다. 가장 자주 혼동되는 지점이다.</b></p>
+  <p>스프링 AOP는 AspectJ의 <b>애너테이션과 포인트컷 표현식 문법만 빌려왔다.</b> <code>@Aspect</code>, <code>@Around("execution(...)")</code>를 쓰고 있어도 <b>실제 엔진은 여전히 런타임 프록시</b>다. <b>문법은 AspectJ, 동작은 프록시</b>라는 조합인 것이다.</p>
+  <p style="margin-bottom:0">그래서 <b><code>@Aspect</code>를 쓰는 코드에도 자기 호출·<code>final</code>·<code>private</code> 함정이 그대로 적용된다.</b> 진짜 AspectJ 위빙을 쓰려면 <b>컴파일 타임 위빙(ajc)이나 로드 타임 위빙(LTW)을 별도로 설정</b>해야 한다.</p>
+</div></details>
+
+<details class="q"><summary>프록시는 모든 public 메서드를 감싸는데, 왜 자기 호출만 부가 기능이 빠지나요?<span class="hint">힌트: "감쌌는가"와 "지나갔는가"는 다른 질문이다</span></summary><div class="a">
+  <p>부가 기능의 실행 조건이 <b>"메서드가 감싸져 있는가"가 아니라 "호출이 프록시 객체를 통과했는가"</b>이기 때문이다. <b>프록시는 실제로 모든 대상 메서드를 감싸고 있다</b> — 다만 <b>그 경로로 호출이 들어오지 않았을 뿐</b>이다.</p>
+  <p style="margin-bottom:0"><b>"CGLIB은 상속이니 오버라이드된 프록시 메서드가 동적 디스패치로 불려야 하지 않나"</b>라는 재반문이 따라올 수 있다. 답은 <b>스프링의 CGLIB 프록시가 <code>super</code> 호출 방식이 아니라 별도 원본 인스턴스에 위임하는 구조</b>라는 것이다. <b>상속은 타입을 맞추기 위한 수단일 뿐</b>이고, <b>실행 주체가 원본 인스턴스로 넘어간 순간 프록시는 호출 경로에서 빠지므로 동적 디스패치가 개입할 여지가 없다.</b></p>
+</div></details>
+
+<details class="q"><summary>디버거로 프록시 객체를 열어보니 필드가 전부 null이던데, 주입이 안 된 건가요? <span class="badge bonus">가산점</span><span class="hint">힌트: 주입은 누구에게 일어났는가</span></summary><div class="a">
+  <p><b>정상이다.</b> 의존성 주입은 <b>원본 객체(target)</b>에 일어나고, <b>프록시는 호출을 넘기는 껍데기라서 자기 필드를 채울 이유가 없다.</b> 실제 일은 필드가 채워진 원본이 하므로 <b>동작에는 문제가 없다.</b></p>
+  <p style="margin-bottom:0">이 현상 자체가 <b>"프록시와 원본은 메모리에 존재하는 서로 다른 두 객체"라는 사실의 직접적인 증거</b>이기도 하다. 자기 호출 함정을 설명할 때 <b>이 관찰을 근거로 쓰면 설명이 훨씬 구체적</b>이 된다.</p>
+</div></details>
+
+<details class="q"><summary>실행 중에 지금 이 빈이 어느 프록시인지 어떻게 확인하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 클래스 이름 하나로 세 가지 경우가 갈린다</span></summary><div class="a">
+  <p><b><code>bean.getClass().getName()</code>을 찍어보는 것이 가장 빠르다.</b> <code>jdk.proxy2.$Proxy123</code> 형태면 <b>JDK 동적 프록시</b>, 이름에 <code>$$SpringCGLIB$$</code>가 들어 있으면 <b>CGLIB 프록시</b>, <b>원본 클래스 이름 그대로면 프록시가 아예 씌워지지 않은 것</b>이다.</p>
+  <p>스프링이 제공하는 판별 유틸도 있다 — <code>AopUtils.isAopProxy(...)</code>, <code>AopUtils.isJdkDynamicProxy(...)</code>, <code>AopUtils.isCglibProxy(...)</code>.</p>
+  <p style="margin-bottom:0"><b>이 확인이 진단의 첫 삽이 되는 이유</b>는, 세 번째 경우(프록시 없음)라면 <b><code>final</code>이나 자기 호출을 뒤질 필요가 없기 때문</b>이다 — 애초에 <b>AOP 대상으로 잡히지 않은 것</b>이므로 문제는 <b>빈 등록·포인트컷·설정 쪽</b>에 있다.</p>
+</div></details>
+
+<details class="q"><summary>JDK 프록시일 때, 인터페이스에 선언되지 않은 public 메서드는 어떻게 되나요? <span class="badge trap">함정</span><span class="hint">힌트: "부가 기능이 빠진다"보다 한 단계 앞의 문제가 있다</span></summary><div class="a">
+  <p><b>프록시가 그 메서드를 아예 갖고 있지 않다.</b> JDK 프록시는 <b>넘겨받은 인터페이스에 선언된 메서드만</b> 구현한 클래스이기 때문이다. 그래서 인터페이스 타입으로 주입받은 참조로는 <b>그 메서드를 호출할 방법 자체가 없고</b>(컴파일이 안 된다), <b>부가 기능 적용 여부를 따지기 이전의 문제</b>가 된다.</p>
+  <p style="margin-bottom:0">반대로 <b>CGLIB은 대상 클래스를 통째로 상속</b>하므로 <b>인터페이스에 없는 public 메서드까지 그대로 오버라이드해 감싼다.</b> 표의 "부가 기능이 빠지는 메서드" 행이 두 기술에서 다른 이유가 이것이다 — <b>JDK는 "인터페이스 밖", CGLIB은 "<code>final</code>·<code>private</code>"</b>가 사각지대다.</p>
+</div></details>
+
+<details class="q"><summary><code>@Transactional</code>을 인터페이스 쪽에 붙여도 되나요? <span class="badge trap">함정</span><span class="hint">힌트: 부트 기본값이 무엇인지 떠올리면 답이 나온다</span></summary><div class="a">
+  <p><b>스프링 공식 권장은 "구체 클래스(와 그 메서드)에 붙이라"</b>다. 이유가 정확히 이 문서의 주제와 맞물린다 — <b>클래스 기반 프록시(CGLIB)를 쓰면 인터페이스에 붙은 애너테이션이 인식되지 않기 때문</b>이다.</p>
+  <p style="margin-bottom:0">그래서 <b>인터페이스에만 붙여둔 코드는 JDK 프록시 환경에서는 동작하다가, <code>proxyTargetClass=true</code>(부트 기본값)로 넘어가는 순간 조용히 무효가 될 수 있다.</b> <b>설정 값 하나에 따라 트랜잭션이 붙었다 떨어졌다 하는 코드</b>는 그 자체로 위험하므로, <b>구현 클래스에 붙이는 것을 규칙으로 삼는다.</b></p>
+</div></details>
+
+<details class="q"><summary>프록시는 빈 생명주기의 어느 시점에 만들어지나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 그 답에서 "<code>@PostConstruct</code> 안에서는 왜 트랜잭션이 안 걸리나"가 따라 나온다</span></summary><div class="a">
+  <p><b>빈 후처리기(BeanPostProcessor)가 초기화 이후 단계에서 원본 대신 프록시를 돌려주는 방식</b>이다. 즉 <b>원본 생성 → 의존성 주입 → 초기화 콜백 → (그다음) 프록시로 교체</b>의 순서이고, 컨테이너에 최종적으로 남는 것이 <b>교체된 프록시</b>다.</p>
+  <p style="margin-bottom:0">여기서 <b>따름정리 하나</b>가 나온다 — <b><code>@PostConstruct</code> 같은 초기화 콜백은 원본 객체에서 실행되고, 그 안에서 <code>this</code>로 부르는 호출에는 부가 기능이 걸리지 않는다.</b> 원리는 자기 호출과 완전히 같다(<b>프록시를 통과하지 않았다</b>). "초기화 때 캐시를 데워두려고 <code>@PostConstruct</code>에서 <code>@Cacheable</code> 메서드를 불렀는데 캐시가 안 차더라"는 사고가 여기서 나온다.</p>
+</div></details>
+
+<details class="q"><summary><code>private</code> 메서드에 <code>@Transactional</code>을 붙이면 왜 컴파일 에러도 경고도 없나요? <span class="badge trap">함정</span><span class="hint">힌트: 애너테이션은 그 자체로 무엇을 하는가</span></summary><div class="a">
+  <p><b>애너테이션은 그 자체로 아무 동작도 하지 않는 표식(메타데이터)</b>이기 때문이다. 동작을 만들어내는 주체는 <b>그 표식을 읽고 프록시를 씌우는 컨테이너</b>이고, <b>컴파일러는 그 표식이 실제로 효력을 갖는지까지 검증하지 않는다.</b></p>
+  <p style="margin-bottom:0"><code>private</code>은 <b>CGLIB에서는 오버라이드 대상이 아니고, JDK에서는 인터페이스에 선언조차 할 수 없어</b> <b>어느 방식으로도 구제되지 않는</b> 유일한 케이스다. 그래서 결과는 <b>가장 나쁜 형태의 실패 — 조용한 실패</b>가 된다. <b>정적 분석 도구나 코드 리뷰 체크리스트로 잡는 수밖에 없다</b>는 것이 실무 결론이다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  스프링 AOP는 원본 대신 <b>"원본인 척하는 대리인"을 컨테이너에 등록하는 구조</b>이고, 척하는 방법이 <b>인터페이스 구현(JDK 동적 프록시)</b>이냐 <b>상속(CGLIB, 부트 기본값)</b>이냐의 차이일 뿐이라서 — JDK 방식은 인터페이스가 없으면 만들 수 없고 구현 클래스 타입으로 주입받으면 <code>BeanNotOfRequiredTypeException</code>을 내며(부트가 CGLIB으로 갈아탄 이유), CGLIB 방식은 <code>final</code> 클래스면 <b>기동이 죽고</b> <code>final</code>·<code>private</code> 메서드면 <b>조용히 새고</b>, 양쪽 모두 <b>프록시를 통과하지 않은 자기 호출</b>에는 걸리지 않는다 — "붙였는데 동작 안 함" 계열 장애는 전부 <b>"프록시가 이 메서드를 오버라이드할 수 있었는가"</b>와 <b>"이 호출이 프록시를 통과했는가"</b> 두 질문으로 진단된다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/02-spring/10-aop-jdk-dynamic-proxy-vs-cglib.md</code> · 함께 볼 문서: IoC와 DI 기초(01) · <code>@Transactional</code> 기본 동작과 롤백 규칙(07) · <code>@Transactional</code> 자기 호출 함정(11) · <code>@Async</code>의 동작 원리(15) · Spring Cache <code>@Cacheable</code>의 함정(20)</p>
+</main>
+</body>
+</html>

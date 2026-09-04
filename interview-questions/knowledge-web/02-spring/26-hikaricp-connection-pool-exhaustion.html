@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HikariCP 커넥션 고갈 진단 — 증상은 하나, 원인은 넷</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.warn .k{color:var(--warn)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">02 Spring / Spring Boot &nbsp;|&nbsp; 고난이도 ⭐⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>HikariCP 커넥션 고갈 진단<br><span class="sub">증상은 하나, 원인은 넷 — "오래 점유"와 "미반환(누수)"을 구분하라</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"HikariCP에서 커넥션 고갈(connection pool exhaustion)이 발생했습니다. 원인 후보와 진단 방법은?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <code>Connection is not available, request timed out after 30000ms</code>는 <b>증상이 하나인데 원인은 여럿</b>인 전형적 상황이라, 이 질문이 보는 것은 지식이 아니라 <b>진단 방법론</b>이다. 고갈의 물리는 하나뿐이다 — <b>필요 동시 점유 수 L = λ × W가 풀 크기 c를 넘으면 나머지는 대기한다.</b> 그래서 원인은 λ가 커졌거나(<b>① 풀 크기 부족</b>), W가 커졌거나(<b>② 느린 쿼리·락 대기</b>, <b>③ 트랜잭션 안 외부 호출·CPU 작업</b>), W가 아예 무한대이거나(<b>④ 커넥션 누수</b>) 넷뿐이다. 진단의 결정적 갈림은 <b>"오래 점유"와 "미반환"의 구분</b>이고, 이건 <b>시계열 모양</b>으로 가른다 — 트래픽이 빠졌는데도 <code>hikaricp.connections.active</code>가 max에 붙어 안 내려오면 <b>누수</b>, 트래픽과 함께 오르내리면 <b>점유</b>다. 앱 메트릭으로 계열을 좁힌 뒤 PostgreSQL의 <code>pg_stat_activity</code>로 교차 확인하는데, 가장 자주 나오는 범인이 <code>state = 'idle in transaction'</code> — 커넥션과 락을 쥐는 것에 더해 <b>VACUUM까지 막아 테이블 블로트</b>를 만든다. 누수 지점은 <code>leakDetectionThreshold</code>가 <b>대여 시점 스택트레이스</b>로 코드 라인까지 잡아주고, 스레드 덤프로 <b>"기다리는 스레드(피해자)"와 "쥐고 있는 스레드(용의자)"</b>를 갈라 읽어 교차 확인한다. 그리고 <b>처방까지 가야 답이 완성된다</b> — 풀 확대는 ①일 때만 정답이고, W가 원인이면 대기 줄이 <b>DB 앞으로 옮겨질 뿐</b>이며(점유가 50ms → 3초가 되면 500 TPS에 커넥션 <b>1,500개</b>가 필요하다), 누수면 <b>마르는 시각만 미룬다.</b>
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>원인을 외워서 나열하지 않고 식에서 유도한다</b> — 고갈의 물리는 하나다. <b>L = λ × W &gt; c</b>. 그러므로 원인은 <b>λ가 커졌나(①), W가 DB 안에서 커졌나(②), W가 DB 밖에서 커졌나(③), W가 무한대인가(④)</b> 넷뿐이고, <b>계열이 정해지면 처방도 자동으로 갈린다.</b></div></li>
+    <li><span class="n">2</span><div><b>진단은 코드가 아니라 관측에서 시작한다</b> — ① <b>예외 로그의 괄호</b>(<code>total/active/idle/waiting</code>) → ② <b>Hikari 메트릭 시계열</b>(<code>active</code>·<code>usage</code>) → ③ <b>PostgreSQL <code>pg_stat_activity</code></b>로 교차 확인 → ④ <b>그다음에야 코드</b>. 결정적 갈림은 하나의 질문이다 — <b>"트래픽이 빠졌을 때 <code>active</code>가 따라 내려오는가."</b> 안 내려오면 누수다.</div></li>
+    <li><span class="n">3</span><div><b>처방은 계열마다 다르고, 풀 확대는 ①일 때만 정답이다</b> — ②③이면 <b>산술적으로 감당이 안 되고</b>(W가 3초면 500 TPS에 1,500개 필요, <code>max_connections</code> 기본값은 100) DB 경합이 늘어 <b>W가 더 나빠지는 양의 되먹임</b>이 생긴다. ④면 <b>죽는 시각만 뒤로 밀린다.</b> 남는 답은 <b>W를 줄이는 것</b>이고, 그동안 전면 장애로 번지지 않게 <code>connection-timeout</code>을 짧게 잡아 연쇄를 끊는다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">로그 한 줄을 끝까지 읽는다</a></li>
+    <li><a href="#s2">고갈의 물리는 하나 — L = λ × W</a></li>
+    <li><a href="#s3">원인 4계열 — ① ② ③ ④</a></li>
+    <li><a href="#s4">관측 ① 앱 — Hikari 메트릭 네 개</a></li>
+    <li><a href="#s5">결정적 갈림 — 시계열의 모양</a></li>
+    <li><a href="#s6">관측 ② DB — <code>pg_stat_activity</code></a></li>
+    <li><a href="#s7"><code>idle in transaction</code>의 3중 피해</a></li>
+    <li><a href="#s8">범인 특정 — 누수 탐지와 스레드 덤프</a></li>
+    <li><a href="#s9">처방 — 풀 확대가 대개 오답인 이유</a></li>
+    <li><a href="#s10">연쇄 끊기와 재발 방지</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "HikariCP에서 커넥션 고갈(connection pool exhaustion)이 발생했습니다. 원인 후보와 진단 방법은?"</p>
+  <p><b>출제 의도</b>: 증상(timeout 로그)은 하나인데 원인은 여럿(누수, 느린 쿼리, 트랜잭션 내 외부 호출, 풀 크기)인 전형적 상황이다. <b>원인 후보를 나열하고 각각의 배제 방법을 말할 수 있는지</b> — 진단 방법론 자체를 평가한다.</p>
+  <div class="callout warn"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>원인을 목록으로 외워 나열하는 것</b> → 2절에서 <b>L = λ × W &gt; c</b> 하나로 <b>원인 넷을 유도</b>한다. 외운 목록과 유도한 목록은 면접에서 완전히 다르게 들린다.<br>
+    ② <b>"누수 같습니다"를 근거 없이 말하는 것</b> → 5절에서 <b>"오래 점유"와 "미반환"을 시계열 모양</b>으로 가르고, 6·8절에서 <b>DB 뷰·스택트레이스·스레드 덤프</b>로 교차 확인하는 절차를 만든다.<br>
+    ③ <b>진단 없이 "풀을 늘리자"로 직행하는 것</b> → 9절에서 <b>계열별로 계산해 반박</b>한다. 풀 확대는 <b>진단의 결과여야지 진단의 대체물이면 안 된다.</b>
+  </div>
+  <p style="margin-bottom:0" class="sub"><b>이 문서의 기준</b>: Spring Boot 3.x + HikariCP 5.x + PostgreSQL 14 이상. DB 진단 어휘는 PostgreSQL 기준이고 MySQL과 갈리는 지점만 한 줄로 대비한다. &nbsp;/&nbsp; <b>이 문서의 자리</b>: 여기는 <b>"이미 잡아놨는데 왜 고갈됐는가"(진단)</b>다. <b>"애초에 얼마로 잡을 것인가"(산정)</b>는 <code>25-thread-pool-connection-pool-sizing.md</code>가 앞에 있다.</p>
+</div>
+
+<div class="callout info">
+  <span class="t">한 문장 비유 — 매장 컵 10개짜리 카페</span>
+  매장용 컵이 <b>10개</b>(= <code>maximumPoolSize</code> <b>c</b>)뿐인 카페를 떠올리면 네 계열이 그대로 대응된다. <b>① 손님이 갑자기 몰린다</b>(λ↑ — 컵 회전은 정상인데 개수가 모자람) &nbsp;·&nbsp; <b>② 설거지가 느려진다</b>(W↑ — 컵이 늦게 돌아온다) &nbsp;·&nbsp; <b>③ 손님이 컵을 든 채 밖에 전화하러 나간다</b>(W↑ — 컵은 안 쓰면서 점유만 한다) &nbsp;·&nbsp; <b>④ 손님이 컵을 들고 집에 간다</b>(W = ∞ — 영영 안 돌아온다). <b>컵을 더 사는 것(풀 확대)이 해결하는 건 ①뿐</b>이고, ④에서는 <b>재고가 마르는 시각만 미룰 뿐 반드시 마른다.</b>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 먼저 로그 한 줄을 끝까지 읽는다</h2>
+
+<p>장애 채널에 올라오는 것은 보통 이 예외다. 대부분 앞부분만 읽고 넘어가는데, <b>괄호 안이 진단의 절반</b>이다. HikariCP는 타임아웃 예외를 던질 때 <b>그 순간의 풀 통계를 함께 찍어 준다.</b></p>
+
+<div class="codehead plain"><span class="tag">LOG</span> 이 한 줄에 이미 네 개의 사실이 들어 있다</div>
+<pre><code>java.sql.SQLTransientConnectionException:
+  HikariPool-1 - Connection is not available, request timed out after <span class="st">30001ms</span>
+  (<span class="st">total=10, active=10, idle=0, waiting=27</span>)</code></pre>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="HikariCP 타임아웃 예외 로그의 괄호 부분을 해부한 도식. 30001ms는 connectionTimeout 기본 30초를 꽉 채웠다는 뜻, total은 10으로 maximumPoolSize 기본값 그대로, active는 10으로 포화, idle은 0, waiting은 27로 27개의 톰캣 스레드가 물려 있다는 뜻이다.">
+    <defs>
+      <marker id="lb" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">예외 로그 해부 — 괄호 안이 진단의 절반이다</text>
+
+    <rect x="30" y="42" width="1060" height="82" rx="10" fill="#1e293b"/>
+    <text x="50" y="70" class="mono" font-size="13" fill="#e2e8f0">HikariPool-1 - Connection is not available, request timed out after</text>
+    <text x="556" y="70" class="mono" font-size="13" font-weight="700" fill="#fbbf24">30001ms</text>
+    <text x="50" y="102" class="mono" font-size="13" fill="#e2e8f0">(</text>
+    <text x="60" y="102" class="mono" font-size="13" font-weight="700" fill="#93c5fd">total=10,</text>
+    <text x="150" y="102" class="mono" font-size="13" font-weight="700" fill="#fca5a5">active=10,</text>
+    <text x="252" y="102" class="mono" font-size="13" font-weight="700" fill="#93c5fd">idle=0,</text>
+    <text x="326" y="102" class="mono" font-size="13" font-weight="700" fill="#fca5a5">waiting=27</text>
+    <text x="434" y="102" class="mono" font-size="13" fill="#e2e8f0">)</text>
+
+    <g stroke="#94a3b8" stroke-width="1.3" fill="none" marker-end="url(#lb)">
+      <path d="M590 78 L590 148 L140 148 L140 176"/>
+      <path d="M100 110 L100 160 L360 160 L360 176"/>
+      <path d="M196 110 L196 168 L580 168 L580 176"/>
+      <path d="M282 110 L282 156 L800 156 L800 176"/>
+      <path d="M378 110 L378 164 L1010 164 L1010 176"/>
+    </g>
+
+    <g>
+      <rect x="30"  y="178" width="220" height="104" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+      <rect x="250" y="178" width="220" height="104" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+      <rect x="470" y="178" width="220" height="104" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+      <rect x="690" y="178" width="220" height="104" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+      <rect x="910" y="178" width="180" height="104" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    </g>
+    <g font-size="12.5" font-weight="700" text-anchor="middle">
+      <text x="140"  y="200" fill="#92400e" class="mono">30001ms</text>
+      <text x="360"  y="200" fill="#1d4ed8" class="mono">total = 10</text>
+      <text x="580"  y="200" fill="#b91c1c" class="mono">active = 10</text>
+      <text x="800"  y="200" fill="#1d4ed8" class="mono">idle = 0</text>
+      <text x="1000" y="200" fill="#b91c1c" class="mono">waiting = 27</text>
+    </g>
+    <g font-size="11.5" fill="#374151">
+      <text x="44"  y="222">connectionTimeout 기본값</text>
+      <text x="44"  y="240">30초를 꽉 채우고 실패했다</text>
+      <text x="44"  y="262" font-weight="700" fill="#92400e">= 장애를 30초 붙들고</text>
+      <text x="44"  y="276" font-weight="700" fill="#92400e">  있으라는 설정</text>
+
+      <text x="264" y="222">풀이 들고 있는 커넥션 총수</text>
+      <text x="264" y="244" font-weight="700" fill="#1d4ed8">10 = maximumPoolSize</text>
+      <text x="264" y="258" font-weight="700" fill="#1d4ed8">기본값 그대로</text>
+      <text x="264" y="276">→ 한 번도 안 건드렸다</text>
+
+      <text x="484" y="222">대여 중(사용 중)인 개수</text>
+      <text x="484" y="244" font-weight="700" fill="#b91c1c">total과 같다 = 포화</text>
+      <text x="484" y="266">남은 게 하나도 없다</text>
+
+      <text x="704" y="222">풀에서 놀고 있는 개수</text>
+      <text x="704" y="244">0 — 내줄 재고 없음</text>
+      <text x="704" y="266" fill="#6b7280">평상시엔 여기가 커야 한다</text>
+
+      <text x="924" y="222">getConnection() 에서</text>
+      <text x="924" y="240">대기 중인 스레드 수</text>
+      <text x="924" y="262" font-weight="700" fill="#b91c1c">톰캣 스레드 27개가</text>
+      <text x="924" y="276" font-weight="700" fill="#b91c1c">30초씩 물려 있다</text>
+    </g>
+    <text x="560" y="306" font-size="12.5" font-weight="700" fill="#374151" text-anchor="middle">total = active + idle 이므로, active = total 이고 waiting &gt; 0 이면 그 순간은 <tspan fill="#b91c1c">확정된 고갈</tspan>이다.</text>
+  </svg>
+  <figcaption><b><code>total=10</code>이라는 것부터 이미 정보다.</b> HikariCP의 <code>maximumPoolSize</code> 기본값이 10이므로 <b>이 서비스는 풀 크기를 한 번도 손대지 않았다</b>는 뜻이고, <code>waiting=27</code>은 대기 줄의 길이다 — 이 27개는 각자 <b>톰캣 스레드를 하나씩 문 채로</b> 30초를 기다린다(10절의 연쇄).</figcaption>
+</figure>
+
+<div class="callout ok">
+  <span class="t">평상시 통계도 남길 수 있다 — 장애 "전후 추이"를 보려면 이게 있어야 한다</span>
+  <code>com.zaxxer.hikari.pool.HikariPool</code> 로거를 <b>DEBUG</b>로 켜 두면 HikariCP가 <b>30초마다 같은 형식의 통계</b>를 평상시에도 찍는다. 장애 시점의 스냅샷 하나만으로는 <b>"원래 그랬는지 갑자기 그렇게 된 것인지"</b>를 알 수 없다.
+  <pre style="margin-bottom:0"><code><span class="cm">DEBUG com.zaxxer.hikari.pool.HikariPool - HikariPool-1 - Pool stats</span>
+      (total=10, active=3, idle=7, waiting=0)   <span class="cm">← 평상시 모습. idle이 있고 waiting이 0이다</span></code></pre>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 고갈의 물리는 하나뿐이다 — L = λ × W</h2>
+
+<p>원인이 넷이라고 하지만, <b>고갈이 일어나는 메커니즘 자체는 하나</b>다. 25번 문서의 <b>Little's law</b>를 그대로 가져오면 이렇게 된다.</p>
+
+<div class="memo">
+  <h4>모든 것이 여기서 나온다 — 이 식 하나만 쥐고 있으면 된다</h4>
+  <div class="rule">필요한 동시 점유 수 &nbsp; <b>L = λ × W</b> &nbsp;&nbsp; vs &nbsp;&nbsp; 풀 크기 <b>c</b></div>
+  <div class="grid g3" style="margin-top:12px">
+    <div class="tile"><div class="k">λ (람다)</div><div class="s">초당 요청 수</div><div class="d">들어오는 <b>속도</b></div></div>
+    <div class="tile"><div class="k">W</div><div class="s">커넥션 점유 시간</div><div class="d">하나가 커넥션을 <b>잡고 있는 시간</b> (대여 → 반환)</div></div>
+    <div class="tile"><div class="k">c</div><div class="s">maximumPoolSize</div><div class="d">동시에 <b>내줄 수 있는 개수</b></div></div>
+  </div>
+  <div class="grid g2" style="margin-top:10px">
+    <div class="tile ok"><div class="k">L ≤ c</div><div class="d">대기 없음. <code>waiting = 0</code></div></div>
+    <div class="tile red"><div class="k">L &gt; c</div><div class="d">나머지 <b>(L − c)</b>개가 <code>getConnection()</code>에서 대기 → <code>connectionTimeout</code>을 넘기면 <code>SQLTransientConnectionException</code></div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">이 틀이 왜 유용한가. 어떤 현상을 보든 <b>"이건 λ 얘기인가, W 얘기인가, c 얘기인가"</b>로 분류할 수 있고, 그러면 <b>처방도 자동으로 갈리기 때문</b>이다. <b>원인 목록을 외우는 것과 이 식에서 유도하는 것은 면접에서 완전히 다르게 들린다.</b></p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 480" role="img" aria-label="커넥션 하나의 생애 도식. 요청 유입 람다가 대기 큐를 거쳐 커넥션 풀에서 커넥션을 대여하고, DB 안 쿼리 실행과 DB 밖 외부 호출을 거친 뒤 반환된다. 대여부터 반환까지가 점유 시간 W다. 원인 4계열이 각각 유입, DB 안, DB 밖, 반환 화살표를 때린다는 것을 번호 배지로 표시하고 아래에 네 계열 카드를 나열한다.">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a1g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">커넥션 하나의 생애 — 그리고 원인 4계열이 각각 어디를 때리는가</text>
+
+    <path d="M690 62 L690 52 L1080 52 L1080 62" stroke="#334155" stroke-width="1.5" fill="none"/>
+    <text x="885" y="44" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">W = 점유 시간 (대여 → 반환) — 이 구간 전체가 커넥션을 잡고 있는 시간이다</text>
+
+    <rect x="30" y="88" width="130" height="72" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="95" y="116" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">요청 유입</text>
+    <text x="95" y="138" font-size="12" class="mono" fill="#475569" text-anchor="middle">λ (초당 요청)</text>
+    <circle cx="158" cy="90" r="13" fill="#2563eb"/><text x="158" y="95" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">1</text>
+
+    <path d="M162 124 L194 124" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)" fill="none"/>
+
+    <rect x="200" y="88" width="150" height="72" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+    <text x="275" y="112" font-size="13" font-weight="700" fill="#92400e" text-anchor="middle">대기 큐</text>
+    <text x="275" y="132" font-size="12" class="mono" fill="#92400e" text-anchor="middle">waiting = 27</text>
+    <text x="275" y="150" font-size="11" fill="#a16207" text-anchor="middle">30초 뒤 timeout</text>
+
+    <path d="M352 124 L384 124" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)" fill="none"/>
+
+    <rect x="390" y="76" width="290" height="96" rx="10" fill="#fff" stroke="#2563eb" stroke-width="2"/>
+    <text x="535" y="94" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">커넥션 풀 — c = maximumPoolSize (10)</text>
+    <g fill="#fef2f2" stroke="#dc2626">
+      <rect x="410" y="102" width="34" height="22" rx="4"/><rect x="450" y="102" width="34" height="22" rx="4"/>
+      <rect x="490" y="102" width="34" height="22" rx="4"/><rect x="530" y="102" width="34" height="22" rx="4"/>
+      <rect x="570" y="102" width="34" height="22" rx="4"/>
+      <rect x="410" y="130" width="34" height="22" rx="4"/><rect x="450" y="130" width="34" height="22" rx="4"/>
+      <rect x="490" y="130" width="34" height="22" rx="4"/><rect x="530" y="130" width="34" height="22" rx="4"/>
+      <rect x="570" y="130" width="34" height="22" rx="4"/>
+    </g>
+    <text x="640" y="118" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">10칸 전부</text>
+    <text x="640" y="134" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">대여 중</text>
+    <text x="535" y="166" font-size="11" class="mono" fill="#6b7280" text-anchor="middle">total=10  active=10  idle=0</text>
+
+    <path d="M682 124 L714 124" stroke="#2563eb" stroke-width="1.8" marker-end="url(#a1)" fill="none"/>
+    <text x="698" y="114" font-size="11" font-weight="700" fill="#1d4ed8" text-anchor="middle">대여</text>
+
+    <rect x="720" y="76" width="360" height="96" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="5 4"/>
+    <rect x="734" y="94" width="162" height="34" rx="7" fill="#fff" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="815" y="116" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">쿼리 실행 (DB 안)</text>
+    <circle cx="896" cy="94" r="13" fill="#dc2626"/><text x="896" y="99" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">2</text>
+    <rect x="906" y="94" width="162" height="34" rx="7" fill="#fff" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="987" y="116" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">외부 호출·연산 (DB 밖)</text>
+    <circle cx="1068" cy="94" r="13" fill="#dc2626"/><text x="1068" y="99" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">3</text>
+    <text x="900" y="148" font-size="11.5" fill="#475569" text-anchor="middle">커넥션은 <tspan font-weight="700">아무 쿼리도 안 보내는 동안에도</tspan> 잡혀 있다</text>
+    <text x="900" y="164" font-size="11.5" fill="#475569" text-anchor="middle">DB에서는 이 상태가 <tspan class="mono" font-weight="700">idle in transaction</tspan>으로 보인다</text>
+
+    <path d="M900 174 L900 208 L537 208 L537 176" stroke="#16a34a" stroke-width="1.8" marker-end="url(#a1g)" fill="none"/>
+    <text x="760" y="226" font-size="12" font-weight="700" fill="#166534" text-anchor="middle">반환 = close() → 풀에 반납 (커넥션을 끊는 게 아니다)</text>
+    <g stroke="#dc2626" stroke-width="3"><path d="M660 198 L684 218"/><path d="M684 198 L660 218"/></g>
+    <circle cx="628" cy="208" r="13" fill="#dc2626"/><text x="628" y="213" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">4</text>
+    <text x="560" y="212" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="end">이 화살표가 없는 것 →</text>
+
+    <g>
+      <rect x="30"  y="252" width="256" height="168" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+      <rect x="298" y="252" width="256" height="168" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+      <rect x="566" y="252" width="256" height="168" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+      <rect x="834" y="252" width="256" height="168" rx="11" fill="#fff1f2" stroke="#dc2626" stroke-width="2.2"/>
+    </g>
+    <g font-size="13.5" font-weight="700">
+      <text x="46"  y="278" fill="#1d4ed8">① 풀 크기 부족</text>
+      <text x="314" y="278" fill="#b91c1c">② 느린 쿼리·락 대기</text>
+      <text x="582" y="278" fill="#b91c1c">③ 트랜잭션 안 외부 호출</text>
+      <text x="850" y="278" fill="#b91c1c">④ 커넥션 누수</text>
+    </g>
+    <g font-size="12" class="mono" font-weight="700" fill="#334155">
+      <text x="46"  y="300">λ↑  또는  c가 작다</text>
+      <text x="314" y="300">W↑  (DB 안에서)</text>
+      <text x="582" y="300">W↑  (DB 밖에서)</text>
+      <text x="850" y="300">W = ∞  (반환 없음)</text>
+    </g>
+    <g font-size="11.8" fill="#374151">
+      <text x="46"  y="326">정상 동작인데 동시 필요 개수가</text>
+      <text x="46"  y="344">풀 크기를 넘었을 뿐이다.</text>
+      <text x="46"  y="368">쿼리도 빠르고 반환도 정상.</text>
+      <text x="46"  y="392" font-weight="700" fill="#1d4ed8">트래픽 빠지면 저절로 회복</text>
+      <text x="46"  y="412">처방: c를 키운다</text>
+
+      <text x="314" y="326">인덱스 누락·실행 계획 변경,</text>
+      <text x="314" y="344">락 대기, DB 자체 포화.</text>
+      <text x="314" y="368" font-weight="700" fill="#b91c1c">DB에 흔적이 남는다</text>
+      <text x="314" y="392">→ 오래 도는 active 쿼리</text>
+      <text x="314" y="412">처방: W를 줄인다</text>
+
+      <text x="582" y="326">쿼리는 5ms인데 커넥션은</text>
+      <text x="582" y="344">3초 동안 잡혀 있는 경우.</text>
+      <text x="582" y="368" font-weight="700" fill="#b91c1c">앱에만 흔적이 남는다</text>
+      <text x="582" y="392">→ DB에선 idle in transaction</text>
+      <text x="582" y="412">처방: W를 줄인다</text>
+
+      <text x="850" y="326">빌려간 커넥션이 영영</text>
+      <text x="850" y="344">안 돌아온다. 누적된다.</text>
+      <text x="850" y="368" font-weight="700" fill="#b91c1c">DB는 오히려 한가하다</text>
+      <text x="850" y="392">→ 반환 이벤트가 없다</text>
+      <text x="850" y="412">처방: 코드 수정뿐</text>
+    </g>
+    <text x="560" y="446" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">②와 ③을 굳이 나누는 이유는 <tspan fill="#2563eb">관측 위치가 다르기 때문</tspan>이다 — ②는 DB에 남고 ③은 앱에만 남는다. 이 차이가 진단 도구를 가른다.</text>
+    <text x="560" y="468" font-size="12.5" fill="#475569" text-anchor="middle">그리고 넷 다 결국 같은 부등식으로 수렴한다 — <tspan class="mono" font-weight="700" fill="#b91c1c">L = λ × W &gt; c</tspan></text>
+  </svg>
+  <figcaption><b>①은 화살표의 굵기(λ), ②③은 오른쪽 구간의 길이(W), ④는 초록 화살표의 존재 여부를 때린다.</b> 그림에서 <b>④만 색이 다른 이유</b>는 다른 셋과 성질이 다르기 때문이다 — 앞의 셋은 <b>커넥션이 결국은 돌아오지만</b>, ④는 <b>돌아오지 않아서 누적된다.</b></figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>암기 장치 — 원인 4계열은 "람 · 안 · 밖 · 무한"</h4>
+  <div class="rule ok"><b>람</b>다가 커졌나(①) &nbsp;·&nbsp; W가 <b>안</b>에서 커졌나(②) &nbsp;·&nbsp; W가 <b>밖</b>에서 커졌나(③) &nbsp;·&nbsp; W가 <b>무한</b>인가(④)</div>
+  <p style="margin-bottom:0" class="sub">면접에서 "누수, 느린 쿼리, 외부 호출, 풀 크기요"라고 <b>목록으로 답하는 것</b>과, "고갈은 <b>L = λW &gt; c</b>일 때만 일어나므로 후보는 <b>λ·W·c 셋에 W = ∞를 더해 넷</b>입니다"라고 <b>유도해서 답하는 것</b>은 완전히 다르게 들린다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 원인 4계열 — 각각의 전형적인 모양</h2>
+
+<h3>3-1. ① 풀 크기 부족 — 정상 동작이 용량을 넘어선 경우</h3>
+
+<p>가장 단순한 계열이다. <b>코드에 아무 문제가 없고 커넥션도 제때 반환되는데, 동시에 필요한 개수가 풀 크기를 넘었을 뿐</b>이다.</p>
+
+<pre><code><span class="cm">풀 크기 c = 10, 커넥션 점유 W = 50ms</span>
+  이 풀이 감당하는 최대 처리량  λ_max = c / W = 10 / 0.05s = <span class="st">200 TPS</span>
+
+  트래픽 150 TPS  ->  L = 150 × 0.05 = <span class="fn">7.5개</span>   (여유 있음)
+  트래픽 300 TPS  ->  L = 300 × 0.05 = <span class="st">15개</span>    (10개를 넘음 -> 고갈)</code></pre>
+
+<p><b>전형적인 모양은 이렇다.</b> 프로모션·푸시 발송·배치와 겹친 시각에 트래픽이 평소의 2~3배로 뛰고, <b>그 시간대에만</b> 고갈이 나며, 트래픽이 빠지면 저절로 정상으로 돌아온다. 쿼리는 여전히 빠르고 DB CPU도 한가하다.</p>
+
+<div class="callout info">
+  <span class="t">이 계열의 결정적 특징</span>
+  <b>어떤 커넥션도 오래 붙들려 있지 않다.</b> 그래서 <code>hikaricp.connections.usage</code>(점유 시간)가 <b>평소와 같은데</b> <code>active</code>만 max에 붙어 있다면 ①일 가능성이 높다. 4절에서 이 지표 하나가 계열을 어떻게 가르는지 본다.
+</div>
+
+<h3>3-2. ② 느린 쿼리·락 대기 — DB "안"에서 W가 늘어난 경우</h3>
+
+<p>같은 트래픽인데 <b>쿼리 한 건이 오래 걸려</b> 커넥션이 오래 잡히는 경우다. W가 늘면 L이 비례해 늘고, c는 그대로이므로 고갈이 난다.</p>
+
+<pre><code><span class="cm">평소</span>  500 TPS × 0.05s =  <span class="fn">25개</span> 필요
+<span class="cm">느린 쿼리로 점유가 300ms가 되면</span>
+      500 TPS × 0.30s = <span class="st">150개</span> 필요   <span class="cm">&lt;- 풀이 36개여도 즉시 마른다</span></code></pre>
+
+<p>원인은 대개 셋 중 하나다.</p>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k">인덱스 누락 · 실행 계획 변경</div><div class="d">데이터가 쌓이면서 옵티마이저가 <b>인덱스 스캔에서 순차 스캔으로 계획을 바꾸는 일</b>이 실제로 일어난다. <b>어제까지 5ms였던 쿼리가 오늘 800ms</b>가 된다.</div></div>
+  <div class="tile red"><div class="k">락 대기</div><div class="d">다른 트랜잭션이 같은 행에 <code>UPDATE</code>나 <code>SELECT ... FOR UPDATE</code>를 걸고 있으면 <b>내 쿼리는 시작조차 못 하고 서 있다.</b> 쿼리 자체는 빠른데 대기만 긴 상태라 <b>슬로우 쿼리 로그로는 원인이 안 보인다.</b></div></div>
+  <div class="tile red"><div class="k">DB 자체의 포화</div><div class="d">커넥션이 많아 <b>DB 안에서 경합</b>이 나는 상황. <b>풀을 늘린 것이 원인이 되어 W가 늘어난 경우</b>다 — 9절의 되먹임이 여기서 시작된다.</div></div>
+</div>
+
+<div class="callout warn">
+  <span class="t">락 대기가 슬로우 쿼리 로그로 잘 안 잡히는 이유</span>
+  로그는 보통 <b>실행 시간</b>을 기준으로 하는데, <b>대기 시간도 실행 시간에 포함되어 찍힌다.</b> 그래서 "8초 걸린 <code>UPDATE</code>"라는 사실은 남지만 <b>"그중 7.9초는 남을 기다린 시간"이라는 것은 로그만으로 안 보인다.</b> 그래서 ②의 진단은 6절의 <code>wait_event_type</code>과 <code>pg_blocking_pids()</code>로 넘어간다.
+</div>
+
+<h3>3-3. ③ 트랜잭션 내 외부 호출·CPU 작업 — DB "밖"에서 W가 늘어난 경우</h3>
+
+<p>②와 결과는 같지만 <b>원인 위치가 정반대</b>다. <b>쿼리는 5ms에 끝났는데 커넥션은 3초 동안 잡혀 있는</b> 경우다.</p>
+
+<div class="cmp wide">
+<div>
+<div class="codehead bad"><span class="tag">before</span> 트랜잭션 경계 안에 외부 API 호출이 들어와 있다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public</span> Order <span class="fn">place</span>(OrderRequest req) {
+<span class="ln-bad">    Order order = orderRepository.<span class="fn">save</span>(Order.<span class="fn">of</span>(req));<span class="note">여기서 커넥션이 잡힌다</span></span>
+    <span class="cm">// 이 save 로 트랜잭션이 시작되며 커넥션이 잡혔고,
+    // 메서드가 끝날 때까지 그 커넥션은 반환되지 않는다.
+    // 트랜잭션 경계 = 커넥션 점유 구간이기 때문이다.</span>
+
+<span class="ln-bad">    PaymentResult result = paymentClient.<span class="fn">charge</span>(order);<span class="note">평소 300ms</span></span>
+    <span class="cm">// 이 300ms 동안 커넥션은 아무 쿼리도 보내지 않으면서
+    // 대여 상태로 남아 있다. DB 입장에서는
+    // 'idle in transaction' 으로 보인다 (7절).
+    // PG사가 느려져 3초가 되면? 점유도 그대로 3초가 된다.</span>
+
+    order.<span class="fn">markPaid</span>(result);
+    <span class="kw">return</span> order;
+}</code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">after</span> 커넥션을 쥐는 구간과 남을 기다리는 구간을 분리한다</div>
+<pre><code><span class="cm">// @Transactional 이 없다 — 경계를 안쪽으로 옮겼다</span>
+<span class="kw">public</span> Order <span class="fn">place</span>(OrderRequest req) {
+<span class="ln-good">    <span class="cm">// ① 짧은 트랜잭션 — PENDING 저장 후 즉시 커밋</span></span>
+<span class="ln-good">    Order order = orderService.<span class="fn">createPending</span>(req);<span class="note">약 5ms 점유 후 반납</span></span>
+
+<span class="ln-good">    <span class="cm">// ② 트랜잭션 밖 — 3초가 걸려도 커넥션 0개</span></span>
+<span class="ln-good">    PaymentResult result = paymentClient.<span class="fn">charge</span>(order);</span>
+
+<span class="ln-good">    <span class="cm">// ③ 다시 짧은 트랜잭션 — 결과 반영 후 커밋</span></span>
+<span class="ln-good">    <span class="kw">return</span> orderService.<span class="fn">applyResult</span>(order.<span class="fn">getId</span>(), result);</span>
+}
+<span class="cm">// 점유 3,000ms -> 5ms 두 번 = 1/300
+// 같은 500 TPS 에서 필요 커넥션 1,500개 -> 5개
+// 풀 크기를 손대지 않고 W 만으로 문제를 없앤 것이다.</span></code></pre>
+</div>
+</div>
+
+<div class="memo red">
+  <h4>반드시 알아야 하는 전제 — 트랜잭션 경계 = 커넥션 점유 구간</h4>
+  <p><b>Spring에서 트랜잭션 경계와 커넥션 점유 구간은 같다.</b> <code>@Transactional</code> 메서드에 진입해 <b>첫 DB 접근이 일어나는 순간</b> 커넥션이 잡혀 <code>TransactionSynchronizationManager</code>의 <b>ThreadLocal에 묶이고</b>, 메서드가 끝나 커밋/롤백될 때까지 <b>그 스레드에 붙어 있다.</b> 중간에 DB를 안 쓰는 구간이 있어도 <b>반환되지 않는다</b>(<code>24-transaction-synchronization-connection-binding.md</code>).</p>
+  <div class="rule red">그래서 <b>트랜잭션 안에 들어간 모든 것</b>이 커넥션 점유 시간에 그대로 더해진다 — 외부 API 호출, 파일 I/O, 무거운 연산, 심지어 <code>Thread.sleep</code>까지</div>
+  <p style="margin-bottom:0">이 계열의 위험은 <b>평소에는 안 터진다</b>는 데 있다. 300ms면 500 TPS에서 150개가 필요해 이미 아슬아슬하지만, <b>트래픽이 낮은 서비스에서는 몇 달 동안 아무 일 없이 돌아간다.</b> 그러다 <b>외부 PG사가 느려지는 날 한 번에 터진다.</b> 상세한 장애 시뮬레이션은 <code>22-external-api-call-inside-transaction.md</code>에 있다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="트랜잭션 경계와 커넥션 점유 구간을 비교한 타임라인. before는 저장 5밀리초 뒤 외부 결제 호출 3초, 갱신 5밀리초, 커밋까지 전체 3010밀리초 동안 커넥션을 계속 점유한다. after는 짧은 트랜잭션 두 번만 점유하고 외부 호출 구간에는 커넥션을 하나도 잡지 않는다.">
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 벽시계 시간, 전혀 다른 점유 — 트랜잭션 경계를 옮기면 W가 300분의 1이 된다</text>
+
+    <text x="30" y="60" font-size="13" font-weight="700" fill="#b91c1c">before — @Transactional 안에 외부 호출</text>
+    <rect x="30" y="72" width="1000" height="46" rx="7" fill="#fecaca" stroke="#dc2626" stroke-width="1.5"/>
+    <rect x="34" y="76" width="26" height="38" rx="4" fill="#fff" stroke="#dc2626"/>
+    <rect x="972" y="76" width="26" height="38" rx="4" fill="#fff" stroke="#dc2626"/>
+    <rect x="1000" y="76" width="26" height="38" rx="4" fill="#fff" stroke="#dc2626"/>
+    <text x="47" y="100" font-size="9.5" fill="#7f1d1d" text-anchor="middle" transform="rotate(-90 47 100)">save 5ms</text>
+    <text x="985" y="100" font-size="9.5" fill="#7f1d1d" text-anchor="middle" transform="rotate(-90 985 100)">update</text>
+    <text x="1013" y="100" font-size="9.5" fill="#7f1d1d" text-anchor="middle" transform="rotate(-90 1013 100)">commit</text>
+    <text x="516" y="94" font-size="13" font-weight="700" fill="#7f1d1d" text-anchor="middle">외부 PG 호출 3,000ms — 커넥션은 대여 상태로 놀고 있다</text>
+    <text x="516" y="111" font-size="11.5" fill="#991b1b" text-anchor="middle" class="mono">DB에서 본 모습: state = 'idle in transaction'</text>
+    <path d="M30 130 L1030 130" stroke="#dc2626" stroke-width="1.4"/>
+    <path d="M30 126 L30 134 M1030 126 L1030 134" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="530" y="148" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">커넥션 점유 W = 3,010ms  →  500 TPS 에 필요한 커넥션 1,500개</text>
+
+    <text x="30" y="192" font-size="13" font-weight="700" fill="#166534">after — 짧은 트랜잭션 두 번으로 쪼갬</text>
+    <rect x="30" y="204" width="34" height="46" rx="7" fill="#bbf7d0" stroke="#16a34a" stroke-width="1.5"/>
+    <rect x="996" y="204" width="34" height="46" rx="7" fill="#bbf7d0" stroke="#16a34a" stroke-width="1.5"/>
+    <rect x="64" y="204" width="932" height="46" rx="7" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="6 4"/>
+    <text x="530" y="226" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">트랜잭션 밖 — 외부 PG 호출 3,000ms 동안 커넥션을 <tspan fill="#166534">하나도</tspan> 잡고 있지 않다</text>
+    <text x="530" y="243" font-size="11.5" fill="#475569" text-anchor="middle">이 구간에서 PG사가 느려져도 풀은 아무 영향을 받지 않는다</text>
+    <text x="47" y="277" font-size="10.5" font-weight="700" fill="#166534" text-anchor="middle">TX① 5ms</text>
+    <text x="1013" y="277" font-size="10.5" font-weight="700" fill="#166534" text-anchor="middle">TX② 5ms</text>
+    <text x="530" y="277" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">커넥션 점유 W = 5ms + 5ms  →  500 TPS 에 필요한 커넥션 5개</text>
+  </svg>
+  <figcaption><b>벽시계 시간(사용자가 기다리는 시간)은 두 경우가 같다.</b> 달라진 것은 <b>그 3초 동안 커넥션을 쥐고 있느냐</b> 하나뿐이고, 그것만으로 <b>필요 커넥션이 1,500개에서 5개</b>가 된다. 상태를 PENDING으로 두는 설계와 실패 처리는 <code>22-external-api-call-inside-transaction.md</code>, 발행 정합성은 <code>23-transactional-outbox-pattern.md</code>에 있다.</figcaption>
+</figure>
+
+<h3>3-4. ④ 커넥션 누수 — 반환 자체가 없는 경우</h3>
+
+<p>앞의 셋은 커넥션이 <b>결국은 돌아온다.</b> 누수는 <b>영영 안 돌아온다.</b></p>
+
+<div class="cmp wide">
+<div>
+<div class="codehead bad"><span class="tag">before</span> 수동으로 얻고, 정상 경로에서만 닫는다</div>
+<pre><code><span class="kw">public</span> List&lt;Row&gt; <span class="fn">report</span>(String sql) <span class="kw">throws</span> SQLException {
+<span class="ln-bad">    Connection con = dataSource.<span class="fn">getConnection</span>();<span class="note">여기부터 점유</span></span>
+    PreparedStatement ps = con.<span class="fn">prepareStatement</span>(sql);
+<span class="ln-bad">    ResultSet rs = ps.<span class="fn">executeQuery</span>();<span class="note">여기서 예외가 나면</span></span>
+    List&lt;Row&gt; rows = <span class="fn">map</span>(rs);
+<span class="ln-bad">    con.<span class="fn">close</span>();<span class="note">이 줄에 도달하지 못한다</span></span>
+    <span class="kw">return</span> rows;
+}
+<span class="cm">// 예외가 위로 던져지며 con 참조가 사라지고,
+// 풀은 이 커넥션을 영영 못 돌려받는다.
+// 요청이 올 때마다 남은 커넥션이 하나씩 줄어든다.</span></code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">after</span> try-with-resources — 정상이든 예외든 close 보장</div>
+<pre><code><span class="kw">public</span> List&lt;Row&gt; <span class="fn">report</span>(String sql) <span class="kw">throws</span> SQLException {
+<span class="ln-good">    <span class="kw">try</span> (Connection con = dataSource.<span class="fn">getConnection</span>();</span>
+<span class="ln-good">         PreparedStatement ps = con.<span class="fn">prepareStatement</span>(sql);</span>
+<span class="ln-good">         ResultSet rs = ps.<span class="fn">executeQuery</span>()) {<span class="note">역순으로 close 보장</span></span>
+        <span class="kw">return</span> <span class="fn">map</span>(rs);
+    }
+}
+<span class="cm">// try 블록을 어떤 경로로 벗어나든
+// 선언의 역순으로 close 가 호출된다.
+// HikariCP 에서 close() 는 실제로 끊는 게 아니라
+// 풀에 반납하는 동작이다.</span></code></pre>
+</div>
+</div>
+
+<div class="memo red">
+  <h4>오해 하나 걷어내기 — <code>Connection.close()</code>는 커넥션을 끊는 것이 아니다</h4>
+  <p>HikariCP가 돌려주는 것은 진짜 커넥션이 아니라 그것을 감싼 <b>프록시</b>(<code>HikariProxyConnection</code>)이고, 그 프록시의 <code>close()</code>는 <b>"풀에 반납한다"</b>는 뜻이다. 그래서 close를 빠뜨리면 <b>커넥션이 끊기는 게 아니라 대여 상태로 영원히 남는다</b> — 이것이 <b>누수라는 이름의 정확한 의미</b>다.</p>
+  <p style="margin-bottom:0" class="sub">비유하자면 <code>close()</code>는 <b>책을 폐기하는 것이 아니라 도서관에 반납하는 것</b>이다. 반납을 안 하면 책이 사라지는 게 아니라 <b>영원히 내 이름으로 대출 중</b>이고, 도서관 재고만 한 권씩 줄어든다.</p>
+</div>
+
+<p>누수가 무서운 이유는 <b>누적된다</b>는 점이다. 점유 시간 문제는 트래픽이 빠지면 저절로 회복되지만, <b>누수는 요청이 들어올 때마다 남은 커넥션이 하나씩 줄어들 뿐 절대 회복되지 않는다.</b></p>
+
+<div class="memo">
+  <h4>인출 대상 — 누수 속도가 분당 5개일 때 고갈까지 걸리는 시간</h4>
+  <div class="grid g3">
+    <div class="tile big red"><div class="k">2분</div><div class="s">풀 10개</div></div>
+    <div class="tile big red"><div class="k">10분</div><div class="s">풀 50개</div></div>
+    <div class="tile big red"><div class="k">20분</div><div class="s">풀 100개</div></div>
+  </div>
+  <div class="rule red">풀을 10배로 늘려도 <b>죽는 시각이 10배 뒤로 밀릴 뿐, 반드시 죽는다</b></div>
+</div>
+
+<div class="callout ok">
+  <span class="t">진단 속도를 가르는 단서 — 누수는 대개 <code>@Transactional</code> 밖에 있다</span>
+  <b><code>@Transactional</code>을 정상적으로 쓰는 코드에서는 누수가 잘 안 난다.</b> Spring이 트랜잭션 종료 시 반환을 책임지기 때문이다. 누수는 대개 <b>① <code>dataSource.getConnection()</code>을 직접 부르는 코드, ② 레거시 JDBC 코드, ③ 커넥션을 필드나 컬렉션에 담아 두는 코드</b>에서 나온다. <b>코드를 뒤질 때 어디부터 볼지</b>를 알려주는 단서다.
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 관측 ① 앱 — Hikari 메트릭 네 개면 대부분 갈린다</h2>
+
+<div class="memo green">
+  <h4>진단 순서의 대원칙 — "로 · 메 · 디 · 코"</h4>
+  <div class="rule ok"><b>로</b>그 괄호 → <b>메</b>트릭 시계열 → <b>D</b>B 뷰(<code>pg_stat_activity</code>) → 그다음에야 <b>코</b>드</div>
+  <p style="margin-bottom:0" class="sub"><b>코드부터 뒤지지 말고, 장애 중인 장비에서 관측 데이터를 먼저 본다.</b> 코드 리뷰는 <b>후보를 좁힌 다음에 하는 일</b>이다. 면접에서 "일단 코드를 보겠습니다"로 시작하면 그 순간 감점이다.</p>
+</div>
+
+<p>Spring Boot에 Micrometer가 붙어 있으면 다음 지표가 자동으로 나온다.</p>
+
+<div class="scroll">
+<table>
+  <caption>Hikari 메트릭 4종 — 이 중 <code>usage</code>가 계열을 가르는 핵심 지표다</caption>
+  <thead><tr><th style="width:280px">지표</th><th style="width:210px">뜻</th><th>읽는 법</th></tr></thead>
+  <tbody>
+    <tr><td><code>hikaricp.connections.active</code></td><td>대여 중인 커넥션 수</td><td>max에 붙어 있으면 <b>포화</b></td></tr>
+    <tr><td><code>hikaricp.connections.pending</code></td><td><code>getConnection()</code> 대기 스레드 수</td><td class="bad">0보다 크면 이미 고갈 중 — 정상값이 0이라 알람 임계를 정하기 쉽다</td></tr>
+    <tr class="hl"><td><code>hikaricp.connections.usage</code></td><td>대여 ~ 반환까지 걸린 시간</td><td><b>이것이 Little's law의 W 실측치다</b> — 계열을 가르는 지표</td></tr>
+    <tr><td><code>hikaricp.connections.acquire</code></td><td>커넥션을 얻는 데 걸린 시간</td><td><code>pending</code>이 생기면 함께 치솟는다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>4-1. <code>usage</code> 하나로 계열을 셋으로 나눈다</h3>
+
+<div class="grid g3">
+  <div class="tile"><div class="k">active 포화 + usage 그대로</div><div class="d">W가 안 변했으니 <b>λ나 c 문제</b><br>→ <b>① 풀 크기 부족</b></div></div>
+  <div class="tile red"><div class="k">active 포화 + usage 증가</div><div class="d">W가 늘었다<br>→ <b>② 또는 ③</b> (DB 뷰로 갈라야 함)</div></div>
+  <div class="tile red"><div class="k">active 포화 + usage 기록 없음</div><div class="d">반환 이벤트가 없어 <b>측정이 끝나지 않는다</b><br>→ <b>④ 누수</b></div></div>
+</div>
+
+<div class="memo red">
+  <h4>가장 자주 놓치는 지점 — "지표에 안 나타난다"는 것 자체가 지표다</h4>
+  <p><code>usage</code>는 <b>반환 시점에 기록되는 타이머</b>다. 대여할 때 시작하고 <b>반납할 때 멈춰서 값을 남긴다.</b> 누수된 커넥션은 <b>반납이 없으므로 이 타이머에 아무것도 남기지 않는다.</b></p>
+  <div class="rule red">"누수는 지표에 안 나타난다"가 아니라 <b>"안 나타난다는 것 자체가 누수의 지표"</b>다</div>
+  <p style="margin-bottom:0" class="sub">같은 논리가 <b>APM 트레이스</b>에도 적용된다 — 오래 점유(②③)는 <b>긴 스팬</b>으로 보이지만, 누수(④)는 <b>스팬이 닫히지 않아 아예 안 잡힌다.</b></p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 결정적 갈림 — "오래 점유"와 "미반환"의 시계열 모양 <span class="badge core">이 문서의 핵심</span></h2>
+
+<p>이 문서에서 <b>가장 중요한 구분</b>이다. 그리고 이건 <b>단일 시점의 값이 아니라 시간에 따른 모양</b>으로 갈린다. 핵심 질문은 하나다.</p>
+
+<div class="rule">트래픽이 빠졌을 때 <code>active</code>가 따라 내려오는가?</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 420" role="img" aria-label="두 시계열 그래프 비교. 왼쪽은 오래 점유 계열로 active가 트래픽과 함께 올라 max에 잠시 붙었다가 트래픽이 빠지면 함께 내려온다. 오른쪽은 누수 계열로 active가 계단식으로 올라가 max에 붙은 뒤 트래픽이 빠져도 절대 내려오지 않는다.">
+    <defs>
+      <marker id="sm" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 "고갈"이라도 시계열의 모양이 다르다 — 이 모양이 계열을 가른다</text>
+
+    <rect x="20" y="42" width="534" height="332" rx="12" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="287" y="68" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">오래 점유 (②③) — 트래픽과 함께 오르내린다</text>
+
+    <line x1="70" y1="120" x2="535" y2="120" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+    <text x="76" y="114" font-size="10.5" fill="#94a3b8">maximumPoolSize (max)</text>
+    <line x1="70" y1="250" x2="535" y2="250" stroke="#cbd5e1"/>
+    <polyline points="70,244 130,240 180,205 230,162 280,140 330,142 380,176 430,220 490,242 535,244" fill="none" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <polyline points="70,246 130,242 180,210 225,170 258,140 275,120 360,120 400,152 440,202 490,240 535,245" fill="none" stroke="#2563eb" stroke-width="2.6"/>
+    <line x1="275" y1="120" x2="360" y2="120" stroke="#dc2626" stroke-width="5"/>
+    <text x="317" y="110" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">고갈 구간</text>
+    <text x="452" y="196" font-size="11" font-weight="700" fill="#1d4ed8">트래픽 따라 내려온다</text>
+    <g font-size="10.5" fill="#94a3b8"><text x="130" y="266" text-anchor="middle">09:00</text><text x="300" y="266" text-anchor="middle">09:30</text><text x="470" y="266" text-anchor="middle">10:00</text></g>
+
+    <text x="40" y="298" font-size="12" fill="#374151">· 트래픽이 빠지자 <tspan font-weight="700" fill="#1d4ed8">active도 함께 내려온다</tspan> — 커넥션이 느리게라도 돌아오고 있다</text>
+    <text x="40" y="320" font-size="12" fill="#374151">· <tspan class="mono">usage</tspan> 타이머는 <tspan font-weight="700">값이 커진다</tspan> · DB에 느린 쿼리나 <tspan class="mono">idle in transaction</tspan> 흔적이 남는다</text>
+    <text x="40" y="342" font-size="12" fill="#374151">· APM에 <tspan font-weight="700">긴 스팬</tspan>이 보인다 · 재시작하면 <tspan font-weight="700">트래픽이 다시 올 때</tspan> 재발한다</text>
+    <text x="40" y="364" font-size="12" font-weight="700" fill="#1d4ed8">→ 유입이 줄면 회복된다. 이것이 "오래 점유"의 지문이다.</text>
+
+    <rect x="566" y="42" width="534" height="332" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="833" y="68" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">미반환 = 누수 (④) — 계단식으로 올라가 안 내려온다</text>
+
+    <line x1="616" y1="120" x2="1081" y2="120" stroke="#fca5a5" stroke-dasharray="5 4"/>
+    <text x="622" y="114" font-size="10.5" fill="#f87171">maximumPoolSize (max)</text>
+    <line x1="616" y1="250" x2="1081" y2="250" stroke="#fecaca"/>
+    <polyline points="616,244 676,240 726,205 776,162 826,140 876,142 926,176 976,220 1036,242 1081,244" fill="none" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <polyline points="616,246 660,246 660,224 712,224 712,200 764,200 764,174 816,174 816,148 862,148 862,122 900,122 900,120 1081,120" fill="none" stroke="#dc2626" stroke-width="2.6"/>
+    <line x1="900" y1="120" x2="1081" y2="120" stroke="#dc2626" stroke-width="5"/>
+    <text x="990" y="110" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">한 번 붙으면 안 내려온다</text>
+    <path d="M700 176 L742 206" stroke="#dc2626" stroke-width="1.3" marker-end="url(#sm)" fill="none"/>
+    <text x="632" y="172" font-size="11" font-weight="700" fill="#b91c1c">계단의 기울기 = 누수 속도</text>
+    <text x="960" y="230" font-size="11" font-weight="700" fill="#94a3b8" text-anchor="middle">트래픽은 정상적으로 빠졌는데</text>
+    <g font-size="10.5" fill="#f87171"><text x="676" y="266" text-anchor="middle">09:00</text><text x="846" y="266" text-anchor="middle">09:30</text><text x="1016" y="266" text-anchor="middle">10:00</text></g>
+
+    <text x="586" y="298" font-size="12" fill="#374151">· 트래픽이 빠져도 <tspan font-weight="700" fill="#b91c1c">active는 max에 붙은 채</tspan> — 커넥션이 돌아오지 않는다</text>
+    <text x="586" y="320" font-size="12" fill="#374151">· <tspan class="mono">usage</tspan> 타이머에 <tspan font-weight="700">아예 기록이 없다</tspan> · <tspan font-weight="700">DB는 오히려 한가하다</tspan></text>
+    <text x="586" y="342" font-size="12" fill="#374151">· APM에 안 잡힌다(스팬이 안 닫힘) · 재시작 후 <tspan font-weight="700">일정 시간 뒤 정확히 재발</tspan></text>
+    <text x="586" y="364" font-size="12" font-weight="700" fill="#b91c1c">→ 재시작해야만 풀린다. 계단 기울기로 다음 고갈 시각을 예측할 수 있다.</text>
+
+    <text x="560" y="404" font-size="13.5" font-weight="700" fill="#111827" text-anchor="middle">핵심 질문은 하나다 — <tspan fill="#2563eb">"트래픽이 빠졌을 때 active가 따라 내려오는가."</tspan> 안 내려오면 누수다.</text>
+  </svg>
+  <figcaption><b>"재시작하면 잠깐 살아났다가 몇 십 분 뒤 똑같이 죽는다"</b>는 증언이 나오면 그것만으로 <b>누수를 강하게 의심</b>할 수 있다. 계단의 기울기가 곧 누수 속도이고, 3-4절의 계산으로 <b>다음 고갈 시각을 예측</b>할 수도 있다 — 이 예측이 맞으면 진단은 사실상 끝난 것이다.</figcaption>
+</figure>
+
+<table class="wide">
+  <caption>시그니처 대조표 — 다섯 축 중 <b>어느 하나만 확인해도</b> 방향이 잡히고, 둘 이상이 같은 답을 가리키면 확정이다</caption>
+  <thead><tr><th style="width:230px"></th><th>오래 점유 (②③)</th><th>미반환 = 누수 (④)</th></tr></thead>
+  <tbody>
+    <tr><td>트래픽 감소 시 <code>active</code></td><td class="good">함께 내려온다</td><td class="bad">안 내려온다</td></tr>
+    <tr class="hl"><td><code>usage</code> 타이머</td><td>값이 커진다</td><td><b>아예 기록이 없다</b> (반환 시점에 기록되므로)</td></tr>
+    <tr><td>DB 쪽 흔적</td><td>느린 쿼리 또는 <code>idle in transaction</code></td><td class="bad"><b>DB는 한가하다</b></td></tr>
+    <tr><td>APM 트레이스</td><td>긴 스팬이 보인다</td><td>안 잡힌다 (반환 이벤트가 없으므로)</td></tr>
+    <tr><td>재시작 후</td><td>트래픽 오면 다시 발생</td><td>일정 시간 뒤 <b>정확히</b> 재발</td></tr>
+  </tbody>
+</table>
+
+<div class="memo red">
+  <h4>누수의 지문 — 이 조합이 보이면 다른 후보를 버린다</h4>
+  <div class="rule red">"쿼리는 빠르고 DB는 한가한데 <code>active</code>가 max에 붙어 안 내려온다"</div>
+  <p style="margin-bottom:0">논리로 말할 수 있어야 한다. 고갈은 <b>L = λW &gt; c</b>일 때 일어나는데, <b>DB가 한가하다는 것은 λ도 W도 크지 않다는 뜻</b>이다. <b>그런데도 c를 다 썼다면, 남은 가능성은 대여된 커넥션이 계산에 잡히지 않는 것 — 즉 반환되지 않는 것뿐이다.</b></p>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 관측 ② DB — <code>pg_stat_activity</code>로 교차 확인한다</h2>
+
+<p>앱 메트릭으로 계열을 좁혔으면 DB에서 확인한다. PostgreSQL에서 <b>지금 무슨 일이 벌어지는지 보는 창은 <code>pg_stat_activity</code> 뷰 하나</b>다. <b>백엔드 프로세스(= 커넥션) 하나가 한 행</b>이다. 먼저 전체 그림부터 본다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> 1단계 — 상태별로 몇 개씩 있는가 (여기서 이미 계열이 갈린다)</div>
+<pre><code><span class="cm">-- 이 DB에 붙은 커넥션이 어떤 상태로 몇 개씩 있는가</span>
+<span class="kw">SELECT</span> state, <span class="fn">count</span>(*)
+  <span class="kw">FROM</span> pg_stat_activity
+ <span class="kw">WHERE</span> datname = <span class="fn">current_database</span>()
+ <span class="kw">GROUP BY</span> state
+ <span class="kw">ORDER BY</span> 2 <span class="kw">DESC</span>;</code></pre>
+
+<div class="scroll">
+<table>
+  <caption><code>state</code> 값이 곧 진단이다</caption>
+  <thead><tr><th style="width:250px"><code>state</code></th><th style="width:330px">뜻</th><th>고갈과의 관계</th></tr></thead>
+  <tbody>
+    <tr><td><code>active</code></td><td>지금 쿼리를 실행 중</td><td>많고 <b>오래 지속되면</b> <b>②</b></td></tr>
+    <tr><td><code>idle</code></td><td>트랜잭션 없이 놀고 있음</td><td class="good">정상. <b>풀에 반납된 커넥션이 여기 있다</b></td></tr>
+    <tr class="hl"><td><code>idle in transaction</code></td><td><b>트랜잭션은 열려 있는데 쿼리를 안 보내는 중</b></td><td><b>③의 지문</b> — 7절에서 자세히</td></tr>
+    <tr><td><code>idle in transaction (aborted)</code></td><td>위와 같은데 이미 오류가 나서 롤백만 남은 상태</td><td class="bad">예외 처리 누락 의심</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="codehead plain"><span class="tag">SQL</span> 2단계 — 오래 도는 쿼리를 찾되, "무엇을 기다리는지"까지 본다</div>
+<pre><code><span class="cm">-- 1초 넘게 돌고 있는 쿼리</span>
+<span class="kw">SELECT</span> pid,
+       <span class="fn">now</span>() - query_start        <span class="kw">AS</span> running_for,
+       wait_event_type, wait_event,   <span class="cm">-- 무엇을 기다리는가 (CPU면 NULL)</span>
+       <span class="fn">left</span>(query, 120)           <span class="kw">AS</span> query
+  <span class="kw">FROM</span> pg_stat_activity
+ <span class="kw">WHERE</span> state = <span class="st">'active'</span>
+   <span class="kw">AND</span> <span class="fn">now</span>() - query_start &gt; <span class="kw">interval</span> <span class="st">'1 second'</span>
+ <span class="kw">ORDER BY</span> query_start;</code></pre>
+
+<div class="memo">
+  <h4>한 컬럼이 "느리다"의 정체를 가른다 — <code>wait_event_type</code></h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">Lock</div><div class="d"><b>다른 트랜잭션을 기다리는 중</b> → 6-1절의 <code>pg_blocking_pids()</code>로 범인을 지목한다</div></div>
+    <div class="tile warn"><div class="k">IO</div><div class="d"><b>디스크를 기다리는 중</b> → 스캔 범위·인덱스·버퍼 문제</div></div>
+    <div class="tile ok"><div class="k">NULL</div><div class="d"><b>실제로 CPU를 쓰며 돌고 있다</b> → 진짜 무거운 쿼리</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub"><b>"느리다"의 원인이 계산인지 대기인지를 이 한 컬럼이 갈라 준다.</b> 슬로우 쿼리 로그로는 이 구분이 안 된다(3-2절).</p>
+</div>
+
+<h3>6-1. 락 대기 추적 — <code>pg_blocking_pids()</code>로 "누가 누구를 막는가" <span class="badge bonus">가산점</span></h3>
+
+<p>②의 하위 유형인 락 대기는 <b>"누가 누구를 막고 있는가"</b>를 알아야 진단이 끝난다. PostgreSQL 9.6부터 이걸 <b>한 함수로</b> 해결할 수 있다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> 피해자 쪽 — 지금 잠금 때문에 서 있는 세션</div>
+<pre><code><span class="kw">SELECT</span> a.pid,
+       <span class="fn">now</span>() - a.query_start        <span class="kw">AS</span> waiting_for,
+       a.wait_event_type, a.wait_event,
+       <span class="fn">pg_blocking_pids</span>(a.pid)      <span class="kw">AS</span> blocked_by,   <span class="cm">-- 나를 막고 있는 pid 배열</span>
+       <span class="fn">left</span>(a.query, 100)           <span class="kw">AS</span> my_query
+  <span class="kw">FROM</span> pg_stat_activity a
+ <span class="kw">WHERE</span> <span class="fn">cardinality</span>(<span class="fn">pg_blocking_pids</span>(a.pid)) &gt; 0
+ <span class="kw">ORDER BY</span> waiting_for <span class="kw">DESC</span>;</code></pre>
+
+<div class="codehead plain"><span class="tag">SQL</span> 용의자 쪽 — 막고 있는 세션을 되짚어 조회한다</div>
+<pre><code><span class="cm">-- 여기서 state 가 'idle in transaction' 으로 나오면 원인은 ③이다</span>
+<span class="kw">SELECT</span> pid, state, <span class="fn">now</span>() - state_change <span class="kw">AS</span> in_state_for, <span class="fn">left</span>(query, 120)
+  <span class="kw">FROM</span> pg_stat_activity
+ <span class="kw">WHERE</span> pid = <span class="kw">ANY</span> (
+        <span class="kw">SELECT</span> <span class="fn">unnest</span>(<span class="fn">pg_blocking_pids</span>(pid))
+          <span class="kw">FROM</span> pg_stat_activity
+         <span class="kw">WHERE</span> <span class="fn">cardinality</span>(<span class="fn">pg_blocking_pids</span>(pid)) &gt; 0);</code></pre>
+
+<div class="callout ok">
+  <span class="t">이 한 갈래를 짚으면 이 질문은 사실상 통과다</span>
+  <b>막는 쪽이 <code>idle in transaction</code>으로 나오는 순간 진단이 끝난다.</b> <b>"쿼리도 안 하면서 락을 쥐고 있는 트랜잭션"</b>이므로 원인은 <b>③</b>이고, 코드에서 <b>트랜잭션 안에 들어간 외부 호출</b>을 찾으면 된다. <b>②로 보이던 락 대기의 진짜 원인이 ③이었다</b>는 것 — 계열이 서로를 만들어낸다는 사실이 여기서 드러난다.
+</div>
+
+<div class="callout info">
+  <span class="t">MySQL이라면 <span class="badge bonus">가산점</span></span>
+  대응되는 것이 <code>SHOW PROCESSLIST</code> 또는 <code>information_schema.processlist</code>이고, <code>idle in transaction</code>에 해당하는 상태는 <b><code>Sleep</code>이면서 트랜잭션이 열려 있는 세션</b>이라 <code>information_schema.innodb_trx</code>를 <b>함께 봐야</b> 한다. <b>PostgreSQL 쪽이 한 뷰에서 다 보인다는 점이 진단상 유리하다.</b>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. <code>idle in transaction</code>이 왜 특별히 위험한가 <span class="badge senior">시니어 변별</span></h2>
+
+<p><code>idle in transaction</code>은 <b><code>BEGIN</code>은 했는데 아직 <code>COMMIT</code>도 <code>ROLLBACK</code>도 안 했고, 지금 이 순간 실행 중인 쿼리도 없는</b> 상태다. 3-3절의 코드가 외부 API를 호출하는 300ms 동안 <b>DB에서 보이는 모습이 정확히 이것</b>이다.</p>
+
+<p>"쿼리를 안 보내고 있으니 DB는 놀고 있는 것 아닌가"라고 생각하기 쉽지만 <b>정반대</b>다. <b>세 가지를 동시에 붙잡고 있다.</b></p>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k">(1) 커넥션을 붙잡는다</div><div class="d">앱 쪽에서는 <b>Hikari 커넥션 하나가 대여 중</b>이고, DB 쪽에서는 <b>백엔드 프로세스 하나가 살아 있다.</b> 이게 <b>고갈로 직결</b>된다.</div></div>
+  <div class="tile red"><div class="k">(2) 획득한 락을 붙잡는다</div><div class="d">트랜잭션이 끝나야 락이 풀린다. <code>UPDATE</code>를 한 번이라도 했다면 <b>그 행의 배타 락</b>을 계속 쥐고 있고, 다른 트랜잭션들이 <b>그 뒤에 줄을 선다.</b> <b>하나의 느린 외부 API 호출이 무관한 요청 수십 개를 세우는 경로</b>가 여기다.</div></div>
+  <div class="tile red"><div class="k">(3) VACUUM을 방해한다</div><div class="d">PostgreSQL 특유의 문제이고 <b>가장 늦게 발견되는 피해</b>다. 결과는 <b>테이블 블로트</b> — 즉 <b>③이 방치되면 결국 ②를 유발한다.</b></div></div>
+</div>
+
+<h3>7-1. 세 번째 피해를 정확히 — MVCC와 VACUUM</h3>
+
+<p>먼저 전제를 깔자. PostgreSQL은 <b>MVCC(다중 버전 동시성 제어)</b>를 쓴다. <code>UPDATE</code>는 기존 행을 덮어쓰지 않고 <b>새 버전의 튜플을 추가</b>하며, 옛 버전은 <b>그것을 아직 봐야 하는 트랜잭션이 있을 수 있으므로</b> 그대로 남겨 둔다. 이렇게 남은 옛 버전을 <b>죽은 튜플(dead tuple)</b>이라 하고, <b>아무도 안 보게 되면 VACUUM이 회수</b>해 공간을 재사용한다.</p>
+
+<p>여기서 <b>"아무도 안 본다"의 기준</b>이 문제다. 기준은 <b>현재 살아 있는 트랜잭션 중 가장 오래된 것의 스냅샷</b>이다. <b>그보다 나중에 죽은 튜플은 그 오래된 트랜잭션이 볼 수도 있으므로 회수할 수 없다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="VACUUM 회수 가능 여부를 비교한 타임라인. 위쪽 정상 케이스는 트랜잭션 A와 B가 짧게 끝나 VACUUM이 그 사이 죽은 튜플을 전부 회수한다. 아래쪽은 트랜잭션 X가 30분째 idle in transaction으로 열려 있어, X의 스냅샷 시점 이후에 생긴 죽은 튜플을 VACUUM이 하나도 회수하지 못하고 테이블 블로트로 이어진다.">
+    <defs>
+      <marker id="vg" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="vr" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">VACUUM은 "가장 오래된 활성 트랜잭션의 스냅샷"보다 최신인 죽은 튜플을 회수하지 못한다</text>
+
+    <text x="30" y="58" font-size="13" font-weight="700" fill="#166534">[정상] 트랜잭션이 제때 끝나는 경우</text>
+    <line x1="140" y1="126" x2="1010" y2="126" stroke="#cbd5e1" stroke-width="1.4"/>
+    <rect x="160" y="76" width="150" height="24" rx="5" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="235" y="93" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">트랜잭션 A</text>
+    <rect x="360" y="76" width="150" height="24" rx="5" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="435" y="93" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">트랜잭션 B</text>
+    <g fill="#94a3b8">
+      <circle cx="200" cy="116" r="3.4"/><circle cx="260" cy="116" r="3.4"/><circle cx="330" cy="116" r="3.4"/>
+      <circle cx="400" cy="116" r="3.4"/><circle cx="470" cy="116" r="3.4"/><circle cx="540" cy="116" r="3.4"/>
+      <circle cx="620" cy="116" r="3.4"/><circle cx="700" cy="116" r="3.4"/><circle cx="790" cy="116" r="3.4"/>
+      <circle cx="880" cy="116" r="3.4"/>
+    </g>
+    <text x="150" y="146" font-size="11" fill="#64748b">● = UPDATE/DELETE 로 생긴 죽은 튜플</text>
+    <path d="M950 70 L950 118" stroke="#16a34a" stroke-width="2" marker-end="url(#vg)" fill="none"/>
+    <text x="1016" y="86" font-size="12" font-weight="700" fill="#166534" text-anchor="middle">VACUUM 실행</text>
+    <text x="1016" y="104" font-size="11.5" fill="#166534" text-anchor="middle">전부 회수 ✓</text>
+    <rect x="150" y="106" width="790" height="22" rx="5" fill="#16a34a" opacity="0.10"/>
+
+    <text x="30" y="188" font-size="13" font-weight="700" fill="#b91c1c">[문제] idle in transaction 이 30분째 방치된 경우</text>
+    <line x1="140" y1="266" x2="1010" y2="266" stroke="#cbd5e1" stroke-width="1.4"/>
+    <line x1="170" y1="196" x2="170" y2="278" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="176" y="208" font-size="11.5" font-weight="700" fill="#b91c1c">X의 스냅샷 시점 t0</text>
+    <rect x="170" y="216" width="770" height="24" rx="5" fill="#fecaca" stroke="#dc2626"/>
+    <text x="555" y="233" font-size="11.5" font-weight="700" fill="#7f1d1d" text-anchor="middle">트랜잭션 X — 쿼리를 한 번 실행한 뒤 열린 채로 30분 (idle in transaction)</text>
+    <rect x="170" y="246" width="770" height="22" rx="5" fill="#dc2626" opacity="0.12"/>
+    <g fill="#dc2626">
+      <circle cx="220" cy="257" r="3.4"/><circle cx="290" cy="257" r="3.4"/><circle cx="360" cy="257" r="3.4"/>
+      <circle cx="430" cy="257" r="3.4"/><circle cx="500" cy="257" r="3.4"/><circle cx="570" cy="257" r="3.4"/>
+      <circle cx="640" cy="257" r="3.4"/><circle cx="710" cy="257" r="3.4"/><circle cx="780" cy="257" r="3.4"/>
+      <circle cx="850" cy="257" r="3.4"/><circle cx="910" cy="257" r="3.4"/>
+    </g>
+    <path d="M950 210 L950 258" stroke="#dc2626" stroke-width="2" marker-end="url(#vr)" fill="none"/>
+    <text x="1020" y="226" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">VACUUM 실행</text>
+    <text x="1020" y="244" font-size="11.5" fill="#b91c1c" text-anchor="middle">하나도 회수 못 함 ✗</text>
+    <text x="150" y="288" font-size="11.5" font-weight="700" fill="#b91c1c">이 구간에 생긴 죽은 튜플은 X가 볼 수도 있으므로 전부 남는다 — 그 사이 수만 건의 UPDATE/DELETE가 쌓인다</text>
+    <text x="150" y="312" font-size="12.5" font-weight="700" fill="#111827">→ 죽은 튜플 누적 = <tspan fill="#b91c1c">테이블 블로트</tspan> → 순차 스캔이 읽을 페이지 수 증가 · 공유 버퍼 적중률 하락 · 인덱스 비대화 → <tspan fill="#b91c1c">결국 ②(느린 쿼리)를 유발한다</tspan></text>
+  </svg>
+  <figcaption><b>계열끼리 서로를 만들어낸다.</b> ③(트랜잭션 안 외부 호출)이 방치되면 블로트를 통해 ②(느린 쿼리)가 되고, ②가 심해지면 W가 늘어 다시 고갈이 난다. <b>"③은 사후 진단보다 사전 차단이 훨씬 싸다"</b>는 결론이 여기서 나온다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>정확히 말하면 가산점 — <code>BEGIN</code>만 한 트랜잭션은 VACUUM을 막지 않는다</h4>
+  <div class="rule ok"><b><code>BEGIN</code>만 하고 쿼리를 한 번도 실행하지 않은 트랜잭션은 아직 스냅샷을 잡지 않아 VACUUM을 막지 않는다</b></div>
+  <p style="margin-bottom:0">문제가 되는 것은 <b>이미 쿼리를 실행한 뒤 열린 채로 방치된 트랜잭션</b>이고, <b>3-3절 같은 실무 코드는 전부 여기 해당한다</b>(<code>save</code>를 먼저 하고 외부 API를 부른다). 그래서 실무에서는 이 예외 조항이 위안이 되지 않는다.</p>
+</div>
+
+<div class="codehead plain"><span class="tag">SQL</span> 방치된 세션을 찾는다 — <code>state_change</code>가 핵심 컬럼</div>
+<pre><code><span class="cm">-- 10초 넘게 idle in transaction 인 세션</span>
+<span class="kw">SELECT</span> pid,
+       usename, application_name, client_addr,
+       <span class="fn">now</span>() - state_change <span class="kw">AS</span> idle_in_tx_for,   <span class="cm">-- 이 상태로 얼마나 있었나</span>
+       <span class="fn">now</span>() - xact_start   <span class="kw">AS</span> tx_age,           <span class="cm">-- 트랜잭션 전체 나이</span>
+       <span class="fn">left</span>(query, 120)     <span class="kw">AS</span> last_query        <span class="cm">-- 마지막으로 실행한 쿼리</span>
+  <span class="kw">FROM</span> pg_stat_activity
+ <span class="kw">WHERE</span> state = <span class="st">'idle in transaction'</span>
+   <span class="kw">AND</span> state_change &lt; <span class="fn">now</span>() - <span class="kw">interval</span> <span class="st">'10 seconds'</span>
+ <span class="kw">ORDER BY</span> state_change;</code></pre>
+
+<div class="grid g2">
+  <div class="tile"><div class="k">state_change</div><div class="d"><b>현재 상태로 전환된 시각</b>이므로 <code>now() - state_change</code>가 곧 <b>"이 상태로 얼마나 방치됐는가"</b>다.</div></div>
+  <div class="tile ok"><div class="k">query</div><div class="d">지금 실행 중인 쿼리가 아니라 <b>마지막으로 실행한 쿼리</b>다. <b>트랜잭션이 어디까지 진행하다 멈췄는지</b>를 알려주므로 <b>코드의 어느 지점인지 특정하는 데 결정적</b>이다.</div></div>
+</div>
+
+<p>VACUUM 방해 여부까지 확인하려면 <b>가장 오래된 스냅샷</b>을 본다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> <code>backend_xmin</code>이 오래될수록 회수하지 못하는 튜플이 많다</div>
+<pre><code><span class="kw">SELECT</span> pid, state, backend_xmin, <span class="fn">age</span>(backend_xmin) <span class="kw">AS</span> xmin_age,
+       <span class="fn">now</span>() - xact_start <span class="kw">AS</span> tx_age
+  <span class="kw">FROM</span> pg_stat_activity
+ <span class="kw">WHERE</span> backend_xmin <span class="kw">IS NOT NULL</span>
+ <span class="kw">ORDER BY</span> <span class="fn">age</span>(backend_xmin) <span class="kw">DESC</span>
+ <span class="kw">LIMIT</span> 10;</code></pre>
+
+<div class="callout warn">
+  <span class="t">안전장치 — 근본 대책이 아니라 방화벽이다</span>
+  PostgreSQL에는 이 상태를 <b>강제로 끊는 설정</b>이 있다.
+  <pre style="margin:8px 0"><code>idle_in_transaction_session_timeout = <span class="st">'30s'</span>
+  <span class="cm">-- idle in transaction 이 이 시간을 넘으면 그 세션을 종료시킨다.
+  -- 기본값 0(비활성). PostgreSQL 9.6 이상.</span>
+
+statement_timeout = <span class="st">'5s'</span>    <span class="cm">-- 쿼리 하나가 이 시간을 넘으면 취소. 기본 0.</span>
+lock_timeout      = <span class="st">'2s'</span>    <span class="cm">-- 락을 이 시간 안에 못 얻으면 실패. 기본 0.</span></code></pre>
+  <code>idle_in_transaction_session_timeout</code>을 켜면 <b>③의 피해가 무한정 번지는 것을 DB 쪽에서 끊을 수 있다.</b> 대신 <b>애플리케이션은 커넥션이 끊긴 것으로 보이므로 예외 처리가 필요하다.</b> <b>근본 대책이 아니라 방화벽</b>이라는 점을 분명히 하고 쓴다.
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 범인 특정 — 누수 탐지와 스레드 덤프</h2>
+
+<h3>8-1. <code>leakDetectionThreshold</code> — 코드의 어느 줄이 새는가</h3>
+
+<p>계열이 ④로 좁혀졌으면 <b>코드의 어느 줄이 새는지</b>를 찾아야 한다. HikariCP가 이를 위한 기능을 <b>내장하고 있다.</b></p>
+
+<div class="codehead plain"><span class="tag">YAML</span> 상시 설정을 권장한다 (8-2에서 비용을 따진다)</div>
+<pre><code>spring:
+  datasource:
+    hikari:
+      <span class="cm"># 대여된 커넥션이 이 시간(ms) 안에 반환되지 않으면 경고 로그를 남긴다.
+      # 최소 2000ms 이며 maxLifetime 보다 크면 HikariCP 가 무시한다. 0 이면 비활성(기본).</span>
+      leak-detection-threshold: <span class="st">10000</span></code></pre>
+
+<p><b>동작 원리를 알아야 값을 제대로 잡을 수 있다.</b> HikariCP는 <b>커넥션이 대여될 때마다</b> 다음 두 가지를 한다.</p>
+
+<div class="step"><span class="n">1</span><div class="body"><b>그 순간의 스택트레이스를 담은 예외 객체를 하나 만들어 둔다.</b> <b>던지지 않고 보관만 한다.</b> 이게 나중에 <b>"어디서 빌려갔는지"</b>를 알려줄 증거다.</div></div>
+<div class="step"><span class="n">2</span><div class="body"><b>임계 시간 뒤에 실행될 태스크를 내부 스케줄러에 등록한다.</b> <b>커넥션이 제때 반환되면 이 태스크는 취소된다.</b> 반환 전에 태스크가 먼저 실행되면 → 보관해 둔 스택트레이스를 <b>WARN으로 찍는다.</b></div></div>
+
+<div class="codehead bad"><span class="tag">LOG</span> 이 로그 한 줄이 코드 라인까지 지목한다</div>
+<pre><code><span class="cm">WARN com.zaxxer.hikari.pool.ProxyLeakTask -</span>
+  Connection leak detection triggered for org.postgresql.jdbc.PgConnection@3f2a1b
+  on thread http-nio-8080-exec-12, stack trace follows
+java.lang.Exception: Apparent connection leak detected
+<span class="ln-bad">    at com.example.report.ReportDao.report(ReportDao.java:41)<span class="note">대여 지점</span></span>
+    at com.example.report.ReportService.build(ReportService.java:88)
+    ...</code></pre>
+
+<div class="memo red">
+  <h4>이 스택이 무엇인지 정확히 — "지금 어디"가 아니라 "어디서 빌려갔는지"</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">leakDetectionThreshold 스택</div><div class="d"><b>어디서 빌려갔는가</b> (대여 시점의 코드 위치)</div></div>
+    <div class="tile"><div class="k">스레드 덤프 스택</div><div class="d"><b>지금 어디서 멈춰 있는가</b> (현재 실행 위치)</div></div>
+  </div>
+  <div class="rule">둘을 <b>함께</b> 봐야 <b>"이 지점에서 빌려간 커넥션이 저기서 멈춰 있다"</b>는 완전한 그림이 된다</div>
+</div>
+
+<h4>값은 얼마로 잡는가</h4>
+<div class="grid g3">
+  <div class="tile ok"><div class="k">기준</div><div class="d">정상적인 <b>최장 점유 시간보다 넉넉히 위</b>. <code>hikaricp.connections.usage</code>의 <b>p99</b>를 본다 — p99가 500ms라면 <b>10초</b> 정도가 무난하다.</div></div>
+  <div class="tile warn"><div class="k">장기 점유 작업이 있다면</div><div class="d">배치·리포트처럼 <b>정상적으로 오래 점유</b>하는 작업은 그것보다 위로 잡거나, <b>별도 데이터소스로 분리</b>해 임계를 따로 준다.</div></div>
+  <div class="tile red"><div class="k">상한</div><div class="d"><code>maxLifetime</code>(<b>기본 30분</b>)보다 크면 <b>HikariCP가 설정을 무시하고 경고</b>한다. 최솟값은 <b>2,000ms</b>.</div></div>
+</div>
+
+<h3>8-2. 운영에 상시 켜도 되는가 <span class="badge bonus">가산점</span></h3>
+
+<div class="split">
+  <div class="pane g">
+    <h4>결론 — 켜도 된다</h4>
+    <ul>
+      <li>비용은 대여마다 <b>예외 객체 1개(스택트레이스 채우기) + 스케줄 태스크 1개</b>다.</li>
+      <li>그런데 <b>커넥션 대여 자체가 이미 그보다 훨씬 비싼 작업</b>이고, <code>getConnection()</code> 뒤에는 대개 <b>수 ms 이상 걸리는 쿼리</b>가 따라온다. 상대적으로 <b>무시할 만한 비율.</b></li>
+      <li>실무에서 <b>상시 켜 두는 것이 일반적</b>이다.</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>다만 "공짜"라고 말하면 안 된다</h4>
+    <ul>
+      <li><b>스택트레이스를 채우는 것은 공짜가 아니다.</b></li>
+      <li>비활성(<code>0</code>)일 때는 <b>이 경로 자체를 타지 않아</b> 정말로 비용이 0이다.</li>
+      <li>그래서 정확한 표현은 <b>"끄면 빨라진다"가 아니라 "켜도 거의 안 느려진다"</b>다.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout warn">
+  <span class="t">오탐 주의 — 그런데 오탐도 정보 가치가 있다</span>
+  이 로그는 <b>"누수 확정"이 아니라 "이 획득 지점이 임계 시간 이상 커넥션을 물고 있었다"</b>는 사실만 말한다. 배치의 정상적인 장기 점유도 걸린다. 다만 <b>오탐이라도 버릴 정보가 아니다</b> — <b>커넥션을 오래 물고 있다는 사실 자체가 ③의 신호</b>이기 때문이다. 대응은 임계값을 올리는 것보다 <b>애초에 그 작업의 점유를 줄이는 것</b>(청크 단위 커밋)이 낫다.
+</div>
+
+<h3>8-3. 스레드 덤프 — 피해자와 용의자를 갈라 읽는다</h3>
+
+<p><code>jstack &lt;pid&gt;</code> 또는 Actuator의 <code>/actuator/threaddump</code>로 덤프를 뜨면, 커넥션 관련 스레드가 <b>두 부류</b>로 나뉜다. <b>이 둘을 섞어 읽으면 진단이 산으로 간다.</b></p>
+
+<div class="cmp wide">
+<div>
+<div class="codehead bad"><span class="tag">부류 A</span> 커넥션을 기다리는 스레드 = 피해자</div>
+<pre><code><span class="st">"http-nio-8080-exec-88"</span> #188 daemon prio=5 waiting on condition
+   java.lang.Thread.State: <span class="kw">TIMED_WAITING</span> (parking)
+        at jdk.internal.misc.Unsafe.park(Native Method)
+        at java.util.concurrent.locks.LockSupport.parkNanos(...)
+        at java.util.concurrent.SynchronousQueue$TransferStack.awaitFulfill(...)
+        at java.util.concurrent.SynchronousQueue.poll(...)
+<span class="ln-bad">        at com.zaxxer.hikari.util.ConcurrentBag.borrow(...)<span class="note">풀에서 대기 중</span></span>
+        at com.zaxxer.hikari.pool.HikariPool.getConnection(...)
+        at com.zaxxer.hikari.pool.HikariDataSource.getConnection(...)
+        at org.springframework.jdbc.datasource.DataSourceUtils.fetchConnection(...)
+
+<span class="cm">// ConcurrentBag.borrow -> HikariPool.getConnection 이 이 부류의 지문.
+// 이런 스택의 스레드 개수가 곧 로그의 waiting 값이다.
+// 수십 개 보이면 고갈은 확정이지만, 원인은 여기 없다.</span></code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">부류 B</span> 커넥션을 쥐고 있는 스레드 = 용의자</div>
+<pre><code><span class="cm">[② 느린 쿼리 — DB 응답을 기다리는 중]</span>
+<span class="st">"http-nio-8080-exec-31"</span>  Thread.State: <span class="kw">RUNNABLE</span>
+        at sun.nio.ch.Net.poll(Native Method)
+        at org.postgresql.core.PGStream.receiveChar(...)
+<span class="ln-good">        at org.postgresql.jdbc.PgStatement.executeQuery(...)<span class="note">DB 응답 대기</span></span>
+
+<span class="cm">[③ 트랜잭션 안 외부 호출 — 커넥션을 문 채 남을 기다림]</span>
+<span class="st">"http-nio-8080-exec-17"</span>  Thread.State: <span class="kw">RUNNABLE</span>
+        at sun.nio.ch.Net.poll(Native Method)
+        at java.net.Socket$SocketInputStream.read(...)
+        at org.apache.hc.core5.http.impl.io.SessionInputBufferImpl.fillBuffer(...)
+<span class="ln-good">        at com.example.pay.PaymentClient.charge(PaymentClient.java:52)<span class="note">외부 API!</span></span>
+<span class="ln-good">        at com.example.order.OrderService.place(OrderService.java:37)<span class="note">@Transactional</span></span></code></pre>
+</div>
+</div>
+
+<div class="memo red">
+  <h4>함정 — 소켓 대기 스레드는 <code>BLOCKED</code>가 아니라 <code>RUNNABLE</code>로 표시된다</h4>
+  <p>25번 문서 2-1의 함정이 여기서 다시 나온다. <b>상태 이름을 보고 "실행 중"이라고 읽으면 정반대의 진단</b>이 나온다(CPU가 모자란 줄 알고 인스턴스를 늘리는 식으로). <b>판단은 스택 최상단이 무엇인지로 한다.</b></p>
+  <div class="rule red"><code>Net.poll</code> / <code>SocketInputStream.read</code>가 최상단이면 <b>상태가 RUNNABLE이어도 그 스레드는 남을 기다리는 중</b>이다</div>
+  <p style="margin-bottom:0"><b>③의 스택은 그 자체로 결정적 증거다.</b> 프레임을 <b>아래에서 위로</b> 읽으면 <code>@Transactional</code> 메서드 안에서 HTTP 클라이언트 호출로 내려가 <b>소켓에서 멈춰 있는 경로</b>가 그대로 보인다 — <b>"커넥션을 문 채 무엇을 하고 있는지"를 코드 라인 단위로 특정한 것</b>이다.</p>
+</div>
+
+<div class="callout trap">
+  <span class="t">④ 누수의 덤프 상 지문 — 부류 B가 아예 안 보인다</span>
+  누수된 커넥션을 빌려간 스레드는 <b>이미 그 요청을 끝내고 다음 요청을 처리하고 있거나 풀에 돌아가 있다</b> — <b>커넥션만 두고 온 것</b>이다. 그래서 <b>"기다리는 스레드는 수십 개인데 쥐고 있는 스레드가 안 보인다"</b>가 누수의 지문이고, 이때는 <b><code>leakDetectionThreshold</code> 로그(8-1)가 유일한 단서</b>가 된다.
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 처방 — 계열별 대응과 "풀을 늘린다"가 대개 오답인 이유</h2>
+
+<p>진단만 하고 끝나면 절반이다. 계열을 좁혔으면 처방이 달라져야 하고, <b>계열마다 처방이 다르다는 사실 자체가 진단을 하는 이유</b>다.</p>
+
+<table class="wide">
+  <caption>계열별 처방 — 오른쪽 열이 <b>식의 어느 항을 건드리는가</b>를 말한다</caption>
+  <thead><tr><th style="width:230px">계열</th><th>처방</th><th style="width:150px">처방의 성격</th></tr></thead>
+  <tbody>
+    <tr><td><b>① 풀 크기 부족</b></td><td>풀 확대 (단 <b>DB 상한 확인</b>) 또는 인스턴스 증설</td><td class="good"><b>c</b>를 키운다</td></tr>
+    <tr><td><b>② 느린 쿼리·락 대기</b></td><td>인덱스·실행 계획 교정, 락 범위 축소, <code>statement_timeout</code>·<code>lock_timeout</code></td><td class="good"><b>W</b>를 줄인다</td></tr>
+    <tr><td><b>③ 트랜잭션 내 외부 호출</b></td><td>트랜잭션 경계 밖으로 빼기, 상태 기반 재설계(PENDING), 아웃박스</td><td class="good"><b>W</b>를 줄인다</td></tr>
+    <tr><td><b>④ 커넥션 누수</b></td><td>try-with-resources, 수동 <code>getConnection()</code> 제거 — <b>우회로 없음</b></td><td class="good"><b>W = ∞</b>를 없앤다</td></tr>
+  </tbody>
+</table>
+
+<div class="callout info">
+  <span class="t">②의 처방에서 자주 빠뜨리는 것 — 타임아웃은 성능 설정이 아니다</span>
+  <code>statement_timeout</code>과 <code>lock_timeout</code>을 설정하면 <b>최악의 W에 상한이 생긴다.</b> 이게 중요한 이유는 <b>L = λ × W</b> 때문이다 — <b>W에 상한이 없으면 L에도 상한이 없고, 그러면 어떤 c로도 방어가 안 된다.</b> 타임아웃은 성능 설정이 아니라 <b>W의 상한을 선언하는 안전장치</b>다.
+</div>
+
+<h3>9-1. ②③일 때 — 산술적으로 감당이 안 된다</h3>
+
+<div class="memo red">
+  <h4>인출 대상 — 목표 500 TPS 에서 필요한 커넥션 수 = 500 × W</h4>
+  <div class="grid g4">
+    <div class="tile big ok"><div class="k">25개</div><div class="s">W = 50ms (정상)</div></div>
+    <div class="tile big red"><div class="k">150개</div><div class="s">W = 300ms</div></div>
+    <div class="tile big red"><div class="k">500개</div><div class="s">W = 1초</div></div>
+    <div class="tile big red"><div class="k">1,500개</div><div class="s">W = 3초</div></div>
+  </div>
+  <div class="rule red"><b>W가 60배 나빠지면 필요 커넥션도 60배</b> — 1,500개를 꽂을 수 있는 PostgreSQL은 실무에 없다</div>
+  <p style="margin-bottom:0"><code>max_connections</code> 기본값이 <b>100</b>이고, 늘린다 해도 <b>커넥션마다 백엔드 프로세스가 하나씩 붙으므로 DB 서버가 먼저 무너진다.</b> 앱 인스턴스가 6대면 <b>6 × 500 = 3,000개</b>가 되어 PostgreSQL이 접속 자체를 거부한다(<code>FATAL: sorry, too many clients already</code>).</p>
+</div>
+
+<p>그리고 늘리면 <b>더 나빠진다.</b> 25번 문서 3-3에서 본 그대로다.</p>
+
+<figure>
+  <svg viewBox="0 0 960 320" role="img" aria-label="풀 확대의 양의 되먹임 고리 도식. 풀 크기를 늘리면 DB에 동시에 도착하는 요청이 늘고, DB 안 경합이 늘어 점유 시간 W가 더 커지고, W가 커지면 필요한 커넥션이 더 늘어 다시 풀을 늘리게 되는 순환을 보여준다.">
+    <defs>
+      <marker id="fb" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="480" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">풀 확대의 양의 되먹임 — 늘릴수록 나빠지는 구간이 실제로 존재한다</text>
+
+    <rect x="60"  y="56" width="340" height="56" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="230" y="82" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="middle">maximumPoolSize 를 늘린다</text>
+    <text x="230" y="100" font-size="11.5" fill="#7f1d1d" text-anchor="middle">"고갈 났으니 일단 키우자"</text>
+
+    <rect x="560" y="56" width="340" height="56" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="730" y="82" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">DB에 동시에 도착하는 요청이 늘어난다</text>
+    <text x="730" y="100" font-size="11.5" fill="#64748b" text-anchor="middle">풀은 병목이면서 동시에 <tspan font-weight="700">문지기</tspan>였다</text>
+
+    <rect x="560" y="200" width="340" height="56" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="730" y="226" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">DB 안 경합 증가</text>
+    <text x="730" y="244" font-size="11.5" fill="#64748b" text-anchor="middle">컨텍스트 스위칭 · 락 경합 · 버퍼 오염</text>
+
+    <rect x="60"  y="200" width="340" height="56" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="230" y="226" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="middle">W(점유 시간)가 더 커진다</text>
+    <text x="230" y="244" font-size="11.5" fill="#7f1d1d" text-anchor="middle">→ L = λW 가 커져 필요 커넥션이 더 늘어난다</text>
+
+    <g stroke="#dc2626" stroke-width="1.8" fill="none" marker-end="url(#fb)">
+      <path d="M404 84 L552 84"/>
+      <path d="M730 116 L730 192"/>
+      <path d="M556 228 L408 228"/>
+      <path d="M230 196 L230 120"/>
+    </g>
+    <text x="480" y="162" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">고리가 닫힌다</text>
+    <text x="480" y="292" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">대기 줄이 없어지는 것이 아니라, <tspan fill="#dc2626">앱 앞에 서 있던 줄이 DB 앞으로 옮겨 가는 것</tspan>이다.</text>
+    <text x="480" y="312" font-size="12.5" fill="#475569" text-anchor="middle">그리고 DB 앞의 줄은 앱 앞의 줄보다 훨씬 비싸다 — 일부가 실패하던 것이 <tspan font-weight="700">전부가 느려지는 것</tspan>으로 바뀐다.</text>
+  </svg>
+  <figcaption><b>"그럼 아주 크게 잡아두면 최소한 고갈은 안 나지 않나요?"</b>에 대한 답이 이 그림이다. 풀 크기 10이 하던 일은 <b>"DB에 동시에 10개까지만 보낸다"는 유입 제어</b>였다. <b>상한은 제약이 아니라 신호 장치</b>다 — 상한이 없으면 시스템은 <b>자기가 과부하라는 사실을 알 방법이 없다</b>(<code>07-traffic-performance/16-backpressure-and-application-points.md</code>).</figcaption>
+</figure>
+
+<h3>9-2. ④일 때 — 죽는 시각만 미룬다</h3>
+
+<div class="split">
+  <div class="pane r">
+    <h4>계산은 이미 3-4절에서 끝났다</h4>
+    <ul>
+      <li>누수 속도 분당 5개 → 풀 <b>10이면 2분</b>, <b>50이면 10분</b>, <b>100이면 20분</b>.</li>
+      <li><b>누수 속도는 풀 크기와 무관하다.</b> 새는 코드가 그대로면 새는 속도도 그대로다.</li>
+    </ul>
+  </div>
+  <div class="pane b">
+    <h4>더 큰 손해는 따로 있다</h4>
+    <ul>
+      <li>"재시작하니 괜찮아졌다", "풀 늘렸더니 며칠 갔다"는 경험이 쌓이면서 <b>진짜 원인을 영영 안 찾게 된다.</b></li>
+      <li>그사이 <b>재발 주기라는 가장 좋은 단서</b>도 흐려진다.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>이 절의 결론 한 줄</h4>
+  <div class="rule ok"><b>풀 확대는 진단의 결과여야지, 진단의 대체물이면 안 된다</b></div>
+  <p style="margin-bottom:0">"고갈 났으니 늘리자"는 <b>①이라는 진단을 이미 내렸다는 뜻</b>인데, 대개는 <b>그 진단을 하지 않은 채로 나온 말</b>이다. 그리고 ①이 맞더라도 그냥 늘리면 안 된다 — <b>앱 쪽 계산값과 DB 쪽 상한 중 작은 쪽이 실질 상한</b>이고, <b>앱 인스턴스 수를 곱한 총합</b>이 PostgreSQL <code>max_connections</code>를 넘지 않아야 한다(<code>25-thread-pool-connection-pool-sizing.md</code>).</p>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 연쇄 끊기와 재발 방지</h2>
+
+<p>커넥션 고갈은 <b>커넥션에서 끝나지 않는다.</b> 25번 문서 3-5에서 본 연쇄가 여기서 실현된다.</p>
+
+<figure>
+  <svg viewBox="0 0 960 440" role="img" aria-label="커넥션 고갈이 전면 장애로 번지는 연쇄 도식. 히카리 고갈에서 시작해 요청이 톰캣 스레드를 문 채 30초 대기하고, 톰캣 스레드 200개가 소진되고, 헬스체크도 응답하지 못하며, 로드밸런서가 인스턴스를 제외하고, 남은 인스턴스로 트래픽이 몰려 전면 장애가 된다. 두 번째와 세 번째 단계 사이에 connection-timeout을 2초로 줄여 연쇄를 끊는 지점이 표시되어 있다.">
+    <defs>
+      <marker id="ch" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="480" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">DB 하나의 문제가 서비스 전체의 문제로 번지는 경로 — 그리고 끊는 지점</text>
+
+    <rect x="180" y="38"  width="600" height="40" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="480" y="63" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">Hikari 고갈 — getConnection() 이 대기에 들어간다</text>
+
+    <rect x="180" y="100" width="600" height="40" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="480" y="125" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">커넥션을 기다리는 요청들이 <tspan text-decoration="underline">톰캣 스레드를 문 채 30초씩</tspan> 대기</text>
+
+    <rect x="180" y="184" width="600" height="40" rx="8" fill="#fff7ed" stroke="#d97706" stroke-width="1.4"/>
+    <text x="480" y="209" font-size="12.5" font-weight="700" fill="#92400e" text-anchor="middle">톰캣 스레드 200개가 전부 "커넥션 대기" 상태로 채워짐</text>
+
+    <rect x="180" y="246" width="600" height="40" rx="8" fill="#fff7ed" stroke="#d97706" stroke-width="1.4"/>
+    <text x="480" y="271" font-size="12.5" font-weight="700" fill="#92400e" text-anchor="middle">DB를 안 쓰는 API도, 헬스체크 엔드포인트도 응답 못 함</text>
+
+    <rect x="180" y="308" width="600" height="40" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="480" y="333" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">LB가 인스턴스를 비정상으로 판정해 제외 → 남은 인스턴스로 트래픽이 몰림</text>
+
+    <rect x="180" y="370" width="600" height="40" rx="8" fill="#7f1d1d" stroke="#7f1d1d"/>
+    <text x="480" y="395" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">거기서도 같은 일이 발생 → 전면 장애</text>
+
+    <g stroke="#dc2626" stroke-width="1.8" fill="none" marker-end="url(#ch)">
+      <path d="M480 78 L480 96"/>
+      <path d="M480 162 L480 180"/>
+      <path d="M480 224 L480 242"/>
+      <path d="M480 286 L480 304"/>
+      <path d="M480 348 L480 366"/>
+    </g>
+
+    <line x1="40" y1="162" x2="920" y2="162" stroke="#16a34a" stroke-width="2" stroke-dasharray="8 5"/>
+    <g stroke="#16a34a" stroke-width="2.6"><path d="M466 152 L494 172"/><path d="M494 152 L466 172"/></g>
+    <text x="44" y="156" font-size="12" font-weight="700" fill="#166534">connection-timeout: 2000 — 여기서 끊는다</text>
+    <text x="916" y="156" font-size="12" font-weight="700" fill="#166534" text-anchor="end">30초 → 2초 = 잠기는 스레드 양 1/15</text>
+  </svg>
+  <figcaption><b>끊는 지점은 "30초씩 대기"다.</b> 요청은 여전히 실패하지만 <b>빨리 실패하고 스레드를 놓아준다.</b> 그러면 <b>DB를 안 쓰는 기능과 헬스체크가 살아남고, 장애가 그 기능 안에 갇힌다.</b> 이건 <b>벌크헤드(bulkhead, 격벽)</b> 관점이다 — 배가 한 구획에 구멍이 나도 격벽이 있으면 <b>그 구획만 잠기고 배는 뜬다.</b></figcaption>
+</figure>
+
+<div class="codehead good"><span class="tag">YAML</span> 기본값 30초는 "장애를 30초 붙들고 있으라"는 설정이다</div>
+<pre><code>spring:
+  datasource:
+    hikari:
+      <span class="cm"># 기본 30초. 커넥션을 못 얻으면 30초를 꽉 채운 뒤 실패한다는 뜻이다.
+      # 짧게 잡으면 못 받을 요청이 빨리 실패해, 톰캣 스레드가 대기로 채워지지 않는다.</span>
+      connection-timeout: <span class="st">2000</span></code></pre>
+
+<div class="callout warn">
+  <span class="t">증상 처리라는 점을 분명히 하자</span>
+  <b>근본 원인은 여전히 ①~④ 중 하나</b>이고, 짧은 타임아웃은 <b>그것이 전면 장애로 번지지 않게 막아줄 뿐</b>이다. 이 구분을 말하지 않으면 <b>"타임아웃 줄여서 해결했습니다"</b>가 되어버린다. 계열별 연쇄 메커니즘은 <code>07-traffic-performance/18-cascading-failure-mechanism-and-bulkhead.md</code>에서 더 다룬다.
+</div>
+
+<h3>10-1. 재발 방지 — 평소에 걸어 두는 것들</h3>
+
+<p>장애 대응의 마지막은 <b>"다음에 같은 일이 나면 5분 안에 계열을 좁힐 수 있는가"</b>다.</p>
+
+<div class="step"><span class="n">관</span><div class="body"><b>관측</b> — <code>hikaricp.connections.active</code>/<code>pending</code>/<code>usage</code>/<code>acquire</code>를 대시보드에 올리고, <b><code>pending &gt; 0</code>이 일정 시간 지속되면 알람</b>을 건다. <b><code>pending</code>은 0이 정상값이라 임계치를 정하기 쉬운 훌륭한 알람 지표</b>다.<br><span class="sub">톰캣 지표(<code>tomcat.threads.busy</code>)는 <code>server.tomcat.mbeanregistry.enabled=true</code>를 켜야 나온다는 점도 함께 챙긴다.</span></div></div>
+<div class="step"><span class="n">탐</span><div class="body"><b>탐지</b> — <code>leak-detection-threshold</code>를 <b>상시 설정</b>한다(8절). <b>오탐이 조금 있어도 켜 두는 편이 낫다.</b></div></div>
+<div class="step red"><span class="n">상</span><div class="body"><b>상한 선언</b> — <code>statement_timeout</code> · <code>lock_timeout</code> · <code>idle_in_transaction_session_timeout</code> · <code>connection-timeout</code>. <b>네 개 모두 "W나 대기 시간에 상한을 두는" 같은 성격의 장치</b>다.</div></div>
+<div class="step ok"><span class="n">예</span><div class="body"><b>예방</b> — 트랜잭션 안에서 <b>외부 호출·긴 연산을 금지하는 컨벤션</b>을 코드 리뷰 체크리스트에 넣는다. <code>@Transactional</code> 메서드에 HTTP 클라이언트 호출이 들어오는 것을 <b>정적 분석이나 ArchUnit 규칙으로 막는 팀</b>도 있다. <b>③은 사후 진단보다 사전 차단이 훨씬 싸다.</b></div></div>
+
+<div class="memo">
+  <h4>암기 대상 — 상한 4종과 그 기본값 (전부 무제한이거나 30초다)</h4>
+  <div class="grid g4">
+    <div class="tile red"><div class="k">statement_timeout</div><div class="s">기본 0 = 무제한</div><div class="d">쿼리 하나의 상한</div></div>
+    <div class="tile red"><div class="k">lock_timeout</div><div class="s">기본 0 = 무제한</div><div class="d">락 획득 대기의 상한</div></div>
+    <div class="tile red"><div class="k">idle_in_transaction<br>_session_timeout</div><div class="s">기본 0 = 무제한</div><div class="d">③의 피해 확산 차단</div></div>
+    <div class="tile red"><div class="k">connection-timeout</div><div class="s">기본 30초</div><div class="d">대기 줄에 서 있는 시간의 상한</div></div>
+  </div>
+  <div class="rule red">아무것도 안 하면 <b>상한이 없는 상태로 운영하는 것</b>이다 — W에 상한이 없으면 <b>L에도 상한이 없다</b></div>
+</div>
+
+<h3>10-2. 5분 안에 계열 좁히기 — 진단 결정 트리</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 540" role="img" aria-label="커넥션 고갈 진단 결정 트리. 예외 로그의 괄호를 읽고, active가 max에 붙어 있는지 확인하고, 트래픽이 빠졌을 때 active가 내려오는지로 누수 여부를 가르고, usage가 평소와 같은지로 풀 크기 부족을 가르고, pg_stat_activity에서 오래 도는 active인지 idle in transaction인지로 느린 쿼리와 트랜잭션 내 외부 호출을 가른다.">
+    <defs>
+      <marker id="dt" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#334155"/></marker>
+    </defs>
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">진단 결정 트리 — 순서 자체가 답이다 (코드는 맨 마지막에 본다)</text>
+
+    <rect x="380" y="40" width="360" height="46" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="560" y="62" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">① 예외 로그의 괄호를 읽는다</text>
+    <text x="560" y="79" font-size="11.5" class="mono" fill="#1e3a8a" text-anchor="middle">(total, active, idle, waiting)</text>
+
+    <rect x="350" y="112" width="420" height="50" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="560" y="134" font-size="12.5" font-weight="700" fill="#92400e" text-anchor="middle">② active 가 max 에 붙어 있나?</text>
+    <text x="560" y="152" font-size="11" fill="#a16207" text-anchor="middle">Hikari 메트릭 시계열을 본다</text>
+    <rect x="836" y="112" width="264" height="50" rx="9" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="968" y="134" font-size="12" font-weight="700" fill="#334155" text-anchor="middle">NO — 아직 고갈이 아니다</text>
+    <text x="968" y="151" font-size="11" fill="#64748b" text-anchor="middle">pending = 0 이면 대기 없음</text>
+
+    <rect x="300" y="188" width="520" height="52" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="2.2"/>
+    <text x="560" y="210" font-size="12.5" font-weight="700" fill="#92400e" text-anchor="middle">③ 트래픽이 빠졌을 때 active 가 따라 내려오는가?</text>
+    <text x="560" y="228" font-size="11" font-weight="700" fill="#b45309" text-anchor="middle">★ 결정적 갈림 (5절)</text>
+    <rect x="20" y="180" width="256" height="96" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="148" y="202" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="middle">④ 커넥션 누수</text>
+    <text x="36" y="222" font-size="11" fill="#7f1d1d">· 안 내려온다 · usage 기록 없음</text>
+    <text x="36" y="240" font-size="11" fill="#7f1d1d">· DB는 오히려 한가하다</text>
+    <text x="36" y="262" font-size="11" font-weight="700" fill="#b91c1c">→ 8절: 누수 탐지 로그 + 스레드 덤프</text>
+
+    <rect x="300" y="266" width="520" height="50" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="560" y="288" font-size="12.5" font-weight="700" fill="#92400e" text-anchor="middle">④ usage(점유 시간)가 평소와 같은가?</text>
+    <text x="560" y="306" font-size="11" fill="#a16207" text-anchor="middle">이것이 Little's law 의 W 실측치다</text>
+    <rect x="856" y="266" width="244" height="50" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="978" y="288" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">① 풀 크기 부족</text>
+    <text x="978" y="305" font-size="11" fill="#1e3a8a" text-anchor="middle">→ c를 키운다 (25번 문서)</text>
+
+    <rect x="300" y="344" width="520" height="50" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="560" y="366" font-size="12.5" font-weight="700" fill="#92400e" text-anchor="middle">⑤ pg_stat_activity 에 무엇이 쌓였나? (6절)</text>
+    <text x="560" y="384" font-size="11" fill="#a16207" text-anchor="middle">앱 지표만으로는 ②와 ③이 갈리지 않는다</text>
+
+    <rect x="150" y="428" width="380" height="82" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="340" y="450" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="middle">② 느린 쿼리 · 락 대기</text>
+    <text x="166" y="470" font-size="11" fill="#7f1d1d">· active 가 오래 지속 · wait_event_type = Lock</text>
+    <text x="166" y="488" font-size="11" fill="#7f1d1d">→ 인덱스·실행 계획 교정, 락 범위 축소,</text>
+    <text x="166" y="504" font-size="11" fill="#7f1d1d">   statement_timeout / lock_timeout</text>
+
+    <rect x="590" y="428" width="380" height="82" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="780" y="450" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="middle">③ 트랜잭션 안 외부 호출</text>
+    <text x="606" y="470" font-size="11" fill="#7f1d1d">· idle in transaction 이 쌓여 있다</text>
+    <text x="606" y="488" font-size="11" fill="#7f1d1d">→ 트랜잭션 경계 밖으로 빼기(3-3),</text>
+    <text x="606" y="504" font-size="11" fill="#7f1d1d">   PENDING 상태 기반 재설계 · 아웃박스</text>
+
+    <g stroke="#334155" stroke-width="1.6" fill="none" marker-end="url(#dt)">
+      <path d="M560 86 L560 108"/>
+      <path d="M770 137 L832 137"/>
+      <path d="M560 162 L560 184"/>
+      <path d="M300 214 L280 214"/>
+      <path d="M560 240 L560 262"/>
+      <path d="M820 291 L852 291"/>
+      <path d="M560 316 L560 340"/>
+      <path d="M560 394 L560 410 L340 410 L340 424"/>
+      <path d="M560 410 L780 410 L780 424"/>
+    </g>
+    <g font-size="10.5" font-weight="700" fill="#475569">
+      <text x="790" y="132">NO</text>
+      <text x="566" y="178">YES</text>
+      <text x="286" y="200">안 내려온다</text>
+      <text x="566" y="258">내려온다</text>
+      <text x="826" y="284">같다</text>
+      <text x="566" y="334">늘었다</text>
+    </g>
+    <text x="560" y="532" font-size="12.5" font-weight="700" fill="#111827" text-anchor="middle">앱 지표만 보면 ②와 ③이 안 갈리고, DB만 보면 ④를 영영 못 찾는다 — <tspan fill="#2563eb">양쪽에서 교차 확인한다.</tspan></text>
+  </svg>
+  <figcaption>면접에서 <b>"지금 무엇부터 보시겠어요?"</b>가 나오면 이 트리를 <b>위에서 아래로 말하면 된다.</b> 중요한 것은 <b>코드가 맨 마지막 노드</b>라는 점이다 — <b>계열이 좁혀진 뒤에야 코드를 본다.</b></figcaption>
+</figure>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>11-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">고갈의 물리를 한 줄로?</div><div class="d"><b>L = λ × W &gt; c</b>. 필요 동시 점유 수가 풀 크기를 넘으면 나머지가 대기하고, <code>connectionTimeout</code>을 넘기면 예외가 난다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">원인 4계열은?</div><div class="d"><b>람 · 안 · 밖 · 무한</b> — λ↑(①) / W↑ DB 안(②) / W↑ DB 밖(③) / W = ∞(④).</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">로그 괄호 네 개는?</div><div class="d"><code>total · active · idle · waiting</code>. <b><code>total=10</code>이면 풀 크기를 한 번도 안 건드렸다</b>는 뜻(기본값).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">누수와 점유를 가르는 질문은?</div><div class="d"><b>"트래픽이 빠졌을 때 <code>active</code>가 따라 내려오는가."</b> 안 내려오면 누수.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>usage</code>에 기록이 없다는 것은?</div><div class="d"><b>반환 시점에 기록되는 타이머</b>이므로, 기록이 없다는 것은 <b>반환이 없다는 뜻 = 누수</b>. "안 나타나는 것 자체가 지표."</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit"><code>pending</code>의 정상값은?</div><div class="d"><b>0</b>. 그래서 <b>알람 임계를 정하기 가장 쉬운 지표</b>다. 0보다 크면 이미 고갈 중.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>idle in transaction</code>의 3중 피해는?</div><div class="d"><b>커넥션을 쥔다 · 락을 쥔다 · VACUUM을 막는다</b>(→ 블로트 → ②를 유발).</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">풀 확대가 정답인 경우는?</div><div class="d"><b>①일 때만.</b> ②③은 산술적으로 감당 불가 + 되먹임, ④는 죽는 시각만 미룸.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">500 TPS 에 W = 3초면?</div><div class="d">커넥션 <b>1,500개</b> 필요. PostgreSQL <code>max_connections</code> 기본값은 <b>100</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">상한 4종은?</div><div class="d"><code>statement_timeout</code> · <code>lock_timeout</code> · <code>idle_in_transaction_session_timeout</code> · <code>connection-timeout</code>. 앞 셋은 기본 0(무제한), 마지막은 30초.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">누수 탐지 임계값 잡는 규칙은?</div><div class="d"><code>usage</code> <b>p99보다 넉넉히 위</b>, <b>최소 2,000ms</b>, <code>maxLifetime</code>(기본 30분)보다 크면 <b>무시된다</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">스레드 덤프 두 부류는?</div><div class="d"><b>피해자</b>(<code>ConcurrentBag.borrow</code>에서 대기) / <b>용의자</b>(스택 최상단이 계열을 알려줌). <b>④면 용의자가 아예 없다.</b></div></div>
+</div>
+
+<h3>11-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>장애 상황입니다. 지금 무엇부터 보시겠어요? <span class="badge core">필수</span><span class="hint">힌트: 순서 자체가 답이다. "코드를 보겠습니다"로 시작하면 그 순간 감점</span></summary><div class="a">
+  <p><b>관측 → 계열 축소 → 그다음에야 코드</b> 순서로 말한다.</p>
+  <p><b>① 예외 로그의 괄호</b>(<code>total, active, idle, waiting</code>)<b>를 읽는다</b>(1절). 풀 크기가 <b>기본값 10인지</b>, 대기 줄이 얼마나 긴지가 즉시 나온다.</p>
+  <p><b>② Hikari 메트릭 시계열에서 <code>active</code>와 <code>usage</code>를 본다</b>(4·5절). <b>트래픽이 빠졌는데 <code>active</code>가 안 내려오면 누수(④)로 직행</b>하고, <code>usage</code>가 평소와 같으면 ①, 늘었으면 ②③이다.</p>
+  <p><b>③ <code>pg_stat_activity</code>를 <code>state</code>별로 집계한다</b>(6절). <b>오래 도는 <code>active</code>가 많으면 ②</b>, <b><code>idle in transaction</code>이 쌓여 있으면 ③</b>, <b>DB가 한가한데 앱은 고갈이면 ④ 확정</b>이다.</p>
+  <p><b>④ 계열이 좁혀진 뒤에야 코드를 본다.</b> ③이면 <code>@Transactional</code> 안의 외부 호출, ④면 <code>leakDetectionThreshold</code> 로그의 스택트레이스부터 본다.</p>
+  <p style="margin-bottom:0"><b>"앱과 DB 양쪽에서 교차 확인한다"는 원칙을 명시적으로 말하면 좋다</b> — <b>앱 지표만 보면 ②와 ③이 안 갈리고, DB만 보면 ④를 영영 못 찾는다.</b></p>
+</div></details>
+
+<details class="q"><summary>쿼리도 빠르고 DB도 한가한데 커넥션이 계속 마릅니다. 왜죠? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 이 조합 자체가 지문이다. 결론을 먼저 말하고 근거를 식으로 댄다</span></summary><div class="a">
+  <p>이 조합이 나오는 순간 <b>누수(④)로 좁혀야 한다.</b></p>
+  <p><b>근거를 논리로 말할 수 있어야 한다.</b> 고갈은 <b>L = λW &gt; c</b>일 때 일어나는데, <b>DB가 한가하다는 것은 λ도 W도 크지 않다는 뜻</b>이다. <b>그런데도 c를 다 썼다면, 남은 가능성은 대여된 커넥션이 계산에 잡히지 않는 것 — 즉 반환되지 않는 것뿐이다.</b></p>
+  <p>확인 순서는 이렇다.</p>
+  <p>1. <b><code>active</code>의 시계열 모양</b>을 본다. 트래픽이 빠졌는데도 max에 붙어 있으면 누수다(5절).<br>
+     2. <b><code>usage</code> 타이머에 기록이 없는지</b> 본다. 반환 시점에 기록되는 지표이므로 누수 커넥션은 흔적을 남기지 않는다.<br>
+     3. <b><code>leak-detection-threshold</code>를 켜고</b> 대여 지점 스택트레이스를 받는다(8-1).<br>
+     4. <b>스레드 덤프</b>에서 <b>"기다리는 스레드는 많은데 쥐고 있는 스레드가 없다"</b>를 확인한다(8-3).<br>
+     5. <b>재시작 후 재발 주기</b>를 잰다. 일정한 주기로 정확히 재발하면 누수 속도가 일정하다는 뜻이다.</p>
+  <p style="margin-bottom:0">그리고 <b>누수는 대개 <code>@Transactional</code> 밖에 있다</b>는 것까지 말하면 좋다. Spring이 관리하는 트랜잭션은 반환을 보장하므로, 범인은 <b><code>dataSource.getConnection()</code>을 직접 부르는 코드나 레거시 JDBC 코드</b>다. <b>코드를 뒤질 때 어디부터 볼지를 아는 것이 진단 속도를 가른다.</b></p>
+</div></details>
+
+<details class="q"><summary><code>idle in transaction</code>은 왜 위험한가요? <span class="badge core">필수</span><span class="hint">힌트: 세 층위로 답하고, 마지막에 "BEGIN만 한 트랜잭션은 예외"를 붙이면 가산점</span></summary><div class="a">
+  <p><b>(1) 커넥션을 쥔다.</b> 트랜잭션이 열려 있는 동안 <b>Hikari 커넥션 하나가 계속 대여 상태</b>다. 이게 고갈로 직결된다.</p>
+  <p><b>(2) 락을 쥔다.</b> 이미 <code>UPDATE</code>를 했다면 <b>그 행의 배타 락을 트랜잭션이 끝날 때까지 붙들고 있다.</b> <b>무관한 요청들이 그 뒤에 줄을 서므로, 하나의 느린 외부 호출이 서비스 전반의 지연으로 번진다.</b></p>
+  <p><b>(3) VACUUM을 막아 테이블 블로트를 만든다.</b> PostgreSQL의 MVCC에서 <b>죽은 튜플은 "가장 오래된 활성 트랜잭션의 스냅샷"보다 최신이면 회수되지 않는다.</b> 30분째 열려 있는 트랜잭션 하나가 <b>그 30분 동안 생긴 모든 죽은 튜플의 회수를 막는다.</b> 결과는 테이블·인덱스 비대화와 스캔 성능 저하 — <b>③이 결국 ②를 만들어낸다.</b></p>
+  <p><b>정확히 하면 가산점이다.</b> <b><code>BEGIN</code>만 하고 쿼리를 한 번도 안 한 트랜잭션은 스냅샷이 없어 VACUUM을 막지 않는다.</b> 문제가 되는 것은 <b>쿼리를 한 뒤 열린 채로 방치된 트랜잭션</b>이고, 실무 코드는 대개 여기 해당한다.</p>
+  <p style="margin-bottom:0"><b>대응은 코드 수정(트랜잭션 밖으로 외부 호출 빼기)이 근본</b>이고, <code>idle_in_transaction_session_timeout</code>은 <b>피해 확산을 막는 방화벽</b>이다. 이 구분을 붙여야 답이 완성된다.</p>
+</div></details>
+
+<details class="q"><summary>고갈 났으니 풀을 늘리면 되지 않나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "①일 때만 정답"이라고 못 박고, 나머지를 계산으로 반박한 뒤 올바른 방향까지</span></summary><div class="a">
+  <p><b>①일 때만 정답</b>이라고 못 박고 나머지를 계산으로 반박한다.</p>
+  <p><b>②③이면 산술적으로 감당이 안 된다.</b> 점유 시간이 <b>50ms에서 3초</b>로 늘면 <b>500 TPS를 감당하는 데 커넥션이 1,500개</b> 필요하다. PostgreSQL의 <code>max_connections</code> 기본값은 <b>100</b>이고, 앱 인스턴스가 6대면 총합이 그 몇 배가 된다. 그리고 늘리면 <b>DB 안 경합이 늘어 W가 더 나빠지는 양의 되먹임</b>이 생긴다(9-1). <b>대기 줄이 사라지는 게 아니라 앱 앞에서 DB 앞으로 옮겨 가는 것이고, DB 앞의 줄이 더 비싸다.</b></p>
+  <p><b>④면 마르는 시간만 미룬다.</b> 분당 5개씩 새는 코드에서 풀을 10에서 100으로 늘리면 <b>2분이 20분이 될 뿐</b>이다. 오히려 <b>진짜 원인을 영영 안 찾게 되는 것</b>이 더 큰 손해다.</p>
+  <p style="margin-bottom:0">그리고 <b>올바른 방향을 함께 제시해야 답이 완성된다.</b> <b>L = λW ≤ c</b>에서 <b>c를 못 늘리면 남는 것은 W를 줄이는 것</b>이다 — 트랜잭션 밖으로 외부 호출 빼기, 인덱스·실행 계획 교정, 락 범위 축소. <b><code>hikaricp.connections.usage</code>가 그 개선을 직접 측정해 준다.</b></p>
+</div></details>
+
+<details class="q"><summary>그럼 <code>maximumPoolSize</code>를 아주 크게 잡아두면 최소한 고갈은 안 나지 않나요? <span class="badge trap">함정</span><span class="hint">힌트: 커넥션 풀은 병목이면서 동시에 "문지기"다</span></summary><div class="a">
+  <p><b>고갈이 다른 곳으로 옮겨 갈 뿐이다.</b> 커넥션 풀은 병목이면서 동시에 <b>문지기</b>이기도 하다.</p>
+  <p>풀 크기 10이 하던 일은 <b>"DB에 동시에 10개까지만 보낸다"는 유입 제어</b>다. 이걸 500으로 열면 <b>DB가 500개의 동시 요청을 받게 되고</b>, DB 쪽 경합이 폭증해 <b>모든 쿼리가 같이 느려진다.</b> <b>일부가 실패하던 것이 전부가 느려지는 것으로 바뀐다.</b></p>
+  <p>여기에 총량 계산이 붙는다. <b>앱 인스턴스가 6대면 6 × 500 = 3,000개</b>다. PostgreSQL은 접속 자체를 거부한다(<code>FATAL: sorry, too many clients already</code>).</p>
+  <p style="margin-bottom:0"><b>"상한은 제약이 아니라 신호 장치"</b>라는 표현까지 쓰면 좋다. <b>상한이 없으면 시스템은 자기가 과부하라는 사실을 알 방법이 없다</b>(<code>07-traffic-performance/16-backpressure-and-application-points.md</code>).</p>
+</div></details>
+
+<details class="q"><summary><code>leakDetectionThreshold</code>를 운영에 상시 켜도 되나요? <span class="badge bonus">가산점</span><span class="hint">힌트: "켜도 된다"로 시작하되, 비용이 정확히 무엇인지 말한다. "공짜"라고 하면 감점</span></summary><div class="a">
+  <p><b>켜도 된다. 다만 공짜라고 말하면 안 된다.</b></p>
+  <p>비용은 <b>대여마다 예외 객체 1개(스택트레이스 채우기) + 스케줄 태스크 1개</b>다. <b>커넥션 대여와 그 뒤에 따라오는 쿼리에 비하면 무시할 만한 비율</b>이라 실무에서는 상시 켜 두는 것이 일반적이다. <b>비활성(<code>0</code>)일 때는 이 경로를 아예 타지 않으므로 그때의 비용은 정말로 0</b>이다 — 그래서 정확한 표현은 <b>"끄면 빨라진다"가 아니라 "켜도 거의 안 느려진다"</b>다.</p>
+  <p>값은 <code>hikaricp.connections.usage</code>의 <b>p99보다 넉넉히 위</b>로 잡고, <b><code>maxLifetime</code>(기본 30분)보다 크면 HikariCP가 무시</b>한다는 점, <b>최솟값이 2,000ms</b>라는 점을 함께 알아 두면 좋다.</p>
+  <p style="margin-bottom:0"><b>로그가 찍혔는데 누수가 아닌 경우</b>도 답할 수 있어야 한다. <b>배치나 대량 처리의 정상적인 장기 점유</b>가 걸린 것이다. 대응은 ① 임계값을 그 작업보다 크게 잡거나 ② 그 작업을 <b>별도 데이터소스로 분리</b>하거나 ③ <b>애초에 그 작업의 점유 자체를 줄이는 것</b>(청크 단위 커밋)이다. <b>마지막 선택지가 가장 낫다</b> — 그런 장기 점유는 <b>오탐이기 이전에 이미 ③의 신호</b>이기 때문이다.</p>
+</div></details>
+
+<details class="q"><summary><code>active</code>가 max인데 <code>pending</code>은 0입니다. 고갈인가요? <span class="badge trap">함정</span><span class="hint">힌트: 부등식의 어느 쪽인지로 답한다 — L &gt; c 인가, L ≈ c 인가</span></summary><div class="a">
+  <p><b>아직 실패는 아니다. 하지만 여유가 0인 상태다.</b></p>
+  <p>식으로 말하면 <b>L ≈ c</b>인 지점이다. <b>대여 요청이 곧바로 커넥션을 받고 있으므로 대기 줄은 없고</b>(<code>pending = 0</code>), <b>실패도 아직 없다.</b> 그러나 <b>λ가 조금만 커지거나 W가 조금만 늘어나면 즉시 <code>pending</code>이 생긴다.</b></p>
+  <p>그래서 지표를 이렇게 나눠 쓴다 — <b><code>pending &gt; 0</code>은 "이미 벌어진 일"을 알리는 확정 알람</b>이고, <b><code>active / max</code> 비율이 지속적으로 1에 가까운 것은 "곧 벌어질 일"을 알리는 선행 신호</b>다. <b>선행 신호에서 <code>usage</code>를 함께 보면</b> 여유가 사라진 이유가 <b>λ 때문인지 W 때문인지</b>까지 갈린다.</p>
+  <p style="margin-bottom:0">반대로 <b><code>pending &gt; 0</code>인데 <code>active</code>가 max가 아닌 상황</b>도 있는지 물으면, 그건 <b>커넥션을 새로 만드는 중</b>이거나 <b>순간적인 경합</b>으로 잠깐 나타날 수 있는 모습이다 — 지속된다면 <b>커넥션 생성 자체가 느린 것</b>(DB 접속 지연)을 의심하고 <code>acquire</code> 시간을 본다.</p>
+</div></details>
+
+<details class="q"><summary>슬로우 쿼리 로그에는 아무것도 없는데 커넥션은 오래 잡혀 있습니다. <span class="badge bonus">가산점</span><span class="hint">힌트: "DB 밖 시간은 DB 로그에 남지 않는다"에서 출발한다</span></summary><div class="a">
+  <p><b>③(트랜잭션 안 외부 호출·CPU 작업)의 전형적인 모습이다.</b> <b>쿼리는 5ms에 끝났으니 슬로우 쿼리 로그에 남을 이유가 없고</b>, 그 뒤 3초는 <b>DB 밖에서 흐른 시간</b>이라 DB는 그 시간의 존재조차 모른다.</p>
+  <p><b>확인은 두 값의 차이로 한다.</b> 앱의 <code>hikaricp.connections.usage</code>(점유 시간)에서 <b>그 요청이 실제로 실행한 쿼리 시간의 합</b>을 빼면, 남는 것이 <b>커넥션을 쥔 채 DB 밖에서 보낸 시간</b>이다. 이 값이 크면 ③이다.</p>
+  <p>교차 확인은 두 곳에서 한다. <b>① DB에서는 <code>pg_stat_activity</code>의 <code>state = 'idle in transaction'</code></b>으로 보이고(<code>query</code> 컬럼에 <b>마지막으로 실행한 쿼리</b>가 남아 있어 코드 지점을 특정할 수 있다), <b>② 스레드 덤프에서는 부류 B의 스택</b>이 <code>@Transactional</code> 메서드 → HTTP 클라이언트 → 소켓 <code>read</code>로 이어진다(8-3).</p>
+  <p style="margin-bottom:0"><b>또 하나의 가능성은 락 대기</b>다. 이 경우는 쿼리가 <b>실행 시간으로는 길게 찍힐 수 있지만 "왜 길었는지"가 안 보인다.</b> <code>wait_event_type = Lock</code>과 <code>pg_blocking_pids()</code>로 <b>막고 있는 세션</b>을 지목하면 갈린다 — 그리고 <b>막는 쪽이 <code>idle in transaction</code>이면 결국 원인은 또 ③</b>이다.</p>
+</div></details>
+
+<details class="q"><summary><code>connection-timeout</code>을 30초에서 2초로 줄이면 실패가 늘어나지 않나요? <span class="badge trap">함정</span><span class="hint">힌트: 실패의 "총량"과 "방식"을 나눠서 답한다</span></summary><div class="a">
+  <p><b>바뀌는 것은 주로 실패의 방식이지 총량이 아니다.</b> 풀이 고갈된 상태에서 <b>30초를 기다린 요청들도 결국 대부분 실패한다.</b> 달라지는 것은 <b>그 30초 동안 톰캣 스레드를 하나씩 물고 있었다는 사실</b>이다.</p>
+  <p><b>2초로 줄이면 같은 시간에 대기로 잠기는 스레드 양이 15분의 1</b>이 된다. 그러면 <b>DB를 안 쓰는 API와 헬스체크가 살아남고</b>, LB가 인스턴스를 빼지 않으며, <b>장애가 그 기능 안에 갇힌다.</b> 스레드가 빨리 풀리므로 <b>회복도 빠르다.</b></p>
+  <p><b>대가도 정직하게 말해야 한다.</b> <b>아주 짧은 스파이크에서라면 30초 안에는 커넥션을 얻어 성공했을 요청이 2초에서 실패</b>로 바뀔 수 있다. 그래서 값은 <b>정상 상황의 <code>hikaricp.connections.acquire</code>보다는 넉넉히 위, 그러나 톰캣 스레드를 오래 잠그지 않는 선</b>에서 잡는다.</p>
+  <p style="margin-bottom:0">그리고 반드시 붙여야 하는 문장 — <b>이것은 증상 처리다.</b> 근본 원인은 여전히 ①~④ 중 하나이고, 짧은 타임아웃은 <b>그것이 전면 장애로 번지지 않게 막는 격벽</b>일 뿐이다.</p>
+</div></details>
+
+<details class="q"><summary>지금 당장 서비스를 살려야 합니다. 재시작 말고 할 수 있는 게 있나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 조치 전에 "증거 보전"을 먼저 말하면 인상이 달라진다</span></summary><div class="a">
+  <p><b>먼저 증거를 보전한다.</b> 재시작이든 세션 종료든 <b>지금 상태를 지우는 조치</b>이므로, <b>① 스레드 덤프 1~2회(간격을 두고) ② <code>pg_stat_activity</code> 스냅샷 ③ 최근 Hikari 메트릭 구간</b>을 먼저 확보한다. <b>이걸 안 하면 복구 후에 원인을 못 찾아 같은 장애가 반복된다.</b></p>
+  <p>그다음 조치는 <b>계열에 따라 다르다.</b></p>
+  <p><b>③이 보이면</b>(<code>idle in transaction</code>이 쌓임) 오래된 세션을 끊어 커넥션과 락을 회수한다. <code>idle_in_transaction_session_timeout</code>을 켜거나 해당 세션을 종료하는 방식이고, <b>애플리케이션에는 커넥션이 끊긴 것으로 보이므로 예외가 발생한다</b>는 점을 감수하고 하는 조치다.</p>
+  <p><b>②가 보이면</b> 문제 쿼리를 취소하고 <code>statement_timeout</code>·<code>lock_timeout</code>을 걸어 <b>최악의 W에 상한</b>을 만든다.</p>
+  <p><b>④가 보이면</b> 아쉽지만 <b>재시작 외에 회수 수단이 없다.</b> 대신 <b>재시작 시각을 기록해 재발 주기를 재는 것</b>이 다음 진단의 결정적 자료가 된다.</p>
+  <p style="margin-bottom:0"><b>공통으로 할 수 있는 것</b>은 <b>유입을 줄이는 쪽</b>이다 — 무거운 배치·리포트 기능을 잠시 끄거나, 해당 엔드포인트에 제한을 걸어 <b>λ를 낮춘다.</b> <b>c를 못 늘리고 W도 당장 못 줄이면 남는 항은 λ뿐</b>이라는 것도 식에서 그대로 나온다.</p>
+</div></details>
+
+<details class="q"><summary>MySQL이라면 무엇을 봐야 하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 대응되는 뷰 이름과, "한 뷰로 안 끝난다"는 차이</span></summary><div class="a">
+  <p><code>pg_stat_activity</code>에 대응되는 것은 <b><code>SHOW PROCESSLIST</code> 또는 <code>information_schema.processlist</code></b>다. 여기서 <b>오래 도는 쿼리</b>는 같은 방식으로 찾을 수 있다.</p>
+  <p>다만 <b><code>idle in transaction</code>에 해당하는 상태를 한 눈에 보기 어렵다.</b> MySQL에서 그 상태는 <b><code>Sleep</code>이면서 트랜잭션이 열려 있는 세션</b>으로 나타나는데, <b><code>Sleep</code>만으로는 "그냥 노는 커넥션"과 구분되지 않는다.</b> 그래서 <b><code>information_schema.innodb_trx</code>를 함께 봐서 그 세션에 열린 트랜잭션이 있는지</b>를 확인해야 한다.</p>
+  <p style="margin-bottom:0"><b>진단 절차 자체는 그대로다</b> — 앱 메트릭으로 계열을 좁히고 DB에서 교차 확인한다. <b>다른 것은 어휘와 도구뿐</b>이고, <b>PostgreSQL이 한 뷰에서 다 보인다는 점이 진단상 유리하다</b>는 차이를 말할 수 있으면 충분하다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  커넥션 고갈은 증상 하나에 원인 넷이지만 <b>물리는 하나</b>다 — <code>L = λ × W</code>가 풀 크기 <code>c</code>를 넘으면 대기가 생기므로, 원인은 <b>λ·c 문제(① 풀 크기 부족)</b>이거나 <b>W 문제(② 느린 쿼리·락 대기, ③ 트랜잭션 안 외부 호출)</b>이거나 <b>W가 무한대인 경우(④ 누수)</b>뿐이다. 진단은 <b>앱 메트릭으로 계열을 좁히고</b>(<code>pending &gt; 0</code>이면 고갈, <code>usage</code>가 W의 실측치, <code>active</code>가 트래픽과 함께 안 내려오면 누수) <b>PostgreSQL의 <code>pg_stat_activity</code>로 교차 확인</b>하되(오래 도는 <code>active</code>는 ②, 쌓인 <code>idle in transaction</code>은 ③ — 이건 커넥션·락에 더해 <b>VACUUM까지 막아 블로트</b>를 만든다), 누수 지점은 <code>leakDetectionThreshold</code>의 <b>대여 시점 스택트레이스</b>로 특정하고 스레드 덤프에서 <b>"기다리는 스레드(피해자)"와 "쥐고 있는 스레드(용의자)"</b>를 갈라 읽어 확정한다. 그리고 처방은 계열마다 달라서 <b>풀 확대는 ①일 때만 정답</b>이다 — W가 원인이면 점유가 3초일 때 500 TPS에 커넥션 <b>1,500개</b>가 필요해 산술적으로 감당이 안 되고 DB 경합만 키우며, 누수면 <b>마르는 시각만 뒤로 밀린다.</b> 남는 답은 <b>W를 줄이는 것</b>이고, 그동안 전면 장애로 번지지 않게 <code>connection-timeout</code>을 짧게 잡아 <b>연쇄를 끊는다.</b>
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/02-spring/26-hikaricp-connection-pool-exhaustion.md</code> · 함께 볼 문서: 스레드풀·커넥션풀 사이징(25) · 트랜잭션 안의 외부 API 호출(22) · 트랜잭셔널 아웃박스 패턴(23) · 트랜잭션 동기화와 커넥션 바인딩(24) · <code>@Transactional</code> 기본 동작과 롤백(07) · <code>07-traffic-performance/16-backpressure-and-application-points</code> · <code>07-traffic-performance/18-cascading-failure-mechanism-and-bulkhead</code></p>
+</main>
+</body>
+</html>
