@@ -1,0 +1,1902 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>"결제됐는데 주문이 없다" 정합성 사고 — 원인을 좁히는 순서와 DB 관점의 재발 방지</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">04 RDB · SQL &nbsp;|&nbsp; 고난이도⭐⭐⭐ &nbsp;|&nbsp; PostgreSQL 기준 (MySQL 대조 포함) &nbsp;|&nbsp; 사고 대응</span>
+  <h1>"결제됐는데 주문이 없다" 정합성 사고<br><span class="sub">원인을 좁히는 순서와 DB 관점의 재발 방지</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"'결제는 성공했는데 주문 데이터가 없다'는 정합성 문제가 발생했습니다. 원인 후보와 재발 방지 설계를 설명해주세요."</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 이 증상의 뿌리는 하나다. <b>돈의 원장(PG)과 주문의 원장(우리 DB)은 서로 다른 시스템이고, PG 승인은 우리 트랜잭션의 롤백으로 되돌아오지 않는다.</b> 그래서 원인 후보는 "PG에 진실이 생긴 뒤 우리 DB에 진실이 안 남는 경로" <b>여섯 가지</b>로 열거된다 — <b>(a)</b> <code>@Transactional</code> 안에서 승인을 호출하고 그 뒤 예외로 롤백 <b>(b)</b> 승인 웹훅이 주문보다 먼저 도착해 매칭 실패 후 폐기 <b>(c)</b> 승인 응답 직후 타임아웃·크래시로 INSERT 미실행 <b>(d)</b> 멱등키 레코드가 "결과" 대신 "봤다"만 저장해 재시도가 무시됨 <b>(e)</b> 배포·failover 순간 커밋 전 커넥션 단절 <b>(f)</b> <code>@Async</code>·이벤트 후처리에서 주문을 만들다 유실. 좁히는 첫 질문은 <b>"고객이 성공 화면을 봤는가"</b>와 <b>"우리 DB에 흔적이 하나라도 있는가"</b>다. 재발 방지는 한 겹이 아니라 <b>다섯 겹</b> — <b>① 순서 설계(PENDING 선생성 → 트랜잭션 밖 승인 → 조건부 확정) ② 멱등(요청·PG·DB 유니크 세 층) ③ Outbox/Inbox(웹훅은 "받았다"는 사실만 먼저 확정) ④ 양방향 대사 배치(PG 원장 ↔ 주문 원장) ⑤ 알람(PENDING 체류 시간·불일치 건수)</b> — 이고, 각각 미완료 주문 정리 배치·키 저장소·테이블과 릴레이·PG 조회 비용과 의존·오탐이라는 <b>값을 치른다</b>. ①~③은 사고 <b>확률</b>을 줄이고 ④⑤는 그래도 난 사고를 <b>대사 주기 안에 반드시 잡히는 유계(bounded) 불일치</b>로 바꾼다. 이 전부를 사람의 주의가 아니라 <b>ArchUnit(트랜잭션 안 PG 호출 금지)·부분 실패 테스트·대사 배치 코드</b>로 고정한다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>뿌리는 하나다 — 원장이 두 권인데 롤백은 우리 쪽 한 권만 되돌린다.</b> <code>@Transactional</code>이 <code>ROLLBACK</code>을 보내는 대상은 PostgreSQL 커넥션 하나이고, <b>PG 서버는 그 명령을 받을 방법도 이유도 없다.</b> 그래서 승인 이후의 모든 실패는 "돈은 나갔는데 주문은 없는" 모양으로 착지한다.</div></li>
+    <li><span class="n">2</span><div><b>원인은 여섯 경로로 열거하고, 두 질문으로 절반씩 자른다.</b> <b>(a) 경계 (b) 웹훅 (c) 불명 (d) 멱등 (e) failover (f) 비동기</b> — 그리고 <b>"고객이 성공 화면을 봤는가"</b>(→ f를 최우선으로 올림)와 <b>"우리 DB에 흔적이 하나라도 있는가"</b>(→ 멱등 레코드만 있으면 d, PENDING이면 c·e)로 좁힌다. 여섯 개를 다 조사하겠다는 답은 답이 아니다.</div></li>
+    <li><span class="n">3</span><div><b>재발 방지는 계층이고, 각 계층의 대가를 함께 말한다.</b> <b>① 순서 ② 멱등 ③ Outbox/Inbox</b>는 사고 <b>확률</b>을 줄이고, <b>④ 대사 ⑤ 알람</b>은 그래도 난 사고의 <b>방치 시간을 배치 주기로 상한</b> 짓는다. 그리고 이 설계를 <b>ArchUnit·부분 실패 테스트·"0이 정상"인 카운터</b>로 고정해, 사람의 기억이 아니라 시스템의 성질로 만든다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 (그리고 PG라는 약어)</a></li>
+    <li><a href="#s1">무대 — 두 개의 원장과 롤백의 사정거리</a></li>
+    <li><a href="#s2">세 번째 결과 "불명", 그리고 증상 세 갈래</a></li>
+    <li><a href="#s3">세 단어 — 멱등 · 아웃박스 · 대사</a></li>
+    <li><a href="#s4">사고 대응 사이클 여섯 단계</a></li>
+    <li><a href="#s5">원인 후보 여섯 가지</a></li>
+    <li><a href="#s6">좁히기 — 단서에서 후보로</a></li>
+    <li><a href="#s7">영향 범위 — 숫자를 만드는 SQL</a></li>
+    <li><a href="#s8">임시 조치 — 출혈 차단 · 고객 복구 · 증거 보존</a></li>
+    <li><a href="#s9">방어선 다섯 겹 (원인 ↔ 방어선 대응표)</a></li>
+    <li><a href="#s10">못 어기게 고정하기 — 대사 · ArchUnit · 테스트 · 지표</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도 (그리고 PG라는 약어)</h2>
+
+<div class="callout trap">
+  <span class="t">먼저 약어부터 — 이 문서에서 <code>PG</code>는 결제대행사(Payment Gateway)다</span>
+  이 장의 다른 문서에서는 <code>PG</code>가 PostgreSQL을 가리키는 경우가 많다. <b>이 문서만 규칙이 다르다.</b> 데이터베이스는 줄이지 않고 <b>PostgreSQL</b>이라고 그대로 쓴다. 둘 다 "PG"로 부르면 문서에서도 면접장에서도 반드시 꼬인다.
+  <div class="grid g3" style="margin-top:10px">
+    <div class="tile"><div class="k" style="font-family:inherit">PG</div><div class="d">결제대행사 — 토스페이먼츠·나이스페이·PortOne 같은 결제 게이트웨이</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">PostgreSQL</div><div class="d">우리가 쓰는 데이터베이스 엔진</div></div>
+    <div class="tile"><div class="k">pg_stat_activity · pgjdbc</div><div class="d">소문자로 시작하는 식별자·드라이버 이름은 <b>전부 PostgreSQL 쪽</b></div></div>
+  </div>
+</div>
+
+<div class="card">
+  <p><b>질문</b>: "'결제는 성공했는데 주문 데이터가 없다'는 정합성 문제가 발생했습니다. 원인 후보와 재발 방지 설계를 설명해주세요."</p>
+  <p><b>출제 의도</b>: <b>실제 장애 시나리오를 그대로 던져 원인 가설 수립(트랜잭션 경계, 웹훅 유실, 부분 실패)과 재발 방지 설계를 동시에 시키는 질문. 사고 대응의 전체 사이클을 수행할 수 있는지 본다.</b> 즉 <b>"Outbox 패턴을 아는가"를 묻는 자리가 아니다.</b></p>
+  <div class="grid g4" style="margin:12px 0">
+    <div class="tile"><div class="k" style="font-family:inherit">① 가설을 여럿</div><div class="d">증상을 받아든 순간 원인 후보를 <b>여럿 세우고 단서로 좁혀</b> 가는가</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 출혈부터</div><div class="d">좁히는 동안에도 <b>영향 범위·고객 피해를 먼저 막는가</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">③ 계층 설계</div><div class="d">재발 방지를 "한 방"이 아니라 <b>계층으로</b>, 각 계층의 <b>대가</b>까지 아는가</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">④ 장치로 고정</div><div class="d">그 설계를 <b>사람의 기억이 아니라 코드·배치·알람</b>으로 고정하는가</div></div>
+  </div>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 습관 네 가지</span>
+    ① <b>인과를 "메커니즘 사슬"로 서술하지 못하는 것</b> → 5절에서 원인 여섯 가지를 <b>전부 t1→t2→… 타임라인 같은 형식</b>으로 세운다. "트랜잭션 문제일 수 있습니다"에서 멈추면 이 문항은 "하"다.<br>
+    ② <b>트레이드오프를 한쪽만 말하는 것</b> → 9절은 방어선 하나마다 "얻는 것"과 "<b>치르는 값</b>"을 같은 호흡에 적는다. <b>값을 말하지 않은 방어선은 설계가 아니라 희망이다.</b><br>
+    ③ <b>안전망을 사람 기억에 맡기는 것</b> → 10절은 규율이 아니라 장치다 — 대사 배치를 코드로, "트랜잭션 안 PG 호출 금지"를 ArchUnit으로, 부분 실패를 테스트로.<br>
+    ④ <b>목록 인출 실패</b> → <b>원인 여섯</b>과 <b>방어선 다섯</b>을 번호 붙은 암기 카드로 고정하고, 9절의 <b>대응표</b>로 둘을 잇는다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 무대 — 두 개의 원장과 롤백의 사정거리</h2>
+
+<p>먼저 증상을 정확히 진술한다. "결제는 성공했는데 주문이 없다"는 <b>PG의 원장에는 승인 레코드가 있는데 우리 DB의 <code>orders</code>에는 대응하는 확정 주문이 없다</b>는 뜻이다. <b>돈은 빠져나갔고 물건은 안 나간다.</b> 고객은 카드사 승인 문자와 함께 "주문 내역 없음"을 본다. CS가 가장 먼저 알게 되고 개발팀은 대개 그 다음에 안다 — <b>이것 자체가 방어선 ⑤(알람)가 필요한 이유다.</b></p>
+
+<p>여기서 <b>원장(ledger)</b>이라는 단어를 그대로 쓴다. 회계에서 원장은 "돈이 오간 사실을 줄 단위로 적어 두는 장부"다. 이 사고에서 중요한 것은 <b>그 장부가 두 권이고, 두 권이 서로 다른 회사의 서로 다른 데이터베이스에 있다</b>는 사실 하나다. 아래 그림이 <b>원인 후보 여섯 가지 전부의 무대</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 396" role="img" aria-label="왼쪽에 우리 시스템의 PostgreSQL이 orders, payment, 웹훅 수신 엔드포인트를 담고 있고 오른쪽에 결제대행사의 승인 원장이 있다. 두 상자 사이에 승인 요청, 승인 응답, 웹훅이라는 세 개의 화살표가 있으며, 트랜잭션 경계는 왼쪽 상자 안에만 존재한다">
+    <defs>
+      <marker id="a1" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="a2" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+      <marker id="a3" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d97706"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15.5" font-weight="700" fill="#1f2937" text-anchor="middle">사고의 무대 — 장부가 두 권이고, 우리 트랜잭션은 왼쪽 상자 안에서만 유효하다</text>
+
+    <!-- OUR SYSTEM -->
+    <rect x="20" y="48" width="404" height="290" rx="14" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="40" y="74" font-size="13.5" font-weight="700" fill="#334155">우리 시스템 · PostgreSQL</text>
+
+    <!-- transaction boundary -->
+    <rect x="36" y="86" width="372" height="150" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2" stroke-dasharray="7 4"/>
+    <text x="52" y="106" font-size="11.5" font-weight="700" fill="#1d4ed8">@Transactional 경계 — 커넥션 하나가 전부다</text>
+
+    <rect x="54" y="118" width="164" height="50" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <text x="66" y="137" font-size="12" font-weight="700" fill="#1d4ed8" class="mono">orders</text>
+    <text x="66" y="156" font-size="10.5" fill="#475569" class="mono">order_no · status · amount</text>
+
+    <rect x="230" y="118" width="164" height="50" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <text x="242" y="137" font-size="12" font-weight="700" fill="#1d4ed8" class="mono">payment</text>
+    <text x="242" y="156" font-size="10.5" fill="#475569" class="mono">payment_key · approved_at</text>
+
+    <rect x="54" y="178" width="340" height="44" rx="8" fill="#fff" stroke="#bfdbfe"/>
+    <text x="66" y="196" font-size="12" font-weight="700" fill="#1d4ed8" class="mono">idempotency / outbox / webhook_inbox</text>
+    <text x="66" y="213" font-size="10.5" fill="#475569">"시도했다"는 흔적을 남기는 테이블들 (§9)</text>
+
+    <rect x="36" y="248" width="372" height="70" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="52" y="270" font-size="12" font-weight="700" fill="#b45309">POST /webhooks/pg — 웹훅 수신 엔드포인트</text>
+    <text x="52" y="290" font-size="11" fill="#92400e">우리가 요청한 적 없이 날아온다. 이 엔드포인트는</text>
+    <text x="52" y="307" font-size="11" fill="#92400e">트랜잭션 경계 <tspan font-weight="700">바깥에서 시작하는 별개의 요청</tspan>이다</text>
+
+    <!-- PG -->
+    <rect x="696" y="48" width="404" height="290" rx="14" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="716" y="74" font-size="13.5" font-weight="700" fill="#b91c1c">결제대행사(PG) · 그들의 DB</text>
+
+    <rect x="712" y="90" width="372" height="94" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="728" y="112" font-size="12.5" font-weight="700" fill="#b91c1c" class="mono">승인 원장</text>
+    <text x="728" y="133" font-size="11" fill="#475569" class="mono">payment_key · order_no · amount</text>
+    <text x="728" y="151" font-size="11" fill="#475569" class="mono">status = APPROVED · approved_at</text>
+    <text x="728" y="172" font-size="11" fill="#7f1d1d">여기 커밋되는 순간 <tspan font-weight="700">되돌릴 수 없는 사건</tspan>이 된다</text>
+
+    <rect x="712" y="196" width="372" height="60" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="728" y="218" font-size="12" font-weight="700" fill="#b91c1c">웹훅 전송 큐</text>
+    <text x="728" y="238" font-size="11" fill="#7f1d1d">순서 보장 없음 · 전달 보장 없음 · <tspan font-weight="700">재시도 정책은 PG가 정한다</tspan></text>
+
+    <rect x="712" y="268" width="372" height="50" rx="10" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="728" y="290" font-size="12" font-weight="700" fill="#b91c1c">우리 ROLLBACK 이 닿지 않는 영역</text>
+    <text x="728" y="308" font-size="11" fill="#7f1d1d">되돌리려면 "취소 API를 또 호출"하는 별도 행위가 필요하다</text>
+
+    <!-- arrows -->
+    <line x1="424" y1="120" x2="694" y2="120" stroke="#2563eb" stroke-width="2" marker-end="url(#a1)"/>
+    <text x="559" y="112" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">① 승인 요청 (동기 HTTP)</text>
+    <text x="559" y="136" font-size="10.5" fill="#64748b" text-anchor="middle" class="mono">approve(paymentKey, amount)</text>
+
+    <line x1="694" y1="176" x2="424" y2="176" stroke="#16a34a" stroke-width="2" marker-end="url(#a2)"/>
+    <text x="559" y="168" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">② 승인 응답</text>
+    <text x="559" y="192" font-size="10.5" fill="#64748b" text-anchor="middle">200 OK &nbsp;/&nbsp; <tspan fill="#b91c1c" font-weight="700">타임아웃(= 응답 없음)</tspan></text>
+
+    <line x1="694" y1="272" x2="424" y2="272" stroke="#d97706" stroke-width="2" marker-end="url(#a3)"/>
+    <text x="559" y="264" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">③ 웹훅 (비동기 통지)</text>
+    <text x="559" y="288" font-size="10.5" fill="#64748b" text-anchor="middle">우리가 부른 적 없다 · <tspan font-weight="700">주문보다 먼저 올 수 있다</tspan></text>
+
+    <!-- bottom band -->
+    <rect x="20" y="352" width="1080" height="36" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="375" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">원인 후보 여섯 가지는 전부 "①②③ 중 무엇이 어떻게 어긋났는가"의 변주다 — 외우지 말고 이 그림에서 꺼낸다</text>
+  </svg>
+  <figcaption>그림에서 읽어야 할 것은 셋이다. <b>①②는 우리가 거는 동기 호출</b>(요청은 갔는데 응답이 안 올 수 있고, 그때 오른쪽 상자의 상태를 우리는 모른다), <b>③은 PG가 우리를 부르는 비동기 통지</b>(순서도 전달도 보장되지 않는다), 그리고 <b>왼쪽 상자 안에만 트랜잭션 경계가 있다</b>는 것.</figcaption>
+</figure>
+
+<h3>1-1. 이 사고를 낳는 전형적 코드 — 문서 끝까지 쓸 무대</h3>
+
+<div class="codehead bad"><span class="tag">before</span> 겉보기엔 "전부 한 트랜잭션이니 안전"한 코드</div>
+<pre><code><span class="kw">@Service</span>
+<span class="kw">@RequiredArgsConstructor</span>
+<span class="kw">public class</span> OrderService {
+
+<span class="ln-bad">    <span class="kw">@Transactional</span>                                          <span class="cm">// ← 경계가 여기서 열린다</span></span>
+    <span class="kw">public</span> OrderResponse <span class="fn">placeOrder</span>(PlaceOrderRequest req) {
+        stockService.<span class="fn">decrease</span>(req.<span class="fn">items</span>());                       <span class="cm">// ① 재고 차감 (UPDATE → 행 락, 커밋까지 유지)</span>
+<span class="ln-bad">        PgApproval approval = pgClient.<span class="fn">approve</span>(req.<span class="fn">paymentKey</span>(), req.<span class="fn">amount</span>());  <span class="cm">// ② 외부 HTTP — 롤백 대상이 아니다</span></span>
+        Order order = orderRepository.<span class="fn">save</span>(Order.<span class="fn">create</span>(req, approval));         <span class="cm">// ③ 주문 INSERT</span>
+        couponService.<span class="fn">use</span>(req.<span class="fn">couponId</span>());                        <span class="cm">// ④ 쿠폰 사용 처리 — 여기서 예외가 나면?</span>
+        <span class="kw">return</span> OrderResponse.<span class="fn">of</span>(order);
+    }
+}</code></pre>
+
+<h3>1-2. 롤백의 사정거리 — 지우개는 우리 장부에만 닿는다</h3>
+
+<p><code>@Transactional</code>이 긋는 경계 안에 있는 것은 <b>우리 DB 커넥션 하나</b>뿐이다. 스프링의 트랜잭션 매니저가 하는 일은 그 커넥션에 <code>BEGIN</code>을 보내고, 정상 종료하면 <code>COMMIT</code>을, 예외가 나면 <code>ROLLBACK</code>을 보내는 것이 전부다. <b><code>ROLLBACK</code>이라는 명령을 받는 대상은 PostgreSQL 서버 하나이고, PG 서버는 그 명령을 받을 방법도 이유도 없다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 900 268" role="img" aria-label="왼쪽 상자 안에 재고 UPDATE, 주문 INSERT, 쿠폰 UPDATE가 있고 이들은 롤백으로 되돌아간다. 오른쪽 밖에 PG 승인이 있고 이는 롤백의 사정거리 밖이며 되돌리려면 취소 API 호출이라는 별도 행위가 필요하다">
+    <defs>
+      <marker id="b1" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="450" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">롤백의 사정거리 — 지우개가 닿는 곳과 닿지 않는 곳</text>
+
+    <rect x="24" y="48" width="446" height="176" rx="13" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="247" y="72" font-size="13" font-weight="700" fill="#166534" text-anchor="middle">@Transactional 이 되돌릴 수 있는 것 (우리 PostgreSQL)</text>
+    <rect x="46" y="86" width="402" height="36" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="62" y="110" font-size="12" fill="#166534" class="mono">① UPDATE stock &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ 되돌아감</text>
+    <rect x="46" y="128" width="402" height="36" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="62" y="152" font-size="12" fill="#166534" class="mono">③ INSERT orders &nbsp;&nbsp;&nbsp;&nbsp;→ 되돌아감</text>
+    <rect x="46" y="170" width="402" height="36" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="62" y="194" font-size="12" fill="#166534" class="mono">④ UPDATE coupon &nbsp;&nbsp;&nbsp;→ 되돌아감</text>
+
+    <rect x="506" y="86" width="370" height="78" rx="13" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="691" y="112" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="middle" class="mono">② PG 승인</text>
+    <text x="691" y="136" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">사정거리 밖 — 그대로 남는다</text>
+    <text x="691" y="154" font-size="11" fill="#7f1d1d" text-anchor="middle">PG의 DB에는 이미 COMMIT 되어 있다</text>
+
+    <line x1="470" y1="125" x2="502" y2="125" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#b1)"/>
+    <text x="486" y="112" font-size="18" font-weight="700" fill="#dc2626" text-anchor="middle">✕</text>
+
+    <rect x="506" y="176" width="370" height="60" rx="11" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="691" y="199" font-size="12" font-weight="700" fill="#b45309" text-anchor="middle">되돌리려면 "취소 API를 또 호출"해야 한다</text>
+    <text x="691" y="220" font-size="11.5" fill="#92400e" text-anchor="middle">= 보상 트랜잭션(compensating transaction) — <tspan font-weight="700">그 호출도 실패할 수 있다</tspan></text>
+
+    <rect x="24" y="240" width="852" height="20" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="450" y="255" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">"자동 롤백"과 "별도 작업으로 되돌리기"는 완전히 다른 일이다 — 후자는 실패할 수 있는 또 하나의 행위다</text>
+  </svg>
+  <figcaption>회계 비유로 옮기면 이렇다. <b>우리 장부는 연필로 쓰여 있어 지울 수 있지만, PG의 장부는 볼펜으로 쓰여 있다.</b> 지울 수 없으니 <b>"취소했음"이라는 새 줄을 한 줄 더 적는 것"</b>이 유일한 수단이고, 그 줄을 적는 일도 실패할 수 있다.</figcaption>
+</figure>
+
+<div class="rule red">롤백은 <b>우리 DB의 ①③④를 없던 일로</b> 만들 수 있을 뿐, <b>②를 없던 일로 만드는 수단이 우리에겐 없다</b></div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 세 번째 결과 "불명", 그리고 증상 세 갈래</h2>
+
+<p>로컬 메서드 호출에 익숙한 감각으로는 <b>"예외가 안 났으면 성공, 났으면 실패"</b>다. 네트워크 너머의 호출은 다르다. 요청을 보냈는데 응답이 안 오면(타임아웃, 커넥션 끊김, 프로세스 사망) <b>요청이 상대에게 도달하지 못한 것인지, 도달해서 처리까지 됐는데 응답만 못 온 것인지 구분할 방법이 없다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 900 250" role="img" aria-label="approve 호출 결과가 성공 실패 불명 세 가지로 갈리는 도식. 성공은 200 OK로 승인 확실, 실패는 4xx 명시적 거절로 승인 없음 확실, 불명은 타임아웃이나 프로세스 사망으로 승인 여부를 알 수 없으며 PG 조회만이 확인 수단이다">
+    <text x="450" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">approve() 호출의 결과는 둘이 아니라 셋이다</text>
+
+    <rect x="24" y="46" width="272" height="132" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="160" y="72" font-size="13.5" font-weight="700" fill="#166534" text-anchor="middle">성공</text>
+    <text x="160" y="96" font-size="12" fill="#166534" text-anchor="middle" class="mono">200 OK 를 받았다</text>
+    <text x="160" y="124" font-size="12" fill="#15803d" text-anchor="middle">PG 원장에 <tspan font-weight="700">승인 있음</tspan></text>
+    <text x="160" y="146" font-size="12" fill="#15803d" text-anchor="middle" font-weight="700">확실하다</text>
+    <text x="160" y="168" font-size="11" fill="#166534" text-anchor="middle">→ 우리 DB에 확정만 하면 된다</text>
+
+    <rect x="314" y="46" width="272" height="132" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="450" y="72" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">실패</text>
+    <text x="450" y="96" font-size="12" fill="#1d4ed8" text-anchor="middle" class="mono">4xx "카드 한도 초과"</text>
+    <text x="450" y="124" font-size="12" fill="#1e40af" text-anchor="middle">PG 원장에 <tspan font-weight="700">승인 없음</tspan></text>
+    <text x="450" y="146" font-size="12" fill="#1e40af" text-anchor="middle" font-weight="700">확실하다 (명시적 거절)</text>
+    <text x="450" y="168" font-size="11" fill="#1d4ed8" text-anchor="middle">→ FAILED 로 마킹해도 된다</text>
+
+    <rect x="604" y="46" width="272" height="132" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2.5"/>
+    <text x="740" y="72" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">불명 (不明)</text>
+    <text x="740" y="94" font-size="11.5" fill="#b91c1c" text-anchor="middle">타임아웃 · 커넥션 끊김</text>
+    <text x="740" y="111" font-size="11.5" fill="#b91c1c" text-anchor="middle">우리 프로세스 사망</text>
+    <text x="740" y="136" font-size="12" fill="#7f1d1d" text-anchor="middle" font-weight="700">있을 수도, 없을 수도 있다</text>
+    <text x="740" y="156" font-size="11.5" fill="#7f1d1d" text-anchor="middle">확인하는 유일한 방법은</text>
+    <text x="740" y="172" font-size="11.5" fill="#7f1d1d" text-anchor="middle" font-weight="700">"PG에 다시 물어보는 것"(조회 API)</text>
+
+    <rect x="24" y="192" width="852" height="46" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="450" y="212" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="middle">세 번째 상태를 "실패"로 취급하는 코드가 이 사고의 절반을 만든다</text>
+    <text x="450" y="230" font-size="11.5" fill="#7f1d1d" text-anchor="middle">불명을 실패로 단정하면 → 주문을 안 만들거나 FAILED 로 마킹한다 → PG 원장에는 승인이 남아 있다</text>
+  </svg>
+  <figcaption>비유하면 <b>등기우편을 부쳤는데 배송 조회가 멈춘 상황</b>이다. 상대가 받았는지 안 받았는지 <b>내 쪽에서는 알 수 없고</b>, 다시 부치면 두 통이 갈 수도 있다. <b>"다시 부쳐도 안전한 장치"(멱등)</b>와 <b>"나중에 상대에게 받았냐고 물어보는 절차"(대사)</b>가 필요한 이유가 전부 이 칸에서 나온다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>"주문 데이터가 없다"는 말을 들으면, 먼저 증상을 세 갈래로 쪼갠다</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">(i) 행이 아예 없다</div><div class="d">INSERT가 <b>실행되지 않았거나 롤백</b>됐다. 우리 쪽 흔적이 0이라 <b>영향 범위조차 우리 DB로는 셀 수 없다.</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">(ii) PENDING 으로 남아 있다</div><div class="d">승인까진 갔는데 <b>확정 단계가 안 돌았다.</b> 이미 방어선 ①이 있는 구조라면 사고는 이 갈래로 온다 — <b>가장 다행인 모양</b>이다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">(iii) FAILED 로 마킹돼 있다</div><div class="d">승인을 <b>실패로 오판</b>했다 — 위 그림의 <b>"불명을 실패로 취급"</b>이 그대로 데이터에 찍힌 것이다.</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">이게 <b>첫 SQL</b>이다. (i)인지 (ii)(iii)인지를 확인하기 전까지는 원인 후보를 하나도 자를 수 없다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 미리 정의하고 가는 세 단어 — 멱등 · 아웃박스 · 대사</h2>
+
+<p>이 문서(와 결제 도메인 전반)는 세 단어 위에 서 있다. 뜻을 모르고 읽으면 9절이 <b>주문(呪文)처럼</b> 들린다. <b>셋 다 "왜 그 이름인가"까지 붙여 둔다</b> — 이름의 유래를 알면 개념이 안 흔들린다.</p>
+
+<div class="card">
+  <h4 style="margin-top:0;color:#2563eb">멱등(idempotent) — 거듭 적용해도 결과가 같다</h4>
+  <p style="margin-top:4px">같은 요청을 한 번 보내든 열 번 보내든 <b>결과 상태가 같은</b> 성질이다. <code>x = 5</code>는 몇 번 실행해도 x가 5지만 <code>x = x + 1</code>은 실행 횟수만큼 달라진다 — <b>앞이 멱등, 뒤가 아니다.</b> 수학에서 "거듭(冪, idem) 제곱해도(potent) 자기 자신"인 연산을 부르던 말을 그대로 가져왔다.</p>
+  <div class="callout info" style="margin-bottom:0"><span class="t">결제에서 멱등이 필수인 이유는 "불명" 때문이다</span>
+    불명 뒤에 우리가 할 수 있는 행동은 <b>재시도</b>뿐인데, 재시도가 안전하지 않으면(= 멱등하지 않으면) 재시도가 <b>이중 결제라는 반대 사고</b>를 만든다. 그래서 <b>"멱등을 갖춘다" = "재시도할 권리를 얻는다"</b>와 같은 말이다.
+  </div>
+</div>
+
+<div class="card">
+  <h4 style="margin-top:0;color:#2563eb">아웃박스(outbox) / 인박스(inbox) — 발신함과 수신함</h4>
+  <p style="margin-top:4px">직역하면 <b>"나갈 우편함"</b>이다. 편지를 우체국까지 직접 들고 가는 대신 발신함에 넣어 두면, <b>내가 자리를 비워도 우편 담당자가 나중에 가져간다.</b> 소프트웨어에서는 <b>"보낼 메시지를 외부로 직접 보내지 않고, 비즈니스 데이터와 같은 트랜잭션에서 우리 DB의 테이블 한 줄로 먼저 적어 두는 것"</b>이다. 그 뒤 별도의 릴레이(relay, 중계기)가 그 테이블을 읽어 실제 발송한다.</p>
+  <p><b>왜 그렇게 하나.</b> "주문 확정 INSERT"와 "메시지 발행"을 나란히 하면 <b>둘 중 하나만 성공하는 순간이 반드시 생긴다</b>(DB는 커밋됐는데 발행 전에 프로세스가 죽는 식으로). 둘 다 <b>우리 DB 안의 쓰기</b>로 만들면 <b>하나의 트랜잭션이 둘을 원자적으로 묶는다</b> — 이것이 아웃박스가 얻는 전부다.</p>
+  <p style="margin-bottom:0"><b>인박스(inbox)</b>는 그 반대 방향, <b>"받은 편지함"</b>이다. 밖에서 들어온 통지(웹훅)를 <b>받자마자 처리하지 않고 테이블에 한 줄로 먼저 적어 두는 것</b>이다. <b>처리가 실패해도 "받았다"는 사실은 남으므로</b> 나중에 다시 처리할 수 있다.</p>
+</div>
+
+<div class="card">
+  <h4 style="margin-top:0;color:#2563eb">대사(對査, reconciliation) — 두 장부를 나란히 놓고 줄마다 맞춰 보기</h4>
+  <p style="margin-top:4px">주니어에게 가장 낯선 단어이고, <b>회계 용어</b>다. 은행 통장과 회사 장부를 나란히 펴놓고 "3월 5일 입금 120만 원"이 <b>양쪽에 다 있는지, 금액이 같은지</b> 한 줄씩 대조하는 작업이 대사다. 한자 그대로 <b>"마주 놓고(對) 조사한다(査)"</b>이고, 영어 reconciliation도 "어긋난 둘을 화해시킨다"는 뉘앙스다.</p>
+  <div class="rule" style="margin-bottom:0">대사는 사고를 <b>막는</b> 장치가 아니라, 사고가 <b>방치되는 시간에 상한을 씌우는</b> 장치다<br><span style="font-size:.92rem;font-weight:600">대사 주기가 5분이면, 어떤 경로로 새든 5분 안에 발견된다</span></div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 사고 대응 사이클 여섯 단계 — 답변의 골격</h2>
+
+<p>rationale이 말하는 <b>"전체 사이클"</b>을 여섯 칸으로 고정한다. 면접에서는 <b>이 순서를 먼저 말하고 각 칸을 채우는 것</b>이 가장 안전한 답변 구조다. 그리고 <b>원인을 모르는 상태에서도 ②③은 진행할 수 있다</b>는 점이 중요하다 — <b>원인 규명이 끝날 때까지 고객 피해를 방치하는 것이 가장 나쁜 대응이다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 232" role="img" aria-label="탐지, 영향 범위 산정, 임시 조치, 근본 원인, 재발 방지, 회고 여섯 단계가 순서대로 이어지는 파이프라인. 영향 범위 산정과 임시 조치는 원인을 몰라도 진행할 수 있다는 표시가 붙어 있다">
+    <defs><marker id="c1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker></defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">사고 대응 사이클 — "원인 후보와 재발 방지"만 물었어도 ②③⑥을 짧게 붙이면 사이클을 아는 사람으로 들린다</text>
+
+    <g font-size="12.5" text-anchor="middle">
+      <rect x="20" y="60" width="164" height="84" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+      <text x="102" y="84" font-weight="700" fill="#1d4ed8">① 탐지</text>
+      <text x="102" y="106" font-size="11" fill="#1e40af">어떻게 알았나</text>
+      <text x="102" y="124" font-size="11" fill="#1e40af">CS면 그 자체가 공백</text>
+
+      <rect x="204" y="60" width="164" height="84" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+      <text x="286" y="84" font-weight="700" fill="#b45309">② 영향 범위</text>
+      <text x="286" y="106" font-size="11" fill="#92400e">언제부터 · 몇 건 · 얼마</text>
+      <text x="286" y="124" font-size="11" fill="#92400e">SQL로 숫자를 만든다</text>
+
+      <rect x="388" y="60" width="164" height="84" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+      <text x="470" y="84" font-weight="700" fill="#b45309">③ 임시 조치</text>
+      <text x="470" y="106" font-size="11" fill="#92400e">출혈 차단 + 고객 복구</text>
+      <text x="470" y="124" font-size="11" fill="#92400e">증거를 먼저 보존</text>
+
+      <rect x="572" y="60" width="164" height="84" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+      <text x="654" y="84" font-weight="700" fill="#b91c1c">④ 근본 원인</text>
+      <text x="654" y="106" font-size="11" fill="#7f1d1d">후보 여섯을 세우고</text>
+      <text x="654" y="124" font-size="11" fill="#7f1d1d">단서로 좁힌다</text>
+
+      <rect x="756" y="60" width="164" height="84" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+      <text x="838" y="84" font-weight="700" fill="#166534">⑤ 재발 방지</text>
+      <text x="838" y="106" font-size="11" fill="#15803d">뚫린 겹 · 없던 겹 식별</text>
+      <text x="838" y="124" font-size="11" fill="#15803d">각 겹의 대가를 명시</text>
+
+      <rect x="940" y="60" width="160" height="84" rx="11" fill="#f1f5f9" stroke="#64748b" stroke-width="1.8"/>
+      <text x="1020" y="84" font-weight="700" fill="#334155">⑥ 회고</text>
+      <text x="1020" y="106" font-size="11" fill="#475569">타임라인 · 탐지 지연</text>
+      <text x="1020" y="124" font-size="11" fill="#475569">담당·기한 있는 액션</text>
+    </g>
+
+    <g stroke="#94a3b8" stroke-width="1.6" marker-end="url(#c1)">
+      <line x1="186" y1="102" x2="200" y2="102"/><line x1="370" y1="102" x2="384" y2="102"/>
+      <line x1="554" y1="102" x2="568" y2="102"/><line x1="738" y1="102" x2="752" y2="102"/>
+      <line x1="922" y1="102" x2="936" y2="102"/>
+    </g>
+
+    <rect x="204" y="160" width="348" height="34" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="378" y="182" font-size="12.5" font-weight="700" fill="#b45309" text-anchor="middle">②③은 원인을 모르는 상태에서도 진행한다</text>
+
+    <rect x="572" y="160" width="528" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="836" y="182" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">④부터가 "원인 후보와 재발 방지"라는 질문이 직접 묻는 구간 — 나머지는 스스로 붙여야 점수가 된다</text>
+
+    <text x="378" y="216" font-size="11.5" fill="#92400e" text-anchor="middle">원인 규명이 끝날 때까지 고객 피해를 방치하는 것이 가장 나쁜 대응이다</text>
+  </svg>
+  <figcaption>이 여섯 칸이 페이지의 골격이기도 하다 — <b>① ⑤</b>는 9·10절(알람·관측), <b>②</b>는 7절, <b>③</b>은 8절, <b>④</b>는 5·6절, <b>⑥</b>은 10절 끝의 회고 표로 이어진다.</figcaption>
+</figure>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 원인 후보 여섯 가지 — 전부 같은 형식으로</h2>
+
+<div class="memo">
+  <h4>암기 ①: 원인 후보 여섯 — <b>경 · 훅 · 불 · 멱 · 페 · 비</b></h4>
+  <div class="chain">
+    <span class="chip r">(a) <b>경</b>계</span><span class="arrow">·</span>
+    <span class="chip r">(b) 웹<b>훅</b></span><span class="arrow">·</span>
+    <span class="chip r">(c) <b>불</b>명</span><span class="arrow">·</span>
+    <span class="chip r">(d) <b>멱</b>등</span><span class="arrow">·</span>
+    <span class="chip r">(e) <b>페</b>일오버</span><span class="arrow">·</span>
+    <span class="chip r">(f) <b>비</b>동기</span>
+  </div>
+  <div class="grid g3" style="margin-top:6px">
+    <div class="tile"><div class="k" style="font-family:inherit">앞 셋은 "동기 경로"</div><div class="d">(a) 트랜잭션 안 승인 후 롤백 · (b) 웹훅 채널 · (c) 응답 불명 — <b>그림의 ①②③ 화살표 순서</b>와 같다</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">뒤 셋은 "우리 쪽 구조"</div><div class="d">(d) 멱등 설계 · (e) 인프라 · (f) 비동기 — <b>코드가 아니라 구조·환경</b>에서 오는 것들</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">유일하게 성공 화면을 보는 것</div><div class="d"><b>(f)</b> 하나뿐이다. 그래서 6절의 <b>첫 갈림길</b>이 여기서 나온다</div></div>
+  </div>
+</div>
+
+<p>여섯 개를 <b>같은 형식</b>으로 쓴다. 먼저 타임라인(왼쪽이 우리 앱·우리 DB, 오른쪽이 결제대행사), 그다음 <b>세 칸</b>을 고정한다.</p>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">⑴ 무엇이 남는가</div><div class="d">사고 직후 <b>두 원장과 고객 화면</b>의 상태 — 이게 곧 <b>"증상"</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">⑵ 로그에 남는 단서</div><div class="d">이 후보만 남기는 흔적 — 이게 곧 <b>"검색어"</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">⑶ 이 후보를 배제하는 법</div><div class="d">아니라고 확정하는 <b>한 가지 확인</b> — 이게 곧 <b>"다음 액션"</b></div></div>
+</div>
+
+<div class="rule">⑶이 있어야 조사가 <b>수렴</b>한다 — "여섯 가지 다 조사하겠습니다"는 답이 아니고,<br><span style="font-size:.94rem;font-weight:600">어떤 확인 하나로 후보 몇 개를 한꺼번에 자르는지가 사고 대응 경험의 증거다</span></div>
+
+<h3>5-1. (a) 트랜잭션 경계 오류 — 승인이 트랜잭션 안에 있고, 승인 뒤 예외로 롤백</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 366" role="img" aria-label="t1에서 BEGIN, t2에서 재고 UPDATE와 행 락, t3에서 PG 승인이 PG 원장에 커밋, t4에서 주문 INSERT, t5에서 쿠폰 예외, t6에서 ROLLBACK이 일어나 t2와 t4만 취소되고 t3은 남는 타임라인">
+    <defs><marker id="d1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="d2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker></defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">(a) 롤백은 t2·t4만 되돌린다 — t3은 이미 남의 장부에 적혔다</text>
+    <text x="300" y="52" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">우리 앱 · PostgreSQL</text>
+    <text x="880" y="52" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">결제대행사(PG)</text>
+    <line x1="612" y1="60" x2="612" y2="330" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="5 5"/>
+
+    <!-- transaction band -->
+    <rect x="34" y="64" width="540" height="238" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-dasharray="6 4"/>
+    <text x="46" y="82" font-size="11" font-weight="700" fill="#1d4ed8">@Transactional 열려 있는 구간 — 재고 행 락과 커넥션을 계속 쥐고 있다</text>
+
+    <g font-size="12">
+      <text x="46" y="108" class="mono" font-weight="700" fill="#64748b">t1</text>
+      <text x="78" y="108" fill="#334155" class="mono">BEGIN (placeOrder 진입, 커넥션 1개 점유)</text>
+
+      <text x="46" y="134" class="mono" font-weight="700" fill="#64748b">t2</text>
+      <text x="78" y="134" fill="#334155" class="mono">UPDATE stock ... → 재고 행 배타 락 (커밋까지 유지)</text>
+
+      <text x="46" y="168" class="mono" font-weight="700" fill="#64748b">t3</text>
+      <text x="78" y="168" fill="#1d4ed8" class="mono" font-weight="700">pgClient.approve()</text>
+
+      <text x="46" y="214" class="mono" font-weight="700" fill="#64748b">t4</text>
+      <text x="78" y="214" fill="#334155" class="mono">INSERT INTO orders ... (아직 커밋 전)</text>
+
+      <text x="46" y="242" class="mono" font-weight="700" fill="#64748b">t5</text>
+      <text x="78" y="242" fill="#b91c1c" class="mono">couponService.use() → 쿠폰 소진 → IllegalStateException</text>
+
+      <text x="46" y="272" class="mono" font-weight="700" fill="#64748b">t6</text>
+      <text x="78" y="272" fill="#b91c1c" class="mono" font-weight="700">프록시가 RuntimeException 감지 → ROLLBACK</text>
+      <text x="78" y="292" fill="#7f1d1d" font-size="11.5">→ t2, t4 가 전부 취소된다. &nbsp;<tspan font-weight="700">t3 은 그대로다.</tspan></text>
+    </g>
+
+    <line x1="330" y1="158" x2="700" y2="158" stroke="#2563eb" stroke-width="2" marker-end="url(#d1)"/>
+    <line x1="700" y1="196" x2="330" y2="196" stroke="#16a34a" stroke-width="2" marker-end="url(#d2)"/>
+    <text x="740" y="150" font-size="12" font-weight="700" fill="#b91c1c">승인 처리</text>
+    <rect x="700" y="158" width="330" height="30" rx="7" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="716" y="178" font-size="12" font-weight="700" fill="#b91c1c">PG 원장에 COMMIT — 되돌릴 수 없는 사건</text>
+    <text x="740" y="212" font-size="12" fill="#166534" font-weight="700">200 OK</text>
+
+    <rect x="34" y="316" width="1052" height="36" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="560" y="339" font-size="12.5" fill="#7f1d1d" text-anchor="middle">t5의 예외는 무엇이든 된다 — 쿠폰·배송지 검증, <tspan class="mono">order_no</tspan> 유니크 충돌(<tspan class="mono">23505</tspan>), 데드락 희생(<tspan class="mono">40P01</tspan>), 락 대기 초과(<tspan class="mono">55P03</tspan>), 그리고 <tspan font-weight="700">PG 응답 자체가 느려서 나는 타임아웃</tspan></text>
+  </svg>
+  <figcaption><b>PostgreSQL에서 특히 조심할 것</b> — 락 대기에 <b>기본 타임아웃이 없다</b>(<code>lock_timeout</code> 기본값 0 = 무한 대기). 안전판이 없으면 예외가 나는 대신 트랜잭션이 하염없이 길어져 <b>(c)의 "불명"으로 넘어간다.</b></figcaption>
+</figure>
+
+<div class="callout trap">
+  <span class="t">이 경로를 정확히 저격하는 PostgreSQL 설정 — <code>idle_in_transaction_session_timeout</code> <span class="badge senior">시니어 변별</span></span>
+  HTTP 응답을 기다리는 동안 그 세션은 <code>pg_stat_activity</code>에서 <b><code>idle in transaction</code></b> 상태로 놀고 있다 — <b>트랜잭션은 열려 있는데 아무 명령도 실행하지 않는 상태</b>다. 운영에서 흔히 켜 두는 <code>idle_in_transaction_session_timeout</code>이 걸려 있으면 서버가 그 세션을 <b>끊어 버린다</b>(<code>25P03</code>). <b>승인은 이미 났고 트랜잭션은 서버가 롤백한 뒤다.</b>
+  <div class="rule red" style="margin:10px 0 0">DBA가 롱 트랜잭션을 막으려고 켠 안전장치가, 승인을 트랜잭션 안에 둔 코드 때문에 <b>결제 유실 장치로 작동</b>한다<br><span style="font-size:.92rem;font-weight:600">"PG가 느려지는 날에만 결제 유실이 늘어난다"는 패턴은 거의 이 사슬이다</span></div>
+</div>
+
+<div class="scroll"><table>
+  <tr><th style="width:150px">칸</th><th>(a)의 내용</th></tr>
+  <tr><td><b>⑴ 무엇이 남는가</b></td><td>PG 원장 = 승인 O / 우리 <code>orders</code> = <b>행 없음</b>(증상 i) / 재고·쿠폰 = 원복됨 / 고객 화면 = <b>500 에러 + 카드 승인 문자</b></td></tr>
+  <tr><td><b>⑵ 로그 단서</b></td><td>"승인 성공" 로그 <b>직후 수백 ms 뒤</b> 예외 스택 · <code>orders</code>의 <b>ID 갭</b> · PG가 느린 날이면 <code>25P03</code>(idle in transaction 종료)·<code>57014</code>(statement_timeout)</td></tr>
+  <tr class="hl"><td><b>⑶ 배제하는 법</b></td><td>코드에서 <code>@Transactional</code> 경계 안에 <code>pgClient</code> 호출이 있는지 본다. 없으면 (a)는 <b>즉시 탈락</b> — <b>이 후보만 코드 정적 검사로 배제된다</b>(그래서 10절의 ArchUnit이 성립한다)</td></tr>
+</table></div>
+
+<h4>ID 갭이 왜 (a)의 증거가 되는가</h4>
+<p><code>orders</code>에는 행이 없지만 <b>시퀀스는 롤백을 따라오지 않는다.</b> PostgreSQL의 <code>nextval()</code>은 트랜잭션 밖에서 동작하는데, <b>그래야 동시에 INSERT하는 세션들이 서로의 커밋을 기다리지 않기 때문이다.</b> 그래서 <b>롤백된 INSERT가 소모한 번호는 영원히 비고</b>, 사고 시각 부근의 ID 갭이 <b>"INSERT까지는 갔다가 롤백됐다"</b>는 DB 쪽 증거가 된다.</p>
+
+<pre><code><span class="cm">-- 시각별 ID 갭 — 연속이어야 할 id 사이에 빈 구간이 사고 시각에 몰렸는지</span>
+<span class="cm">--   lag(id): 바로 앞 행의 id. (내 id - 앞 id - 1) 이 그 사이에 사라진 번호의 개수다</span>
+<span class="kw">SELECT</span> id, created_at,
+       id - <span class="fn">lag</span>(id) <span class="kw">OVER</span> (<span class="kw">ORDER BY</span> id) - 1 <span class="kw">AS</span> gap_before
+<span class="kw">FROM</span>   orders
+<span class="kw">WHERE</span>  created_at <span class="kw">BETWEEN</span> $1 <span class="kw">AND</span> $2
+<span class="kw">ORDER</span>  <span class="kw">BY</span> id;</code></pre>
+
+<div class="callout warn"><span class="t">ID 갭 해석의 함정</span>
+  ID 갭은 <b>정상 상황</b>(동시 삽입, <code>ON CONFLICT</code> 충돌, 시퀀스 <code>CACHE</code>로 인한 세션별 점프)에서도 생긴다. <b>"갭이 있다 = 사고"가 아니라 "평소보다 갭이 몰린 구간이 예외 로그 시각과 겹친다"가 증거다.</b>
+</div>
+
+<div class="callout info" style="margin-bottom:0"><span class="t">변형 — t5가 checked 예외였다면 증상이 반대로 나온다</span>
+  스프링의 기본 롤백 규칙상 checked 예외는 롤백되지 않고 <b>커밋</b>된다. 이때는 주문이 남으므로 이 증상이 아니라 <b>"주문은 있는데 쿠폰 처리는 안 된"</b> 반대 증상이 된다. <b>예외 종류에 따라 증상이 갈린다는 사실 자체가 "롤백 규칙을 모르면 사고 유형을 못 맞힌다"는 뜻이다.</b>
+</div>
+
+<h3>5-2. (b) 웹훅 유실·순서 역전 — 승인 웹훅이 주문보다 먼저 와서 매칭 실패 후 폐기</h3>
+
+<p>PG 연동은 보통 두 채널이 병행한다 — <b>우리가 부르는 승인 API(동기)</b>와 <b>PG가 우리를 부르는 웹훅(비동기)</b>. 1절 그림의 ②와 ③이다. 웹훅은 "승인이 일어났다"는 통지이고, PG는 웹훅을 <b>매우 빠르게, 그리고 순서 보장 없이</b> 보낸다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 322" role="img" aria-label="t1에 PG에서 승인이 확정되고 t2에 웹훅이 우리에게 먼저 도착한다. t3에서 주문을 찾지 못해 200 OK로 응답하고 PG는 전달 성공으로 기록해 재전송하지 않는다. t4에서야 클라이언트의 주문 확정 요청이 오거나 오지 않는다">
+    <defs><marker id="e1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+      <marker id="e2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker></defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">(b) 통지가 진실보다 먼저 도착한다 — 그리고 우리는 200을 돌려주며 두 번째 기회를 스스로 버린다</text>
+    <text x="300" y="52" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">우리 앱 · PostgreSQL</text>
+    <text x="880" y="52" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">결제대행사(PG)</text>
+    <line x1="612" y1="60" x2="612" y2="248" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="5 5"/>
+
+    <rect x="700" y="66" width="386" height="42" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="716" y="83" font-size="12" font-weight="700" fill="#b91c1c">t1 &nbsp;고객이 결제창에서 인증 완료 → 승인 확정</text>
+    <text x="716" y="100" font-size="11" fill="#7f1d1d">이 순간 PG 원장에는 이미 진실이 있다</text>
+
+    <line x1="700" y1="128" x2="330" y2="128" stroke="#d97706" stroke-width="2" marker-end="url(#e1)"/>
+    <text x="515" y="120" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">웹훅 발송 (t1 직후 수십 ms)</text>
+
+    <g font-size="12">
+      <text x="40" y="132" class="mono" font-weight="700" fill="#64748b">t2</text>
+      <text x="72" y="132" class="mono" fill="#334155">POST /webhooks/pg 수신 {paymentKey, orderNo, DONE}</text>
+
+      <text x="40" y="164" class="mono" font-weight="700" fill="#64748b">t3</text>
+      <text x="72" y="164" class="mono" fill="#b91c1c">findByOrderNo(orderNo) → 없음 (주문을 아직 안 만들었다)</text>
+      <text x="72" y="184" class="mono" fill="#b91c1c" font-weight="700">→ "매칭 실패" 로그 → 200 OK</text>
+    </g>
+    <line x1="330" y1="200" x2="700" y2="200" stroke="#64748b" stroke-width="2" marker-end="url(#e2)"/>
+    <rect x="700" y="184" width="386" height="34" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="716" y="206" font-size="12" font-weight="700" fill="#b91c1c">"전달 성공"으로 기록 → 재전송 없음</text>
+
+    <rect x="34" y="228" width="560" height="76" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="48" y="248" font-size="12" font-weight="700" fill="#b45309" class="mono">t4 &nbsp;POST /orders/confirm (결제창에서 돌아온 뒤)</text>
+    <text x="48" y="270" font-size="11.5" fill="#92400e">(A) 이 요청이 <tspan font-weight="700">아예 안 온다</tspan> — 브라우저를 닫음 · 네트워크 끊김 · 앱 백그라운드 전환</text>
+    <text x="48" y="290" font-size="11.5" fill="#92400e">(B) 왔지만 처리 중 실패 — <tspan font-weight="700">(a)(c)(e) 중 하나로 이어진다</tspan></text>
+
+    <rect x="612" y="240" width="474" height="64" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="628" y="262" font-size="12.5" font-weight="700" fill="#b91c1c">(b)의 지문 — 이 조합이면 (b)다</text>
+    <text x="628" y="282" font-size="11.5" fill="#7f1d1d">우리 로그의 <tspan class="mono">order not found</tspan> + 200 &nbsp;&amp;&amp;&nbsp; PG 콘솔의 전송 이력 "성공"</text>
+  </svg>
+  <figcaption>웹훅 핸들러가 5xx를 돌려주면 PG는 재시도하지만 <b>재시도 횟수와 간격은 PG가 정한다.</b> 그 창 안에 배포가 겹치거나 엔드포인트가 4xx를 돌려주면 PG는 재시도를 멈춘다. <b>웹훅을 "받아서 곧바로 처리"하는 구조 자체가 (b)를 만든다</b> — <b>처리 실패와 수신 실패를 구분하지 못하기 때문이다.</b></figcaption>
+</figure>
+
+<div class="scroll"><table>
+  <tr><th style="width:150px">칸</th><th>(b)의 내용</th></tr>
+  <tr><td><b>⑴ 무엇이 남는가</b></td><td>PG 원장 = 승인 O / 우리 <code>orders</code> = <b>행 없음</b>(증상 i) / <b>웹훅은 이미 200으로 응답해 버려서 두 번째 기회도 없다</b> / 고객은 결제창 뒤 화면을 못 봤거나 에러를 봤다</td></tr>
+  <tr><td><b>⑵ 로그 단서</b></td><td>웹훅 수신 로그에 <code>order not found</code> + 200 응답 · <b>PG 관리자 콘솔의 웹훅 전송 이력이 "성공"</b> — 이 조합이 (b)의 지문</td></tr>
+  <tr class="hl"><td><b>⑶ 배제하는 법</b></td><td>PG 콘솔에서 해당 <code>paymentKey</code>의 웹훅 전송 이력을 본다. <b>전송 기록 자체가 없으면 (b) 탈락.</b> 있는데 우리 수신 로그가 없으면 네트워크·방화벽 문제로 갈래가 갈린다</td></tr>
+</table></div>
+
+<div class="callout trap">
+  <span class="t">변형 — "없다"가 사실이 아닐 수 있다 (PostgreSQL 읽기 경로 함정) <span class="badge trap">가장 오래 헤매는 갈래</span></span>
+  t3의 <code>findByOrderNo</code>가 <code>@Transactional(readOnly = true)</code>로 선언돼 <b>리드 리플리카(hot standby)로 라우팅</b>되면, 프라이머리에서 방금 커밋된 주문이 <b>아직 리플리카에 도착하지 않아 없는 것으로 보인다.</b> PostgreSQL의 스트리밍 복제는 <b>기본이 비동기</b>이고, 리플리카가 무거운 조회를 돌고 있으면 WAL 재생이 밀린다.
+  <p style="margin:8px 0 0"><b>즉 주문은 있는데 "없다"고 판단해 웹훅을 버리는 사고다</b> — 코드도 데이터도 멀쩡한데 증상만 (b)와 똑같다. 확인은 두 줄이면 된다.</p>
+<pre style="margin-top:8px"><code><span class="cm">-- 리플리카에서: 내가 지금 스탠바이인가, 그리고 얼마나 밀려 있나</span>
+<span class="kw">SELECT</span> <span class="fn">pg_is_in_recovery</span>(), <span class="fn">now</span>() - <span class="fn">pg_last_xact_replay_timestamp</span>() <span class="kw">AS</span> replay_lag;</code></pre>
+  <div class="rule red" style="margin:10px 0 0">처방 — <b>"진실을 판정하는 읽기는 프라이머리에서"</b><br><span style="font-size:.92rem;font-weight:600">웹훅·대사·멱등 확인처럼 <b>분기를 결정하는</b> 조회는 리플리카로 보내지 않는다</span></div>
+</div>
+
+<h3>5-3. (c) 부분 실패 — 승인은 됐는데 응답 수신 후(또는 직전) 앱이 죽거나 타임아웃</h3>
+
+<pre><code><span class="cm">    우리 앱 · PostgreSQL                                    결제대행사(PG)</span>
+<span class="cm">    ──────────────────────────────────                      ────────────────────────</span>
+t1  pgClient.approve() 요청 전송  ────────────────────▶
+t2                                                          <span class="st">승인 처리 완료 · PG 원장에 COMMIT</span>
+                                                            응답 전송 시작  ─────┐
+<span class="ln-bad">t3  (i)  read timeout(예: 3초) 만료 → SocketTimeoutException                    │ 응답이 늦게 도착하거나</span>
+<span class="ln-bad">         → 클라이언트 코드가 <span class="st">"실패"로 판단</span>                                        │ 도중에 유실</span>
+<span class="ln-bad">         → 주문 INSERT 안 함 / 예외로 롤백 / FAILED 마킹                     ◀───┘</span>
+    (ii) 응답은 받았지만 INSERT 전에 프로세스 사망
+         — OOMKilled, 배포 SIGTERM 후 강제 종료, 노드 축출</code></pre>
+
+<p>핵심은 2절의 그림이다 — <b>타임아웃은 실패가 아니라 "불명"이다.</b> PG는 승인했는데 응답만 늦게 온 것일 수 있다. 이 상태를 실패로 단정하고 FAILED로 마킹하거나 아무 기록도 남기지 않으면, <b>나중에 PG 원장과 맞춰 볼 때(= 대사)만 드러난다.</b></p>
+
+<div class="scroll"><table>
+  <tr><th style="width:150px">칸</th><th>(c)의 내용</th></tr>
+  <tr><td><b>⑴ 무엇이 남는가</b></td><td>PG 원장 = 승인 O / 우리 <code>orders</code> = <b>행 없음</b>(증상 i) 또는 <b>FAILED</b>(증상 iii). (ii)라면 앱 로그가 <b>문장 중간에서 끊긴다</b></td></tr>
+  <tr><td><b>⑵ 로그 단서</b></td><td><code>SocketTimeoutException</code>/<code>ResourceAccessException</code> 로그와 <b>PG 콘솔의 승인 시각이 거의 일치</b> · 또는 로그 절단 + 컨테이너 재시작 이벤트(<code>OOMKilled</code>, 배포 롤아웃 시각)</td></tr>
+  <tr class="hl"><td><b>⑶ 배제하는 법</b></td><td>해당 시각에 HTTP 클라이언트 타임아웃 예외가 있었는지, 그리고 <b>파드 재시작 이벤트</b>가 있었는지 본다. <b>둘 다 없으면 (c) 탈락</b></td></tr>
+</table></div>
+
+<h3>5-4. (d) 멱등키 충돌 — 멱등 레코드가 "결과" 대신 "봤다"만 저장해 재시도가 무시됨</h3>
+
+<p>멱등키는 중복 결제를 막는 <b>필수 장치</b>인데, <b>잘못 설계하면 이 사고의 원인이 된다.</b> 전형적인 구현은 요청 진입 시 멱등 테이블에 키를 남기고 같은 키가 또 오면 튕겨내는 필터다.</p>
+
+<pre><code><span class="cm">    우리 앱 · PostgreSQL                                    결제대행사(PG)</span>
+<span class="cm">    ──────────────────────────────────                      ────────────────────────</span>
+t1  POST /orders  (Idempotency-Key: K)
+<span class="ln-bad">    멱등 필터: idempotency 테이블에 K = IN_PROGRESS INSERT</span>
+<span class="ln-bad">      ← REQUIRES_NEW. <span class="st">비즈니스 트랜잭션과 별개 트랜잭션이라 함께 롤백되지 않는다</span></span>
+t2  비즈니스 로직: pgClient.approve()  ────────────────▶    <span class="st">승인 성공 → PG 원장 COMMIT</span>
+                                       ◀────────────────    200 OK
+t3  주문 INSERT 중 예외(배송지 검증 등) → 비즈니스 트랜잭션 ROLLBACK
+    → 그러나 K 레코드는 별도 트랜잭션이라 <span class="st">IN_PROGRESS 로 그대로 남는다</span>
+t4  클라이언트: 500 을 받고 같은 K 로 재시도 <span class="cm">(정석대로 — 멱등키의 목적이 재시도니까)</span>
+<span class="ln-bad">t5  멱등 필터: "K 는 처리 중" → 409 Conflict. 비즈니스 로직에 진입조차 못 한다</span>
+<span class="ln-bad">    → 이후 <span class="st">모든 재시도가 같은 자리에서 튕긴다</span></span></code></pre>
+
+<div class="callout trap"><span class="t">구조적 결함을 한 문장으로</span>
+  멱등 레코드가 <b>"이 키를 봤다"만 기억하고</b>, 그 키로 <b>실제 어떤 결과가 확정됐는지(PG 승인 여부)를 함께 저장·판단하지 않으며</b>, <b>실패한 시도의 키를 다시 열어 주지 않는다.</b> 그리고 <b>멱등 레코드와 비즈니스 결과가 원자적으로 묶이지 않았다.</b> (t3에서 K를 <code>FAILED</code>로 마킹하고 그 실패 응답을 캐시하는 변형도 원인은 같다 — 재시도가 캐시된 실패를 그대로 받는다.)
+</div>
+
+<div class="scroll"><table>
+  <tr><th style="width:150px">칸</th><th>(d)의 내용</th></tr>
+  <tr><td><b>⑴ 무엇이 남는가</b></td><td>PG 원장 = 승인 O / 우리 <code>orders</code> = <b>행 없음</b>(증상 i) / <b>멱등 테이블에만 <code>IN_PROGRESS</code> 또는 <code>FAILED</code> 레코드가 남는다</b> — <b>여섯 후보 중 유일하게 "우리 쪽에 흔적이 있는데 주문은 없는" 모양</b></td></tr>
+  <tr><td><b>⑵ 로그 단서</b></td><td>서버 로그에 409 또는 <code>duplicate idempotency key</code> <b>반복</b> · 클라이언트 로그에 재시도 흔적</td></tr>
+  <tr class="hl"><td><b>⑶ 배제하는 법</b></td><td>멱등 저장소에서 그 키의 상태를 조회한다. <b>레코드 자체가 없으면 (d) 탈락</b> — 6절의 흔적 탐색 SQL <b>한 방</b>으로 확인된다</td></tr>
+</table></div>
+
+<h3>5-5. (e) 배포·failover 순간 커넥션 단절 — 커밋 직전에 DB가 바뀌었다</h3>
+
+<pre><code><span class="cm">    우리 앱 · PostgreSQL                                    결제대행사(PG)</span>
+t1  pgClient.approve()  ───────────────────────────────▶    <span class="st">승인 성공 → PG 원장 COMMIT</span>
+                        ◀───────────────────────────────    200 OK
+t2  INSERT INTO orders ... 전송
+t3  COMMIT 요청 전송
+    <span class="cm">─── 이 순간 DB failover(standby 승격) 또는 배포로 커넥션 종료 ───</span>
+    (α) 커밋 <span class="st">전에</span> 단절            → 트랜잭션 통째로 사라짐 → orders 없음
+    (β) 커밋 요청은 갔는데 <span class="st">응답 전 단절</span> → DB는 커밋했을 수도, 아닐 수도
+        → pgjdbc: PSQLException("An I/O error occurred while sending to the backend")
+        → 앱은 "실패"로 판단해 고객에게 에러          <span class="cm">← (c)와 같은 "불명"이 DB 쪽에서 난 것</span>
+    (γ) 커밋됐지만 <span class="st">스트리밍 복제가 비동기</span>라 마지막 커밋이 승격된 standby 의 WAL 에 없음
+        → 승격 후 그 주문은 존재하지 않는다
+    (δ) <span class="st">synchronous_commit = off</span> 였다 → 커밋 응답을 이미 받았는데도 그 커밋의 WAL 이
+        아직 디스크에 없어, 서버 크래시 시 마지막 수백 ms 가 사라진다 (손상이 아니라 "유실")
+    (ε) 승격이 끝난 뒤 앱이 옛 프라이머리(이제 standby)에 다시 붙음
+        → ERROR 25006 cannot execute INSERT in a read-only transaction 이 쏟아진다</code></pre>
+
+<p><b>(γ)(δ)는 인프라 설정의 문제라 애플리케이션 코드만 봐서는 영원히 원인을 못 찾는다.</b> PostgreSQL에서 이 <b>유실 창</b>을 닫는 손잡이는 두 개다.</p>
+
+<div class="scroll"><table>
+  <tr><th>손잡이</th><th>무엇을 정하나</th><th>값과 의미</th></tr>
+  <tr><td><code>synchronous_commit</code></td><td>커밋 응답을 돌려주기 전에 <b>WAL을 어디까지 확정</b>할지</td><td><code>off</code>(디스크 기록 전에 응답 — <b>유실 창 생김</b>) → <code>local</code>(로컬 fsync까지) → <code>on</code>(기본) → <code>remote_write</code>/<code>remote_apply</code>(standby까지 도달·적용 확인)</td></tr>
+  <tr><td><code>synchronous_standby_names</code></td><td><b>어느 standby</b>를 동기 복제 대상으로 볼지</td><td>비워 두면 동기 복제 없음. <code>ANY 1 (s1, s2)</code>처럼 쓰면 둘 중 하나만 응답해도 커밋 진행</td></tr>
+</table></div>
+
+<div class="memo red">
+  <h4>결제 원장을 담은 DB에서 <code>synchronous_commit = off</code>는 금지다</h4>
+  <p style="margin:4px 0 0">벌크 적재 배치에서나 쓸 수 있는 설정이고, <b>"커밋 응답을 받았으니 남았다"는 앱의 전제를 깨뜨린다.</b> 동기 복제로 (γ)까지 막으면 <b>RPO</b>(Recovery Point Objective, 사고 시 허용하는 데이터 유실 시간)는 0에 가까워지지만 <b>커밋 지연이 standby 왕복만큼 늘고, standby가 죽으면 프라이머리 쓰기가 멈춘다.</b> 그래서 보통 <b>standby 두 대 이상 + <code>ANY 1 (...)</code></b> 구성으로 간다.</p>
+</div>
+
+<div class="scroll"><table>
+  <tr><th style="width:150px">칸</th><th>(e)의 내용</th></tr>
+  <tr><td><b>⑴ 무엇이 남는가</b></td><td>PG 원장 = 승인 O / 우리 <code>orders</code> = <b>행 없음</b>(증상 i) / <b>특정 시각에 군집으로 발생</b>한다는 것이 다른 후보와의 결정적 차이</td></tr>
+  <tr><td><b>⑵ 로그 단서</b></td><td>사고 건들의 시각이 <b>배포 이벤트·failover 이벤트와 정확히 겹침</b> · pgjdbc의 <code>An I/O error occurred while sending to the backend</code>, <code>This connection has been closed</code>, <code>terminating connection due to administrator command</code>, 승격 직후의 <code>25006 read-only transaction</code>이 같은 시각에 묶여 있음</td></tr>
+  <tr class="hl"><td><b>⑶ 배제하는 법</b></td><td>사고 건들의 <code>approved_at</code>을 <b>분 단위 히스토그램</b>으로 그린다. <b>시간에 고르게 퍼져 있으면 (e) 탈락</b>(코드 경로 문제로). 승격 여부는 <code>SELECT pg_is_in_recovery()</code> 한 줄과 인프라 이벤트 로그로 확인</td></tr>
+</table></div>
+
+<p class="sub">이 후보는 <b>"내 코드 밖에서 벌어지는 일"</b>이라 후보 목록에서 <b>가장 잘 빠진다.</b> 반대로, 이 후보를 스스로 꺼내는 것만으로 "인프라까지 보는 사람"이 된다.</p>
+
+<h3>5-6. (f) 비동기 후처리에서 주문 생성 — <code>@Async</code>·이벤트 리스너가 조용히 죽었다</h3>
+
+<p>"승인은 빨리 응답하고 주문 생성은 뒤에서" 하려고 주문 생성을 이벤트로 뺀 구조다. 결합도는 낮아졌지만 <b>주문이라는 진실을 메모리 위 이벤트에 맡긴 것</b>이다.</p>
+
+<pre><code><span class="cm">    우리 앱 · PostgreSQL                                    결제대행사(PG)</span>
+t1  승인 컨트롤러: pgClient.approve()  ────────────────▶    <span class="st">승인 성공 → PG 원장 COMMIT</span>
+                                       ◀────────────────    200 OK
+    → publishEvent(PaymentApprovedEvent)
+<span class="ln-bad">    → 고객에게 200 OK "결제 완료"                            <span class="st">← 이 후보만 고객이 성공 화면을 본다</span></span>
+t2  @Async @EventListener onPaymentApproved → orderService.create()
+    (i)   실행기 큐가 유계면 거부(RejectedExecutionException)
+          — void 메서드라 호출자에게 전파 안 됨. 핸들러가 로그만 남기고 끝
+    (ii)  큐가 무계면 <span class="st">메모리에 쌓여 있다가 재시작·배포 때 프로세스와 함께 소멸</span>
+    (iii) @TransactionalEventListener(AFTER_COMMIT) 로 선언했는데
+          발행 시점에 트랜잭션이 없어 <span class="st">리스너가 아예 호출되지 않음</span>
+    (iv)  리스너 안에서 예외 — 비동기라 <span class="st">재시도도, 롤백도, 호출자 통지도 없다</span></code></pre>
+
+<div class="scroll"><table>
+  <tr><th style="width:150px">칸</th><th>(f)의 내용</th></tr>
+  <tr><td><b>⑴ 무엇이 남는가</b></td><td>PG 원장 = 승인 O / 우리 <code>orders</code> = <b>행 없음</b>(증상 i) / <b>고객은 성공 화면을 봤다 — 여섯 후보 중 유일하다.</b> 그래서 6절의 <b>첫 갈림길</b>이 여기서 나온다</td></tr>
+  <tr><td><b>⑵ 로그 단서</b></td><td>응답 로그는 <b>200인데 주문 없음</b> · <code>AsyncUncaughtExceptionHandler</code> 로그 · 실행기 거부 카운트 · 재시작 시각과의 상관</td></tr>
+  <tr class="hl"><td><b>⑶ 배제하는 법</b></td><td>주문 생성이 <b>동기 경로</b>에 있는지 코드로 확인한다. <code>@Async</code>/<code>@EventListener</code> 뒤에 없으면 (f) 탈락 — <b>(a)와 함께 정적 검사로 배제되는 후보</b></td></tr>
+</table></div>
+
+<div class="rule ok">여섯 후보 중 <b>(a)와 (f)만 코드 정적 검사로 배제된다</b> → 그래서 그 둘만 <b>ArchUnit 룰</b>로 재발을 막을 수 있다 (10-2절)</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 좁히기 — 단서에서 후보로</h2>
+
+<div class="memo">
+  <h4>암기 ②: 여섯을 절반씩 자르는 두 질문</h4>
+  <div class="chain">
+    <span class="chip b">Q1. 고객이 <b>성공 화면</b>을 봤는가</span><span class="arrow">→</span><span class="chip g">봤다면 (f) 최우선</span>
+  </div>
+  <div class="chain">
+    <span class="chip b">Q2. 우리 DB에 <b>흔적</b>이 하나라도 있는가</span><span class="arrow">→</span><span class="chip g">멱등 레코드만 = (d) · PENDING = (c)(e)</span>
+  </div>
+  <p style="margin-bottom:0" class="sub">그리고 마지막에 <b>"단발인가 군집인가"</b>를 본다 — 특정 시각에 몰려 있으면 <b>(e)나 PG·웹훅 장애 (b)</b>, 산발적이면 <b>코드 경로의 문제 (a)(c)(d)(f)</b>다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="고객이 본 화면에 따라 후보가 갈리고 그다음 우리 DB에 남은 흔적에 따라 후보가 다시 갈리는 결정 트리. 마지막으로 단발인지 군집인지로 한 번 더 나눈다">
+    <defs><marker id="f1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker></defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">좁히는 순서 — 두 질문으로 절반씩 자르고, 마지막에 시각 분포로 확정한다</text>
+
+    <!-- Q1 -->
+    <rect x="20" y="48" width="230" height="46" rx="10" fill="#2563eb"/>
+    <text x="135" y="70" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">Q1. 고객이 무엇을 봤나</text>
+    <text x="135" y="86" font-size="10.5" fill="#dbeafe" text-anchor="middle">응답이 정상 반환됐는지를 알려준다</text>
+
+    <g font-size="11.5">
+      <rect x="288" y="42" width="230" height="40" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+      <text x="302" y="58" font-weight="700" fill="#166534">"결제 완료" 성공 화면</text>
+      <text x="302" y="74" fill="#15803d">→ <tspan font-weight="700">(f) 최우선</tspan>, 그다음 (e)(β)</text>
+
+      <rect x="288" y="90" width="230" height="40" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+      <text x="302" y="106" font-weight="700" fill="#b91c1c">에러 화면(500 등)</text>
+      <text x="302" y="122" fill="#7f1d1d">→ (a) (c) (d) (e)(α)</text>
+
+      <rect x="288" y="138" width="230" height="40" rx="9" fill="#fffbeb" stroke="#d97706"/>
+      <text x="302" y="154" font-weight="700" fill="#b45309">결제창 뒤 화면 자체를 못 봄</text>
+      <text x="302" y="170" fill="#92400e">→ (b)(A) 창을 닫았거나 끊겼다</text>
+    </g>
+    <g stroke="#94a3b8" stroke-width="1.5" marker-end="url(#f1)">
+      <line x1="252" y1="62" x2="284" y2="62"/><line x1="252" y1="71" x2="284" y2="108"/><line x1="252" y1="80" x2="284" y2="154"/>
+    </g>
+
+    <!-- Q2 -->
+    <rect x="20" y="212" width="230" height="46" rx="10" fill="#2563eb"/>
+    <text x="135" y="234" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">Q2. 우리 DB에 흔적이 있나</text>
+    <text x="135" y="250" font-size="10.5" fill="#dbeafe" text-anchor="middle">orders · payment · 멱등 · outbox · inbox</text>
+
+    <g font-size="11.5">
+      <rect x="288" y="196" width="230" height="40" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+      <text x="302" y="212" font-weight="700" fill="#b91c1c">아무것도 없다</text>
+      <text x="302" y="228" fill="#7f1d1d">→ (a) · (c)(ii) · (e)(α)(γ)</text>
+
+      <rect x="288" y="244" width="230" height="40" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+      <text x="302" y="260" font-weight="700" fill="#1d4ed8">멱등 레코드만 IN_PROGRESS/FAILED</text>
+      <text x="302" y="276" fill="#1e40af">→ <tspan font-weight="700">(d) 확정에 가깝다</tspan></text>
+
+      <rect x="288" y="292" width="230" height="40" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+      <text x="302" y="308" font-weight="700" fill="#166534">PENDING 주문이 있다</text>
+      <text x="302" y="324" fill="#15803d">→ 확정 단계가 안 돔: (c)(e), 또는 (b)</text>
+
+      <rect x="288" y="340" width="230" height="40" rx="9" fill="#fffbeb" stroke="#d97706"/>
+      <text x="302" y="356" font-weight="700" fill="#b45309">FAILED 주문이 있다</text>
+      <text x="302" y="372" fill="#92400e">→ 불명을 실패로 취급한 <tspan font-weight="700">(c)(i)</tspan></text>
+    </g>
+    <g stroke="#94a3b8" stroke-width="1.5" marker-end="url(#f1)">
+      <line x1="252" y1="226" x2="284" y2="216"/><line x1="252" y1="232" x2="284" y2="262"/>
+      <line x1="252" y1="238" x2="284" y2="310"/><line x1="252" y1="244" x2="284" y2="358"/>
+    </g>
+
+    <!-- Q3 -->
+    <rect x="560" y="48" width="248" height="46" rx="10" fill="#111827"/>
+    <text x="684" y="70" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">Q3. 단발인가 군집인가</text>
+    <text x="684" y="86" font-size="10.5" fill="#d1d5db" text-anchor="middle">approved_at 을 분 단위 히스토그램으로</text>
+
+    <rect x="838" y="42" width="262" height="46" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="852" y="60" font-size="11.5" font-weight="700" fill="#b91c1c">특정 시각에 군집</text>
+    <text x="852" y="78" font-size="11.5" fill="#7f1d1d">→ (e) failover·배포, 또는 PG·웹훅 장애 (b)</text>
+
+    <rect x="838" y="96" width="262" height="46" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="852" y="114" font-size="11.5" font-weight="700" fill="#1d4ed8">시간에 산발</text>
+    <text x="852" y="132" font-size="11.5" fill="#1e40af">→ 코드 경로 문제 (a)(c)(d)(f)</text>
+    <g stroke="#94a3b8" stroke-width="1.5" marker-end="url(#f1)">
+      <line x1="810" y1="64" x2="834" y2="64"/><line x1="810" y1="78" x2="834" y2="116"/>
+    </g>
+
+    <!-- caution -->
+    <rect x="560" y="170" width="540" height="86" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="578" y="192" font-size="12.5" font-weight="700" fill="#b91c1c">조사자가 5-2절의 함정을 그대로 밟는 순간</text>
+    <text x="578" y="214" font-size="11.5" fill="#7f1d1d">Q2를 <tspan font-weight="700">리플리카에 붙어</tspan> 확인하면 "없다"가 사실이 아닐 수 있다.</text>
+    <text x="578" y="234" font-size="11.5" fill="#7f1d1d"><tspan class="mono" font-weight="700">SELECT pg_is_in_recovery()</tspan> 가 false 인지 먼저 보고 시작하는 습관이</text>
+    <text x="578" y="250" font-size="11.5" fill="#7f1d1d" font-weight="700">사고 조사에서 한 시간을 아낀다.</text>
+
+    <rect x="560" y="272" width="540" height="108" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="578" y="294" font-size="12.5" font-weight="700" fill="#166534">Q1 · Q2 조합이 만드는 지름길</text>
+    <text x="578" y="316" font-size="11.5" fill="#15803d">성공 화면 + 흔적 없음 &nbsp;&nbsp;→&nbsp; <tspan font-weight="700">(f) 사실상 확정</tspan> (200을 돌려줬는데 주문이 없다)</text>
+    <text x="578" y="336" font-size="11.5" fill="#15803d">에러 화면 + 멱등 레코드만 → <tspan font-weight="700">(d) 사실상 확정</tspan></text>
+    <text x="578" y="356" font-size="11.5" fill="#15803d">에러 화면 + 흔적 없음 + 군집 → <tspan font-weight="700">(e)</tspan> &nbsp;/&nbsp; 산발이면 <tspan font-weight="700">(a)</tspan> 부터 ID 갭으로</text>
+    <text x="578" y="374" font-size="11" fill="#166534">두 질문의 답만으로 여섯 중 넷이 지워지는 경우가 대부분이다.</text>
+  </svg>
+  <figcaption>이 트리가 <b>면접에서 그대로 말이 되는 형태</b>다 — "먼저 고객이 무엇을 봤는지 확인하고, 다음으로 우리 DB에 흔적이 있는지 한 방에 훑고, 마지막으로 시각 분포를 봅니다."</figcaption>
+</figure>
+
+<h3>6-1. 흔적 탐색 — 여러 테이블을 한 결과로 모으는 SQL</h3>
+
+<p><code>orders</code>뿐 아니라 <code>payment</code>, 멱등 테이블, outbox, 웹훅 로그 테이블까지 본다. <b>테이블마다 따로 조회하면 "어디까지 갔는지"를 머릿속에서 조립해야 하지만, <code>UNION ALL</code>로 한 결과에 모으면 "어느 테이블에서 흔적이 끊겼는가"가 한눈에 보인다.</b></p>
+
+<pre><code><span class="cm">-- 흔적 탐색 — 주문번호·결제키·고객 ID 어느 것으로든 한 방에 훑는다.</span>
+<span class="kw">SELECT</span> <span class="st">'orders'</span> <span class="kw">AS</span> src, id, status, created_at <span class="kw">FROM</span> orders            <span class="kw">WHERE</span> order_no = :orderNo
+<span class="kw">UNION ALL</span>
+<span class="kw">SELECT</span> <span class="st">'payment'</span>,      id, status, created_at <span class="kw">FROM</span> payment           <span class="kw">WHERE</span> payment_key = :paymentKey
+<span class="kw">UNION ALL</span>
+<span class="kw">SELECT</span> <span class="st">'idem'</span>,         id, status, created_at <span class="kw">FROM</span> idempotency_record <span class="kw">WHERE</span> idem_key = :idemKey;</code></pre>
+
+<div class="callout trap" style="margin-top:0"><span class="t">이 조회는 반드시 프라이머리에서 한다</span>
+  리플리카에 붙어 "없다"를 확인하면 <b>조사자가 5-2절 변형의 함정을 그대로 밟는다.</b> 코드도 데이터도 멀쩡한데 조사 결론만 틀린다.
+</div>
+
+<h3>6-2. 단서 → 후보 역방향 표 (사고 조사 중에는 이쪽이 실전 도구)</h3>
+
+<div class="scroll"><table class="wide">
+  <caption>각 후보의 ⑵칸(로그 단서)을 역방향으로 뒤집은 표. 5절 표는 "후보 → 단서", 이 표는 <b>"단서 → 후보"</b>다.</caption>
+  <tr><th style="width:52%">단서</th><th>가리키는 후보</th><th>한 줄 근거</th></tr>
+  <tr><td>승인 성공 로그 <b>직후</b> 예외 스택 · <code>orders</code> ID 갭 · <code>25P03</code>/<code>57014</code></td><td class="bad">(a) 경계</td><td>INSERT까지 갔다가 롤백됐다는 DB 쪽 증거</td></tr>
+  <tr><td>웹훅 로그 <code>order not found</code> + 200 · PG 콘솔 전송 "성공"</td><td class="bad">(b) 웹훅</td><td>두 번째 기회를 우리가 스스로 소모했다</td></tr>
+  <tr><td><code>SocketTimeoutException</code> · 로그 절단 + 재시작 이벤트</td><td class="bad">(c) 불명</td><td>PG 콘솔 승인 시각과 예외 시각이 거의 일치</td></tr>
+  <tr><td>멱등 레코드 <code>IN_PROGRESS</code>·<code>FAILED</code> · 409 반복</td><td class="bad">(d) 멱등</td><td>우리 쪽에 흔적이 있는데 주문만 없는 유일한 모양</td></tr>
+  <tr><td>배포·failover 시각과 일치 · pgjdbc I/O 에러 · <code>25006 read-only transaction</code> 군집</td><td class="bad">(e) failover</td><td>시각 분포가 <b>군집</b>이라는 점이 결정적</td></tr>
+  <tr><td>고객은 <b>성공 화면</b> · 응답 200 · 비동기 예외 핸들러 로그</td><td class="bad">(f) 비동기</td><td>성공 화면을 보는 후보는 이것뿐</td></tr>
+</table></div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 영향 범위 — 숫자를 만드는 SQL</h2>
+
+<p>"몇 건, 얼마, 언제부터"가 없으면 <b>임시 조치의 크기도, 회고의 심각도도 정할 수 없다.</b> 그리고 <b>"결제됐는데 주문이 없다"만 세면 절반만 본 것이다</b> — 두 원장이 어긋나는 방식은 대칭이라 <b>반대 방향이 더 급한 출혈일 때가 많다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 268" role="img" aria-label="두 원장이 어긋나는 세 방식. 방향1은 PG 승인은 있는데 주문이 없어 고객 피해, 방향2는 주문은 있는데 승인이 없어 회사 손실, 방향3은 둘 다 있는데 금액이 달라 방향1과 2 쿼리로는 잡히지 않는다">
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">두 원장이 어긋나는 세 가지 방식 — 한 방향만 세는 것은 절반만 보는 것이다</text>
+
+    <g font-size="12">
+      <rect x="20" y="44" width="1080" height="64" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+      <text x="40" y="68" font-size="12.5" font-weight="700" fill="#b91c1c">방향 1</text>
+      <rect x="100" y="52" width="132" height="26" rx="6" fill="#fff" stroke="#dc2626"/><text x="166" y="70" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">PG 승인 O</text>
+      <rect x="240" y="52" width="132" height="26" rx="6" fill="#fff" stroke="#dc2626"/><text x="306" y="70" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">우리 주문 ✕</text>
+      <text x="392" y="70" font-size="12.5" font-weight="700" fill="#b91c1c">돈은 받았는데 물건이 안 나간다</text>
+      <text x="100" y="96" font-size="11.5" fill="#7f1d1d"><tspan font-weight="700">고객 피해.</tspan> CS로 먼저 들어온다. 이번 사고의 증상. → 이 페이지 전체가 이 방향을 다룬다</text>
+
+      <rect x="20" y="118" width="1080" height="64" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+      <text x="40" y="142" font-size="12.5" font-weight="700" fill="#b45309">방향 2</text>
+      <rect x="100" y="126" width="132" height="26" rx="6" fill="#fff" stroke="#d97706"/><text x="166" y="144" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">PG 승인 ✕</text>
+      <rect x="240" y="126" width="132" height="26" rx="6" fill="#fff" stroke="#d97706"/><text x="306" y="144" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">우리 주문 O</text>
+      <text x="392" y="144" font-size="12.5" font-weight="700" fill="#b45309">돈은 안 받았는데 물건이 나간다</text>
+      <text x="100" y="170" font-size="11.5" fill="#92400e"><tspan font-weight="700">회사 손실.</tspan> 아무도 항의하지 않아 조용히 새고, <tspan font-weight="700">배송이 끝나면 회수가 사실상 불가능하다</tspan></text>
+
+      <rect x="20" y="192" width="1080" height="64" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+      <text x="40" y="216" font-size="12.5" font-weight="700" fill="#1d4ed8">방향 3</text>
+      <rect x="100" y="200" width="272" height="26" rx="6" fill="#fff" stroke="#2563eb"/><text x="236" y="218" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">둘 다 있는데 금액이 다르다</text>
+      <text x="392" y="218" font-size="12.5" font-weight="700" fill="#1d4ed8">부분 취소·쿠폰 재계산 버그가 여기서만 드러난다</text>
+      <text x="100" y="244" font-size="11.5" fill="#1e40af">방향 1·2 쿼리로는 <tspan font-weight="700">절대 안 잡힌다</tspan> — 양쪽에 행이 다 있으니 anti-join 에 걸리지 않기 때문이다</text>
+    </g>
+  </svg>
+  <figcaption>방향 1·2는 <b>anti-join</b>(짝이 없는 행 찾기)으로, 방향 3은 <b>inner join + 값 비교</b>로 잡는다. <b>조인 형태가 다르므로 쿼리를 따로 써야 한다</b>는 것이 이 그림의 실무적 결론이다.</figcaption>
+</figure>
+
+<h3>7-1. 세 방향을 세는 SQL — 조인 방향이 전부다</h3>
+
+<pre><code><span class="cm">-- 방향 1: 결제는 승인인데 주문이 없거나 확정이 아닌 건 (돈은 받았는데 물건이 안 나감)</span>
+<span class="cm">--   payment 를 왼쪽에 두고 LEFT JOIN 하는 것이 핵심이다.</span>
+<span class="cm">--   "결제 기준으로 훑으면서 짝이 없는 것"을 찾는 형태라, 짝이 아예 없는 행(o.id IS NULL)도 결과에 남는다.</span>
+<span class="kw">SELECT</span> p.payment_key, p.order_no, p.amount, p.approved_at, o.status <span class="kw">AS</span> order_status
+<span class="kw">FROM</span> payment p
+<span class="kw">LEFT JOIN</span> orders o <span class="kw">ON</span> o.order_no = p.order_no
+<span class="kw">WHERE</span> p.status = <span class="st">'APPROVED'</span>
+  <span class="kw">AND</span> p.approved_at <span class="kw">BETWEEN</span> :from <span class="kw">AND</span> :to    <span class="cm">-- 하한 = 배포 시각 / PG 장애 공지 / 첫 CS 접수 중 가장 이른 것</span>
+  <span class="kw">AND</span> (o.id <span class="kw">IS NULL</span>                          <span class="cm">-- 주문 행 자체가 없음  (증상 i)</span>
+       <span class="kw">OR</span> o.status &lt;&gt; <span class="st">'CONFIRMED'</span>);          <span class="cm">-- 행은 있는데 확정이 아님 (증상 ii·iii)</span>
+
+<span class="cm">-- 방향 2: 주문은 확정인데 승인 결제가 없는 건 (돈은 안 받았는데 물건이 나감)</span>
+<span class="cm">--   이번엔 orders 를 왼쪽에 둔다. 조인 조건에 p.status='APPROVED' 를 넣은 이유:</span>
+<span class="cm">--   WHERE 로 빼면 "승인 아닌 결제가 있는 주문"이 통째로 사라져 오히려 못 잡는다.</span>
+<span class="kw">SELECT</span> o.order_no, o.total_amount, o.confirmed_at
+<span class="kw">FROM</span> orders o
+<span class="kw">LEFT JOIN</span> payment p <span class="kw">ON</span> p.order_no = o.order_no <span class="kw">AND</span> p.status = <span class="st">'APPROVED'</span>
+<span class="kw">WHERE</span> o.status = <span class="st">'CONFIRMED'</span>
+  <span class="kw">AND</span> o.confirmed_at <span class="kw">BETWEEN</span> :from <span class="kw">AND</span> :to
+  <span class="kw">AND</span> p.id <span class="kw">IS NULL</span>;                          <span class="cm">-- 승인된 결제가 하나도 없다</span>
+
+<span class="cm">-- 방향 3 (가산점 포인트): 둘 다 있는데 금액이 다른 건</span>
+<span class="cm">--   양쪽에 행이 있으므로 INNER JOIN 이다. 방향 1·2 로는 구조적으로 안 잡히는 유일한 유형.</span>
+<span class="kw">SELECT</span> o.order_no, o.total_amount, p.amount, o.total_amount - p.amount <span class="kw">AS</span> diff
+<span class="kw">FROM</span> orders o <span class="kw">JOIN</span> payment p <span class="kw">ON</span> p.order_no = o.order_no
+<span class="kw">WHERE</span> o.status = <span class="st">'CONFIRMED'</span> <span class="kw">AND</span> p.status = <span class="st">'APPROVED'</span>
+  <span class="kw">AND</span> o.total_amount &lt;&gt; p.amount
+  <span class="kw">AND</span> o.confirmed_at <span class="kw">BETWEEN</span> :from <span class="kw">AND</span> :to;</code></pre>
+
+<h3>7-2. 숫자를 실제로 만들어 본다 — 그리고 그 숫자가 곧 방어선의 근거가 된다</h3>
+
+<p>예를 들어 14:32 배포 직후부터 15:08 핫픽스까지 창이 열려 있었고, 방향 1이 <b>412건 · 평균 결제금액 42,300원</b>으로 나왔다고 하자.</p>
+
+<div class="grid g4">
+  <div class="tile big"><div class="s">창 길이</div><div class="k">36분</div><div class="s">15:08 − 14:32</div></div>
+  <div class="tile big red"><div class="s">피해 건수 / 금액</div><div class="k">412건</div><div class="s">× 42,300원 = <b>17,427,600원</b></div></div>
+  <div class="tile big red"><div class="s">유출 속도</div><div class="k">분당 11.4건</div><div class="s">1분 지연 = 약 48만 원</div></div>
+  <div class="tile big"><div class="s">탐지 지연</div><div class="k">19분</div><div class="s">14:32 발생 → 14:51 CS 접수</div></div>
+</div>
+
+<div class="memo green">
+  <h4>이 계산의 마지막 줄이 <b>대사(방어선 ④)의 가치를 숫자로 만든 것</b>이다</h4>
+  <div class="rule ok" style="margin:6px 0">피해 상한 = <b>대사 주기 × 유출 속도</b> &nbsp;→&nbsp; 5분짜리 대사가 있었다면 5분 × 11.4 ≈ <b>57건</b>에서 끊긴다</div>
+  <p style="margin-bottom:0"><b>대사는 사고를 막지 않는다. 사고의 크기를 "주기 × 유출 속도"로 상한 짓는다.</b> 회고에서 "대사 주기를 5분으로 줄이자"를 주장할 때 <b>이 계산이 근거</b>가 되고, "탐지 지연 19분"은 그대로 <b>알람(⑤) 부재의 비용</b>이다.</p>
+</div>
+
+<div class="callout warn"><span class="t">우리 쪽에 아무 흔적도 없다면 — 영향 범위를 우리 DB로는 셀 수 없다</span>
+  1-1절의 before 구조처럼 시도의 흔적이 없으면 기준은 <b>PG 원장</b>이다. PG 거래내역 API나 정산 파일을 받아 임시 테이블에 적재하고 우리 주문과 대조한다.
+<pre style="margin-top:8px"><code><span class="cm">-- PG 거래내역 CSV 를 COPY 로 적재한다. INSERT 를 수만 번 반복하는 것보다 훨씬 빠르고,</span>
+<span class="cm">-- 사고 중엔 이 차이가 크다.  \copy pg_tx_snapshot FROM 'pg_ledger_20260830.csv' WITH (FORMAT csv, HEADER true)</span>
+<span class="kw">SELECT</span> s.payment_key, s.order_no, s.amount, s.approved_at
+<span class="kw">FROM</span> pg_tx_snapshot s
+<span class="kw">LEFT JOIN</span> orders o <span class="kw">ON</span> o.order_no = s.order_no <span class="kw">AND</span> o.status = <span class="st">'CONFIRMED'</span>
+<span class="kw">WHERE</span> s.status = <span class="st">'DONE'</span> <span class="kw">AND</span> o.id <span class="kw">IS NULL</span>;</code></pre>
+  <p style="margin:8px 0 0"><b>"우리 DB에 기록이 없어서 PG 파일을 받아 대조해야 했다"는 경험 자체가 방어선 ①(PENDING 선생성)의 가장 강한 근거다</b> — <b>시도의 흔적이 우리 쪽에 남아야 영향 범위를 우리 손으로 잴 수 있다.</b></p>
+</div>
+
+<div class="callout trap"><span class="t">이 쿼리들은 사고 대응 중 운영 DB에 날린다 — 인덱스가 없으면 2차 사고다</span>
+  <code>payment(status, approved_at)</code>, <code>orders(status, confirmed_at)</code>, <code>orders(order_no)</code> 인덱스가 없으면 <code>Seq Scan</code>이고, <b>사고 중에 긴 조회를 얹는 것은 2차 사고</b>다. 대사 배치가 상시 도는 구조라면 이 인덱스는 <b>이미 있어야 한다.</b>
+  <p style="margin:8px 0 0">PostgreSQL이면 <b>부분 인덱스</b>가 이 용도에 정확히 맞는다 — <b>조건을 만족하는 행만</b> 담는 인덱스다. 대사가 관심 있는 것은 전체가 아니라 <b>"미결" 행뿐</b>이라, 인덱스가 그 행만 담으면 <b>크기도 갱신 비용도 작다.</b></p>
+<pre style="margin-top:8px"><code><span class="cm">-- 미결 주문만 담는 인덱스 — CONFIRMED 로 전이하면 그 행이 인덱스에서 스스로 빠진다.</span>
+<span class="cm">--   PENDING 이 전체의 0.1% 라면 인덱스도 그 0.1% 크기다.</span>
+<span class="kw">CREATE INDEX CONCURRENTLY</span> idx_orders_pending_created
+    <span class="kw">ON</span> orders (created_at) <span class="kw">WHERE</span> status = <span class="st">'PENDING'</span>;
+
+<span class="cm">-- 사고 조사·대사용 anti-join(짝 없는 행 찾기) 축</span>
+<span class="kw">CREATE INDEX CONCURRENTLY</span> idx_payment_approved_at
+    <span class="kw">ON</span> payment (approved_at) <span class="kw">WHERE</span> status = <span class="st">'APPROVED'</span>;</code></pre>
+  <p style="margin:8px 0 0"><code>CONCURRENTLY</code>를 붙이는 이유는 <b>운영 중 인덱스 생성이 쓰기를 막지 않게</b> 하기 위해서다(대신 트랜잭션 블록 안에서는 못 쓰고, 실패하면 <code>INVALID</code> 인덱스가 남으니 <code>pg_index.indisvalid</code>를 확인하고 DROP 후 재시도한다).</p>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 임시 조치 — 출혈 차단 · 고객 복구 · 증거 보존</h2>
+
+<p><b>세 가지를 분리해서 결정한다.</b> 섞으면 "일단 재시작해 보죠"라는 최악의 선택이 나온다.</p>
+
+<div class="step red"><span class="n">1</span><div class="body">
+  <b>출혈 차단 — 원인이 "진행 중"인가부터 본다</b><br>
+  웹훅 장애·failover·PG 장애가 <b>계속되고 있으면</b> 결제 진입을 기능 플래그로 잠그거나 결제 수단을 전환한다. 산발적 코드 결함 (a)(c)(d)이면 <b>차단보다 빠른 핫픽스와 대사 빈도 상향</b>이 낫다.
+  <div class="rule red" style="margin:10px 0 0">차단은 <b>매출 손실</b>이므로 <b>"지금 분당 몇 건 새고 있는가"</b>와 저울질한다<br><span style="font-size:.92rem;font-weight:600">7-2절의 "분당 11.4건"이 정확히 그 저울의 눈금이다</span></div>
+</div></div>
+
+<div class="step"><span class="n">2</span><div class="body">
+  <b>고객 복구 — 살릴 것인가, 취소할 것인가</b><br>
+  방향 1(승인인데 주문 없음)의 각 건에 대해 기준은 <b>재고·배송 가능 여부와 고객 의사</b>다 — 재고가 있고 고객이 원하면 <b>주문 복구</b>(PG 승인 정보로 CONFIRMED 주문 생성), 아니면 <b>PG 취소 API로 환불</b>하고 안내한다.
+  <div class="callout warn" style="margin:10px 0 0"><span class="t">방향 2가 방향 1보다 먼저 막아야 하는 출혈일 때가 많다</span>
+    방향 2(확정인데 결제 없음)는 <b>배송 전이면 주문을 보류·취소</b>할 수 있지만 <b>배송 후면 추심 문제</b>로 넘어간다. 이 판단이 <b>7절에서 "양방향으로 세라"고 한 이유의 실전 형태</b>다.</div>
+</div></div>
+
+<div class="step ok"><span class="n">3</span><div class="body">
+  <b>증거 보존 — 재시작·재배포 전에 스냅샷부터</b><br>
+  앱 로그, PG 콘솔의 웹훅·승인 이력, 배포·failover 타임라인을 캡처한다. <b>DB 쪽에서 재시작하면 사라지는 것들이 있다.</b>
+  <div class="scroll" style="margin:10px 0 0"><table>
+    <tr><th>뜨는 것</th><th>무엇을 보존하나</th><th>언제 사라지나</th></tr>
+    <tr><td><code>pg_stat_activity</code></td><td>진행 중 쿼리, <code>idle in transaction</code> 세션, <code>xact_start</code></td><td class="bad">세션이 끊기는 즉시</td></tr>
+    <tr><td><code>pg_locks</code> + <code>pg_blocking_pids()</code></td><td>누가 누구를 막고 있었나</td><td class="bad">락이 풀리는 즉시</td></tr>
+    <tr><td><code>pg_stat_statements</code></td><td>쿼리별 누적 실행 통계</td><td>재시작이 아니라 <code>pg_stat_statements_reset()</code>으로 날아간다</td></tr>
+    <tr><td>서버 로그의 데드락·락 대기 기록</td><td>사고 시점의 경합</td><td><code>log_lock_waits</code>·<code>log_min_duration_statement</code>가 켜져 있어야 애초에 남는다</td></tr>
+  </table></div>
+</div></div>
+
+<div class="rule red">재시작은 원인 (e)(f)의 증거를 지운다 — <b>"일단 재시작해 보죠"가 진단을 불가능하게 만드는 대표적인 순간이다</b></div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 방어선 다섯 겹 — 각각의 "얻는 것"과 "치르는 값"</h2>
+
+<div class="memo">
+  <h4>암기 ③: 방어선 다섯 겹 — <b>순 · 멱 · 박 · 대 · 알</b></h4>
+  <div class="chain">
+    <span class="chip b">① <b>순</b>서 설계</span><span class="arrow">·</span>
+    <span class="chip b">② <b>멱</b>등 세 층</span><span class="arrow">·</span>
+    <span class="chip b">③ 아웃<b>박</b>스/인박스</span><span class="arrow">·</span>
+    <span class="chip g">④ <b>대</b>사 배치</span><span class="arrow">·</span>
+    <span class="chip g">⑤ <b>알</b>람</span>
+  </div>
+  <div class="split" style="margin-top:8px">
+    <div class="pane b"><h4>①②③ — 사고가 나는 <b>확률</b>을 줄인다</h4><p style="margin:0;font-size:.94rem">각각 <b>특정 원인 하나</b>를 겨냥하는 <b>국소 방어</b>다. 그래서 하나만으로는 나머지 원인이 그대로 뚫린다.</p></div>
+    <div class="pane g"><h4>④⑤ — 사고가 <b>방치되는 시간</b>을 줄인다</h4><p style="margin:0;font-size:.94rem">원인을 몰라도 <b>결과</b>를 잡는 <b>전역 방어</b>다. 불일치를 <b>대사 주기 안에 반드시 잡히는 유계(bounded) 불일치</b>로 바꾼다.</p></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">"무엇부터 하겠습니까"의 답은 ①이 아니라 <b>④(대사)와 ⑤(알람)</b>다<br><span style="font-size:.92rem;font-weight:600">지금 사고가 나 있는 상황에서는 "다시 안 나게"보다 <b>"나면 바로 알게"</b>가 먼저이기 때문이다</span></div>
+</div>
+
+<h3>9-1. 왜 한 겹으로 안 되는가 — 원인 ↔ 방어선 대응표를 먼저 본다</h3>
+
+<p>방어선을 소개하기 전에 <b>대응표를 먼저 본다.</b> 순서가 중요하다 — <b>"한 겹이 어느 원인을 못 막는가"를 먼저 봐야 다음 겹이 필요한 이유가 서기 때문이다.</b></p>
+
+<div class="scroll"><table class="wide">
+  <caption><b>가로로 읽으면</b> "이 원인은 이 방어선이 막는다", <b>세로로 읽으면</b> "방어선 하나로는 여섯 원인을 다 못 막는다"가 보인다.</caption>
+  <tr><th style="width:150px">원인</th><th style="width:230px">1차로 막는 방어선</th><th>이 방어선 하나만 있으면 무엇이 남나</th><th style="width:150px">그래도 뚫리면</th></tr>
+  <tr><td class="bad">(a) 트랜잭션 경계</td><td>① 순서 설계 + ArchUnit</td><td>(b)(d)(f)는 그대로 뚫린다 — <b>경계와 무관한 경로</b>다</td><td class="good">④ 대사</td></tr>
+  <tr><td class="bad">(b) 웹훅 역전·유실</td><td>③ Inbox + 지연 재시도</td><td>승인 API 경로가 죽는 (a)(c)(e)는 못 막는다</td><td class="good">④ 대사 (PG 조회)</td></tr>
+  <tr><td class="bad">(c) 불명·크래시</td><td>① PENDING 흔적 + graceful shutdown</td><td>흔적은 남지만 <b>아무도 그 흔적을 보지 않으면</b> 그대로 방치된다</td><td class="good">④ 대사</td></tr>
+  <tr><td class="bad">(d) 멱등 충돌</td><td>② 결과 저장·상태별 재개</td><td>멱등이 완벽해도 <b>애초에 요청이 안 오면</b>(b)(f) 소용없다</td><td class="good">④ 대사</td></tr>
+  <tr><td class="bad">(e) failover</td><td>① PENDING 흔적 + 동기 복제</td><td>(γ)로 <b>PENDING 자체가 유실</b>되면 흔적도 없다</td><td class="good">④ 대사</td></tr>
+  <tr><td class="bad">(f) 비동기 유실</td><td>주문 생성은 동기로, 후속만 ③ Outbox</td><td>후속(재고·알림) 유실은 막지만 <b>주문 유실은 설계로만 막힌다</b></td><td class="good">④ 대사</td></tr>
+</table></div>
+
+<div class="callout ok"><span class="t">표에서 두 가지가 읽힌다</span>
+  <b>첫째, "그래도 뚫리면" 칸이 전부 ④(대사)다.</b> ①②③은 각각 특정 원인 하나를 막는 <b>국소 방어</b>이고, ④는 <b>원인을 몰라도 결과를 잡는 전역 방어</b>다.<br>
+  <b>둘째, 원인의 성격이 여섯 가지로 다르다</b>(코드 경계 / 외부 통지 / 불명 / 멱등 설계 / 인프라 / 비동기). <b>성격이 다르면 방어선도 계층이어야 한다. 한 방으로 막는 설계는 없다.</b>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="다섯 겹 방어선이 층으로 쌓인 도식. 아래 세 겹은 확률을 줄이는 국소 방어이고 위 두 겹은 방치 시간을 줄이는 전역 방어이며, 마지막 겹을 통과한 불일치는 대사 주기 곱하기 유출 속도로 상한이 정해진다">
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">다섯 겹이 막는 대상이 서로 다르다 — 그래서 겹이지 대안이 아니다</text>
+
+    <!-- funnel -->
+    <rect x="20" y="46" width="176" height="222" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="108" y="74" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">들어오는 사고 원인</text>
+    <g font-size="11.5" fill="#7f1d1d" text-anchor="middle">
+      <text x="108" y="100">(a) 트랜잭션 경계</text><text x="108" y="122">(b) 웹훅 역전</text>
+      <text x="108" y="144">(c) 불명 · 크래시</text><text x="108" y="166">(d) 멱등 충돌</text>
+      <text x="108" y="188">(e) failover</text><text x="108" y="210">(f) 비동기 유실</text>
+      <text x="108" y="240" font-size="11" fill="#b91c1c">+ 우리가 생각 못 한</text>
+      <text x="108" y="256" font-size="11" font-weight="700" fill="#b91c1c">일곱 번째 경로</text>
+    </g>
+
+    <!-- layers -->
+    <g>
+      <rect x="216" y="46" width="150" height="222" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+      <text x="291" y="72" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">① 순서 설계</text>
+      <text x="291" y="94" font-size="11" fill="#1e40af" text-anchor="middle">PENDING 선생성</text>
+      <text x="291" y="110" font-size="11" fill="#1e40af" text-anchor="middle">트랜잭션 밖 승인</text>
+      <text x="291" y="126" font-size="11" fill="#1e40af" text-anchor="middle">조건부 확정</text>
+      <rect x="232" y="140" width="118" height="24" rx="6" fill="#dbeafe"/><text x="291" y="157" font-size="11" font-weight="700" fill="#1d4ed8" text-anchor="middle">(a) 제거 · (c)(e) 완화</text>
+      <text x="291" y="184" font-size="10.5" fill="#64748b" text-anchor="middle">값: 미완료 주문</text>
+      <text x="291" y="199" font-size="10.5" fill="#64748b" text-anchor="middle">정리 배치가 필수</text>
+
+      <rect x="382" y="46" width="150" height="222" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+      <text x="457" y="72" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">② 멱등 세 층</text>
+      <text x="457" y="94" font-size="11" fill="#1e40af" text-anchor="middle">요청 / PG / DB 유니크</text>
+      <text x="457" y="110" font-size="11" fill="#1e40af" text-anchor="middle">"봤다"가 아니라</text>
+      <text x="457" y="126" font-size="11" fill="#1e40af" text-anchor="middle" font-weight="700">"결과"를 기억한다</text>
+      <rect x="398" y="140" width="118" height="24" rx="6" fill="#dbeafe"/><text x="457" y="157" font-size="11" font-weight="700" fill="#1d4ed8" text-anchor="middle">(d) 제거</text>
+      <text x="457" y="184" font-size="10.5" fill="#64748b" text-anchor="middle">값: 키 저장소·TTL,</text>
+      <text x="457" y="199" font-size="10.5" fill="#64748b" text-anchor="middle">키 스코프 설계 리스크</text>
+
+      <rect x="548" y="46" width="150" height="222" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+      <text x="623" y="72" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">③ Outbox/Inbox</text>
+      <text x="623" y="94" font-size="11" fill="#1e40af" text-anchor="middle">"받았다"·"보낼 것"을</text>
+      <text x="623" y="110" font-size="11" fill="#1e40af" text-anchor="middle">테이블에 먼저 확정</text>
+      <text x="623" y="126" font-size="11" fill="#1e40af" text-anchor="middle">처리는 그 뒤</text>
+      <rect x="564" y="140" width="118" height="24" rx="6" fill="#dbeafe"/><text x="623" y="157" font-size="11" font-weight="700" fill="#1d4ed8" text-anchor="middle">(b) 제거 · (f) 후속 보호</text>
+      <text x="623" y="184" font-size="10.5" fill="#64748b" text-anchor="middle">값: 테이블·릴레이라는</text>
+      <text x="623" y="199" font-size="10.5" fill="#64748b" text-anchor="middle">운영 대상이 는다</text>
+
+      <rect x="714" y="46" width="150" height="222" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+      <text x="789" y="72" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">④ 양방향 대사</text>
+      <text x="789" y="94" font-size="11" fill="#15803d" text-anchor="middle">PENDING → PG 조회</text>
+      <text x="789" y="110" font-size="11" fill="#15803d" text-anchor="middle">PG 원장 → 우리 주문</text>
+      <text x="789" y="126" font-size="11" fill="#15803d" text-anchor="middle">확정 → 승인 결제</text>
+      <rect x="730" y="140" width="118" height="24" rx="6" fill="#dcfce7"/><text x="789" y="157" font-size="11" font-weight="700" fill="#166534" text-anchor="middle">원인 무관 · 전역</text>
+      <text x="789" y="184" font-size="10.5" fill="#64748b" text-anchor="middle">값: PG 조회 비용·의존,</text>
+      <text x="789" y="199" font-size="10.5" fill="#64748b" text-anchor="middle">오보정 위험</text>
+
+      <rect x="880" y="46" width="150" height="222" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+      <text x="955" y="72" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">⑤ 알람</text>
+      <text x="955" y="94" font-size="11" fill="#15803d" text-anchor="middle">불일치 건수 &gt; 0</text>
+      <text x="955" y="110" font-size="11" fill="#15803d" text-anchor="middle">PENDING 나이 p99</text>
+      <text x="955" y="126" font-size="11" fill="#15803d" text-anchor="middle">auto_confirmed 증가</text>
+      <rect x="896" y="140" width="118" height="24" rx="6" fill="#dcfce7"/><text x="955" y="157" font-size="11" font-weight="700" fill="#166534" text-anchor="middle">CS보다 먼저 안다</text>
+      <text x="955" y="184" font-size="10.5" fill="#64748b" text-anchor="middle">값: 오탐 — 계속 울리는</text>
+      <text x="955" y="199" font-size="10.5" fill="#64748b" text-anchor="middle">알람은 꺼진 알람이다</text>
+    </g>
+
+    <rect x="216" y="228" width="482" height="34" rx="8" fill="#dbeafe" stroke="#bfdbfe"/>
+    <text x="457" y="250" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">여기까지가 "사고 확률"을 줄이는 겹</text>
+    <rect x="714" y="228" width="316" height="34" rx="8" fill="#dcfce7" stroke="#bbf7d0"/>
+    <text x="872" y="250" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">여기부터가 "방치 시간"을 줄이는 겹</text>
+
+    <rect x="1046" y="46" width="54" height="222" rx="10" fill="#fffbeb" stroke="#d97706"/>
+    <text x="1073" y="157" font-size="10.5" font-weight="700" fill="#b45309" text-anchor="middle" transform="rotate(90 1073 157)">남는 불일치 = 유계(bounded)</text>
+
+    <text x="560" y="288" font-size="12" fill="#92400e" text-anchor="middle">마지막 겹을 통과한 불일치의 크기는 <tspan font-weight="700">대사 주기 × 유출 속도</tspan> — 즉 <tspan font-weight="700">우리가 정하는 숫자</tspan>가 된다</text>
+  </svg>
+  <figcaption>비유하면 <b>배의 격벽</b>이다. 한 칸이 뚫려도 배가 가라앉지 않는 이유는 방수 격벽이 <b>여러 겹</b>이기 때문이고, 마지막 격벽인 <b>배수 펌프(④⑤)</b>는 물이 들어오는 것을 막지는 못해도 <b>차오르는 속도에 상한</b>을 씌운다.</figcaption>
+</figure>
+
+<h3>9-2. 방어선 ① 순서 설계 — PENDING 선생성 → 트랜잭션 밖 승인 → 조건부 확정</h3>
+
+<div class="rule">원칙은 두 줄이다 — <b>되돌릴 수 없는 외부 사건(PG 승인) 전에 우리 쪽 원장에 "시도"를 먼저 남기고,</b><br><b>외부 사건은 트랜잭션 밖에서 일으키며, 그 결과를 조건부 UPDATE로 확정한다</b></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="before는 하나의 트랜잭션 안에서 재고, PG 승인, 주문 INSERT, 쿠폰, 커밋이 순서대로 일어나 승인 뒤 죽으면 흔적이 없다. after는 PENDING INSERT 커밋, 트랜잭션 밖 승인, 조건부 확정 커밋 세 구간으로 나뉘어 어디서 죽어도 PENDING이 남는다">
+    <defs><marker id="g1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker></defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">before / after — 달라진 것은 "쪼갠 것"이 아니라 "죽었을 때 무엇이 남는가"다</text>
+
+    <!-- before -->
+    <text x="20" y="58" font-size="13" font-weight="700" fill="#b91c1c">before</text>
+    <rect x="92" y="42" width="838" height="46" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="106" y="60" font-size="11" font-weight="700" fill="#b91c1c">하나의 @Transactional</text>
+    <g font-size="11.5" class="mono" fill="#7f1d1d">
+      <text x="106" y="79">BEGIN → 재고 → </text>
+      <text x="240" y="79" font-weight="700" fill="#dc2626">[PG 승인]</text>
+      <text x="330" y="79"> → INSERT 주문 → 쿠폰 → COMMIT</text>
+    </g>
+    <rect x="238" y="90" width="86" height="4" rx="2" fill="#dc2626"/>
+    <rect x="944" y="42" width="156" height="46" rx="10" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="1022" y="62" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">승인 뒤 어디서 죽어도</text>
+    <text x="1022" y="79" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">우리 쪽 흔적 0</text>
+    <text x="560" y="112" font-size="11.5" fill="#7f1d1d" text-anchor="middle">→ 영향 범위를 PG 정산 파일 없이는 <tspan font-weight="700">셀 수조차 없다</tspan> · 재고 락과 커넥션을 PG 응답 내내 쥐고 있다</text>
+
+    <line x1="560" y1="122" x2="560" y2="146" stroke="#64748b" stroke-width="1.8" marker-end="url(#g1)"/>
+
+    <!-- after -->
+    <text x="20" y="176" font-size="13" font-weight="700" fill="#166534">after</text>
+    <g>
+      <rect x="92" y="156" width="266" height="52" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+      <text x="106" y="176" font-size="11" font-weight="700" fill="#166534">[A] 트랜잭션 1 — 짧다</text>
+      <text x="106" y="196" font-size="11.5" class="mono" fill="#15803d">INSERT orders(PENDING) → COMMIT</text>
+
+      <rect x="382" y="156" width="266" height="52" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+      <text x="396" y="176" font-size="11" font-weight="700" fill="#b45309">[PG] 트랜잭션이 열려 있지 않다</text>
+      <text x="396" y="196" font-size="11.5" class="mono" fill="#92400e">pgClient.approve(order_no, amount)</text>
+
+      <rect x="672" y="156" width="258" height="52" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+      <text x="686" y="176" font-size="11" font-weight="700" fill="#166534">[B] 트랜잭션 2 — 조건부 확정</text>
+      <text x="686" y="196" font-size="11.5" class="mono" fill="#15803d">UPDATE ... WHERE status='PENDING'</text>
+    </g>
+    <g stroke="#64748b" stroke-width="1.8" marker-end="url(#g1)">
+      <line x1="360" y1="182" x2="378" y2="182"/><line x1="650" y1="182" x2="668" y2="182"/>
+    </g>
+    <rect x="944" y="156" width="156" height="52" rx="10" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="1022" y="178" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">어디서 죽어도</text>
+    <text x="1022" y="196" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">PENDING 이 남는다</text>
+
+    <!-- death markers -->
+    <g font-size="16" font-weight="700" fill="#dc2626" text-anchor="middle">
+      <text x="370" y="232">✕</text><text x="660" y="232">✕</text><text x="930" y="232">✕</text>
+    </g>
+    <g font-size="11" fill="#7f1d1d" text-anchor="middle">
+      <text x="370" y="252">여기서 죽으면</text><text x="370" y="266" font-weight="700">"승인 안 된 PENDING"</text>
+      <text x="660" y="252">여기서 죽으면</text><text x="660" y="266" font-weight="700">"승인된 PENDING"</text>
+      <text x="930" y="252">여기서 죽어도</text><text x="930" y="266" font-weight="700">조건부 UPDATE 라 재실행 안전</text>
+    </g>
+
+    <rect x="92" y="276" width="1008" height="20" rx="6" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="596" y="291" font-size="11.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">죽은 지점은 "PENDING 의 나이 + PG 조회 결과"로 판별한다 — 그래서 ①이 있어야 ④(대사 방향 1)가 성립한다</text>
+  </svg>
+  <figcaption>after에서 <b>원자성을 하나 내준다</b>는 점을 반드시 같이 말해야 한다. [A] 커밋 뒤 [PG] 전에 죽으면 <b>"승인 안 된 PENDING"</b>이 남는다 — <b>새로 생긴 중간 상태</b>이고, 이건 정리 배치가 갚는다.</figcaption>
+</figure>
+
+<div class="codehead good"><span class="tag">after</span> 조율자(Facade)는 트랜잭션을 열지 않는다</div>
+<pre><code><span class="kw">@Service</span>
+<span class="kw">@RequiredArgsConstructor</span>
+<span class="kw">public class</span> OrderPlacementFacade {
+
+    <span class="kw">private final</span> OrderTxService orderTx;   <span class="cm">// 짧은 트랜잭션 두 개를 제공한다</span>
+    <span class="kw">private final</span> PgClient pgClient;
+
+    <span class="cm">// ★ 이 메서드에는 @Transactional 이 없다 — 그것이 설계의 핵심이다</span>
+    <span class="kw">public</span> OrderResult <span class="fn">place</span>(PlaceOrderCommand cmd) {
+        <span class="cm">// [A] 트랜잭션 1 — 주문을 PENDING 으로 먼저 남긴다.</span>
+        <span class="cm">//     order_no 채번, 금액 확정, idempotency_key UNIQUE 까지 여기서 커밋된다.</span>
+<span class="ln-good">        Order pending = orderTx.<span class="fn">createPending</span>(cmd);        <span class="note">이 커밋이 있어야 흔적이 남는다</span></span>
+
+        <span class="cm">// [PG] 트랜잭션 밖 — order_no 를 멱등키로 실어 승인 요청.</span>
+        <span class="cm">//      트랜잭션이 열려 있지 않으므로 PG 가 8초를 끌어도 우리 DB 는 아무 락도 쥐지 않는다.</span>
+        PgApproval approval;
+        <span class="kw">try</span> {
+            approval = pgClient.<span class="fn">approve</span>(pending.<span class="fn">getOrderNo</span>(), pending.<span class="fn">getAmount</span>());
+        } <span class="kw">catch</span> (PgDeclinedException e) {            <span class="cm">// 명시적 거절만 "실패"로 확정한다</span>
+            orderTx.<span class="fn">markFailed</span>(pending.<span class="fn">getId</span>(), e.<span class="fn">code</span>());
+            <span class="kw">throw</span> e;
+        } <span class="kw">catch</span> (PgUnknownResultException e) {       <span class="cm">// 타임아웃·커넥션 끊김 = 불명</span>
+<span class="ln-good">            <span class="kw">return</span> OrderResult.<span class="fn">processing</span>(pending.<span class="fn">getOrderNo</span>());  <span class="note">실패로 단정하지 않는다</span></span>
+            <span class="cm">// PENDING 유지 → 대사 배치(10-1절)가 PG 에 묻는다</span>
+        }
+
+        <span class="cm">// [B] 트랜잭션 2 — 조건부 확정 + 결제 기록 + Outbox 를 한 트랜잭션에</span>
+        orderTx.<span class="fn">confirm</span>(pending.<span class="fn">getId</span>(), approval);
+        <span class="kw">return</span> OrderResult.<span class="fn">confirmed</span>(pending.<span class="fn">getOrderNo</span>());
+    }
+}
+
+<span class="kw">@Service</span>
+<span class="kw">@RequiredArgsConstructor</span>
+<span class="kw">public class</span> OrderTxService {
+
+    <span class="kw">@Transactional</span>
+    <span class="kw">public</span> Order <span class="fn">createPending</span>(PlaceOrderCommand cmd) {
+        <span class="kw">return</span> orderRepository.<span class="fn">save</span>(Order.<span class="fn">pending</span>(cmd));            <span class="cm">// status = PENDING</span>
+    }
+
+    <span class="kw">@Transactional</span>
+    <span class="kw">public void</span> <span class="fn">confirm</span>(Long orderId, PgApproval approval) {
+        <span class="cm">// UPDATE orders SET status='CONFIRMED', confirmed_at=now() WHERE id=$1 AND status='PENDING'</span>
+        <span class="cm">//   WHERE 에 현재 상태를 넣는 것이 핵심이다. 갱신된 행 수가 0이면 이미 다른 경로가 확정한 것이고,</span>
+        <span class="cm">//   그 판정을 DB 가 원자적으로 해 주므로 "SELECT 로 확인하고 UPDATE" 사이의 경쟁이 생기지 않는다.</span>
+<span class="ln-good">        <span class="kw">int</span> updated = orderRepository.<span class="fn">confirmIfPending</span>(orderId);</span>
+        <span class="kw">if</span> (updated == 0) <span class="kw">return</span>;                                    <span class="cm">// 이미 확정(웹훅·대사가 먼저 왔다) — 두 번 실행돼도 무해</span>
+        paymentRepository.<span class="fn">save</span>(Payment.<span class="fn">approved</span>(orderId, approval)); <span class="cm">// payment_key UNIQUE — DB 레벨 최후 방어선</span>
+        outboxRepository.<span class="fn">save</span>(OutboxEvent.<span class="fn">orderConfirmed</span>(orderId));  <span class="cm">// 후속(재고 확정·알림)은 Outbox 로</span>
+    }
+
+    <span class="kw">@Transactional</span>
+    <span class="kw">public void</span> <span class="fn">markFailed</span>(Long orderId, String reason) { ... }     <span class="cm">// PENDING → FAILED 조건부</span>
+}</code></pre>
+
+<div class="callout info"><span class="t">상태 머신은 이 사고를 막는 데 필요한 만큼만</span>
+  <code>PENDING → CONFIRMED / FAILED / EXPIRED</code>. <b>PENDING은 "PG에 물어보는 중"이라는 정식 상태</b>이고, 모든 전이는 <code>WHERE status = 'PENDING'</code> 조건부 UPDATE라 <b>세 경로(응답 경로·웹훅·대사)가 동시에 확정하려 해도 한 번만 성공한다.</b>
+</div>
+
+<div class="split">
+  <div class="pane g"><h4>얻는 것</h4><ul>
+    <li><b>(a)를 구조적으로 제거</b> — 트랜잭션 안에 PG가 없다</li>
+    <li>(c)(e)의 결과가 <b>"흔적 없음" → "PENDING 잔존"</b>으로 바뀌어 <b>대사가 가능해진다</b></li>
+    <li>응답 경로·웹훅·대사 <b>세 경로의 확정이 조건부 UPDATE로 멱등</b></li>
+    <li>PG가 느려도 <b>재고 행 락과 커넥션을 쥐지 않는다</b></li>
+  </ul></div>
+  <div class="pane r"><h4>치르는 값</h4><ul>
+    <li><b>미완료 주문 정리 배치가 필수다.</b> 결제창에서 이탈한 고객마다 PENDING이 남는다. <b>만료 전에 반드시 PG 조회로 승인 여부를 확인해야 한다</b> — 확인 없이 만료하면 <b>"승인됐는데 EXPIRED"라는 같은 사고를 배치가 만든다</b></li>
+    <li><b>재고를 언제 잡을지 결정해야 한다.</b> PENDING 선점이면 이탈 고객이 재고를 묶고(TTL·해제 배치), 확정 시 차감이면 승인 뒤 품절 시 <b>PG 취소(보상)</b>가 필요하다. 어느 쪽도 공짜가 아니다</li>
+    <li><b>쓰기 2회 + 응답 지연 소폭 증가</b>, 그리고 <b>"처리 중" 응답</b>을 클라이언트가 다룰 수 있어야 한다</li>
+    <li><b>원자성을 내준다</b> — "승인 안 된 PENDING"이라는 새 중간 상태가 생긴다</li>
+  </ul></div>
+</div>
+
+<h3>9-3. 방어선 ② 멱등 세 층 — 요청 / PG / DB 유니크</h3>
+
+<p>(d)를 막으려면 멱등을 "필터 하나"가 아니라 <b>세 층</b>으로 두고, <b>각 층이 "봤다"가 아니라 "결과"를 기억하게 한다.</b></p>
+
+<div class="scroll"><table>
+  <tr><th>층</th><th>어디서 어디로</th><th>키</th><th>하는 일</th></tr>
+  <tr><td><b>요청 층</b></td><td>클라이언트 → 우리</td><td><code>order_no</code> 또는 클라이언트 생성 키</td><td><code>orders.idempotency_key UNIQUE</code>. 같은 키가 다시 오면 <b>거절하지 말고 그 키의 주문 상태를 보고 이어간다</b></td></tr>
+  <tr><td><b>PG 층</b></td><td>우리 → PG</td><td><code>order_no</code></td><td>PG가 같은 주문번호·같은 금액의 재요청에 <b>이전 승인 결과를 그대로 돌려주거나</b> 중복 승인을 거절한다</td></tr>
+  <tr class="hl"><td><b>DB 층</b></td><td>우리 DB 안</td><td><code>payment.payment_key</code>, <code>orders.order_no</code></td><td>위 두 층이 다 뚫려도 <b>DB가 두 번째 INSERT를 거절한다</b></td></tr>
+</table></div>
+
+<div class="memo green">
+  <h4>4장 관점에서 DB 층이 가장 중요한 이유 — <b>PostgreSQL에는 없는 행을 잠글 방법이 없다</b></h4>
+  <p style="margin:4px 0 0"><b>애플리케이션 멱등은 버그가 날 수 있지만 유니크 제약은 안 난다.</b> 게다가 MySQL/InnoDB에는 <b>"아직 존재하지 않는 행이 들어올 자리"를 잠그는 갭 락</b>이 있지만 <b>PostgreSQL에는 없다.</b> 그러므로 <b>"조회해서 없으면 INSERT"는 아무리 잘 짜도 두 요청이 동시에 통과할 수 있고, 이 경쟁을 막는 것은 유니크 인덱스 하나뿐이다.</b></p>
+</div>
+
+<pre><code><span class="cm">-- 멱등 삽입 — 같은 멱등키로 두 번 들어와도 주문은 하나.</span>
+<span class="cm">--   ON CONFLICT (idempotency_key): 이 유니크 인덱스와 충돌하면</span>
+<span class="cm">--   DO NOTHING: 에러를 내지 말고 그냥 아무것도 하지 마라</span>
+<span class="cm">--   RETURNING: 실제로 삽입된 행만 돌려준다 → 반환 행이 있으면 "내가 만들었다", 없으면 "남이 이미 만들었다"</span>
+<span class="kw">INSERT INTO</span> orders (order_no, idempotency_key, user_id, amount, status, created_at)
+<span class="kw">VALUES</span> ($1, $2, $3, $4, <span class="st">'PENDING'</span>, <span class="fn">now</span>())
+<span class="kw">ON CONFLICT</span> (idempotency_key) <span class="kw">DO NOTHING</span>
+<span class="kw">RETURNING</span> id, order_no;
+<span class="cm">--   0행 반환 → 이미 존재 → 그 주문을 읽어 상태별로 이어간다(아래 after 코드)</span>
+
+<span class="cm">-- 결제 기록도 같은 형태. payment_key 는 PG 가 준 값이라 최후 방어선이 된다</span>
+<span class="kw">INSERT INTO</span> payment (order_id, payment_key, amount, status, approved_at)
+<span class="kw">VALUES</span> ($1, $2, $3, <span class="st">'APPROVED'</span>, $4)
+<span class="kw">ON CONFLICT</span> (payment_key) <span class="kw">DO NOTHING</span>;</code></pre>
+
+<div class="callout ok"><span class="t">왜 <code>try { insert } catch (DuplicateKeyException)</code>가 아니라 <code>ON CONFLICT</code>인가 <span class="badge bonus">가산점</span></span>
+  PostgreSQL은 <b>트랜잭션 안에서 에러가 하나라도 나면 그 트랜잭션 전체가 abort 상태</b>가 되어 이후 명령이 전부 <code>current transaction is aborted, commands ignored until end of transaction block</code>으로 거부된다. 유니크 위반을 잡아서 "그럼 기존 주문을 읽자"로 이어가려면 <code>SAVEPOINT</code>(스프링 <code>@Transactional(propagation = NESTED)</code>)가 필요하다 — <b>결제 경로에서 이 함정을 밟으면 "중복 요청 하나 때문에 정상 트랜잭션이 통째로 죽는" 2차 사고가 난다.</b> 그래서 <b>예외를 아예 만들지 않는 <code>ON CONFLICT</code></b>가 PostgreSQL의 정석이다. <code>DO UPDATE</code>를 쓸 때는 <code>RETURNING (xmax = 0) AS inserted</code>로 삽입/갱신을 구분할 수 있다(새로 삽입된 튜플은 <code>xmax</code>가 0이다).
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> "봤다"만 기억하는 멱등 필터</div>
+<pre><code><span class="ln-bad"><span class="kw">if</span> (idemRepository.<span class="fn">existsByKey</span>(key))</span>
+<span class="ln-bad">    <span class="kw">throw new</span> <span class="fn">ConflictException</span>();   <span class="cm">// 결과가 뭐였는지 모른다</span></span>
+
+<span class="ln-bad">idemRepository.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">IdemRecord</span>(key, IN_PROGRESS));</span>
+<span class="cm">// ↑ 비즈니스 트랜잭션과 별개라 롤백돼도 남는다</span>
+
+<span class="cm">// 결과:</span>
+<span class="cm">//   PG 승인은 났는데 주문은 롤백 →</span>
+<span class="cm">//   K 는 IN_PROGRESS 로 영원히 남고</span>
+<span class="cm">//   모든 재시도가 409 로 튕긴다 (= 원인 d)</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 결과를 기억하고, 상태에 따라 이어간다</div>
+<pre><code>Optional&lt;Order&gt; existing =
+    orderRepository.<span class="fn">findByIdempotencyKey</span>(key);
+
+<span class="kw">if</span> (existing.<span class="fn">isPresent</span>()) {
+    <span class="kw">return switch</span> (existing.<span class="fn">get</span>().<span class="fn">getStatus</span>()) {
+<span class="ln-good">        <span class="kw">case</span> CONFIRMED -&gt; OrderResult.<span class="fn">confirmed</span>(...);  <span class="cm">// 저장된 결과 반환</span></span>
+<span class="ln-good">        <span class="kw">case</span> PENDING   -&gt; <span class="fn">resumeFromPending</span>(existing.<span class="fn">get</span>());</span>
+        <span class="cm">//                 ↑ PG 에 조회 → 확정/실패로 이어간다</span>
+<span class="ln-good">        <span class="kw">case</span> FAILED, EXPIRED -&gt; <span class="fn">startNewAttempt</span>(cmd);</span>
+        <span class="cm">//                 ↑ 실패는 재시도를 막지 않는다</span>
+    };
+}</code></pre>
+  </div>
+</div>
+
+<p><b>요청 층의 근본 처방 하나를 더 짚는다</b> — 멱등 레코드를 <b>비즈니스 트랜잭션([A])과 같은 트랜잭션</b>에 넣는 것이 (d)의 "별도 트랜잭션이라 남는다" 문제의 해법이고, <code>IN_PROGRESS</code>에는 <b>반드시 만료 시간</b>을 둔다.</p>
+
+<div class="split">
+  <div class="pane g"><h4>얻는 것</h4><ul>
+    <li><b>재시도가 안전해진다</b> — 재시도가 안전해야 (c)(e)의 "불명" 뒤에 <b>클라이언트·대사 배치가 마음 놓고 다시 두드릴 수 있다</b></li>
+    <li>멱등 없는 재시도는 <b>이중 결제라는 반대 사고</b>를 만든다 — 즉 이 겹은 이 사고와 <b>반대 사고를 동시에</b> 막는다</li>
+  </ul></div>
+  <div class="pane r"><h4>치르는 값</h4><ul>
+    <li>멱등 레코드 저장소와 <b>TTL·정리 비용</b>, 응답 캐시 크기</li>
+    <li><b>키 스코프 설계 실수의 파급</b> — 사용자 단위로 키를 잡으면 다른 주문의 요청이 "중복"으로 무시되고(<b>또 다른 (d)</b>), 너무 좁게 잡으면 중복을 못 막는다</li>
+    <li>키 설계는 <b>한 번 정하면 클라이언트까지 바꿔야 하는 계약</b>이다</li>
+  </ul></div>
+</div>
+
+<h3>9-4. 방어선 ③ Outbox / Inbox — 진실은 테이블에 먼저, 처리는 그 뒤에</h3>
+
+<div class="rule">Inbox가 (b)를 막는다 — <b>웹훅 핸들러는 처리하지 않는다. "받았다"는 사실만 테이블에 남기고 200을 돌려준다.</b></div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 받자마자 처리, 실패하면 폐기</div>
+<pre><code><span class="kw">@PostMapping</span>(<span class="st">"/webhooks/pg"</span>)
+<span class="kw">public</span> ResponseEntity&lt;Void&gt; <span class="fn">onWebhook</span>(<span class="kw">@RequestBody</span> PgWebhook w) {
+
+    Order order = orderRepository
+        .<span class="fn">findByOrderNo</span>(w.<span class="fn">orderNo</span>()).<span class="fn">orElse</span>(<span class="kw">null</span>);
+
+<span class="ln-bad">    <span class="kw">if</span> (order == <span class="kw">null</span>) {                <span class="cm">// ← 5-2절의 t3</span></span>
+<span class="ln-bad">        log.<span class="fn">warn</span>(<span class="st">"order not found"</span>);</span>
+<span class="ln-bad">        <span class="kw">return</span> ResponseEntity.<span class="fn">ok</span>().<span class="fn">build</span>();  <span class="note">두 번째 기회를 스스로 버린다</span></span>
+<span class="ln-bad">    }</span>
+
+    orderTx.<span class="fn">confirmByWebhook</span>(order.<span class="fn">getId</span>(), w);
+    <span class="kw">return</span> ResponseEntity.<span class="fn">ok</span>().<span class="fn">build</span>();
+}
+
+<span class="cm">// 문제: "수신 실패"와 "처리 실패"를 구분하지 못한다.</span>
+<span class="cm">//       그래서 처리에 실패해도 PG 에게는 성공이라고 말한다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 수신과 처리를 분리한다</div>
+<pre><code><span class="kw">@PostMapping</span>(<span class="st">"/webhooks/pg"</span>)
+<span class="kw">public</span> ResponseEntity&lt;Void&gt; <span class="fn">onWebhook</span>(
+        <span class="kw">@RequestBody</span> PgWebhook w,
+        <span class="kw">@RequestHeader</span>(<span class="st">"X-Signature"</span>) String sig) {
+
+<span class="ln-good">    signatureVerifier.<span class="fn">verify</span>(w, sig);   <span class="cm">// 웹훅은 "통지"다</span></span>
+    <span class="cm">// 서명 검증 없이는 진실로 취급하지 않는다</span>
+
+<span class="ln-good">    webhookInboxService.<span class="fn">record</span>(w);      <span class="note">받았다는 사실만 확정</span></span>
+    <span class="cm">// INSERT (provider, event_id) UNIQUE</span>
+    <span class="cm">//   → 중복 수신은 여기서 무해해진다</span>
+
+    <span class="kw">return</span> ResponseEntity.<span class="fn">ok</span>().<span class="fn">build</span>();
+    <span class="cm">// 처리 결과와 무관하게 200 — PG 의 재전송 창을 소모하지 않는다</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="codehead good"><span class="tag">after</span> 별도 처리기 — 주문이 아직 없으면 <b>폐기하지 않고 지연 재시도</b>한다</div>
+<pre><code><span class="kw">@Scheduled</span>(fixedDelay = 1_000)
+<span class="kw">public void</span> <span class="fn">processInbox</span>() {
+    <span class="cm">// findDue 의 실제 SQL — 인스턴스가 여러 대여도 서로 같은 행을 잡지 않는다</span>
+    <span class="cm">//   SELECT * FROM webhook_inbox</span>
+    <span class="cm">//    WHERE status = 'PENDING_RETRY' AND next_attempt_at &lt;= now()</span>
+    <span class="cm">//    ORDER BY next_attempt_at</span>
+    <span class="cm">//    LIMIT 100</span>
+    <span class="cm">//    FOR UPDATE SKIP LOCKED    ← 다른 인스턴스가 잠근 행은 기다리지 않고 건너뛴다.</span>
+    <span class="cm">//                                 기다리면 인스턴스를 늘려도 처리량이 안 는다.</span>
+    <span class="kw">for</span> (WebhookInbox in : inboxRepository.<span class="fn">findDue</span>(100)) {
+        Optional&lt;Order&gt; order = orderRepository.<span class="fn">findByOrderNo</span>(in.<span class="fn">orderNo</span>());
+        <span class="kw">if</span> (order.<span class="fn">isEmpty</span>()) {                                          <span class="cm">// 순서 역전 — 주문이 아직 없다</span>
+<span class="ln-good">            in.<span class="fn">scheduleRetry</span>(<span class="fn">backoff</span>(in.<span class="fn">attempts</span>()));                   <span class="cm">// 1s → 5s → 30s → 5m … 상한 초과 시 수동 큐 + 알람</span></span>
+<span class="ln-good">            <span class="kw">continue</span>;                                                   <span class="note">폐기하지 않는다 — 이것이 (b) 처방의 전부다</span></span>
+        }
+        orderTx.<span class="fn">confirmByWebhook</span>(order.<span class="fn">get</span>().<span class="fn">getId</span>(), in);              <span class="cm">// 조건부 UPDATE — 이미 확정이면 no-op</span>
+        in.<span class="fn">markProcessed</span>();
+    }
+}</code></pre>
+
+<div class="callout info"><span class="t">Outbox(발신 측)가 (f)에 주는 처방</span>
+  Outbox는 [B] 확정 뒤 후속 처리(재고 확정, 알림, 정산 이벤트)의 유실을 막는다. 그리고 (f)에 대한 처방이 여기서 나온다 — <b>주문 생성은 비동기로 빼지 않는다.</b> 비동기로 빼도 되는 것은 <b>"주문이 확정됐다는 사실이 DB에 있고, 그 사실에서 파생되는 것"</b>뿐이며, 그것도 <b>메모리 이벤트가 아니라 Outbox를 거친다.</b>
+</div>
+
+<h4>PostgreSQL이 이 패턴에 주는 도구 셋 <span class="badge bonus">가산점</span></h4>
+<div class="grid g3">
+  <div class="tile"><div class="k">FOR UPDATE SKIP LOCKED</div><div class="d">Outbox·Inbox 릴레이를 <b>여러 인스턴스로 돌려도 같은 행을 두 번 집지 않는다.</b> 별도 분산 락이 필요 없는, <b>PostgreSQL로 작업 큐를 만드는 표준 문장</b>이다</div></div>
+  <div class="tile"><div class="k">논리 디코딩 기반 CDC</div><div class="d">Outbox 테이블을 폴링하는 대신 <b>WAL을 읽어 흘려보낸다</b>(<code>wal_level = logical</code>). 폴링 지연과 DB 부하가 사라지지만 <b>복제 슬롯이라는 새 운영 대상</b>이 생긴다 — <b>컨슈머가 멈춘 슬롯은 WAL을 붙잡아 디스크를 채우고, 심하면 프라이머리가 멈춘다.</b> 결제 이벤트를 여러 소비자가 나눠 쓰는 규모가 아니면 <b>폴링이 더 싸다</b></div></div>
+  <div class="tile"><div class="k">LISTEN / NOTIFY</div><div class="d">Outbox에 INSERT한 트랜잭션이 <b>커밋되면</b> 대기 중인 릴레이를 즉시 깨운다(커밋 시점에만 전달되므로 롤백된 알림은 안 나간다). 폴링 주기를 1초에서 사실상 0으로 줄이지만 <b>전달 보장이 없다</b> — 리스너가 죽어 있는 동안의 알림은 사라진다. 그래서 <b>NOTIFY는 "빨리 깨우는 용도"로만 쓰고, 정합성은 여전히 폴링(백스톱)이 지킨다</b></div></div>
+</div>
+
+<div class="split">
+  <div class="pane g"><h4>얻는 것</h4><ul>
+    <li>웹훅 순서 역전·일시 실패가 <b>사고가 아니라 "재시도 대기"</b>가 된다</li>
+    <li>후속 처리가 <b>프로세스 사망에도 살아남는다</b></li>
+    <li>두 테이블 자체가 <b>7절 영향 범위 산정에 쓸 수 있는 흔적</b>이 된다</li>
+  </ul></div>
+  <div class="pane r"><h4>치르는 값</h4><ul>
+    <li>테이블 두 개와 처리기·릴레이라는 <b>운영 대상</b>이 는다 — 적체 모니터링, 청소 배치, 재시도 상한과 <b>수동 큐 정책</b>이 전부 필요하다</li>
+    <li>처리가 비동기가 되므로 <b>지연</b>이 생기고, at-least-once(최소 한 번 전달)라 <b>소비자 멱등이 필수</b>가 된다(②와 맞물린다)</li>
+    <li><b>작은 서비스에서는 이 운영 비용이 막는 사고보다 클 수 있다</b> — 그때는 ①②④만으로 시작하고 웹훅은 <b>"PG 조회 트리거"로만</b> 쓰는 축소판도 답이다</li>
+  </ul></div>
+</div>
+
+<h3>9-5. 방어선 ④ 양방향 대사 배치 — 두 원장을 주기적으로 맞춘다</h3>
+
+<p>①②③이 전부 있어도 뚫린다 — <b>정리 배치의 버그, PG 쪽 장애, 우리가 생각 못 한 일곱 번째 경로.</b> 그래서 <b>PG 원장과 주문 원장을 주기적으로 대조하는 배치</b>가 마지막 그물이다. <b>세 방향</b>으로 돈다.</p>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">방향 (1) &nbsp;분 단위</div><div class="s">우리 쪽 오래된 PENDING → PG에 상태 조회</div><div class="d">"우리는 시도했는데 <b>결과를 모르는 건</b>"을 PG에 물어 확정한다. <b>방어선 ①이 남긴 흔적을 쓰는 방향이라, ①이 있어야 성립한다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">방향 (2) &nbsp;일 단위</div><div class="s">PG 승인 목록 → 우리 쪽 확정 주문 존재 확인</div><div class="d">"PG에는 있는데 <b>우리에겐 흔적조차 없는 건</b>"을 잡는다. <b>①이 없던 시절의 사고, 그리고 ①을 우회한 경로를 잡는 유일한 방향.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">방향 (3) &nbsp;분 단위</div><div class="s">우리 쪽 CONFIRMED → 승인 결제 존재 확인</div><div class="d">7절의 <b>"방향 2"(돈 안 받고 물건 나감)</b>를 상시로 잡는다. 아무도 항의하지 않는 방향이라 <b>이 배치가 없으면 영원히 모른다.</b></div></div>
+</div>
+
+<div class="split">
+  <div class="pane g"><h4>얻는 것</h4><ul>
+    <li>어떤 경로로 새든 <b>대사 주기 안에 반드시 발견</b>된다</li>
+    <li>불일치 지속 시간에 <b>상한</b>이 생기고, 그 상한은 <b>배치 주기라는 우리가 정하는 숫자</b>다 (7-2절의 "5분 × 11.4건 ≈ 57건"이 그 상한의 실물)</li>
+    <li><b>CS보다 먼저 안다</b></li>
+  </ul></div>
+  <div class="pane r"><h4>치르는 값</h4><ul>
+    <li><b>PG 조회 API 호출 비용과 rate limit.</b> PENDING이 1만 건 쌓인 날 1만 번 조회하면 PG가 차단할 수 있다 → 배치 크기·간격 조절</li>
+    <li><b>PG 의존.</b> PG가 장애면 대사도 못 돈다 → "대사 중단"을 알람으로 올리고 <b>복구 후 밀린 구간을 재실행</b>하는 설계가 필요</li>
+    <li><b>주기와 탐지 지연의 트레이드오프.</b> 1분마다 돌면 빨리 잡지만 DB·PG 부하가 늘고, 하루 한 번이면 싸지만 <b>하루치 CS를 먹는다</b></li>
+    <li><b>오보정의 위험.</b> 자동 보정이 틀리면 <b>대사 배치가 사고의 원인이 된다</b> → 자동/수동 경계를 코드로 고정 (10-1절)</li>
+  </ul></div>
+</div>
+
+<h3>9-6. 방어선 ⑤ 알람 — CS보다 먼저 아는 장치</h3>
+
+<p>관측 없이는 ④가 돌아도 아무도 안 본다. 원칙은 하나 — <b>"결제 승인 수 vs 주문 확정 수"의 차이를 분 단위로 보고, PENDING의 나이 분포와 대사 불일치 건수를 알람 대상으로 둔다.</b> 임계치는 <b>성격이 다른 두 종류</b>를 구분한다.</p>
+
+<div class="split">
+  <div class="pane r"><h4>0건이어야 정상인 지표</h4>
+    <p style="margin:0;font-size:.94rem">대사 불일치 건수(방향 2·3), 자동 보정 건수.</p>
+    <div class="rule red" style="margin:10px 0 0;font-size:.98rem">1건이라도 나면 알람<br><span style="font-size:.88rem;font-weight:600">"몇 건까지는 봐준다"가 없다</span></div>
+  </div>
+  <div class="pane b"><h4>분포가 정상이어야 하는 지표</h4>
+    <p style="margin:0;font-size:.94rem">PENDING 나이 p99, Inbox 적체.</p>
+    <div class="rule" style="margin:10px 0 0;font-size:.98rem">건수가 아니라 <b>나이</b>를 본다<br><span style="font-size:.88rem;font-weight:600">평상시 분포를 재서 임계를 잡는다</span></div>
+  </div>
+</div>
+
+<div class="callout warn" style="margin-bottom:0"><span class="t">치르는 값 — 오탐</span>
+  PG 결제창 <b>체류 시간이 긴 상품군</b>에서는 PENDING 나이 알람이 계속 울린다. 임계치를 <b>결제창 유효 시간과 맞추고</b>, 상품군별로 분리하는 조정 비용이 든다. <b>계속 울리는 알람은 꺼진 알람과 같으므로 이 조정은 선택이 아니다.</b>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 못 어기게 고정하기 — 대사 · ArchUnit · 테스트 · 지표</h2>
+
+<div class="rule">여기서부터가 <b>"조심하자"가 아니라 "못 어기게"의 영역</b>이다 — 방어선을 <b>코드·테스트·설정</b>으로 고정한다</div>
+
+<h3>10-1. 대사 배치 — 양방향 탐지 + 자동 보정 vs 수동 큐 기준</h3>
+
+<pre><code><span class="kw">@Component</span>
+<span class="kw">@RequiredArgsConstructor</span>
+<span class="kw">public class</span> PaymentOrderReconciler {
+
+    <span class="kw">private static final</span> Duration GRACE = Duration.<span class="fn">ofMinutes</span>(5);   <span class="cm">// 정상 흐름([A]→[PG]→[B])이 끝나기에 충분한 시간.</span>
+                                                                  <span class="cm">//   너무 짧으면 "진행 중인 정상 주문"을 사고로 오인한다</span>
+    <span class="kw">private static final int</span> BATCH = 200;                        <span class="cm">// PG rate limit 과 DB 부하를 함께 고려한 크기</span>
+    <span class="kw">private static final int</span> CIRCUIT_BREAK = 500;                <span class="cm">// 이 이상이면 대사가 아니라 장애 — 멈추고 사람을 부른다</span>
+
+    <span class="cm">// 방향 (1) — 우리 쪽 오래된 PENDING → PG 에 진실을 묻는다 (분 단위)</span>
+    <span class="kw">@Scheduled</span>(fixedDelay = 60_000)
+    <span class="kw">public void</span> <span class="fn">reconcilePendingOrders</span>() {
+        <span class="cm">// 인스턴스가 여러 대여도 한 대만 돈다 — PostgreSQL 어드바이저리 락("이름표" 락).</span>
+        <span class="cm">//   SELECT pg_try_advisory_lock(:key)  → false 면 다른 인스턴스가 도는 중이라 그냥 반환</span>
+        <span class="cm">//   트랜잭션 단위인 pg_try_advisory_xact_lock 은 커밋/롤백 시 자동 해제라 실수가 적다.</span>
+        <span class="cm">//   ★ 이 락은 정합성 장치가 아니라 "헛수고 방지" 최적화다 — 보정 자체는 조건부 UPDATE 로 이미 멱등하다</span>
+        <span class="kw">if</span> (!advisoryLock.<span class="fn">tryLock</span>(RECONCILE_LOCK_KEY)) <span class="kw">return</span>;
+
+        Instant threshold = clock.<span class="fn">instant</span>().<span class="fn">minus</span>(GRACE);
+        <span class="kw">long</span> total = orderRepository.<span class="fn">countPendingOlderThan</span>(threshold);
+<span class="ln-good">        <span class="kw">if</span> (total &gt; CIRCUIT_BREAK) { alert.<span class="fn">critical</span>(<span class="st">"PENDING 폭증 — 대사 중단"</span>, total); <span class="kw">return</span>; }</span>
+
+        <span class="kw">for</span> (Order o : orderRepository.<span class="fn">findPendingOlderThan</span>(threshold, BATCH)) {  <span class="cm">// 인덱스: idx_orders_pending_created</span>
+            PgInquiry pg = pgClient.<span class="fn">inquireByOrderNo</span>(o.<span class="fn">getOrderNo</span>());
+            <span class="kw">switch</span> (pg.<span class="fn">status</span>()) {
+                <span class="kw">case</span> APPROVED -&gt; {
+                    <span class="kw">if</span> (pg.<span class="fn">amount</span>().<span class="fn">compareTo</span>(o.<span class="fn">getAmount</span>()) != 0) {          <span class="cm">// 금액 불일치 — 기계가 판단할 수 없다</span>
+                        manualQueue.<span class="fn">push</span>(o.<span class="fn">getOrderNo</span>(), pg, <span class="st">"AMOUNT_MISMATCH"</span>); <span class="kw">break</span>;
+                    }
+                    orderTx.<span class="fn">confirm</span>(o.<span class="fn">getId</span>(), pg.<span class="fn">toApproval</span>());                  <span class="cm">// 조건부 UPDATE — 응답 경로와 겹쳐도 안전</span>
+<span class="ln-good">                    metrics.<span class="fn">counter</span>(<span class="st">"reconcile.auto_confirmed"</span>).<span class="fn">increment</span>();  <span class="note">0 이 아니면 어딘가 새고 있다</span></span>
+                }
+                <span class="kw">case</span> CANCELED, FAILED, NOT_FOUND -&gt; orderTx.<span class="fn">markFailed</span>(o.<span class="fn">getId</span>(), <span class="st">"RECONCILED_"</span> + pg.<span class="fn">status</span>());
+                <span class="kw">case</span> IN_PROGRESS -&gt; { <span class="cm">/* 결제창 체류 중 — 건드리지 않고 다음 주기로 */</span> }
+            }
+        }
+    }
+
+    <span class="cm">// 방향 (2) — PG 원장 기준: 승인됐는데 우리 쪽에 확정 주문이 없는 건 (정산 API/파일, 일 단위)</span>
+    <span class="kw">@Scheduled</span>(cron = <span class="st">"0 30 4 * * *"</span>)
+    <span class="kw">public void</span> <span class="fn">reconcileAgainstPgLedger</span>() {
+        <span class="kw">for</span> (PgTransaction tx : pgClient.<span class="fn">listApproved</span>(<span class="fn">yesterday</span>())) {
+            <span class="kw">if</span> (!orderRepository.<span class="fn">existsConfirmedByPaymentKey</span>(tx.<span class="fn">paymentKey</span>())) {
+                manualQueue.<span class="fn">push</span>(tx.<span class="fn">orderNo</span>(), tx, <span class="st">"APPROVED_WITHOUT_ORDER"</span>);  <span class="cm">// 우리 쪽 흔적이 없어 자동 보정 불가</span>
+                alert.<span class="fn">critical</span>(<span class="st">"결제 승인인데 주문 없음"</span>, tx);
+            }
+        }
+    }
+
+    <span class="cm">// 방향 (3) — 주문은 확정인데 승인 결제가 없는 건 (돈 안 받고 물건 나가는 방향)</span>
+    <span class="kw">@Scheduled</span>(fixedDelay = 300_000)
+    <span class="kw">public void</span> <span class="fn">reconcileConfirmedWithoutPayment</span>() {
+        <span class="kw">for</span> (Order o : orderRepository.<span class="fn">findConfirmedWithoutApprovedPayment</span>(clock.<span class="fn">instant</span>().<span class="fn">minus</span>(GRACE), BATCH)) {
+            PgInquiry pg = pgClient.<span class="fn">inquireByOrderNo</span>(o.<span class="fn">getOrderNo</span>());
+            <span class="kw">if</span> (pg.<span class="fn">status</span>() == APPROVED) {
+                paymentTx.<span class="fn">recordMissing</span>(o.<span class="fn">getId</span>(), pg);                        <span class="cm">// 결제 기록만 빠진 것 → 자동 보정 가능</span>
+            } <span class="kw">else</span> {
+                manualQueue.<span class="fn">push</span>(o.<span class="fn">getOrderNo</span>(), pg, <span class="st">"CONFIRMED_WITHOUT_PAYMENT"</span>); <span class="cm">// 확정 취소는 배송·재고가 얽힌다 → 사람</span>
+                alert.<span class="fn">critical</span>(<span class="st">"주문 확정인데 승인 결제 없음"</span>, o.<span class="fn">getOrderNo</span>());
+            }
+        }
+    }
+}</code></pre>
+
+<p>방향 (3)의 쿼리는 7-1절 방향 2와 같은 <b>anti-join</b>이다.</p>
+
+<pre><code><span class="kw">SELECT</span> o.*
+<span class="kw">FROM</span> orders o
+<span class="kw">LEFT JOIN</span> payment p <span class="kw">ON</span> p.order_id = o.id <span class="kw">AND</span> p.status = <span class="st">'APPROVED'</span>
+<span class="kw">WHERE</span> o.status = <span class="st">'CONFIRMED'</span>
+  <span class="kw">AND</span> o.confirmed_at &lt; :threshold     <span class="cm">-- GRACE 를 넘긴 것만. 방금 확정된 건은 [B] 진행 중일 수 있다</span>
+  <span class="kw">AND</span> p.id <span class="kw">IS NULL</span>
+<span class="kw">ORDER BY</span> o.confirmed_at
+<span class="kw">LIMIT</span> 200;</code></pre>
+
+<div class="memo green">
+  <h4>암기 ④: 자동 보정을 허용하는 <b>다섯 조건</b> — 코드에 박아 둘 것</h4>
+  <ol style="margin:6px 0 0;padding-left:22px">
+    <li><b>PG가 진실을 명확히 답했다</b>(<code>APPROVED</code>/<code>CANCELED</code>). <code>IN_PROGRESS</code>나 조회 실패는 <b>건드리지 않는다</b></li>
+    <li><b>주문번호·금액·통화가 정확히 일치</b>한다</li>
+    <li>보정 동작이 <b>멱등</b>하다 (조건부 UPDATE, 유니크 제약)</li>
+    <li>보정 방향이 <b>고객이 원한 결과 쪽</b>이다 — <code>PENDING → CONFIRMED</code>는 자동, <code>CONFIRMED → 취소</code>는 <b>수동</b></li>
+    <li>건수가 <b>임계치 이하</b>다. 갑자기 수백 건이면 대사가 아니라 <b>장애</b>이므로 멈추고 알람 — <b>자동 보정이 장애를 조용히 덮어 원인 규명을 늦추는 것</b>을 막는다</li>
+  </ol>
+  <p style="margin:10px 0 0"><b>수동 큐로 보내는 것</b>: 금액 불일치 · 우리 쪽 흔적 없음(방향 2) · 확정 취소 방향(방향 3의 미승인) · 부분 취소·환불 진행 중 · 임계치 초과. <b>수동 큐는 "담당자가 보는 화면"이 있어야 큐다 — 로그 한 줄은 큐가 아니다.</b></p>
+</div>
+
+<div class="callout trap"><span class="t"><code>reconcile.auto_confirmed</code> 카운터는 <b>0이 정상</b>이다</span>
+  자동 보정이 매일 몇 건씩 잡힌다면 <b>대사가 잘 돌고 있다는 뜻이 아니라 ①②③ 어딘가가 새고 있다는 뜻</b>이고, 그 건들의 원인을 6절로 좁혀 <b>앞 방어선을 고친다.</b>
+  <div class="rule red" style="margin:10px 0 0">대사는 <b>그물</b>이지 <b>처방</b>이 아니다</div>
+</div>
+
+<h3>10-2. ArchUnit — 트랜잭션 안에서 PG를 부르지 못하게</h3>
+
+<p>(a)는 <b>코드 리뷰어의 눈에 의존하면 반드시 재발한다.</b> 5-1절 ⑶칸에서 봤듯 이 후보는 <b>정적 검사로 배제되는 유일한 원인</b>이므로, <b>배제를 사람이 아니라 빌드가 하게 만든다.</b></p>
+
+<pre><code><span class="kw">@AnalyzeClasses</span>(packages = <span class="st">"com.example"</span>)
+<span class="kw">class</span> PaymentBoundaryRulesTest {
+
+    <span class="kw">@ArchTest</span>
+    <span class="kw">static final</span> ArchRule 트랜잭션_안에서_PG를_호출하지_않는다 =
+        <span class="fn">noMethods</span>().<span class="fn">that</span>().<span class="fn">areAnnotatedWith</span>(Transactional.<span class="kw">class</span>)
+            .<span class="fn">or</span>().<span class="fn">areDeclaredInClassesThat</span>().<span class="fn">areAnnotatedWith</span>(Transactional.<span class="kw">class</span>)
+            .<span class="fn">should</span>().<span class="fn">accessClassesThat</span>().<span class="fn">resideInAnyPackage</span>(<span class="st">"..infrastructure.pg.."</span>, <span class="st">"..client.pg.."</span>)
+            .<span class="fn">because</span>(<span class="st">"PG 승인은 롤백되지 않는다 — 트랜잭션 안에서 부르면 롤백 시 '결제됐는데 주문 없음'이 된다"</span>);
+
+    <span class="kw">@ArchTest</span>
+    <span class="kw">static final</span> ArchRule 주문_생성은_비동기_리스너에서_하지_않는다 =
+        <span class="fn">noMethods</span>().<span class="fn">that</span>().<span class="fn">areAnnotatedWith</span>(Async.<span class="kw">class</span>)
+            .<span class="fn">should</span>().<span class="fn">accessClassesThat</span>().<span class="fn">haveSimpleNameEndingWith</span>(<span class="st">"OrderTxService"</span>)
+            .<span class="fn">because</span>(<span class="st">"주문이라는 진실을 메모리 위 이벤트에 맡기지 않는다 — 후속 처리만 Outbox 를 거쳐 비동기로"</span>);
+}</code></pre>
+
+<div class="callout warn"><span class="t">한계를 같이 말해야 한다 <span class="badge senior">시니어 변별</span></span>
+  <code>PgClient</code>가 <b>인터페이스</b>이고 구현체만 HTTP를 쓰면 "접근"으로 안 잡히므로 <b>패키지 규약</b>(<code>..infrastructure.pg..</code>)을 룰에 명시해야 하고, <code>TransactionTemplate</code> 블록 안의 호출은 <b>애노테이션 기반 룰로는 못 잡는다.</b> 그래서 룰은 <b>"가장 흔한 위반을 막고, 우회하려면 룰을 고쳐야 하니 논의가 강제된다"</b>는 가치로 쓰고, 나머지는 다음 절의 테스트가 받친다.
+</div>
+
+<h3>10-3. 부분 실패를 테스트로 고정 — 테스트 이름이 곧 사고 시나리오다</h3>
+
+<p>"PG 승인 뒤 우리 쪽이 죽어도 흔적이 남고 대사가 복구한다"는 성질은 <b>테스트가 지켜야 한다.</b> 그렇지 않으면 <b>다음 리팩터링에서 [A]와 [PG]가 다시 한 트랜잭션으로 합쳐진다.</b></p>
+
+<pre><code><span class="kw">@SpringBootTest</span>
+<span class="kw">class</span> PaymentPartialFailureTest {
+
+    <span class="kw">@Test</span>
+    <span class="kw">void</span> PG_승인_후_확정_단계가_실패해도_PENDING이_남고_대사가_복구한다() {
+        <span class="cm">// given — PG 는 승인하고, 확정 트랜잭션은 첫 호출에 DB 장애를 흉내 낸다 (5-5절 (e) 재현)</span>
+        pgStub.<span class="fn">willApprove</span>(cmd.<span class="fn">orderNo</span>(), cmd.<span class="fn">amount</span>());
+        orderTxFailure.<span class="fn">failNextConfirmWith</span>(<span class="kw">new</span> <span class="fn">CannotCreateTransactionException</span>(<span class="st">"failover"</span>));
+
+        <span class="cm">// when</span>
+        <span class="fn">assertThatThrownBy</span>(() -&gt; facade.<span class="fn">place</span>(cmd)).<span class="fn">isInstanceOf</span>(CannotCreateTransactionException.<span class="kw">class</span>);
+
+        <span class="cm">// then — 흔적이 남아 있다 (before 구조였다면 여기서 행이 아예 없다)</span>
+<span class="ln-good">        Order o = orderRepository.<span class="fn">findByOrderNo</span>(cmd.<span class="fn">orderNo</span>()).<span class="fn">orElseThrow</span>();</span>
+<span class="ln-good">        <span class="fn">assertThat</span>(o.<span class="fn">getStatus</span>()).<span class="fn">isEqualTo</span>(OrderStatus.PENDING);</span>
+
+        <span class="cm">// and — 대사 배치가 PG 에 묻고 확정한다</span>
+        clock.<span class="fn">advance</span>(Duration.<span class="fn">ofMinutes</span>(6));             <span class="cm">// GRACE(5분)를 넘겨야 대사 대상이 된다</span>
+        reconciler.<span class="fn">reconcilePendingOrders</span>();
+        <span class="fn">assertThat</span>(orderRepository.<span class="fn">findByOrderNo</span>(cmd.<span class="fn">orderNo</span>()).<span class="fn">orElseThrow</span>().<span class="fn">getStatus</span>()).<span class="fn">isEqualTo</span>(OrderStatus.CONFIRMED);
+        <span class="fn">assertThat</span>(paymentRepository.<span class="fn">findByPaymentKey</span>(pgStub.<span class="fn">lastPaymentKey</span>())).<span class="fn">isPresent</span>();
+    }
+
+    <span class="kw">@Test</span>
+    <span class="kw">void</span> 승인_웹훅이_주문보다_먼저_와도_버려지지_않고_나중에_매칭된다() {
+        webhookEndpoint.<span class="fn">receive</span>(PgWebhook.<span class="fn">done</span>(<span class="st">"ORD-1"</span>, <span class="st">"pk-1"</span>));       <span class="cm">// 주문이 아직 없다 (5-2절의 t2)</span>
+        inboxProcessor.<span class="fn">processInbox</span>();                                  <span class="cm">// 매칭 실패 → 재시도 예약. 폐기가 아니다</span>
+        <span class="fn">assertThat</span>(inboxRepository.<span class="fn">findByEventId</span>(<span class="st">"evt-1"</span>).<span class="fn">get</span>().<span class="fn">getStatus</span>()).<span class="fn">isEqualTo</span>(PENDING_RETRY);
+
+        orderTx.<span class="fn">createPending</span>(<span class="fn">cmdFor</span>(<span class="st">"ORD-1"</span>));                         <span class="cm">// 이제 주문이 생겼다 (5-2절의 t4)</span>
+        clock.<span class="fn">advance</span>(Duration.<span class="fn">ofSeconds</span>(5));
+        inboxProcessor.<span class="fn">processInbox</span>();
+        <span class="fn">assertThat</span>(orderRepository.<span class="fn">findByOrderNo</span>(<span class="st">"ORD-1"</span>).<span class="fn">get</span>().<span class="fn">getStatus</span>()).<span class="fn">isEqualTo</span>(OrderStatus.CONFIRMED);
+    }
+}</code></pre>
+
+<div class="grid g4">
+  <div class="tile ok"><div class="k" style="font-family:inherit">(a)</div><div class="d">ArchUnit 룰이 고정</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">(b)</div><div class="d">두 번째 테스트가 고정</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">(c)(e)</div><div class="d">첫 번째 테스트가 고정</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">(d)</div><div class="d">"같은 멱등키로 두 번 호출하면 두 번째가 PENDING에서 이어간다" 테스트</div></div>
+</div>
+
+<h3>10-4. 관측 지표와 알람 — 숫자로 본다</h3>
+
+<pre><code><span class="cm">-- 오래된 PENDING 건수 — 0 이 아니어도 되지만 늘어나면 안 된다 (임계는 결제창 유효 시간에 맞춘다)</span>
+<span class="cm">--   7-2절에서 만든 부분 인덱스 idx_orders_pending_created 를 그대로 탄다</span>
+<span class="kw">SELECT</span> <span class="fn">count</span>(*) <span class="kw">FROM</span> orders
+<span class="kw">WHERE</span> status = <span class="st">'PENDING'</span> <span class="kw">AND</span> created_at &lt; <span class="fn">now</span>() - <span class="kw">interval</span> <span class="st">'10 minutes'</span>;
+
+<span class="cm">-- PENDING 나이 분포 — "건수"가 아니라 "나이 p99"를 봐야 결제창 체류와 사고가 구분된다.</span>
+<span class="cm">--   결제창에 오래 머무는 고객이 많으면 건수는 늘 크지만, 나이 p99 는 결제창 유효 시간 안에 머문다.</span>
+<span class="kw">SELECT</span> <span class="fn">count</span>(*)                                                        <span class="kw">AS</span> pending,
+       <span class="fn">percentile_cont</span>(0.99) <span class="kw">WITHIN GROUP</span> (<span class="kw">ORDER BY</span> <span class="fn">now</span>() - created_at) <span class="kw">AS</span> age_p99
+<span class="kw">FROM</span>   orders <span class="kw">WHERE</span> status = <span class="st">'PENDING'</span>;
+
+<span class="cm">-- 분 단위 확정 건수 — PG 승인 콜백/웹훅 수와 같은 창에서 비교해</span>
+<span class="cm">-- "승인은 늘었는데 확정은 안 늘었다"를 잡는다</span>
+<span class="kw">SELECT</span> <span class="fn">date_trunc</span>(<span class="st">'minute'</span>, confirmed_at) <span class="kw">AS</span> minute, <span class="fn">count</span>(*) <span class="kw">AS</span> confirmed
+<span class="kw">FROM</span>   orders
+<span class="kw">WHERE</span>  confirmed_at &gt;= <span class="fn">now</span>() - <span class="kw">interval</span> <span class="st">'30 minutes'</span>
+<span class="kw">GROUP</span>  <span class="kw">BY</span> 1
+<span class="kw">ORDER</span>  <span class="kw">BY</span> 1;</code></pre>
+
+<div class="memo">
+  <h4>암기 ⑤: 알람 대상 네 가지</h4>
+  <div class="grid g4">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 대사 불일치 건수</div><div class="d">방향 2·3 &gt; <b>0</b></div></div>
+    <div class="tile red"><div class="k">② auto_confirmed</div><div class="d">증가율 — <b>0이 정상</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">③ PENDING 나이 p99</div><div class="d">&gt; <b>결제창 유효 시간</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">④ Inbox 적체</div><div class="d">미처리 · <b>재시도 상한 도달 건수</b></div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">그리고 <b>배포·failover 이벤트를 같은 대시보드에 마커로</b> 올려 (e)의 상관을 한눈에 보게 한다. 인프라 쪽 처방도 한 줄 — <code>server.shutdown=graceful</code>과 종료 유예 시간을 두어 <b>SIGTERM 시 진행 중인 [B]가 끝날 시간을 준다</b>((c)(ii) 대비).</p>
+</div>
+
+<div class="scroll"><table class="wide">
+  <caption>결제 DB에 걸어 둘 PostgreSQL 설정 — <b>목록으로 고정</b>한다</caption>
+  <tr><th style="width:280px">설정</th><th style="width:260px">어떻게</th><th>왜</th></tr>
+  <tr><td><code>synchronous_commit</code></td><td class="bad">기본 <code>on</code> 유지, <b>절대 끄지 않는다</b></td><td>끄면 "커밋 응답을 받았으니 남았다"는 <b>앱의 전제가 깨진다</b> — 5-5절 (δ)가 그 사고다</td></tr>
+  <tr><td><code>lock_timeout</code> · <code>statement_timeout</code></td><td>명시적으로 값을 준다</td><td>무한 대기 대신 <b>빠른 실패</b>로 만들어 <b>재시도 가능한 오류</b>로 바꾼다</td></tr>
+  <tr><td><code>idle_in_transaction_session_timeout</code></td><td class="bad">켜되, <b>방어선 ①을 먼저 적용한 뒤에</b></td><td><b>순서를 반대로 하면 이 설정이 5-1절의 사고를 직접 만든다</b></td></tr>
+  <tr><td>복제 지연·슬롯 감시</td><td><code>pg_last_xact_replay_timestamp()</code> 지연, <code>pg_replication_slots</code></td><td>앞은 <b>5-2절의 "리플리카를 보고 없다고 오판"</b> 방지, 뒤는 CDC를 쓴다면 <b>WAL 폭증</b> 방지</td></tr>
+</table></div>
+
+<h3>10-5. 회고 — 무엇을 남기나</h3>
+
+<div class="scroll"><table>
+  <tr><th style="width:240px">항목</th><th>내용</th></tr>
+  <tr><td><b>타임라인</b></td><td>첫 발생 → 탐지 → 임시 조치 → 원인 확정 → 복구, 각 시각</td></tr>
+  <tr><td><b>탐지까지 걸린 시간</b></td><td>CS로 알았다면 <b>그 시간이 곧 방어선 ⑤의 부재 비용</b> (7-2절의 "탐지 지연 19분")</td></tr>
+  <tr><td><b>영향</b></td><td>건수 · 금액 · 고객 수 (7-1절 쿼리 결과)</td></tr>
+  <tr><td><b>원인 사슬</b></td><td>5절의 <b>타임라인 형식 그대로</b></td></tr>
+  <tr><td><b>왜 방어선이 없었나 / 있었는데 왜 뚫렸나</b></td><td>9-1절 대응표에 대입</td></tr>
+  <tr><td><b>액션 아이템</b></td><td>담당·기한. <b>"조심하자"류는 액션이 아니다</b> — 10-1~10-4 중 무엇을 넣는지</td></tr>
+  <tr class="hl"><td><b>재발 시 잡아낼 지표</b></td><td>그때 <b>무엇이 울릴 것인가</b></td></tr>
+</table></div>
+
+<div class="rule red">마지막 항목이 없는 회고는 <b>"다음에도 CS로 알겠다"는 선언이다</b></div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<div class="memo">
+  <h4>면접 전날 이 다섯 장만 다시 본다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">① 뿌리 한 문장</div><div class="d">원장이 <b>두 권</b>이고 <b>롤백은 우리 쪽 한 권만</b> 되돌린다. <code>ROLLBACK</code>을 받는 대상은 <b>PostgreSQL 서버 하나</b>다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 원인 여섯 — 경·훅·불·멱·페·비</div><div class="d">경계 / 웹훅 / 불명 / 멱등 / failover / 비동기</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">③ 좁히는 두 질문</div><div class="d">"고객이 <b>성공 화면</b>을 봤는가" · "우리 DB에 <b>흔적</b>이 있는가" &nbsp;→&nbsp; 마지막에 <b>단발/군집</b></div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">④ 방어선 다섯 — 순·멱·박·대·알</div><div class="d">순서 / 멱등 / 아웃박스·인박스 / 대사 / 알람 &nbsp;— &nbsp;<b>①②③은 확률, ④⑤는 시간</b></div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">⑤ 대사의 정체</div><div class="d">사고를 <b>막는</b> 장치가 아니라 <b>피해 = 주기 × 유출 속도</b>로 <b>상한을 씌우는</b> 장치</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">⑥ 값을 말하지 않은 방어선</div><div class="d">= 설계가 아니라 <b>희망</b>. 정리 배치 / 키 저장소 / 릴레이 운영 / PG 조회 비용·의존 / 오탐</div></div>
+  </div>
+</div>
+
+<details class="q"><summary>"그냥 XA/2PC로 PG까지 한 트랜잭션에 묶으면 되지 않나요?" <span class="badge core">필수</span><span class="hint">힌트: 세 가지로 답한다. 그리고 PostgreSQL로 좁히면 한 겹이 더 있다</span></summary><div class="a">
+  <p><b>먼저 용어부터.</b> <b>2PC</b>(two-phase commit, 2단계 커밋)는 여러 데이터베이스를 하나의 트랜잭션으로 묶는 프로토콜이다. 코디네이터가 참여자 전원에게 <b>"커밋할 준비 됐나"(prepare)</b>를 묻고, 전원이 준비됐다고 답하면 그때 <b>"커밋해"(commit)</b>를 보낸다. <b>XA</b>는 그 프로토콜의 표준 인터페이스 이름이다.</p>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">① PG는 XA 리소스가 아니다</div><div class="d">외부 HTTP API에 prepare/commit 프로토콜을 <b>걸 수 없다</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② 된다 해도 "불명"은 남는다</div><div class="d">2PC의 <b>커밋 응답이 유실</b>되면 코디네이터도 참여자 상태를 모르고, <b>그 복구 절차가 곧 대사</b>다</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ 비용</div><div class="d">prepare 상태에서 <b>락을 쥔 채 남의 응답을 기다린다</b> → 5-1절 "PG가 느린 날" 문제가 더 커진다</div></div>
+  </div>
+  <p style="margin-top:12px"><b>PostgreSQL로 좁혀 한 겹 더 <span class="badge bonus">가산점</span></b> — PostgreSQL은 <code>PREPARE TRANSACTION</code>으로 2PC를 <b>지원한다</b>(기본은 <code>max_prepared_transactions = 0</code>이라 꺼져 있다). 그런데 <b>이 기능의 운영 리스크가 정확히 이 문항의 교훈을 보여 준다</b> — 코디네이터가 죽어 <code>COMMIT PREPARED</code>가 오지 않으면 <b>prepared 트랜잭션이 락과 XID를 쥔 채 영원히 남고</b>(<code>pg_prepared_xacts</code>), 그 XID 때문에 <b>VACUUM이 막혀 블로트와 wraparound 경고까지 번진다.</b></p>
+  <div class="rule red">PostgreSQL에서 2PC를 켜는 것은 "원자성을 얻는" 일이 아니라 <b>"고아 트랜잭션을 감시할 의무를 지는"</b> 일이다</div>
+  <p style="margin-bottom:0">그래서 외부 시스템과의 정합성은 <b>원자성으로 푸는 것이 아니라 "시도의 흔적 + 멱등 + 대사"로 최종적 일관성(eventual consistency)</b>을 만드는 것이 정석이다. <b>이 답이 있어야 "왜 Outbox·대사 같은 번거로운 걸 하느냐"에 대한 근거가 선다.</b></p>
+</div></details>
+
+<details class="q"><summary>"PENDING 주문을 먼저 만들면 재고는 언제 차감하나요? PENDING이 쌓이면요?" <span class="badge core">필수</span><span class="hint">힌트: 두 선택지와 각각의 대가. 그리고 "쌓이는 것 자체는 정상"</span></summary><div class="a">
+  <div class="split" style="margin-top:0">
+    <div class="pane b"><h4>PENDING에서 선점</h4><p style="margin:0;font-size:.94rem">결제 중 <b>품절이 없어 UX가 좋다.</b> 대신 <b>이탈 고객이 재고를 묶으므로 선점 TTL과 해제 배치가 필요</b>하고, 그 배치가 늦으면 <b>"재고 있는데 품절 표시"</b>가 된다.</p><p style="margin:8px 0 0;font-size:.9rem;color:#1d4ed8"><b>한정 수량·타임세일</b>에 보통 쓴다</p></div>
+    <div class="pane g"><h4>확정([B])에서 차감</h4><p style="margin:0;font-size:.94rem">PENDING 부담은 없지만 <b>승인 뒤 품절이 날 수 있어</b> <b>PG 취소(보상)</b> 경로와 고객 안내가 필요하다.</p><p style="margin:8px 0 0;font-size:.9rem;color:#166534"><b>일반 상품</b>에 보통 쓴다</p></div>
+  </div>
+  <div class="rule red">어느 쪽이든 — <b>PENDING 정리 배치는 반드시 PG 조회 후 만료해야 한다</b><br><span style="font-size:.92rem;font-weight:600">확인 없이 만료하면 "승인됐는데 EXPIRED" — <b>배치가 이 사고를 새로 만든다</b></span></div>
+  <p style="margin-bottom:0"><b>"PENDING이 쌓이면요?"에 대한 답</b>은 <b>"쌓이는 것 자체는 정상이고, 건수가 아니라 나이 분포를 알람으로 본다"</b>이다. 결제창에 오래 머무는 고객이 많으면 <b>건수는 늘 크지만 나이 p99는 결제창 유효 시간 안에 머문다.</b></p>
+</div></details>
+
+<details class="q"><summary>"웹훅이 주문보다 먼저 왔습니다. 그냥 버리고 승인 API 응답으로만 처리하면 안 되나요?" <span class="badge trap">함정</span><span class="hint">힌트: 답이 둘이다 — 버리면 안 되는 이유 + 그렇다고 웹훅을 믿어서도 안 되는 이유</span></summary><div class="a">
+  <p><b>승인 API 응답 경로가 (c)(e)로 죽을 수 있기 때문에 웹훅은 "두 번째 기회"</b>이고, <b>두 번째 기회를 버리는 것은 방어선 하나를 스스로 없애는 일</b>이다. 그래서 <b>Inbox에 "받았다"만 먼저 남기고 지연 재시도로 매칭</b>한다.</p>
+  <p><b>단 반대 방향의 함정도 말해야 답이 완성된다 — 웹훅은 통지이지 진실이 아니다.</b> 서명 검증 없이 웹훅 본문만 믿고 확정하면 <b>위조 요청으로 주문이 확정될 수 있다.</b></p>
+  <div class="rule">보수적인 설계는 웹훅을 <b>"PG에 조회하라는 트리거"로만</b> 쓰고, <b>확정의 근거는 항상 PG 조회 결과</b>로 삼는다</div>
+  <p style="margin-bottom:0">그러면 <b>웹훅의 순서·중복·위조가 전부 무해해진다.</b> "버리지 않는다"와 "그대로 믿지 않는다"를 <b>동시에</b> 말하는 것이 이 질문의 만점 답이다.</p>
+</div></details>
+
+<details class="q"><summary>"대사 배치가 불일치를 찾았으면 자동으로 다 보정하면 되지, 왜 수동 큐를 두나요?" <span class="badge senior">시니어 변별</span><span class="hint">힌트: 위험이 둘이다. 하나는 되돌리기, 하나는 신호 소실</span></summary><div class="a">
+  <p><b>자동 보정은 두 가지 위험이 있다.</b></p>
+  <p><b>첫째, 틀렸을 때 되돌리기 어려운 방향이 있다.</b> <code>PENDING → CONFIRMED</code>는 고객이 원한 결과라 자동이 안전하지만, <code>CONFIRMED → 취소</code>는 <b>배송·재고·쿠폰 복원이 얽혀 자동 취소가 새 사고를 만든다.</b> 금액 불일치는 <b>"어느 쪽이 맞는지"를 기계가 판단할 수 없다.</b></p>
+  <p><b>둘째, 원인을 덮어버린다.</b> 자동 보정이 매일 조용히 수십 건을 고치고 있으면 <b>앞 방어선이 새고 있다는 신호가 사라진다</b> — 그래서 <code>auto_confirmed</code> 카운터를 <b>"0이 정상"으로 알람에 걸고</b>, 임계치를 넘으면 <b>보정을 멈춘다.</b></p>
+  <div class="rule">요약 — <b>"진실이 명확하고, 멱등하고, 고객이 원한 방향이고, 건수가 정상 범위일 때만 자동 — 나머지는 사람"</b></div>
+  <p style="margin-bottom:0">그리고 이 기준을 <b>코드에</b> 박아야(10-1절의 다섯 조건) <b>담당자가 바뀌어도 유지된다.</b> 문서에만 있는 기준은 <b>두 번째 사고에서 반드시 무시된다.</b></p>
+</div></details>
+
+<details class="q"><summary>"PG 승인을 트랜잭션 밖으로 뺐더니 이번엔 '주문은 확정인데 결제 기록이 없다'가 생겼습니다." <span class="badge bonus">가산점</span><span class="hint">힌트: 이 증상은 [B] 안에서는 구조적으로 못 생긴다. 그러면 어디가 쪼개진 것인가</span></summary><div class="a">
+  <p><b>쪼갠 뒤에 생기는 반대 방향 불일치를 알고 있는지 묻는 질문이다.</b> [B] 안에서 <code>confirmIfPending</code> UPDATE와 <code>payment</code> INSERT가 <b>같은 트랜잭션</b>이면 <b>둘 중 하나만 남을 수는 없다.</b> 그러므로 이 증상은 셋 중 하나다.</p>
+  <ul>
+    <li><b>[B]가 둘로 쪼개져 있다</b> — 확정은 응답 경로에서, 결제 기록은 웹훅 경로에서</li>
+    <li><b>웹훅 경로가 확정만 하고 결제 기록을 안 남긴다</b></li>
+    <li><b>예전 데이터 마이그레이션 잔재</b></li>
+  </ul>
+  <p><b>처방은 확정과 결제 기록을 한 트랜잭션에 두는 것</b>이다 — 이 둘은 <b>순수 DB 작업이라 쪼갤 이유가 없다.</b> 기준은 <b>"블로킹 I/O가 없고 함께 되돌려야 하면 쪼개지 않는다"</b>이고, 이 기준이 <b>"PG 승인은 밖으로, DB 두 개는 안으로"</b>를 동시에 설명한다.</p>
+  <p style="margin-bottom:0">그리고 그래도 새는 것을 잡는 것이 <b>대사 방향 (3)</b>이다. <b>이 질문에 "양방향 대사가 그래서 필요하다"로 연결하면 방어선 ④를 이해한 것이다.</b></p>
+</div></details>
+
+<details class="q"><summary>"MySQL로 물어보면 답이 달라지는 부분은?" <span class="badge senior">시니어 변별</span><span class="hint">힌트: 뼈대는 같고 구현 문장·실패 모드가 네 군데 갈린다</span></summary><div class="a">
+  <p><b>사고의 뼈대(두 원장 · 롤백의 한계 · 다섯 겹 방어선)는 엔진과 무관하다.</b> 갈리는 것은 <b>구현 문장과 실패 모드</b> 네 군데다.</p>
+  <div class="scroll"><table>
+    <tr><th style="width:130px">축</th><th>PostgreSQL</th><th>MySQL</th></tr>
+    <tr><td><b>① 멱등 삽입</b></td><td><code>INSERT ... ON CONFLICT (충돌 대상 명시) DO NOTHING/DO UPDATE</code>. <b>에러가 나면 트랜잭션 전체가 abort</b>되므로 "유니크 위반을 잡아서 이어가기"가 성립하지 않아 <b>사실상 필수</b></td><td><code>ON DUPLICATE KEY UPDATE</code> / <code>INSERT IGNORE</code>. <b>예외를 잡고 같은 트랜잭션을 계속 쓸 수 있다</b></td></tr>
+    <tr><td><b>② "조회 후 없으면 INSERT"의 경쟁</b></td><td class="bad"><b>갭 락이 없어 "없는 행"을 잠글 수단이 아예 없다</b> → 유니크 제약·<code>ON CONFLICT</code>·어드바이저리 락·SERIALIZABLE 중 하나를 <b>명시적으로 골라야 한다</b></td><td>REPEATABLE READ + <b>갭 락</b>이 그 틈을 어느 정도 막아 준다</td></tr>
+    <tr><td><b>③ CDC와 복제</b></td><td>WAL 하나로 복제·PITR·논리 디코딩을 모두 하되 <b>복제 슬롯이 소비되지 않으면 WAL이 쌓여 프라이머리가 위험</b></td><td>binlog 기반. <code>sync_binlog</code>·<code>innodb_flush_log_at_trx_commit</code>로 내구성 조절</td></tr>
+    <tr><td><b>④ 작업 큐</b></td><td><code>FOR UPDATE SKIP LOCKED</code>가 관용구 + <code>LISTEN</code>/<code>NOTIFY</code>라는 <b>깨우기 장치가 추가로 있다</b></td><td><code>SKIP LOCKED</code>는 8.0부터 지원</td></tr>
+  </table></div>
+  <p style="margin-bottom:0">이 넷을 짚으면 <b>"패턴을 외웠다"가 아니라 "쓰는 엔진에서 그 패턴이 어떻게 구현되는지 안다"</b>로 들린다.</p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>"재발 방지 다섯 겹 중 무엇부터 하겠습니까?" <span class="badge senior">시니어 변별</span><span class="hint">힌트: ①부터라고 답하면 절반이다. 지금이 어떤 상황인지를 먼저 말한다</span></summary><div class="a">
+  <p><b>지금 사고가 나 있는 상황에서는 ④(대사)와 ⑤(알람)가 먼저다.</b> 이유는 9-1절 대응표의 <b>"그래도 뚫리면" 칸이 전부 ④</b>라는 사실에서 나온다 — ①②③은 각각 <b>특정 원인 하나</b>를 겨냥하는 국소 방어라, <b>내가 아직 원인을 확정하지 못한 상태에서는 어느 것을 먼저 넣어야 할지도 모른다.</b> 반면 ④⑤는 <b>원인을 몰라도 결과를 잡는다.</b></p>
+  <div class="rule">"다시 안 나게"보다 <b>"나면 바로 알게"</b>가 먼저다</div>
+  <p><b>그다음 순서는 이렇게 정당화한다.</b> ①(순서 설계)이 그 뒤인 이유는 <b>①이 있어야 대사 방향 (1)이 성립하기 때문</b>이다 — PENDING 흔적이 없으면 대사가 물어볼 대상 자체가 없어서 <b>PG 정산 파일에 의존하는 일 단위 방향 (2)밖에 못 돌린다.</b> 즉 ①은 <b>④의 탐지 주기를 "하루"에서 "분"으로 당기는 투자</b>다.</p>
+  <p style="margin-bottom:0"><b>그리고 확정된 원인이 있으면 그 원인의 1차 방어선을 끼워 넣는다</b> — (a)면 ① + ArchUnit, (b)면 ③ Inbox, (d)면 ②. <b>"전부 다 하겠습니다"는 우선순위를 못 매긴다는 뜻</b>이므로, <b>④⑤ → 확정된 원인의 1차 방어선 → 나머지</b>라는 순서와 그 근거를 말하는 것이 답이다.</p>
+</div></details>
+
+<details class="q"><summary>"<code>orders</code>에 ID 갭이 보입니다. 롤백된 INSERT가 있었다고 결론 내도 되나요?" <span class="badge trap">함정</span><span class="hint">힌트: 갭이 생기는 정상 경로가 최소 셋이다</span></summary><div class="a">
+  <p><b>안 된다.</b> ID 갭은 <b>정상 상황에서도 생긴다</b> — ① <b>동시 삽입</b>(여러 세션이 번호를 미리 받아 가면 커밋 순서와 번호 순서가 어긋난다), ② <b><code>ON CONFLICT</code> 충돌</b>(번호는 소모하고 행은 안 생긴다), ③ <b>시퀀스 <code>CACHE</code></b>(세션마다 번호를 뭉텅이로 미리 받아 세션이 끝나면 남은 번호가 통째로 버려진다).</p>
+  <div class="rule red">"갭이 있다 = 사고"가 아니라 <b>"평소보다 갭이 몰린 구간이 예외 로그 시각과 겹친다"</b>가 증거다</div>
+  <p><b>그런데 갭이 증거가 될 수 있다는 사실 자체가 중요한 지식</b>이다. <code>nextval()</code>은 <b>트랜잭션 밖에서 동작</b>한다 — <b>그래야 동시에 INSERT하는 세션들이 서로의 커밋을 기다리지 않기 때문</b>이다. 이 설계의 대가로 <b>롤백된 INSERT가 소모한 번호는 영원히 빈다.</b></p>
+  <p style="margin-bottom:0"><b>즉 "시퀀스가 롤백을 따라오지 않는 것"은 버그가 아니라 동시성을 위한 의도된 성질이고, 사고 조사에서는 그 성질이 뜻밖의 증거를 남긴다.</b> 답변에서 이 인과를 붙이면 "현상을 외웠다"가 아니라 "이유를 안다"로 들린다.</p>
+</div></details>
+
+<details class="q"><summary>"조사 중에 '주문 없음'을 확인했는데 나중에 보니 주문이 있었습니다. 어떻게 이런 일이 가능한가요?" <span class="badge trap">함정</span><span class="hint">힌트: 코드도 데이터도 멀쩡하다. 어디에 붙어서 봤는지를 묻는다</span></summary><div class="a">
+  <p><b>리드 리플리카(hot standby)를 보고 판정했기 때문이다.</b> PostgreSQL의 <b>스트리밍 복제는 기본이 비동기</b>라, 프라이머리에서 방금 커밋된 주문이 <b>아직 리플리카에 도착하지 않아 없는 것으로 보인다.</b> 리플리카가 무거운 조회를 돌고 있으면 <b>WAL 재생이 더 밀린다.</b></p>
+  <p><b>이 함정은 두 자리에서 밟는다.</b> ① <b>운영 코드</b> — 웹훅 핸들러의 <code>findByOrderNo</code>가 <code>@Transactional(readOnly = true)</code>라 리플리카로 라우팅되면, <b>주문은 있는데 "없다"고 판단해 웹훅을 버린다.</b> 증상이 (b)와 <b>똑같아서 가장 오래 헤매는 갈래</b>다. ② <b>조사자 본인</b> — 흔적 탐색 SQL을 리플리카에 날리면 <b>같은 오판을 조사 단계에서 반복한다.</b></p>
+<pre style="margin:10px 0"><code><span class="kw">SELECT</span> <span class="fn">pg_is_in_recovery</span>(), <span class="fn">now</span>() - <span class="fn">pg_last_xact_replay_timestamp</span>() <span class="kw">AS</span> replay_lag;
+<span class="cm">-- true 면 스탠바이다. replay_lag 이 곧 "내가 보고 있는 과거의 깊이"</span></code></pre>
+  <div class="rule">처방 — <b>"진실을 판정하는 읽기는 프라이머리에서"</b><br><span style="font-size:.92rem;font-weight:600">웹훅·대사·멱등 확인처럼 <b>분기를 결정하는</b> 조회는 리플리카로 보내지 않는다</span></div>
+  <p style="margin-bottom:0">구조적 처방을 하나 더 붙이면 만점이다 — <b>Inbox에 먼저 적재하고 지연 재시도하면, 설령 리플리카를 봤더라도 다음 시도에서 정상 매칭된다.</b> 즉 <b>③이 이 함정까지 덮는다.</b></p>
+</div></details>
+
+<details class="q"><summary>"<code>reconcile.auto_confirmed</code>가 매일 5건씩 잡힙니다. 대사가 잘 돌고 있다는 뜻이죠?" <span class="badge trap">함정</span><span class="hint">힌트: 이 카운터의 정상값은 무엇인가</span></summary><div class="a">
+  <p><b>아니다. 그 카운터는 0이 정상이다.</b> 매일 5건이 잡힌다는 것은 <b>대사가 잘 돌고 있다는 뜻이 아니라 ①②③ 어딘가가 매일 5건씩 새고 있다는 뜻</b>이다. 대사는 <b>그물이지 처방이 아니다.</b></p>
+  <p><b>대응은 "카운터를 무시"가 아니라 "그 5건의 원인을 6절로 좁히는 것"</b>이다 — 시각이 <b>군집</b>이면 (e)나 PG 장애, <b>산발</b>이면 코드 경로. 그리고 그 결과에 따라 <b>앞 방어선을 고친다.</b></p>
+  <div class="rule red">자동 보정이 조용히 잘 돌수록 <b>앞 방어선이 새고 있다는 신호가 사라진다</b> — 그래서 임계치를 넘으면 <b>보정을 멈추고 사람을 부른다</b></div>
+  <p style="margin-bottom:0">같은 논리가 <b>PENDING 나이 알람</b>에도 적용된다. 다만 <b>PENDING 건수는 0이 정상이 아니다</b>(결제창 체류가 정상이니까) — <b>"0이어야 정상인 지표"와 "분포가 정상이어야 하는 지표"를 구분</b>하는 것이 관측 설계의 핵심이다.</p>
+</div></details>
+
+<details class="q"><summary>"중복 INSERT는 <code>try { insert } catch (DuplicateKeyException)</code>로 잡으면 되지 않나요?" <span class="badge bonus">가산점</span><span class="hint">힌트: PostgreSQL에서는 이 코드가 2차 사고를 만든다</span></summary><div class="a">
+  <p><b>PostgreSQL에서는 위험하다.</b> PostgreSQL은 <b>트랜잭션 안에서 에러가 하나라도 나면 그 트랜잭션 전체가 abort 상태</b>가 되어, 이후 명령이 전부 <code>current transaction is aborted, commands ignored until end of transaction block</code>으로 거부된다.</p>
+  <p>즉 유니크 위반을 잡아서 <b>"그럼 기존 주문을 읽자"</b>로 이어가려면 <code>SAVEPOINT</code>(스프링에서는 <code>@Transactional(propagation = NESTED)</code>)가 필요하고, 그것을 빠뜨리면 <b>중복 요청 하나 때문에 정상 트랜잭션이 통째로 죽는 2차 사고</b>가 난다.</p>
+  <div class="rule">그래서 PostgreSQL의 정석은 <b>예외를 아예 만들지 않는 <code>INSERT ... ON CONFLICT DO NOTHING RETURNING</code></b>이다</div>
+  <p><b><code>RETURNING</code>이 핵심</b>이다 — <b>반환 행이 있으면 "내가 만들었다", 없으면 "남이 이미 만들었다"</b>가 <b>한 왕복</b>에서 끝난다. <code>DO UPDATE</code>를 쓸 때는 <code>RETURNING (xmax = 0) AS inserted</code>로 삽입/갱신을 구분할 수 있다(<b>새로 삽입된 튜플은 <code>xmax</code>가 0</b>이다).</p>
+  <p style="margin-bottom:0"><b>MySQL에서는 사정이 다르다</b>는 것도 같이 말하면 좋다 — <b>예외를 잡고 같은 트랜잭션을 계속 쓸 수 있어서</b> try-catch 관용구가 성립한다. <b>같은 패턴도 엔진에 따라 안전성이 달라진다</b>는 점이 이 질문의 요지다.</p>
+</div></details>
+
+<details class="q"><summary>"장애가 났으니 일단 애플리케이션을 재시작해서 정상화하면 안 되나요?" <span class="badge trap">함정</span><span class="hint">힌트: 재시작이 지우는 것이 무엇인지 목록으로 답한다</span></summary><div class="a">
+  <p><b>재시작은 원인 (e)(f)의 증거를 지운다.</b> "일단 재시작해 보죠"는 <b>진단을 불가능하게 만드는 대표적인 순간</b>이다. 그래서 <b>증거 보존이 임시 조치의 세 축 중 하나</b>다.</p>
+  <div class="scroll"><table>
+    <tr><th>지워지는 것</th><th>그게 없으면 못 하는 판정</th></tr>
+    <tr><td><code>pg_stat_activity</code>의 <code>idle in transaction</code> 세션과 <code>xact_start</code></td><td><b>(a)</b> — 승인을 기다리며 트랜잭션을 열어 둔 세션이 있었는가</td></tr>
+    <tr><td><code>pg_locks</code> + <code>pg_blocking_pids()</code></td><td><b>(a)</b> — 재고 락 대기가 예외를 만들었는가</td></tr>
+    <tr><td>메모리에 쌓여 있던 <code>@Async</code> 실행기 큐</td><td class="bad"><b>(f)</b> — <b>이건 증거만 사라지는 게 아니라 아직 처리 안 된 주문이 함께 사라진다</b></td></tr>
+    <tr><td>진행 중이던 [B] 트랜잭션</td><td><b>(c)(ii)</b> — <code>server.shutdown=graceful</code>이 없으면 <b>재시작이 새 사고를 만든다</b></td></tr>
+  </table></div>
+  <p style="margin-top:12px"><b>순서를 뒤집어 말하면 된다</b> — "재시작하겠습니다"가 아니라 <b>"① 스냅샷을 뜨고 ② 출혈을 차단하고 ③ 그다음에 재시작 여부를 판단한다"</b>. 그리고 <b>재시작이 정말 필요한 경우</b>(누수·데드락으로 서비스 자체가 멎은 경우)에도 <b>한 대만 남겨 두고 재시작</b>해 증거를 남기는 방법이 있다.</p>
+  <p style="margin-bottom:0" class="sub">참고로 <code>pg_stat_statements</code>는 재시작으로 사라지지 않고 <code>pg_stat_statements_reset()</code>으로 날아간다 — <b>무엇이 언제 사라지는지를 아는 것 자체가 조사 순서를 만든다.</b></p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  "결제됐는데 주문이 없다"는 <b>PG(결제대행사) 원장과 우리 PostgreSQL 원장이 다른 시스템이고 롤백은 우리 쪽만 되돌린다</b>는 사실에서 나오는 사고이며, 원인은 <b>(a) 트랜잭션 안 승인 후 롤백 (b) 웹훅 순서 역전·폐기 (c) 불명을 실패로 취급 (d) 멱등 레코드가 결과 대신 "봤다"만 기억 (e) failover·배포 중 커밋 전 단절 (f) 비동기 후처리 유실</b> 여섯 경로로 열거해 <b>"고객이 성공 화면을 봤는가 / 우리 DB에 흔적이 있는가"</b>로 좁히고, 재발 방지는 <b>① PENDING 선생성 → 밖에서 승인 → 조건부 확정 ② 요청·PG·DB 유니크 세 층 멱등 ③ Inbox/Outbox ④ 양방향 대사 배치 ⑤ 알람</b> 다섯 겹으로 — 각각 <b>정리 배치·키 저장소·릴레이 운영·PG 조회 비용과 의존·오탐</b>이라는 값을 치르며 — 쌓되, 이 모든 것을 <b>ArchUnit·부분 실패 테스트·대사 코드·"0이 정상"인 카운터</b>로 못 어기게 고정해야 사고 대응 사이클이 <b>사람의 기억이 아니라 시스템의 성질</b>이 된다. PostgreSQL로 구현할 때 이 다섯 겹이 기대는 문장은 넷이다 — <b>유니크 제약 + <code>INSERT ... ON CONFLICT DO NOTHING RETURNING</code></b>(갭 락이 없어 "없는 행"을 잠글 수 없으므로 중복을 막는 것은 결국 인덱스 하나이고, 예외를 던지면 트랜잭션 전체가 abort되므로 예외를 안 만드는 문장을 쓴다), <b>조건부 UPDATE</b>(세 경로가 동시에 확정해도 한 번만 성공), <b><code>FOR UPDATE SKIP LOCKED</code></b>(Inbox·Outbox 릴레이를 여러 대로), 그리고 <b><code>synchronous_commit</code>을 끄지 않는 것</b>(커밋 응답을 받았다는 앱의 전제를 DB가 배신하지 않게).
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/04-rdb-sql/27-payment-succeeded-order-missing-incident.md</code> · 이어서 볼 문서: 롱 트랜잭션의 해악과 단축(<code>16-long-transaction-harm-and-shortening.md</code>) · <code>SELECT FOR UPDATE</code> 락 범위(<code>19-select-for-update-lock-scope.md</code>) · 무중단 스키마 변경(<code>14-online-ddl-zero-downtime-schema-change.md</code>) · MVCC와 VACUUM(<code>11-mvcc-postgresql.md</code>) · 결제 상태 관리(<code>10-payment-consistency/01-payment-state-management.md</code>) · 웹훅 수신 처리(<code>10-payment-consistency/03-webhook-reception-handling.md</code>) · PG 타임아웃과 결과 불명 상태(<code>10-payment-consistency/04-pg-timeout-unknown-state.md</code>) · 대사 배치 설계(<code>10-payment-consistency/08-reconciliation-batch-design.md</code>) · 분산 Saga와 보상 설계(<code>10-payment-consistency/10-distributed-saga-compensation-idempotency.md</code>) · 트랜잭션 경계와 도메인 이벤트(<code>03-jpa-orm/22-transaction-boundary-and-domain-events.md</code>) · <code>@Transactional</code> 기본 동작과 롤백(<code>02-spring/07-transactional-default-behavior-rollback.md</code>)</p>
+</main>
+</body>
+</html>

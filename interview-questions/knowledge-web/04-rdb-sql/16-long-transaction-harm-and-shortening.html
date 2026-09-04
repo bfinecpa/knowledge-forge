@@ -1,0 +1,1460 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>긴 트랜잭션의 해악과 짧게 유지하는 법 — "성능 저하"가 아니라 네 개의 사슬</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">04 RDB · SQL &nbsp;|&nbsp; 중급⭐⭐ &nbsp;|&nbsp; PostgreSQL 기준</span>
+  <h1>긴 트랜잭션의 해악과 짧게 유지하는 법<br><span class="sub">"성능 저하"가 아니라 네 개의 사슬로 말하기</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"긴 트랜잭션(long transaction)은 DB에 어떤 해악을 끼치나요? 애플리케이션에서 트랜잭션을 짧게 유지하는 방법은?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>"길다"는 벽시계 시간이 아니라 그 트랜잭션이 붙들고 있는 자원으로 정의된다.</b> 10초가 걸려도 아무것도 안 붙들고 있으면 남에게 해가 없고, 0.5초여도 핫 로우의 배타 락을 쥔 채 외부 API를 기다리면 서비스를 세운다. 붙드는 자원은 넷이고 해악은 그 넷에서 각각 출발하는 <b>네 개의 사슬</b>이다. <b>① 스냅샷·XID(xmin 지평선)</b> — "아직 볼 수 있는 옛 버전"의 하한선을 고정 → VACUUM이 그 뒤의 죽은 튜플을 못 치움 → 테이블·인덱스 <b>bloat</b> → 통계 왜곡·Index Only Scan 퇴화 → 무관한 조회까지 느려지고, 끝까지 가면 <b>XID wraparound</b>로 쓰기가 멈춘다. <b>② 락</b> — 행 락은 커밋까지, 테이블 <code>ACCESS SHARE</code>는 SELECT만 해도 커밋까지 → 대기 큐 → 대기자가 커넥션을 쥔 채 → 풀 고갈 → 톰캣 스레드 고갈 → DB와 무관한 API까지 전면 장애. <b>③ 변경량</b> — 커밋 순간 죽은 튜플·WAL 한 덩어리 → autovacuum 폭주, 논리 복제·CDC는 커밋 시점에 통째로 전송 → 지연 계단식 급증. <b>④ 커넥션(= 백엔드 프로세스)</b> — 락이 하나도 없어도 외부 호출 3초 = 커넥션 3초 독점 → 풀 고갈. 짧게 만드는 기법은 다섯이고 각각 <b>어떤 자원을 언제 놓아주는가</b>로 외운다 — <b>외부 호출을 밖으로 / <code>TransactionTemplate</code>로 블록 단위 축소 / 읽기 분리 / <code>AFTER_COMMIT</code>·Outbox로 후처리 분리 / 청크 커밋.</b> 단 쪼개는 순간 원자성을 내주므로 <b>상태 머신 + 보상 + 재시도·멱등</b>으로 값을 치르고, "조심하자"가 아니라 <b>못 어기게</b> — ArchUnit, <code>idle_in_transaction_session_timeout</code>·<code>lock_timeout</code>·<code>statement_timeout</code>, <code>pg_stat_activity</code> 기반 알람으로 고정한다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>정의부터 바꾼다 — "길다"는 시간이 아니라 붙든 자원이다</b> — 트랜잭션 없이 10초 파일을 파싱하는 배치는 DB에 존재하지도 않는 시간이고, <b>핫 로우 배타 락을 쥔 채 외부 API를 기다리는 0.5초</b>는 뒤에 오는 모든 요청을 직렬화한다. 그래서 길이의 축은 둘이다 — <b>오래 열려 있거나(시간), 많이 바꾸거나(변경량).</b></div></li>
+    <li><span class="n">2</span><div><b>해악은 "느려집니다"가 아니라 네 개의 사슬이다</b> — <b>스냅샷·XID / 락 / 변경량 / 커넥션</b> 네 자원 각각에서 도미노가 출발한다. <b>지평선 고정 → VACUUM 정지 → bloat → 무관한 조회까지 지연</b>, <b>락 → 대기 큐 → 커넥션 → 스레드 → 전면 장애</b>까지 <b>끝 칸을 말해야</b> 답이 완성된다.</div></li>
+    <li><span class="n">3</span><div><b>처방 다섯 가지와, 그 대가까지 같은 호흡에</b> — <b>밖으로 · 블록으로 · 읽기 분리 · 뒤로 · 쪼개기</b>를 "어떤 자원을 언제 놓아주는가"로 외운다. 쪼개기는 <b>락·커넥션·bloat를 사고 원자성을 파는 거래</b>라 <b>상태 머신·보상·멱등</b>으로 되사 오고, 마지막엔 사람의 주의가 아니라 <b>ArchUnit·타임아웃 3종·<code>pg_stat_activity</code> 알람</b>으로 못 어기게 고정한다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">정의 — 벽시계가 아니라 "붙든 자원"</a></li>
+    <li><a href="#s2">붙드는 자원 넷 · 길이의 두 축</a></li>
+    <li><a href="#s3">네 사슬 — 도미노를 끝 칸까지</a></li>
+    <li><a href="#s4">처방 — 짧게 만드는 다섯 기법</a></li>
+    <li><a href="#s5">대가 — 중간 상태와 되사는 세 장치</a></li>
+    <li><a href="#s6">안전망 — "조심하자"가 아니라 "못 어기게"</a></li>
+    <li><a href="#s7">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "긴 트랜잭션(long transaction)은 DB에 어떤 해악을 끼치나요? 애플리케이션에서 트랜잭션을 짧게 유지하는 방법은?"</p>
+  <p><b>출제 의도</b>: "undo 누적으로 인한 조회 성능 저하, 락 점유 시간, 복제 지연까지 — <b>'트랜잭션은 짧게'라는 격언의 실제 근거를 메커니즘으로 아는지.</b> 트랜잭션 범위 안에 파일 처리·외부 호출을 넣은 코드를 리뷰에서 잡는 눈이기도 하다."</p>
+  <p>출제 의도의 <b>"undo 누적"은 MySQL 용어</b>다. PostgreSQL로 옮기면 그 자리에 오는 것은 <b>VACUUM이 치우지 못해 쌓이는 죽은 튜플(bloat)</b>이고, 이름은 달라도 <b>"누군가 아직 볼 수 있는 옛 버전은 지울 수 없다"</b>는 원리는 같다. 즉 이 문항은 격언을 외웠는지가 아니라 <b>격언 뒤의 인과 사슬을 단계별로 말할 수 있는지</b>, 그래서 리뷰에서 <code>@Transactional</code> 안의 <code>restTemplate.postForObject(...)</code>를 보는 순간 손이 멈추는지를 본다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 습관 네 가지</span>
+    ① <b>비용을 "성능 저하"로 뭉뚱그리는 것</b> → 3절에서 네 사슬을 <b>도미노 한 칸씩</b> 세운다. "락 경합이 생겨서 느려집니다"에서 멈추면 이 문항은 "중" 이하다.<br>
+    ② <b>트레이드오프를 한쪽만 말하는 것</b> → 5절은 "쪼개면 좋다"가 아니라 <b>쪼개는 순간 무엇을 잃고 그 값을 어떻게 치르는지</b>를 같은 호흡에 적는다.<br>
+    ③ <b>안전망을 사람 기억에 맡기는 것</b> → 6절은 규율이 아니라 <b>장치</b>다 — 컴파일 단계(ArchUnit), DB 단계(타임아웃 3종), 운영 단계(<code>pg_stat_activity</code> 알람).<br>
+    ④ <b>목록 인출 실패</b> → 4절은 기법 다섯을 <b>번호와 암기 문구로 고정</b>한다. 순서대로 말할 수 있어야 한다.
+  </div>
+</div>
+
+<div class="callout info"><span class="t">이 페이지의 분업 — 부품이 아니라 "피해와 처방"</span>
+  <b>MVCC의 부품</b>(튜플 헤더 <code>xmin</code>/<code>xmax</code>/<code>ctid</code>, 스냅샷의 가시성 판정, HOT 업데이트, VACUUM이 visibility map을 갱신하는 방식)은 <b>11-mvcc-postgresql</b>이 이미 깊게 다뤘다. 이 페이지는 그 위에서 <b>사슬 (a)를 나머지 세 사슬과 같은 높이에 놓고</b>, <b>애플리케이션 쪽 처방과 그 대가, 안전망</b>까지 한 벌로 묶는 것이 목적이다. 프록시 동작·롤백 규칙은 <b>02-spring/07-transactional-default-behavior-rollback</b>, 경계 설계와 도메인 이벤트는 <b>03-jpa-orm/22-transaction-boundary-and-domain-events</b>가 맡는다.
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 정의 — "길다"는 시간이 아니라 "붙들고 있는 자원"이다</h2>
+
+<p>"긴 트랜잭션"이라는 말을 들으면 대부분 <b>벽시계</b>를 떠올린다. 몇 초 이상이면 긴 트랜잭션인가? 그 기준으로는 다음 장면을 설명할 수 없다 — <b>10초짜리가 무해하고 0.5초짜리가 서비스를 세우는 장면</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 392" role="img" aria-label="같은 시간축 위에 세 가지 작업을 나란히 그린 도식. 트랜잭션 없이 10초 파일을 파싱하는 배치는 아무 자원도 붙들지 않아 피해가 없고, 8초짜리 통계 조회는 커넥션 하나와 실행 중 스냅샷을 붙들며, 0.5초짜리 결제 트랜잭션은 핫 로우 배타 락을 쥐어 뒤에 오는 요청을 직렬화시켜 커넥션 풀을 고갈시킨다">
+    <defs>
+      <marker id="lt-a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 벽시계 시간, 다른 피해 — 무엇을 붙들고 있었는가</text>
+
+    <!-- time ruler -->
+    <line x1="210" y1="46" x2="830" y2="46" stroke="#cbd5e1" stroke-width="1"/>
+    <g font-size="10.5" fill="#94a3b8" text-anchor="middle">
+      <text x="210" y="40">0s</text><text x="334" y="40">2s</text><text x="458" y="40">4s</text>
+      <text x="582" y="40">6s</text><text x="706" y="40">8s</text><text x="830" y="40">10s</text>
+    </g>
+
+    <!-- row 1 -->
+    <text x="196" y="80" font-size="12.5" fill="#334155" text-anchor="end" font-weight="700">배치가 파일 10초 파싱</text>
+    <text x="196" y="98" font-size="11" fill="#94a3b8" text-anchor="end">커넥션도 트랜잭션도 안 열었다</text>
+    <rect x="210" y="60" width="620" height="46" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="6 4"/>
+    <text x="520" y="88" font-size="12.5" fill="#64748b" text-anchor="middle" font-weight="700">트랜잭션 없음 — DB 입장에서는 존재하지도 않는 10초</text>
+    <rect x="856" y="60" width="248" height="46" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="980" y="80" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">붙든 자원 0</text>
+    <text x="980" y="97" font-size="11.5" fill="#166534" text-anchor="middle">남에게 주는 피해 0</text>
+
+    <!-- row 2 -->
+    <text x="196" y="140" font-size="12.5" fill="#334155" text-anchor="end" font-weight="700">통계 조회 <tspan class="mono">SELECT count(*)</tspan></text>
+    <text x="196" y="158" font-size="11" fill="#94a3b8" text-anchor="end">READ COMMITTED · 한 문장 8초</text>
+    <rect x="210" y="120" width="496" height="46" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="458" y="148" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">커넥션 1개 + 실행 중인 문장의 스냅샷</text>
+    <rect x="856" y="120" width="248" height="46" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="980" y="140" font-size="12" fill="#b45309" text-anchor="middle" font-weight="700">커넥션 1 + VACUUM 8초 방해</text>
+    <text x="980" y="157" font-size="11.5" fill="#b45309" text-anchor="middle">락은 없다 — 그래도 지평선은 붙든다</text>
+
+    <!-- row 3 -->
+    <text x="196" y="204" font-size="12.5" fill="#334155" text-anchor="end" font-weight="700">결제 트랜잭션 0.5초</text>
+    <text x="196" y="222" font-size="11" fill="#94a3b8" text-anchor="end"><tspan class="mono">UPDATE</tspan> 후 PG 응답 대기</text>
+    <text x="196" y="240" font-size="11" fill="#94a3b8" text-anchor="end">같은 주문·같은 재고 행에 몰린다</text>
+
+    <rect x="210" y="188" width="31" height="20" rx="4" fill="#dc2626"/>
+    <text x="250" y="203" font-size="11" fill="#b91c1c" font-weight="700">요청 ①  0.5초 — 행의 배타 락 보유</text>
+    <rect x="241" y="214" width="31" height="20" rx="4" fill="#ef4444"/>
+    <text x="281" y="229" font-size="11" fill="#b91c1c">요청 ②  앞이 커밋할 때까지 대기 → 그 뒤 0.5초</text>
+    <rect x="272" y="240" width="31" height="20" rx="4" fill="#f87171"/>
+    <text x="312" y="255" font-size="11" fill="#b91c1c">요청 ③  대기 + 대기 → …</text>
+    <rect x="303" y="266" width="31" height="20" rx="4" fill="#fca5a5"/>
+    <text x="343" y="281" font-size="11" fill="#b91c1c">요청 ④ … <tspan font-weight="700">N번째는 0.5초 × N을 기다린다</tspan></text>
+
+    <line x1="210" y1="298" x2="830" y2="298" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#lt-a)"/>
+    <text x="520" y="314" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">대기 큐는 계속 자라고, 대기자는 그동안 커넥션을 쥔 채 아무 일도 못 한다</text>
+
+    <rect x="856" y="188" width="248" height="98" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="980" y="210" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">핫 로우 배타 락 + 커넥션 50</text>
+    <text x="980" y="230" font-size="11.5" fill="#7f1d1d" text-anchor="middle">초당 50건이 같은 행을 노리면</text>
+    <text x="980" y="248" font-size="11.5" fill="#7f1d1d" text-anchor="middle">풀(기본 10)은 몇 초 만에 마른다</text>
+    <text x="980" y="270" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 전면 장애</text>
+
+    <!-- bottom -->
+    <rect x="16" y="336" width="1088" height="42" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="354" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">가장 오래 걸린 작업(10초)이 가장 무해하고, 가장 짧은 작업(0.5초)이 서비스를 세운다</text>
+    <text x="560" y="371" font-size="11.5" fill="#1e40af" text-anchor="middle">차이를 만든 것은 <tspan font-weight="700">시간이 아니라 "그 시간 동안 무엇을 붙들고 있었는가"</tspan></text>
+  </svg>
+  <figcaption>세 번째 줄이 요점이다. <b>0.5초는 짧은 시간이지만, 그 0.5초 동안 모두가 원하는 행의 배타 락을 쥐고 있으면 뒤에 오는 요청은 전부 그 0.5초를 더한 시간만큼 밀린다.</b> 반대로 첫 줄의 10초는 트랜잭션이 아예 없으니 <b>DB에는 존재하지 않는 시간</b>이다. 두 번째 줄은 중간 — 락은 하나도 안 잡지만 <b>커넥션 하나와 스냅샷</b>은 붙든다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>면접 첫 문장으로 쓸 정의 — 이 한 문장이 이후 질문의 방향을 정한다</h4>
+  <div class="rule">긴 트랜잭션이란 "오래 걸리는 트랜잭션"이 아니라<br><b>다른 트랜잭션에 영향을 줄 만큼 오래·많이 자원을 붙들고 있는 트랜잭션</b>이다</div>
+  <p style="margin-bottom:0">이 문장을 첫 문장으로 놓으면 다음 질문이 자연스럽게 <b>"무슨 자원을 붙드는데요?"</b>가 되고, 그 답(2절의 자원 넷)이 이 문서 전체의 뼈대다. 반대로 "몇 초 이상이면 긴 트랜잭션"이라고 답하면 그다음에 할 말이 없다.</p>
+</div>
+
+<h3>1-1. 비유 두 개 — 락과 지평선은 서로 다른 방식으로 남을 괴롭힌다</h3>
+
+<div class="split">
+  <div class="pane r">
+    <h4>락 = 하나뿐인 화장실 칸에서 통화하기</h4>
+    <p style="margin:0;font-size:.94rem">복도에서 <b>10초를 서 있는 사람</b>은 아무에게도 피해를 주지 않는다. 그런데 <b>유일한 칸에 들어가 문을 잠근 채 30초 통화하는 사람</b>은 그 뒤의 모든 사람을 30초씩 밀어낸다. <b>점유한 것이 남들도 반드시 필요한 자원</b>이면, 짧은 시간도 줄을 만든다.</p>
+    <p style="margin:8px 0 0;font-size:.92rem;color:#b91c1c"><b>→ 사슬 (b).</b> 문을 여는 유일한 방법은 <b>나오는 것</b>(= 커밋)이다.</p>
+  </div>
+  <div class="pane b">
+    <h4>지평선 = 열람권을 반납하지 않은 도서관 이용자</h4>
+    <p style="margin:0;font-size:.94rem">사서는 <b>구판을 폐기</b>하고 싶지만, "구판을 볼 권리"를 가진 이용자가 <b>한 명이라도 남아 있으면</b> 폐기할 수 없다. 그 사람이 <b>실제로 책을 펼칠 생각이 있는지는 상관없다</b> — 권리를 쥐고 있다는 사실만으로 폐기가 멈추고, 서고는 구판으로 가득 찬다.</p>
+    <p style="margin:8px 0 0;font-size:.92rem;color:#1d4ed8"><b>→ 사슬 (a).</b> 그래서 <b>아무 SQL도 안 보내고 열려만 있는 세션</b> 하나가 테이블을 부풀린다.</p>
+  </div>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 붙드는 자원 넷, 그리고 길이의 두 축</h2>
+
+<p>트랜잭션이 BEGIN에서 COMMIT까지 살아 있는 동안 PostgreSQL이 그 트랜잭션을 위해 <b>붙들어야 하는 것이 넷</b> 있다. 넷 각각이 하나의 사슬로 이어지고, 3절이 그 사슬 넷이다.</p>
+
+<table class="wide">
+  <caption>표를 읽는 눈은 <b>"언제 놓아주나" 칸</b>에 둔다 — 전부 <b>커밋·롤백</b>이다.</caption>
+  <thead><tr><th>붙드는 자원</th><th>무엇인가</th><th>왜 붙드나</th><th>언제 놓아주나</th><th>길이의 축</th><th>사슬</th></tr></thead>
+  <tbody>
+    <tr><td><b>스냅샷·XID</b><br>(xmin 지평선)</td><td>"이 트랜잭션이 볼 수 있는 버전"의 기준선</td><td>이 트랜잭션이 아직 볼 수 있는 옛 버전을 <b>아무도 못 지우게</b></td><td>커밋·롤백 시점<br><span class="sub">(READ COMMITTED의 읽기 전용 스냅샷은 문장 끝)</span></td><td>시간</td><td><b>(a)</b></td></tr>
+    <tr><td><b>행 락</b>(튜플 헤더 <code>xmax</code>)<br><b>테이블 락</b>(<code>ACCESS SHARE</code> 포함)</td><td>"이 행/테이블은 내가 쓰는 중" 표시</td><td>격리성 — 커밋 전까지 남이 못 건드리게</td><td>커밋·롤백 시점<br><span class="sub">중간 해제 불가</span></td><td>시간</td><td><b>(b)</b></td></tr>
+    <tr><td><b>변경 내역</b><br>(죽은 튜플·WAL·논리 디코딩 버퍼)</td><td>아직 확정·전파되지 않은 변경 더미</td><td>커밋 시 <b>한꺼번에</b> 확정·전파해야 하므로</td><td>커밋 시점에 한꺼번에</td><td class="bad">변경량</td><td><b>(c)</b></td></tr>
+    <tr><td><b>커넥션 1개</b><br>= 백엔드 프로세스 1개</td><td>DB 서버의 OS 프로세스 하나</td><td>한 트랜잭션의 모든 SQL은 <b>같은 커넥션</b>을 타야 하므로</td><td>커밋·롤백 후 풀 반납</td><td>시간</td><td><b>(d)</b></td></tr>
+  </tbody>
+</table>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="BEGIN부터 COMMIT까지의 시간축 위에 커넥션, 스냅샷과 XID, 행 락, 변경 더미 네 자원이 각각 언제부터 붙들리는지를 막대로 그린 도식. 네 막대가 모두 COMMIT 시점의 세로선에서 동시에 끝나며, 그것이 유일한 해제 지점임을 보여준다">
+    <defs>
+      <pattern id="lt-h" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <rect width="8" height="8" fill="#eff6ff"/><line x1="0" y1="0" x2="0" y2="8" stroke="#93c5fd" stroke-width="3"/>
+      </pattern>
+      <marker id="lt-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">한 트랜잭션이 붙드는 것 넷 — 그리고 놓아주는 지점은 오직 하나</text>
+
+    <!-- timeline -->
+    <line x1="230" y1="76" x2="1055" y2="76" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-b)"/>
+    <rect x="550" y="64" width="390" height="24" rx="5" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="745" y="80" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">외부 PG 호출 — SQL은 한 줄도 없는데 트랜잭션은 열려 있다</text>
+
+    <g font-size="11" fill="#334155" text-anchor="middle">
+      <circle cx="240" cy="76" r="4" fill="#2563eb"/><text x="240" y="56" font-weight="700">BEGIN</text>
+      <circle cx="350" cy="76" r="4" fill="#2563eb"/><text x="350" y="56">첫 SELECT</text>
+      <circle cx="480" cy="76" r="4" fill="#dc2626"/><text x="480" y="56" font-weight="700" fill="#b91c1c">UPDATE (XID 배정)</text>
+      <circle cx="990" cy="76" r="4" fill="#16a34a"/><text x="1000" y="56" font-weight="700" fill="#166534">COMMIT</text>
+    </g>
+
+    <!-- release line -->
+    <line x1="990" y1="66" x2="990" y2="304" stroke="#16a34a" stroke-width="2" stroke-dasharray="6 4"/>
+
+    <!-- rows -->
+    <text x="214" y="118" font-size="12.5" fill="#334155" text-anchor="end" font-weight="700">커넥션 (= 프로세스)</text>
+    <rect x="240" y="102" width="750" height="24" rx="5" fill="#dbeafe" stroke="#60a5fa"/>
+    <text x="615" y="119" font-size="11.5" fill="#1d4ed8" text-anchor="middle">BEGIN부터 커밋까지 통째로 점유 — 놀고 있어도 반납되지 않는다</text>
+
+    <text x="214" y="160" font-size="12.5" fill="#334155" text-anchor="end" font-weight="700">스냅샷 · XID (지평선)</text>
+    <rect x="350" y="144" width="130" height="24" rx="5" fill="url(#lt-h)" stroke="#93c5fd"/>
+    <text x="415" y="161" font-size="10.5" fill="#1d4ed8" text-anchor="middle">문장 동안</text>
+    <rect x="480" y="144" width="510" height="24" rx="5" fill="#bfdbfe" stroke="#2563eb"/>
+    <text x="735" y="161" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">쓰기로 XID를 받는 순간부터 커밋까지 지평선에 박힌다</text>
+
+    <text x="214" y="202" font-size="12.5" fill="#334155" text-anchor="end" font-weight="700">행 락 (튜플 <tspan class="mono">xmax</tspan>)</text>
+    <rect x="480" y="186" width="510" height="24" rx="5" fill="#fecaca" stroke="#dc2626"/>
+    <text x="735" y="203" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">UPDATE 순간부터 커밋까지 — 중간 해제는 존재하지 않는다</text>
+
+    <text x="214" y="248" font-size="12.5" fill="#334155" text-anchor="end" font-weight="700">변경 더미 (죽은 튜플·WAL)</text>
+    <polygon points="480,246 990,228 990,258 480,254" fill="#fde68a" stroke="#d97706"/>
+    <text x="735" y="250" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">바꾼 만큼 쌓이다가 커밋 순간 한 덩어리로 확정·전파</text>
+
+    <!-- release label -->
+    <rect x="852" y="276" width="268" height="46" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="986" y="295" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">COMMIT · ROLLBACK</text>
+    <text x="986" y="313" font-size="11.5" fill="#166534" text-anchor="middle">넷을 동시에 놓는 유일한 지점</text>
+
+    <rect x="16" y="336" width="1088" height="30" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="356" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">자원을 놓는 유일한 방법이 "트랜잭션을 끝내는 것"이므로, 처방 다섯 가지는 전부 "어디서 끊어 커밋할 것인가"의 변주다</text>
+  </svg>
+  <figcaption>트랜잭션 중간에 <b>"이 락만 먼저 풀어 주세요"는 없다.</b> 그래서 4절의 다섯 기법은 새로운 기능이 아니라 <b>커밋 지점을 앞당기거나 여러 개로 나누는 방법들</b>이다. 그림에서 <b>빗금 구간</b>은 READ COMMITTED의 읽기 전용 스냅샷 — 문장이 끝나면 놓지만, <b>UPDATE로 XID를 받는 순간부터는 커밋까지 통째로</b> 붙든다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>자원 넷 암기 — <b>스 · 락 · 변 · 커</b></h4>
+  <div class="grid g4">
+    <div class="tile big"><div class="k">스</div><div class="s">스냅샷·XID</div><div class="d" style="font-size:.86rem">지평선 → VACUUM</div></div>
+    <div class="tile big red"><div class="k">락</div><div class="s">행 락·테이블 락</div><div class="d" style="font-size:.86rem">대기 큐 → 전면 장애</div></div>
+    <div class="tile big"><div class="k">변</div><div class="s">변경량</div><div class="d" style="font-size:.86rem">WAL·복제 지연</div></div>
+    <div class="tile big"><div class="k">커</div><div class="s">커넥션</div><div class="d" style="font-size:.86rem">풀 고갈</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">면접 답변의 첫 문장은 이 넉 자를 세로로 읽는 것이다 — <b>"스냅샷, 락, 변경량, 커넥션 — 네 자원 각각에서 사슬이 출발합니다."</b> 그리고 하나씩 도미노를 세운다.</p>
+</div>
+
+<h3>2-1. 길이에는 축이 두 개다 — 여기서 절반이 갈린다</h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4>시간 축 — 얼마나 오래 열려 있었나</h4>
+    <p style="margin:0;font-size:.94rem">아무 SQL도 안 날리고 <b>외부 API 응답을 기다리기만 해도</b> (a)(b)(d)는 전부 진행 중이다. DB 입장에선 <b>"실행 중인 쿼리가 없는데 트랜잭션은 열려 있는"</b> 상태 — PostgreSQL이 <code>pg_stat_activity.state</code>에 <b><code>idle in transaction</code></b>이라는 이름을 따로 붙여둔 바로 그 상태다.</p>
+  </div>
+  <div class="pane b">
+    <h4>변경량 축 — 얼마나 많이 바꿨나</h4>
+    <p style="margin:0;font-size:.94rem"><b>1초 만에 끝나도</b> 500만 행을 UPDATE했다면 (c)의 WAL·죽은 튜플 부피와 그 뒤 VACUUM이 치워야 할 양 측면에서 <b>긴 트랜잭션</b>이다. 시간만 보는 알람은 이 유형을 통째로 놓친다.</p>
+  </div>
+</div>
+
+<div class="rule red">"긴 트랜잭션이란?"에 <b>"오래 걸리는 트랜잭션"</b>이라고만 답하면 변경량 축을 놓친 것<br><span style="font-size:.95rem;font-weight:600">정답은 <b>"오래 열려 있거나, 많이 바꾸거나"</b> 둘 다다</span></div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 네 사슬 — 도미노를 "끝 칸"까지 세운다</h2>
+
+<p>"긴 트랜잭션은 성능을 떨어뜨립니다"는 <b>답의 제목</b>일 뿐이다. 이 문항의 채점은 <b>도미노를 몇 칸까지 세우느냐</b>로 갈린다. 먼저 네 사슬을 한 장에 나란히 놓고, 아래에서 하나씩 뜯는다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="네 개의 사슬을 가로 도미노로 나란히 그린 지도. 스냅샷과 XID 사슬은 지평선 고정에서 VACUUM 정지, bloat를 거쳐 무관한 조회 지연과 wraparound까지 이어지고, 락 사슬은 대기 큐에서 커넥션 고갈과 스레드 고갈을 거쳐 전면 장애로, 변경량 사슬은 죽은 튜플과 WAL 덩어리에서 autovacuum 폭주와 복제 지연으로, 커넥션 사슬은 idle in transaction에서 풀 고갈과 전면 장애로 이어진다">
+    <defs>
+      <marker id="lt-c" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">네 자원 → 네 사슬 → 네 개의 끝 칸</text>
+
+    <!-- ROW A -->
+    <rect x="16" y="40" width="140" height="46" rx="9" fill="#1e293b"/>
+    <text x="86" y="60" font-size="12.5" fill="#e2e8f0" text-anchor="middle" font-weight="700">(a) 스냅샷·XID</text>
+    <text x="86" y="77" font-size="10.5" fill="#94a3b8" text-anchor="middle">원인 축: 시간</text>
+    <g>
+      <rect x="170" y="40" width="166" height="46" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="253" y="59" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">스냅샷·XID를 쥔다</text>
+      <text x="253" y="76" font-size="10.5" fill="#1e40af" text-anchor="middle">읽기만 해도 성립</text>
+      <rect x="362" y="40" width="166" height="46" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="445" y="59" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">xmin 지평선 고정</text>
+      <text x="445" y="76" font-size="10.5" fill="#1e40af" text-anchor="middle">"아직 볼 수 있다"의 하한</text>
+      <rect x="554" y="40" width="166" height="46" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+      <text x="637" y="59" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">VACUUM 정지</text>
+      <text x="637" y="76" font-size="10.5" fill="#b45309" text-anchor="middle">dead but not yet removable</text>
+      <rect x="746" y="40" width="166" height="46" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="829" y="59" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">테이블·인덱스 bloat</text>
+      <text x="829" y="76" font-size="10.5" fill="#7f1d1d" text-anchor="middle">visibility map 꺼짐</text>
+      <rect x="938" y="40" width="166" height="46" rx="8" fill="#dc2626"/>
+      <text x="1021" y="59" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">무관한 조회까지 지연</text>
+      <text x="1021" y="76" font-size="10.5" fill="#fecaca" text-anchor="middle">끝까지 가면 wraparound</text>
+      <line x1="338" y1="63" x2="358" y2="63" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="530" y1="63" x2="550" y2="63" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="722" y1="63" x2="742" y2="63" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="914" y1="63" x2="934" y2="63" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+    </g>
+
+    <!-- ROW B -->
+    <rect x="16" y="114" width="140" height="46" rx="9" fill="#1e293b"/>
+    <text x="86" y="134" font-size="12.5" fill="#e2e8f0" text-anchor="middle" font-weight="700">(b) 락</text>
+    <text x="86" y="151" font-size="10.5" fill="#94a3b8" text-anchor="middle">원인 축: 시간</text>
+    <g>
+      <rect x="170" y="114" width="166" height="46" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="253" y="133" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">행 락·ACCESS SHARE</text>
+      <text x="253" y="150" font-size="10.5" fill="#1e40af" text-anchor="middle">커밋까지 절대 안 풀린다</text>
+      <rect x="362" y="114" width="166" height="46" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+      <text x="445" y="133" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">대기 큐가 자란다</text>
+      <text x="445" y="150" font-size="10.5" fill="#b45309" text-anchor="middle">lock_timeout 기본 0 = 무한</text>
+      <rect x="554" y="114" width="166" height="46" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="637" y="133" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">대기자가 커넥션 점유</text>
+      <text x="637" y="150" font-size="10.5" fill="#7f1d1d" text-anchor="middle">풀(기본 10) 고갈</text>
+      <rect x="746" y="114" width="166" height="46" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="829" y="133" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">톰캣 워커 스레드 고갈</text>
+      <text x="829" y="150" font-size="10.5" fill="#7f1d1d" text-anchor="middle">커넥션 대기가 스레드를 문다</text>
+      <rect x="938" y="114" width="166" height="46" rx="8" fill="#dc2626"/>
+      <text x="1021" y="133" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">헬스체크까지 실패</text>
+      <text x="1021" y="150" font-size="10.5" fill="#fecaca" text-anchor="middle">= 서비스 전면 장애</text>
+      <line x1="338" y1="137" x2="358" y2="137" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="530" y1="137" x2="550" y2="137" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="722" y1="137" x2="742" y2="137" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="914" y1="137" x2="934" y2="137" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+    </g>
+
+    <!-- ROW C -->
+    <rect x="16" y="188" width="140" height="46" rx="9" fill="#1e293b"/>
+    <text x="86" y="208" font-size="12.5" fill="#e2e8f0" text-anchor="middle" font-weight="700">(c) 변경량</text>
+    <text x="86" y="225" font-size="10.5" fill="#fbbf24" text-anchor="middle">원인 축: 변경 행 수</text>
+    <g>
+      <rect x="170" y="188" width="166" height="46" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="253" y="207" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">한 트랜잭션에 500만 행</text>
+      <text x="253" y="224" font-size="10.5" fill="#1e40af" text-anchor="middle">죽은 튜플·WAL 한 덩어리</text>
+      <rect x="362" y="188" width="166" height="46" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+      <text x="445" y="207" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">커밋 순간 한꺼번에</text>
+      <text x="445" y="224" font-size="10.5" fill="#b45309" text-anchor="middle">"치워도 됨"으로 전환</text>
+      <rect x="554" y="188" width="166" height="46" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="637" y="207" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">autovacuum 폭주</text>
+      <text x="637" y="224" font-size="10.5" fill="#7f1d1d" text-anchor="middle">테이블+모든 인덱스 훑기</text>
+      <rect x="746" y="188" width="166" height="46" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="829" y="207" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">논리 복제·CDC는</text>
+      <text x="829" y="224" font-size="10.5" fill="#7f1d1d" text-anchor="middle">커밋 시점에 통째로 전송</text>
+      <rect x="938" y="188" width="166" height="46" rx="8" fill="#dc2626"/>
+      <text x="1021" y="207" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">지연이 계단처럼 뛴다</text>
+      <text x="1021" y="224" font-size="10.5" fill="#fecaca" text-anchor="middle">레플리카는 옛 데이터</text>
+      <line x1="338" y1="211" x2="358" y2="211" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="530" y1="211" x2="550" y2="211" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="722" y1="211" x2="742" y2="211" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="914" y1="211" x2="934" y2="211" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+    </g>
+
+    <!-- ROW D -->
+    <rect x="16" y="262" width="140" height="46" rx="9" fill="#1e293b"/>
+    <text x="86" y="282" font-size="12.5" fill="#e2e8f0" text-anchor="middle" font-weight="700">(d) 커넥션</text>
+    <text x="86" y="299" font-size="10.5" fill="#94a3b8" text-anchor="middle">원인 축: 시간</text>
+    <g>
+      <rect x="170" y="262" width="166" height="46" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="253" y="281" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">락이 하나도 없어도</text>
+      <text x="253" y="298" font-size="10.5" fill="#1e40af" text-anchor="middle">커넥션=프로세스를 점유</text>
+      <rect x="362" y="262" width="166" height="46" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+      <text x="445" y="281" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">idle in transaction</text>
+      <text x="445" y="298" font-size="10.5" fill="#b45309" text-anchor="middle">외부 호출 3초 = 3초 독점</text>
+      <rect x="554" y="262" width="166" height="46" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="637" y="281" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">리틀의 법칙</text>
+      <text x="637" y="298" font-size="10.5" fill="#7f1d1d" text-anchor="middle">20건/초 × 3초 = 60개 필요</text>
+      <rect x="746" y="262" width="166" height="46" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="829" y="281" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">풀 고갈 → 스레드 대기</text>
+      <text x="829" y="298" font-size="10.5" fill="#7f1d1d" text-anchor="middle">(b)의 3·4칸과 합류</text>
+      <rect x="938" y="262" width="166" height="46" rx="8" fill="#dc2626"/>
+      <text x="1021" y="281" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">전면 장애</text>
+      <text x="1021" y="298" font-size="10.5" fill="#fecaca" text-anchor="middle">쓰기를 했다면 (a)도 동시에</text>
+      <line x1="338" y1="285" x2="358" y2="285" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="530" y1="285" x2="550" y2="285" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="722" y1="285" x2="742" y2="285" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+      <line x1="914" y1="285" x2="934" y2="285" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-c)"/>
+    </g>
+
+    <rect x="16" y="330" width="1088" height="32" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="351" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">(b)와 (d)는 4번째 칸에서 합류하고, (a)와 (c)는 "VACUUM"에서 만난다 — 하나의 긴 트랜잭션이 보통 두세 사슬을 동시에 굴린다</text>
+  </svg>
+  <figcaption>왼쪽 끝이 <b>붙든 자원</b>, 오른쪽 끝이 <b>면접에서 반드시 말해야 하는 끝 칸</b>이다. "락 경합이 생겨서 느려집니다"는 (b)의 <b>두 번째 칸</b>에서 멈춘 답이다.</figcaption>
+</figure>
+
+<h3>3-1. 사슬 (a) — 지평선 고정 → VACUUM 정지 → bloat → <b>무관한 조회까지</b> 지연</h3>
+
+<p>네 사슬 중 이것이 <b>PostgreSQL 고유이면서 가장 먼저 말해야 하는 사슬</b>이다. <b>락도 안 잡고 아무것도 안 하면서 그냥 열려만 있는 세션 하나가 테이블 전체를 부풀릴 수 있다</b>는 것이 결론인데, 이게 왜 가능한지가 직관에 안 맞기 때문이다.</p>
+
+<div class="step">
+  <div class="n">1</div>
+  <div class="body"><b>전제 — 옛 버전은 "별도 공간"이 아니라 테이블 안에 남는다.</b> PostgreSQL은 UPDATE 시 행을 제자리에서 덮어쓰지 않고 <b>새 버전 튜플을 힙 페이지에 하나 더 쓰고</b>, 옛 튜플 헤더에 "이 XID가 나를 지웠다"(<code>xmax</code>)를 표시한다. DELETE는 표시만 한다. 아무도 볼 수 없게 된 순간부터 <b>죽은 튜플</b>이 되어 <b>VACUUM</b>(보통 autovacuum)이 회수한다.</div>
+</div>
+<div class="step">
+  <div class="n">2</div>
+  <div class="body"><b>"아무도 볼 수 없게 됐다"를 판정하는 기준선이 <span style="color:#2563eb">xmin 지평선</span>이다.</b> 지금 살아 있는 모든 트랜잭션의 스냅샷 <code>xmin</code>과 각자의 XID 가운데 <b>가장 오래된 값</b>. 지평선보다 <b>나중에</b> 죽은 튜플은 VACUUM이 건드릴 수 없다.</div>
+</div>
+<div class="step red">
+  <div class="n">3</div>
+  <div class="body"><b>왜 못 건드리나 — 원리로 말하면 이렇다.</b> 지평선을 붙든 트랜잭션은 <b>자기가 스냅샷을 뜬 시점의 세상을 볼 권리</b>가 있다. 그 뒤 누가 UPDATE를 커밋했어도 그 트랜잭션에게는 <b>옛 버전이 정답</b>이다. 옛 버전을 지우면 보여줄 것이 없어지므로 격리성이 깨진다. VACUUM은 이 가능성을 배제할 수 없으니 <b>"지평선보다 나중에 죽은 튜플은 전부 살려 둔다"</b>는 안전한 쪽을 택한다. <b>그 트랜잭션이 실제로 그 행을 읽을 생각인지, SQL을 하나라도 더 보낼 생각인지는 아무 상관이 없다.</b></div>
+</div>
+<div class="step red">
+  <div class="n">4</div>
+  <div class="body"><b>비용은 그 트랜잭션과 <span style="color:#dc2626">무관한 쿼리</span>에 전가된다.</b> 초당 100번 갱신되는 행이라면 10분 동안 죽은 버전 <b>6만 개</b> — 그 행을 읽는 모든 쿼리가 인덱스에서 6만 개 TID를 만나 힙을 하나씩 찔러 "죽었나"를 확인한다. 죽은 튜플이 섞인 페이지는 visibility map이 꺼져 <b>Index Only Scan이 힙을 다시 방문</b>하고(커버링 인덱스 무력화), 부푼 <code>relpages</code>로 플래너의 비용 계산까지 흔들린다. <b>그 트랜잭션 자신도</b> 같은 죽은 튜플 더미를 헤치므로 "배치가 뒤로 갈수록 느려진다"가 된다.</div>
+</div>
+<div class="step red">
+  <div class="n">5</div>
+  <div class="body"><b>끝 칸은 wraparound다.</b> XID는 32비트 순환 카운터라 VACUUM이 오래된 튜플을 주기적으로 <b>동결(freeze)</b>해야 하는데, 동결 기준선도 같은 지평선에 묶인다. <code>relfrozenxid</code>가 전진하지 못하고 <code>age(datfrozenxid)</code>만 자라 <code>autovacuum_freeze_max_age</code>(기본 2억)를 넘으면 <b>취소 불가능한 anti-wraparound VACUUM</b>이 돌고(그래도 그 트랜잭션 뒤는 못 치운다), 한계에 다가가면 경고 끝에 <b>쓰기를 거부</b>한다.</div>
+</div>
+
+<div class="memo red">
+  <h4>반드시 붙여야 할 문장 — "이 사슬은 SELECT만 해도 성립한다"</h4>
+  <p>락을 하나도 안 잡는 순수 조회 트랜잭션이라도 <b>스냅샷을 쥐고 있는 한 지평선을 붙든다.</b> PostgreSQL 기준으로 정확히는 조건이 둘이다.</p>
+  <div class="grid g2">
+    <div class="tile"><div class="k">ⓐ 스냅샷을 쥔 상태</div><div class="d">REPEATABLE READ 이상은 <b>첫 문장부터 끝까지</b>, 기본값 READ COMMITTED는 <b>문장이 실행되는 동안</b>과 열어 둔 커서. → 30초짜리 <code>GROUP BY</code> 하나는 30초를 붙든다.</div></div>
+    <div class="tile red"><div class="k">ⓑ XID를 배정받은 상태</div><div class="d"><b>무언가 쓴 뒤 커밋·롤백까지.</b> 현업에서 가장 흔한 형태 — <b>UPDATE 한 줄 뒤에 외부 API를 기다리는</b> — 가 여기다. 꼼짝없이 붙든다.</div></div>
+  </div>
+  <p style="margin-bottom:0">"READ COMMITTED로 읽기만 하고 문장 사이에 놀고 있는" 트랜잭션은 안 붙들지만, <b>리포트를 REPEATABLE READ로 돌리면 30분 내내 ⓐ</b>다. 그래서 "일관된 스냅샷이 필요하다"며 격리 수준을 올리는 것은 <b>일관성을 지평선으로 사는 거래</b>다.</p>
+</div>
+
+<div class="codehead plain"><span class="tag">SQL</span> 범인을 30초 안에 특정하는 한 줄 — "지평선을 누가 붙들고 있나"</div>
+<pre><code><span class="cm">-- idle in transaction 으로 열려만 있는 세션이 지평선을 얼마나 오래 붙들고 있나</span>
+<span class="kw">SELECT</span> pid,
+       state,                                <span class="cm">-- 'idle in transaction' 이면 DB 밖에서 뭔가를 기다리는 중</span>
+       now() - xact_start <span class="kw">AS</span> xact_age,       <span class="cm">-- 트랜잭션이 열린 지 얼마나 됐나</span>
+       backend_xmin,                         <span class="cm">-- 이 세션이 붙들고 있는 스냅샷의 xmin (= 지평선 후보)</span>
+       left(query, <span class="st">60</span>) <span class="kw">AS</span> last_query         <span class="cm">-- 멈추기 직전에 실행한 문장 = 코드의 어느 줄인지 단서</span>
+<span class="kw">FROM</span> pg_stat_activity
+<span class="kw">WHERE</span> backend_type = <span class="st">'client backend'</span>
+  <span class="kw">AND</span> state &lt;&gt; <span class="st">'idle'</span>                        <span class="cm">-- 'idle' 은 트랜잭션이 없는 유휴 커넥션 — 무해하다</span>
+  <span class="kw">AND</span> xact_start &lt; now() - <span class="kw">interval</span> <span class="st">'1 minute'</span>
+<span class="kw">ORDER BY</span> xact_start;</code></pre>
+
+<div class="callout trap"><span class="t">"긴 트랜잭션이 없는데 VACUUM이 안 치운다" — 지평선을 붙드는 것은 세션만이 아니다 <span class="badge bonus">가산점</span></span>
+  ① 구독자가 죽은 <b>논리 복제 슬롯</b>(<code>pg_replication_slots.xmin</code>/<code>catalog_xmin</code>) ② 커밋도 롤백도 안 된 <b>고아 2PC</b>(<code>pg_prepared_xacts</code>) ③ <b>레플리카의 긴 쿼리</b> — <code>hot_standby_feedback = on</code>이면 스탠바이의 스냅샷이 프라이머리로 전달돼(<code>pg_stat_replication.backend_xmin</code>) <b>프라이머리의 VACUUM을 막는다.</b> 사슬 (a)가 복제선을 타고 넘어오는 것이다.
+</div>
+
+<div class="callout info"><span class="t">롤백은 이 사슬의 비용이 아니다 — PostgreSQL에서는</span>
+  롤백은 <code>pg_xact</code>(CLOG)에 "이 XID는 abort"라고 <b>표시만 하는 O(1)</b> 작업이라, 500만 행을 바꾸다 롤백해도 즉시 끝나고 락도 즉시 풀린다. 대신 그 500만 개 새 튜플은 <b>죽은 튜플로 남아 VACUUM의 몫</b>이 되고 이미 쓴 WAL은 되돌릴 수 없다 — <b>비용이 사라진 게 아니라 "롤백하는 세션"에서 "나중의 VACUUM"으로 옮겨졌을 뿐</b>이다. 그래도 "느리니까 KILL했더니 상황이 더 길어진다"는 MySQL식 함정은 PostgreSQL에 없다.
+</div>
+
+<div class="callout warn"><span class="t">MySQL 대조 — 이름만 다르고 원리는 같다</span>
+  InnoDB는 행을 <b>제자리에서 덮어쓰고</b> 옛 값을 <b>undo 로그</b>에 두며, 스냅샷 읽기는 롤 포인터를 따라 <b>버전 체인</b>을 거슬러 내려간다. 긴 트랜잭션은 <b>purge 스레드</b>를 멈춰 <code>History list length</code>를 키우고, 비용은 "체인 순회 + 삭제 마크 레코드 건너뛰기"로 나타난다. <b>롤백은 undo를 거꾸로 전부 타므로 변경량에 비례해 오래 걸리고 그동안 락을 쥔다</b> — PostgreSQL과 가장 크게 갈리는 지점이다. 엔진이 달라도 <b>"누군가 아직 볼 수 있는 옛 버전은 못 지운다"</b>는 원리는 같다.
+</div>
+
+<h3>3-2. 사슬 (b) — 락 점유 시간 → 대기 큐 → 커넥션 고갈 → <b>서비스 전면 영향</b></h3>
+
+<div class="step red">
+  <div class="n">1</div>
+  <div class="body"><code>UPDATE</code>/<code>DELETE</code>/<code>SELECT ... FOR UPDATE</code>가 잡은 <b>행 락은 커밋·롤백까지 절대 안 풀린다.</b> 명시적 락이 없어도 UPDATE 문 자체가 행 락(튜플 헤더 <code>xmax</code>)을 잡는다. 락이 <b>별도 메모리가 아니라 튜플에 기록</b>되므로 "락 에스컬레이션"은 없다 — <b>대신 상한도 없다.</b></div>
+</div>
+<div class="step red">
+  <div class="n">2</div>
+  <div class="body">같은 행을 원하는 트랜잭션은 대기한다(<code>wait_event_type = 'Lock'</code>, <code>wait_event = 'transactionid'</code>). <b><code>lock_timeout</code> 기본값 0 = 무한 대기</b> — 아무도 안 정해 주면 <b>영원히</b> 기다린다.</div>
+</div>
+<div class="step red">
+  <div class="n">3</div>
+  <div class="body">대기 중인 트랜잭션은 그동안 <b>자기 커넥션을 쥔 채 아무 일도 못 한다.</b> 대기자가 풀 크기(HikariCP 기본 10)만큼 쌓이는 순간 <b>커넥션 풀 고갈</b> → 이제 재고 행과 상관없는 요청도 <code>Connection is not available</code>(기본 30초 대기 후).</div>
+</div>
+<div class="step red">
+  <div class="n">4</div>
+  <div class="body">커넥션을 기다리는 요청은 <b>톰캣 워커 스레드를 문 채</b> 대기한다 → 스레드풀 고갈 → <b>헬스체크·로그인·정적 응답까지 실패</b> → LB가 인스턴스를 제외 → 나머지로 쏠림 → <b>전면 장애.</b></div>
+</div>
+
+<div class="rule red">락은 <b>"행 하나"</b>에 걸렸는데 영향은 <b>"서비스 전체"</b>다<br><span style="font-size:.93rem;font-weight:600">게다가 자기 강화적이다 — 대기 때문에 다른 트랜잭션도 길어지고, 길어진 트랜잭션이 또 락을 오래 쥔다(컨보이)</span></div>
+
+<p>락 보유 시간이 길수록 <b>서로 다른 순서로 락을 잡는 두 트랜잭션이 겹칠 확률</b>도 올라가 <b>데드락 빈도</b>가 함께 오른다. PostgreSQL은 <code>deadlock_timeout</code>(기본 1초)만큼 기다려도 안 풀리면 대기 그래프를 검사해 순환을 찾고 한쪽을 <code>40P01</code>로 abort한다 — <b>감지는 되지만 그 1초 동안 둘 다 커넥션을 쥐고 있다.</b></p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>위험 지점 ① 핫 로우</h4>
+    <p style="margin:0;font-size:.94rem">재고·잔액·일별 카운터처럼 <b>모두가 갱신하는 행</b>. 락 대기 큐가 가장 빨리 자라고, <b>사슬 (a)의 죽은 버전도 가장 빨리 쌓이는</b> 곳이다 — 두 사슬이 같은 지점에서 만난다.</p>
+  </div>
+  <div class="pane r">
+    <h4>위험 지점 ② 테이블 락 — <b>SELECT도 잡는다</b></h4>
+    <p style="margin:0;font-size:.94rem">트랜잭션이 테이블을 한 번이라도 읽으면 <b>끝날 때까지 <code>ACCESS SHARE</code></b>를 쥔다. 평소엔 아무와도 충돌하지 않지만 딱 하나, <code>ALTER TABLE</code>이 요구하는 <b><code>ACCESS EXCLUSIVE</code></b>와 충돌한다.</p>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>"인덱스 하나 추가했는데 테이블 전체가 멈췄다"의 정체 — 새치기 없는 대기열</h4>
+  <div class="chain">
+    <span class="chip b">긴 트랜잭션이 <code>ACCESS SHARE</code> 보유</span><span class="arrow">→</span>
+    <span class="chip w">ALTER가 <code>ACCESS EXCLUSIVE</code> 대기</span><span class="arrow">→</span>
+    <span class="chip r">그 뒤에 도착한 <b>단순 SELECT까지</b> ALTER 뒤에 줄</span><span class="arrow">→</span>
+    <span class="chip r">전면 정지</span>
+  </div>
+  <p style="margin-bottom:0"><b>PostgreSQL의 락 대기열은 새치기를 허용하지 않는다.</b> 그래서 원인은 ALTER가 아니라 <b>그 앞의 긴 트랜잭션</b>이다. 그리고 <b>autovacuum도 이 대기열의 피해자</b>다 — 일반 autovacuum은 누군가의 락 요청을 막고 있으면 스스로 물러나고(로그의 "canceling autovacuum task"), anti-wraparound VACUUM만은 물러나지 않는다. "VACUUM이 돌긴 도는데 끝을 못 낸다"가 여기서 나온다.</p>
+</div>
+
+<div class="callout warn"><span class="t">MySQL 대조 — 타임아웃이 둘로 갈려 있다</span>
+  같은 사슬이 MySQL에서는 <b>메타데이터 락(MDL)</b>이라는 이름으로 존재한다. 다른 점은 <b>타임아웃이 둘</b>이라는 것 — 행 락은 <code>innodb_lock_wait_timeout</code>(기본 50초), MDL은 <code>lock_wait_timeout</code>(사실상 무제한). PostgreSQL은 <code>lock_timeout</code> <b>하나</b>(기본 0 = 무한)로 둘 다 다스린다. <b>"MySQL은 기본이 50초라 그나마 끊기는데, PostgreSQL은 기본이 무한 대기라 반드시 직접 정해야 한다"</b>가 실무 차이다.
+</div>
+
+<h3>3-3. 사슬 (c) — 대형 트랜잭션 → 죽은 튜플·WAL 한 덩어리 → autovacuum 폭주·복제 지연</h3>
+
+<p>이 사슬만은 <b>시간이 아니라 변경량</b>이 원인이다. 열어놓고 아무것도 안 하는 트랜잭션은 (c)와 무관하다.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>물리(스트리밍) 복제 — 계단은 덜하다</h4>
+    <p style="margin:0;font-size:.94rem">WAL은 <b>커밋을 기다리지 않고 생성되는 대로</b> 흘러가므로 "커밋 순간 계단"은 덜하다. 대신 스탠바이의 재생은 <b>단일 프로세스</b>라 WAL 폭주를 못 따라가면 <code>replay_lag</code>이 벌어지고, 스탠바이의 긴 SELECT는 재생과 충돌해 취소되거나(<code>max_standby_streaming_delay</code>) <code>hot_standby_feedback</code>으로 <b>프라이머리 VACUUM을 되려 막는다</b> — 사슬 (a)로 되돌아간다.</p>
+  </div>
+  <div class="pane r">
+    <h4>논리 복제 / CDC(Debezium 등) — 계단이 생긴다</h4>
+    <p style="margin:0;font-size:.94rem"><b>트랜잭션 단위로 모았다가 COMMIT 순간 한 덩어리로</b> 보낸다 → 커밋되는 순간 구독자에 10분어치가 도착하고 <b>그 뒤 작은 트랜잭션들이 전부 줄을 선다</b> → 지연이 <b>계단처럼</b> 뛴다. 모으는 동안 <code>logical_decoding_work_mem</code>을 넘으면 프라이머리 디스크로 스필한다.</p>
+  </div>
+</div>
+
+<p>그 결과 <b>레플리카·구독자를 읽는 모든 것이 옛 데이터를 본다</b> — 읽기 라우팅을 탄 서비스에서는 "방금 썼는데 목록에 없어요", 논리 복제 기반 검색 인덱싱·통계·이벤트 발행은 밀린다. 동기 복제(<code>synchronous_commit = remote_apply</code>)라면 스탠바이 적용 지연이 <b>프라이머리 커밋 응답 지연으로 되돌아온다.</b></p>
+
+<div class="callout trap"><span class="t">이 지연은 트랜잭션이 끝나도 바로 안 풀린다</span>
+  큰 트랜잭션 하나가 만든 지연은 <b>구독자가 밀린 것을 따라잡고 autovacuum이 죽은 튜플을 치울 때까지</b> 지속된다. 그래서 처방은 하나 — <b>큰 변경을 청크로 나눠 커밋</b>하면 죽은 튜플이 청크 단위로 "치워도 되는 상태"가 되어 autovacuum이 사이사이 따라오고, 논리 복제도 청크 단위로 흘러간다(4절 기법 ⑤).
+</div>
+
+<div class="callout warn"><span class="t">MySQL 대조 — "PostgreSQL 레플리카는 괜찮다"가 아니다</span>
+  MySQL의 binlog는 세션별 캐시에 쌓이다가 <b>COMMIT 순간 한 덩어리</b>로 기록되고, 리플리카는 그것을 <b>하나의 트랜잭션으로 재실행</b>한다(멀티스레드 복제도 트랜잭션 "안"은 못 쪼갠다) → <code>Seconds_Behind_Source</code>가 계단처럼 뛴다. PostgreSQL의 <b>논리 복제</b>가 정확히 이 양상이고 <b>물리 복제</b>는 다르다 — <b>"어떤 복제냐에 따라 다르다"</b>고 답한다.
+</div>
+
+<h3>3-4. 사슬 (d) — 커넥션 점유 → 풀 고갈 → 무관한 요청까지 대기</h3>
+
+<div class="callout info"><span class="t">(b)와 헷갈리기 쉬운데 원인이 다르다</span>
+  <b>(b)는 락 때문에 남이 기다리는 것</b>이고, <b>(d)는 락이 하나도 없어도</b> 트랜잭션이 커넥션을 놀리고 있는 것이다. 스프링 <code>@Transactional</code>은 시작 시점에 커넥션을 빌려 <code>ThreadLocal</code>에 묶고 <b>끝날 때까지 반납하지 않는다</b> — 한 트랜잭션의 모든 SQL이 같은 커넥션을 타야 하므로 구조적으로 당연하다. PgBouncer의 transaction pooling도 마찬가지로 <b>트랜잭션이 끝나야</b> 서버 커넥션을 남에게 돌린다.
+</div>
+
+<div class="memo">
+  <h4>숫자로 외우는 리틀의 법칙 — 300배 차이</h4>
+  <div class="rule">동시 점유 커넥션 ≈ <b>초당 요청 수 × 평균 점유 시간</b></div>
+  <div class="grid g2">
+    <div class="tile red"><div class="k">트랜잭션 안에 외부 API 3초</div><div class="d">초당 20건 × 3초 = <b>60개 필요</b> → 풀이 10개면 <b>즉시 고갈</b></div></div>
+    <div class="tile ok"><div class="k">외부 호출을 밖으로 뺀 10ms</div><div class="d">초당 20건 × 0.01초 = <b>0.2개</b>면 충분 → <b>300배 차이</b></div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">DB 쪽에서 보면 이 상태는 <code>pg_stat_activity</code>에 <b><code>state = 'idle in transaction'</code>이고 <code>query</code> 칸에는 "마지막으로 실행한 문장"이 남아 있는 행</b>으로 보인다 — 그 문장이 <b>코드의 어느 줄에서 멈춰 있는지</b>를 알려주는 단서다.</p>
+</div>
+
+<div class="callout trap"><span class="t">"커넥션이 모자라면 풀을 늘리면 되지 않나?"에 대한 답</span>
+  PostgreSQL의 커넥션 하나는 DB 서버에서 <b>OS 프로세스 하나</b>와 수 MB의 메모리, 열린 트랜잭션 하나는 <b>스냅샷 하나</b>다. 풀을 60개로 늘리면 (d)는 가려지지만 <b>프로세스 60개가 스냅샷을 계산하며 경합</b>하고 <b>(a)의 지평선 후보가 6배</b>가 된다. <b>병목(외부 API 대기)을 안 고치고 숫자만 키운 것</b>이다. (커넥션을 늘리면 왜 처리량이 오히려 꺾이는지는 <b>15-connection-count-vs-throughput</b>이 따로 다룬다.)
+</div>
+
+<h3>3-5. 네 사슬 한 장 정리 — 관측 지표까지 짝지어</h3>
+
+<table class="wide">
+  <thead><tr><th>사슬</th><th>원인 축</th><th>첫 도미노</th><th>마지막 도미노</th><th>관측 지표</th></tr></thead>
+  <tbody>
+    <tr><td><b>(a) 스냅샷·XID</b></td><td>시간<br><span class="sub">읽기만 해도 — RR은 항상, RC는 문장 중·쓰기 후</span></td><td>지평선 고정 → VACUUM 정지</td><td class="bad">bloat · Index Only Scan 퇴화 · 통계 왜곡, 끝은 wraparound</td><td>최고령 <code>backend_xmin</code>/<code>backend_xid</code>, <code>n_dead_tup</code>, <code>age(datfrozenxid)</code></td></tr>
+    <tr><td><b>(b) 락</b></td><td>시간<br><span class="sub">쓰기·FOR UPDATE, 테이블 락은 SELECT도</span></td><td>락 대기 큐</td><td class="bad">풀·스레드 고갈 → 전면 장애, DDL 대기열</td><td><code>wait_event_type = 'Lock'</code> 세션 수, <code>log_lock_waits</code>, 데드락 수</td></tr>
+    <tr><td><b>(c) 변경량</b></td><td>변경 행 수</td><td>죽은 튜플·WAL 한 덩어리</td><td class="bad">autovacuum 폭주, 논리 복제 지연 급증</td><td><code>pg_stat_replication.replay_lag</code>, 슬롯 지연, WAL 생성량</td></tr>
+    <tr><td><b>(d) 커넥션</b></td><td>시간<br><span class="sub">락이 없어도</span></td><td>프로세스 놀림(<code>idle in transaction</code>)</td><td class="bad">풀 고갈 → 전면 장애</td><td><code>state</code> 분포, 풀 pending 수</td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 처방 — 짧게 만드는 다섯 기법</h2>
+
+<div class="rule">트랜잭션 안에는 <b>"DB 쓰기"</b>와 <b>"그 쓰기를 결정하는 데 꼭 필요한 최소한의 읽기"</b>만 둔다<br><span style="font-size:.93rem;font-weight:600">그 외 모든 것 — 외부 API, 파일, 메일, 무거운 계산, 사용자 대기 — 은 트랜잭션 앞이나 뒤로</span></div>
+
+<p>아래 다섯 기법은 전부 이 원칙을 코드로 옮기는 <b>서로 다른 손잡이</b>이고, 2절 그림을 다시 보면 전부 <b>"어떤 자원을 언제 놓아주는가"</b>를 앞당기는 일이다.</p>
+
+<h3>4-1. 무대 — 리뷰에서 손이 멈춰야 하는 코드</h3>
+
+<div class="codehead bad"><span class="tag">Before</span> 결제 서비스에서 흔히 보는 형태 — 트랜잭션 길이 = PG + S3 + 메일</div>
+<pre><code><span class="kw">@Service</span>
+<span class="kw">@RequiredArgsConstructor</span>
+<span class="kw">public class</span> OrderPaymentService {
+
+    <span class="kw">@Transactional</span>
+    <span class="kw">public void</span> <span class="fn">pay</span>(Long orderId, PaymentCommand cmd) {
+        Order order = orderRepository.findById(orderId).orElseThrow();  <span class="cm">// ① 첫 SELECT → 스냅샷 + 테이블 ACCESS SHARE (a·b 시작)</span>
+        order.markPaying();                       <span class="cm">// ② flush 시 UPDATE → XID 배정 + 행 락은 커밋까지 (a 지평선 고정, b)</span>
+<span class="ln-bad">        PgResult result = pgClient.approve(cmd);  <span class="cm">// ③ 외부 PG 호출 2~10초 — 커넥션·락·지평선을 전부 쥔 채</span> <span class="note">사슬 d</span></span>
+<span class="ln-bad">        byte[] receipt = receiptRenderer.render(order, result);   <span class="cm">// ④ CPU 작업</span></span>
+<span class="ln-bad">        s3Client.upload(receiptKey(order), receipt);              <span class="cm">// ⑤ 또 외부 I/O</span></span>
+        order.complete(result.approvalNo());                      <span class="cm">// ⑥</span>
+        paymentHistoryRepository.save(PaymentHistory.of(order, result));
+<span class="ln-bad">        mailSender.sendReceipt(order);                            <span class="cm">// ⑦ 또 외부 — 실패하면 결제까지 롤백?</span></span>
+    }
+}</code></pre>
+
+<p><b>DB 작업 자체는 수 ms인데 트랜잭션은 수 초다.</b> PG가 느려지는 날 주문 행 락과 커넥션이 수 초씩 잡히고, 초당 주문이 수십 건이면 풀은 몇 초 만에 고갈된다. (여기서 "PG"는 <b>결제 게이트웨이</b>다 — 데이터베이스는 항상 "PostgreSQL"로 풀어 쓴다.)</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="개선 전에는 하나의 트랜잭션이 PG 호출, 영수증 렌더링, S3 업로드, 메일 발송까지 약 6.3초 동안 열려 있지만, 개선 후에는 수 밀리초짜리 트랜잭션 두 개만 남고 외부 입출력은 전부 트랜잭션 밖에서 일어난다는 것을 보여주는 대비 타임라인">
+    <defs>
+      <marker id="lt-d" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="lt-e" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 일을 하는데 트랜잭션이 열려 있는 시간만 다르다 — 6.3초 vs 10ms</text>
+
+    <!-- BEFORE -->
+    <text x="214" y="72" font-size="12.5" fill="#b91c1c" text-anchor="end" font-weight="700">Before — @Transactional 하나</text>
+    <text x="214" y="90" font-size="11" fill="#94a3b8" text-anchor="end">메서드 전체가 경계</text>
+    <g>
+      <rect x="230" y="58" width="44" height="44" rx="5" fill="#bfdbfe" stroke="#2563eb"/>
+      <text x="252" y="85" font-size="9.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">DB</text>
+      <rect x="274" y="58" width="340" height="44" rx="5" fill="#fecaca" stroke="#dc2626"/>
+      <text x="444" y="80" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">PG 승인 대기 3초</text>
+      <text x="444" y="96" font-size="10.5" fill="#7f1d1d" text-anchor="middle">SQL은 한 줄도 없다</text>
+      <rect x="614" y="58" width="40" height="44" rx="5" fill="#fde68a" stroke="#d97706"/>
+      <text x="634" y="85" font-size="9.5" fill="#b45309" text-anchor="middle" font-weight="700">렌더</text>
+      <rect x="654" y="58" width="226" height="44" rx="5" fill="#fecaca" stroke="#dc2626"/>
+      <text x="767" y="85" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">S3 업로드 2초</text>
+      <rect x="880" y="58" width="44" height="44" rx="5" fill="#bfdbfe" stroke="#2563eb"/>
+      <text x="902" y="85" font-size="9.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">DB</text>
+      <rect x="924" y="58" width="114" height="44" rx="5" fill="#fecaca" stroke="#dc2626"/>
+      <text x="981" y="85" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">메일 1초</text>
+    </g>
+    <line x1="230" y1="112" x2="1038" y2="112" stroke="#dc2626" stroke-width="1.6" marker-end="url(#lt-d)"/>
+    <text x="634" y="130" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">이 구간 내내 커넥션 1개 + 주문 행의 배타 락 + xmin 지평선을 쥐고 있다 (약 6.3초)</text>
+
+    <!-- AFTER -->
+    <text x="214" y="192" font-size="12.5" fill="#166534" text-anchor="end" font-weight="700">After — 짧은 트랜잭션 둘</text>
+    <text x="214" y="210" font-size="11" fill="#94a3b8" text-anchor="end">TransactionTemplate 블록</text>
+    <g>
+      <rect x="230" y="178" width="44" height="44" rx="5" fill="#bbf7d0" stroke="#16a34a" stroke-width="2"/>
+      <text x="252" y="199" font-size="9.5" fill="#166534" text-anchor="middle" font-weight="700">[A]</text>
+      <text x="252" y="213" font-size="8.5" fill="#166534" text-anchor="middle">5ms</text>
+
+      <rect x="274" y="178" width="606" height="44" rx="5" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="6 4"/>
+      <text x="577" y="198" font-size="12" fill="#475569" text-anchor="middle" font-weight="700">트랜잭션 밖 — PG 승인 · 영수증 렌더 · S3 업로드</text>
+      <text x="577" y="214" font-size="11.5" fill="#16a34a" text-anchor="middle" font-weight="700">커넥션 0 · 락 0 · 지평선 0</text>
+
+      <rect x="880" y="178" width="44" height="44" rx="5" fill="#bbf7d0" stroke="#16a34a" stroke-width="2"/>
+      <text x="902" y="199" font-size="9.5" fill="#166534" text-anchor="middle" font-weight="700">[B]</text>
+      <text x="902" y="213" font-size="8.5" fill="#166534" text-anchor="middle">5ms</text>
+
+      <rect x="924" y="178" width="114" height="44" rx="5" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="6 4"/>
+      <text x="981" y="198" font-size="10.5" fill="#475569" text-anchor="middle" font-weight="700">메일·영수증은</text>
+      <text x="981" y="213" font-size="10.5" fill="#475569" text-anchor="middle">Outbox 릴레이가</text>
+    </g>
+    <line x1="230" y1="232" x2="274" y2="232" stroke="#16a34a" stroke-width="2" marker-end="url(#lt-e)"/>
+    <line x1="880" y1="232" x2="924" y2="232" stroke="#16a34a" stroke-width="2" marker-end="url(#lt-e)"/>
+    <text x="577" y="250" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">자원을 붙드는 시간은 초록 두 칸의 합 — 약 10ms (약 600배 감소)</text>
+
+    <rect x="16" y="270" width="1088" height="38" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="560" y="288" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">외부 I/O 시간은 그대로다 — 사용자 대기 시간은 안 줄어든다</text>
+    <text x="560" y="304" font-size="11.5" fill="#166534" text-anchor="middle">줄어든 것은 <tspan font-weight="700">"그 시간 동안 DB의 자원을 붙들고 있었는가"</tspan> — PG가 10초 걸려도 이제 PostgreSQL은 모른다</text>
+  </svg>
+  <figcaption>착각하기 쉬운 지점을 그림이 못 박는다 — <b>쪼개기는 응답을 빠르게 만드는 최적화가 아니다.</b> 사용자가 기다리는 6.3초는 그대로이고, 사라지는 것은 <b>그 6.3초 동안 남들이 못 쓰게 붙들고 있던 자원</b>이다.</figcaption>
+</figure>
+
+<h3>4-2. 기법 ① — 외부 호출·파일·CPU 작업을 트랜잭션 밖으로</h3>
+
+<p>가장 효과가 크고 가장 기계적인 규칙이다. <b>"이 줄이 DB에 SQL을 보내는가?" 아니면 밖으로.</b> 구조는 항상 같다.</p>
+
+<div class="chain">
+  <span class="chip g">[짧은 트랜잭션 A] 상태 선점</span><span class="arrow">→</span>
+  <span class="chip b">[트랜잭션 밖] 외부 I/O</span><span class="arrow">→</span>
+  <span class="chip g">[짧은 트랜잭션 B] 결과 반영</span>
+</div>
+
+<p>놓아주는 자원으로 말하면 — <b>외부 I/O가 시작되기 전에 커밋해 커넥션·행 락·지평선을 한꺼번에 반납한다.</b> <b>사슬 (a)(b)(d) 셋을 동시에 끊는 유일한 기법</b>이라 다섯 중 첫 번째다.</p>
+
+<h3>4-3. 기법 ② — <code>TransactionTemplate</code>로 경계를 "메서드"에서 "블록"으로</h3>
+
+<p><code>@Transactional</code>은 선언형이라 편하지만 <b>경계가 항상 메서드 전체</b>다. 메서드 안에서 "여기부터 여기까지만"을 표현할 수 없어서, 외부 호출을 빼려면 <b>메서드를 쪼개 별도 빈으로 옮겨야</b> 한다(자기 호출은 프록시를 안 타므로). <code>TransactionTemplate</code>은 그 대신 <b>블록 단위로</b> 경계를 긋는다.</p>
+
+<div class="codehead good"><span class="tag">After</span> 기법 ①+② — 트랜잭션 길이가 "PG + S3 + 메일"에서 "UPDATE 한 번" 두 개로</div>
+<pre><code><span class="kw">@Service</span>
+<span class="kw">@RequiredArgsConstructor</span>
+<span class="kw">public class</span> OrderPaymentService {
+
+    <span class="kw">private final</span> TransactionTemplate tx;   <span class="cm">// PlatformTransactionManager 를 감싼 빈</span>
+
+<span class="ln-good">    <span class="cm">// 주의: 이 메서드에는 @Transactional 이 없다 — 있으면 아래 블록들이 전부 여기에 합류해 무의미해진다</span></span>
+    <span class="kw">public void</span> <span class="fn">pay</span>(Long orderId, PaymentCommand cmd) {
+
+<span class="ln-good">        <span class="cm">// [A] 짧은 트랜잭션 — 상태 선점. READY → PAYING 만 허용해 이중 결제를 여기서 막는다</span></span>
+        String paymentKey = tx.execute(status -&gt; {
+            Order order = orderRepository.findById(orderId).orElseThrow();
+            order.markPaying();                       <span class="cm">// 상태가 READY 가 아니면 예외 → 이 블록만 롤백</span>
+            <span class="kw">return</span> order.getPaymentKey();             <span class="cm">// 멱등 키 (주문 생성 시 발급)</span>
+        });                                           <span class="cm">// ← 커밋: 락·커넥션·지평선 전부 반납. 수 ms</span>
+
+<span class="ln-good">        <span class="cm">// [밖] 외부 I/O — 커넥션 0개, 락 0개, 지평선 0개</span></span>
+        PgResult result;
+        <span class="kw">try</span> {
+            result = pgClient.approve(cmd.withIdempotencyKey(paymentKey));
+        } <span class="kw">catch</span> (PgException e) {
+            tx.executeWithoutResult(s -&gt;
+                orderRepository.findById(orderId).orElseThrow().markPayFailed(e.code()));
+            <span class="kw">throw</span> e;
+        }
+
+<span class="ln-good">        <span class="cm">// [B] 짧은 트랜잭션 — 결과 반영 + 후처리는 "예약"만 (기법 ④)</span></span>
+        tx.executeWithoutResult(status -&gt; {
+            Order order = orderRepository.findById(orderId).orElseThrow();
+            order.complete(result.approvalNo());
+            paymentHistoryRepository.save(PaymentHistory.of(order, result));
+            outboxRepository.save(OutboxMessage.of(<span class="st">"PaymentCompleted"</span>, order.getId()));
+        });                                           <span class="cm">// ← 커밋. 영수증 생성·S3·메일은 릴레이가 별도 트랜잭션으로</span>
+    }
+}</code></pre>
+
+<div class="memo red">
+  <h4><code>TransactionTemplate</code>의 함정 — 조용히 원본으로 되돌아간다</h4>
+  <p>기본 전파가 <code>REQUIRED</code>라서 <b>호출자가 이미 트랜잭션 안이면 블록들이 전부 거기에 합류</b>한다. 컨트롤러나 파사드에 <code>@Transactional</code>이 붙어 있으면 위 코드는 <b>아무 에러 없이, 조용히 원본과 똑같은 긴 트랜잭션</b>이 된다. 테스트는 통과하고 코드는 개선된 것처럼 보인다.</p>
+  <p style="margin-bottom:0">그래서 <b>장치로 막는다</b> — 진입점에서 <code>TransactionSynchronizationManager.isActualTransactionActive()</code>가 <code>false</code>임을 단정하는 테스트를 하나 두거나, <b>"컨트롤러·파사드 계층에는 <code>@Transactional</code>을 붙이지 않는다"</b>를 ArchUnit 룰로 고정한다(6-1절).</p>
+</div>
+
+<h3>4-4. 기법 ③ — 읽기를 분리한다</h3>
+
+<p>쓰기 트랜잭션 안에서 무거운 조회를 하지 않는다. 이유는 사슬 (a) — <b>쓰기로 XID를 배정받은 트랜잭션은 그 순간부터 지평선에 박히고, 그 뒤의 30초짜리 조회는 30초 동안 지평선을 끌고 간다.</b></p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 집계 30초 + 쓰기 1ms를 한 트랜잭션에</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">closeDailySettlement</span>(LocalDate day) {
+<span class="ln-bad">    SettlementSummary summary =
+        settlementQuery.aggregate(day);   <span class="cm">// 무거운 GROUP BY 30초</span></span>
+    settlementRepository.save(
+        Settlement.close(day, summary));  <span class="cm">// 실제 쓰기는 1ms</span>
+}
+<span class="cm">
+// 30초 동안 커넥션 점유, 쓰기 이후엔 지평선까지</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 읽기는 readOnly로 따로, 쓰기만 짧게</div>
+<pre><code><span class="cm">// 클래스 레벨 @Transactional 없음</span>
+<span class="kw">public void</span> <span class="fn">closeDailySettlement</span>(LocalDate day) {
+<span class="ln-good">    SettlementSummary summary =
+        settlementQuery.aggregate(day);   <span class="cm">// @Transactional(readOnly = true) 별도 빈</span></span>
+<span class="ln-good">    settlementCommand.close(day, summary); <span class="cm">// @Transactional 별도 빈 — 1ms</span></span>
+}
+<span class="cm">
+// 지평선을 붙드는 구간이 1ms로 줄었다</span></code></pre>
+  </div>
+</div>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">① 읽기 트랜잭션도 길면 (a)를 일으킨다</div><div class="d">READ COMMITTED는 문장이 끝나면 스냅샷을 놓지만 <b>30초짜리 문장 하나는 30초를 붙든다.</b> "일관된 스냅샷"이 필요하다며 <code>REPEATABLE_READ</code>로 올리면 <b>트랜잭션 전체가</b> 붙든다. 처방은 문장을 쪼개거나(기간별 집계) <b>레플리카</b>로.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">② <code>readOnly = true</code>는 힌트가 아니다</div><div class="d">pgjdbc는 기본 설정(<code>readOnlyMode=transaction</code>)에서 이것을 <b><code>BEGIN READ ONLY</code></b>로 보내고 PostgreSQL이 그 안의 쓰기를 <b>거부</b>한다 — "읽기 빈에서 실수로 쓰는" 사고를 <b>DB가 막는다.</b> 레플리카 라우팅 구조라면 이 분리가 곧 <b>라우팅 조건</b>이다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">③ OSIV가 켜져 있으면</div><div class="d"><code>spring.jpa.open-in-view</code>가 켜져 있으면 컨트롤러·뷰의 지연 로딩이 <b>트랜잭션 밖에서 커넥션을 새로 빌리는 조회</b>로 번진다 — <b>끄고</b>, 응답에 필요한 데이터는 서비스 안에서 가져온다.</div></div>
+</div>
+
+<h3>4-5. 기법 ④ — 후처리를 이벤트로 트랜잭션 뒤로</h3>
+
+<p>메일·알림·영수증 생성·검색 인덱스 갱신처럼 <b>"본 처리가 성공했을 때만, 그리고 본 처리와 운명을 같이할 필요는 없는"</b> 작업은 커밋 뒤로 보낸다.</p>
+
+<div class="chain">
+  <span class="chip g"><code>@TransactionalEventListener(phase = AFTER_COMMIT)</code></span><span class="arrow">→ 유실이 허용되지 않으면 →</span>
+  <span class="chip b">같은 트랜잭션으로 <b>Outbox INSERT</b> + 릴레이가 별도 트랜잭션으로 처리</span>
+</div>
+
+<p>커밋 직후 서버가 죽어도 유실되지 않아야 하면 앞의 코드처럼 <b>Outbox 테이블에 같은 트랜잭션으로 INSERT</b>하고 릴레이가 처리한다. (설계·함정 — <code>AFTER_COMMIT</code> 리스너 안의 DB 쓰기가 조용히 사라지는 문제 등 — 은 <b>03-jpa-orm/22-transaction-boundary-and-domain-events</b>와 <b>02-spring/16-spring-event-transactional-event-listener</b>가 전부 다루므로 여기서는 <b>이름만 고정</b>한다.)</p>
+
+<h3>4-6. 기법 ⑤ — 대량 변경은 청크로 나눠 커밋한다</h3>
+
+<p>사슬 (c)와 (a)의 <b>변경량 축</b>을 직접 자르는 기법이다. "500만 건 만료 처리"를 UPDATE 한 문장으로 날리면 <b>죽은 튜플 500만 개가 한 트랜잭션 끝에서 한꺼번에 쏟아지고</b>, 그동안 500만 행의 락과 XID 하나가 지평선을 붙들며, 논리 복제에는 커밋 순간 한 덩어리로 도착한다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> UPDATE 한 문장이 500만 행</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">expireCoupons</span>(LocalDate today) {
+<span class="ln-bad">    couponRepository.expireAllBefore(today);</span>
+    <span class="cm">// UPDATE coupon SET status = 'EXPIRED'
+    //  WHERE expires_at &lt; $1 AND status = 'ACTIVE'</span>
+}
+<span class="cm">
+// 한 트랜잭션에 새 튜플 500만 + 죽은 튜플 500만
+// 커밋 순간 논리 복제 구독자가 500만 행을 한 덩어리로
+// 300만 건째에서 실패하면 → 전부 롤백, 0건</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> PK 커서로 5,000건씩 끊어 청크마다 커밋</div>
+<pre><code><span class="kw">public void</span> <span class="fn">expireCoupons</span>(LocalDate today) {
+    Long cursor = 0L;
+    <span class="kw">while</span> (cursor != <span class="kw">null</span>) {
+<span class="ln-good">        cursor = chunkWorker.expireChunk(today, cursor, 5_000);</span>
+    }
+}
+
+<span class="kw">@Component</span>
+<span class="kw">public class</span> CouponExpireChunkWorker {
+<span class="ln-good">    <span class="kw">@Transactional</span>                       <span class="cm">// ← 경계가 청크 하나</span></span>
+    <span class="kw">public</span> Long <span class="fn">expireChunk</span>(LocalDate today, Long afterId, <span class="kw">int</span> size) {
+        List&lt;Long&gt; ids = couponRepository.findExpirableIds(today, afterId, size);
+        <span class="kw">if</span> (ids.isEmpty()) <span class="kw">return null</span>;
+<span class="ln-good">        couponRepository.expireByIds(ids);  <span class="cm">// WHERE id = ANY($1) AND status = 'ACTIVE'</span></span>
+        <span class="kw">return</span> ids.get(ids.size() - 1);     <span class="cm">// 조건 자체가 멱등</span>
+    }
+}</code></pre>
+  </div>
+</div>
+
+<p>청크마다 <b>락과 XID가 풀려 지평선이 전진</b>하고, 죽은 튜플이 5,000개 단위로 "치워도 되는 상태"가 되어 <b>autovacuum이 사이사이 따라오며</b>, 논리 복제도 5,000행 단위로 흘러가고, <b>300만 건째에서 실패해도 299만 건은 남는다.</b> 조건에 <code>status = 'ACTIVE'</code>를 넣어 <b>재실행해도 결과가 같게</b> 만든 것에 주목 — 청크 커밋은 "중간 상태"를 만들기 때문에 <b>재실행 가능성이 곧 세트</b>다(5절). Spring Batch의 <code>chunk(n)</code>은 이 구조에 <b>재시작 지점 기록</b>까지 붙인 것이다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> <span class="badge bonus">가산점</span> 청크 하나 = 문장 하나, 워커를 여럿 띄워도 안 부딪히게</div>
+<pre><code><span class="kw">WITH</span> batch <span class="kw">AS</span> (
+    <span class="kw">SELECT</span> id <span class="kw">FROM</span> coupon
+    <span class="kw">WHERE</span> expires_at &lt; $1 <span class="kw">AND</span> status = <span class="st">'ACTIVE'</span>
+    <span class="kw">ORDER BY</span> id <span class="kw">LIMIT</span> <span class="st">5000</span>
+    <span class="kw">FOR UPDATE SKIP LOCKED</span>              <span class="cm">-- 다른 워커가 잡은 행은 건너뛴다</span>
+)
+<span class="kw">UPDATE</span> coupon c <span class="kw">SET</span> status = <span class="st">'EXPIRED'</span>
+<span class="kw">FROM</span> batch <span class="kw">WHERE</span> c.id = batch.id
+<span class="kw">RETURNING</span> c.id;   <span class="cm">-- 0행이면 끝. 부분 인덱스 (expires_at) WHERE status = 'ACTIVE' 가 있으면 매 청크가 싸다</span></code></pre>
+
+<div class="callout trap"><span class="t">청크 크기의 양면 — 그리고 자주 하는 오해 하나</span>
+  작을수록 <b>락·지평선·복제 지연은 줄지만</b> 커밋 횟수(WAL fsync·왕복)가 늘어 <b>총 소요 시간이 길어진다.</b> 그리고 <b>청크 커밋은 죽은 튜플의 총량을 줄이지 않는다</b> — 500만 개는 어차피 생긴다. 줄이는 것은 <b>"치울 수 있게 되는 시점"과 "한 번에 쏟아지는 양"</b>이다. 그래서 청크 사이에 autovacuum이 따라올 여유(짧은 sleep, 배치 끝의 <code>VACUUM (ANALYZE) coupon</code>)까지 설계에 넣고, <b>"1,000~10,000에서 시작해 복제 지연·<code>n_dead_tup</code>·처리 시간을 보며 조정한다"</b>처럼 <b>측정으로 정한다</b>고 답한다.
+</div>
+
+<h3>4-7. 다섯 기법을 "어떤 자원을 언제 놓아주는가"로 — 인출용</h3>
+
+<p>기법을 <b>이름으로만</b> 외우면 면접에서 순서가 흐트러진다. 2절의 자원 표와 짝지어 외우면 각 기법이 <b>왜 효과가 있는지</b>가 같이 나온다.</p>
+
+<table class="wide">
+  <thead><tr><th>기법</th><th>놓아주는 자원</th><th>언제 놓아주게 되나</th><th>끊는 사슬</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>① 외부 호출·파일·CPU를 밖으로</b></td><td>커넥션 + 행 락 + 지평선 <b>(전부)</b></td><td>외부 I/O가 시작되기 <b>전에</b> 커밋해서</td><td><b>(a)(b)(d)</b></td></tr>
+    <tr class="hl"><td><b>② <code>TransactionTemplate</code> 블록 축소</b></td><td>커넥션 + 행 락 + 지평선 <b>(전부)</b></td><td>메서드 끝이 아니라 <b>블록 끝에서</b></td><td><b>(a)(b)(d)</b></td></tr>
+    <tr><td><b>③ 읽기 분리</b></td><td>커넥션 + (쓰기 뒤라면) 지평선</td><td>무거운 조회를 쓰기 트랜잭션 <b>밖으로</b> — 문장 단위로 끊거나 레플리카로</td><td>(a)(d)</td></tr>
+    <tr><td><b>④ <code>AFTER_COMMIT</code>·Outbox</b></td><td>커넥션 + 행 락</td><td>후처리가 시작되기 <b>전에</b> 본 트랜잭션을 커밋해서</td><td>(b)(d)</td></tr>
+    <tr><td><b>⑤ 청크 커밋</b></td><td>행 락 + XID + 죽은 튜플의 "치워도 됨" 시점</td><td><b>청크마다</b></td><td>(a)(b)(c)</td></tr>
+  </tbody>
+</table>
+
+<div class="memo green">
+  <h4>다섯 기법 3초 인출 — <b>밖 · 블 · 읽 · 뒤 · 쪼</b></h4>
+  <ol style="margin:6px 0 10px;padding-left:22px">
+    <li><b>밖</b>으로 — 외부 API·파일·메일·CPU 작업은 트랜잭션 앞뒤로</li>
+    <li><b>블</b>록으로 — <code>TransactionTemplate</code>으로 경계를 메서드에서 블록으로</li>
+    <li><b>읽</b>기 분리 — 무거운 조회는 <code>readOnly</code>로 따로(문장을 쪼개거나 레플리카로)</li>
+    <li><b>뒤</b>로 — 후처리는 <code>AFTER_COMMIT</code> + Outbox</li>
+    <li><b>쪼</b>개서 — 대량 변경은 PK 커서로 나눠 커밋, VACUUM이 따라올 틈과 함께</li>
+  </ol>
+  <p style="margin-bottom:0" class="sub">순서에도 근거가 있다 — <b>①②는 사슬 셋을 한 번에 끊어 효과가 가장 크고</b>, ③④는 한 사슬씩, ⑤는 <b>변경량 축</b> 전용이다. 그래서 "무엇부터 하겠느냐"는 질문에 <b>①부터</b>라고 답한다.</p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 대가 — 쪼개는 순간 "중간 상태"가 생긴다</h2>
+
+<p>여기까지만 말하면 <b>"쪼개면 좋다"는 한쪽 답</b>이다. 하나였던 트랜잭션을 <b>[A] → [밖] → [B]</b>로 나누는 순간, 예전에는 <b>물리적으로 존재할 수 없던 중간 상태</b>가 존재하게 된다. 이것이 대가이고, <b>대가를 갚는 장치 없이 쪼개면 사고의 종류만 바꾼 것</b>이다.</p>
+
+<div class="scroll">
+<table>
+  <caption>4-3절의 결제 코드에서 생길 수 있는 중간 상태를 전부 적어 본다</caption>
+  <thead><tr><th>실패 지점</th><th>DB 상태</th><th>외부(PG) 상태</th><th>원래 코드였다면</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td>[A] 커밋 후 PG 호출 전에 서버 사망</td><td><code>PAYING</code></td><td>미승인</td><td class="good">롤백으로 READY 복귀</td></tr>
+    <tr><td>PG 승인 성공 후 응답 수신 전 타임아웃</td><td><code>PAYING</code></td><td class="bad">승인됨</td><td class="dash">원래 코드도 같은 문제</td></tr>
+    <tr><td>PG 승인 후 [B] 커밋 전 서버 사망</td><td><code>PAYING</code></td><td class="bad">승인됨</td><td class="dash">원래 코드도 같은 문제</td></tr>
+    <tr class="hl"><td>청크 300만 건째 실패</td><td>299만 건 <code>EXPIRED</code></td><td class="dash">—</td><td class="good">전부 롤백, 0건</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout info"><span class="t">중간 두 행은 사실 원래 코드에도 있던 문제다 — 이걸 먼저 짚어야 한다</span>
+  <b>외부 시스템은 어차피 DB 트랜잭션에 참여하지 않는다.</b> 한 트랜잭션에 넣었다고 PG 승인이 롤백되지는 않는다(메일과 마찬가지다). 쪼개기가 <b>새로 만든</b> 중간 상태는 <b>첫 번째 행과 네 번째 행</b>이고, 이 둘은 아래 세 장치로 갚는다.
+</div>
+
+<h3>5-1. 장치 ① 상태 머신 — 중간 상태를 숨기지 말고 <b>이름을 붙인다</b></h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 292" role="img" aria-label="주문 상태 머신 도식. READY에서 markPaying으로 PAYING이 되고, PAYING에서 승인 결과 반영 커밋으로 PAID가 되거나 예외로 PAY_FAILED가 된다. 서버가 죽으면 PAYING에 멈추며, 5분을 넘긴 PAYING은 보정 배치가 멱등 키로 PG에 조회해 PAID 또는 PAY_FAILED로 정리한다">
+    <defs>
+      <marker id="lt-f" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="lt-g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">중간 상태에 이름을 붙이면, 사고가 "쿼리로 찾을 수 있는 상태"가 된다</text>
+
+    <!-- crash annotation -->
+    <rect x="286" y="36" width="268" height="42" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="420" y="54" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">여기서 서버가 죽으면 이 상태로 멈춘다</text>
+    <text x="420" y="70" font-size="10.5" fill="#7f1d1d" text-anchor="middle">① [A] 커밋 직후 &nbsp;② PG 승인 후 [B] 커밋 전</text>
+    <line x1="420" y1="78" x2="420" y2="96" stroke="#dc2626" stroke-width="1.6" marker-end="url(#lt-g)"/>
+
+    <!-- states -->
+    <rect x="40" y="100" width="150" height="54" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="115" y="124" font-size="13" fill="#334155" text-anchor="middle" font-weight="700" class="mono">READY</text>
+    <text x="115" y="142" font-size="10.5" fill="#64748b" text-anchor="middle">주문 생성 · 멱등 키 발급</text>
+
+    <rect x="330" y="100" width="180" height="54" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="420" y="124" font-size="13" fill="#b45309" text-anchor="middle" font-weight="700" class="mono">PAYING</text>
+    <text x="420" y="142" font-size="10.5" fill="#b45309" text-anchor="middle">"PG에 물어보는 중" — 정식 상태</text>
+
+    <rect x="760" y="52" width="152" height="48" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="836" y="82" font-size="13" fill="#166534" text-anchor="middle" font-weight="700" class="mono">PAID</text>
+
+    <rect x="760" y="132" width="152" height="48" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="836" y="162" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">PAY_FAILED</text>
+
+    <!-- transitions -->
+    <line x1="190" y1="127" x2="326" y2="127" stroke="#475569" stroke-width="1.8" marker-end="url(#lt-f)"/>
+    <text x="258" y="118" font-size="10.5" fill="#334155" text-anchor="middle" font-weight="700">markPaying()</text>
+    <text x="258" y="146" font-size="10" fill="#64748b" text-anchor="middle">READY에서만 성공 · [A] 커밋</text>
+
+    <line x1="510" y1="116" x2="756" y2="82" stroke="#16a34a" stroke-width="1.8" marker-end="url(#lt-f)"/>
+    <text x="636" y="90" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">[B] 커밋 — complete(approvalNo)</text>
+
+    <line x1="510" y1="140" x2="756" y2="158" stroke="#dc2626" stroke-width="1.8" marker-end="url(#lt-f)"/>
+    <text x="636" y="172" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">PgException — markPayFailed(code)</text>
+
+    <!-- reconcile -->
+    <line x1="420" y1="154" x2="420" y2="196" stroke="#475569" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#lt-f)"/>
+    <text x="434" y="176" font-size="10.5" fill="#334155" font-weight="700">5분 초과 &amp; 승인 기록 없음</text>
+
+    <rect x="286" y="198" width="240" height="52" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="406" y="218" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">@Scheduled 보정 배치</text>
+    <text x="406" y="236" font-size="10.5" fill="#1e40af" text-anchor="middle">"PAYING인데 5분 넘은 주문" 조회</text>
+
+    <line x1="526" y1="224" x2="606" y2="224" stroke="#475569" stroke-width="1.8" marker-end="url(#lt-f)"/>
+
+    <rect x="610" y="198" width="180" height="52" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="700" y="218" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">PG에 상태 조회</text>
+    <text x="700" y="236" font-size="10.5" fill="#1e40af" text-anchor="middle">멱등 키로 "진실"을 묻는다</text>
+
+    <path d="M790 212 L 950 212 L 950 76 L 918 76" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#lt-f)"/>
+    <text x="800" y="206" font-size="10.5" fill="#166534" font-weight="700">APPROVED → [B] 재실행</text>
+    <path d="M790 238 L 1000 238 L 1000 156 L 918 156" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#lt-f)"/>
+    <text x="800" y="256" font-size="10.5" fill="#b91c1c" font-weight="700">NOT_FOUND · CANCELED → 실패 처리</text>
+    <text x="700" y="276" font-size="10.5" fill="#64748b" text-anchor="middle">PENDING이면 다음 주기로 미룬다</text>
+  </svg>
+  <figcaption><code>PAYING</code>을 <b>정식 상태</b>로 두면 사고가 <b>"PAYING인데 N분이 지났고 PG 승인 기록이 없는 주문"</b>이라는 <b>쿼리로 찾을 수 있는 상태</b>가 된다. 그리고 <code>markPaying()</code>이 <b>READY에서만 성공</b>하게 만들면 재시도·중복 요청이 같은 주문을 두 번 결제하는 것을 <b>DB 상태 전이로</b> 막는다 — PostgreSQL이라면 <code>UPDATE ... WHERE status = 'READY' RETURNING id</code>로 <b>"선점 성공 여부"를 한 문장에</b> 받는 것이 관용구다.</figcaption>
+</figure>
+
+<h3>5-2. 장치 ② 보상 + 보정 배치 — 롤백이 사라진 자리를 대신한다</h3>
+
+<p><b>되돌리는 동작을 직접 만드는 것이 보상</b>이다. PG 승인 뒤 [B]가 실패하면 PG 취소를 호출하고, <b>그 취소도 실패할 수 있으므로</b> 오래된 <code>PAYING</code>을 주기적으로 PG에 조회해 <b>대사(對査)하는 보정 배치</b>가 마지막 그물이다.</p>
+
+<div class="codehead plain"><span class="tag">Java</span> 보정 배치 — 멱등 키로 "PG 쪽 진실"을 묻는다</div>
+<pre><code><span class="kw">@Scheduled</span>(fixedDelay = 60_000)
+<span class="kw">public void</span> <span class="fn">reconcileStalePayments</span>() {
+    List&lt;Order&gt; stale = orderRepository.findPayingOlderThan(Duration.ofMinutes(5));
+    <span class="cm">// SELECT ... FROM orders WHERE status = 'PAYING' AND updated_at &lt; now() - interval '5 minutes'</span>
+    <span class="kw">for</span> (Order o : stale) {
+        PgStatus pg = pgClient.inquire(o.getPaymentKey());     <span class="cm">// 멱등 키로 PG 쪽 진실을 묻는다</span>
+        <span class="kw">switch</span> (pg) {
+            <span class="kw">case</span> APPROVED -&gt; paymentCommand.complete(o.getId(), pg.approvalNo());   <span class="cm">// [B] 재실행</span>
+            <span class="kw">case</span> NOT_FOUND, CANCELED -&gt; paymentCommand.fail(o.getId(), <span class="st">"reconciled"</span>);
+            <span class="kw">case</span> PENDING -&gt; { <span class="cm">/* 다음 주기 */</span> }
+        }
+    }
+}</code></pre>
+
+<h3>5-3. 장치 ③ 재시도 + 멱등 — 재시도는 중복을 만들고, 멱등이 그 중복을 무해하게 만든다</h3>
+
+<p>[B]를 재실행하려면 <b>[B]가 두 번 실행돼도 결과가 한 번과 같아야</b> 한다. 코드로 옮기면 <b>세 겹</b>이다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead good"><span class="tag">겹 1</span> 도메인 쪽 멱등 — 재실행이 상태를 덮어쓰지 않게</div>
+<pre><code><span class="kw">public void</span> <span class="fn">complete</span>(String approvalNo) {
+<span class="ln-good">    <span class="kw">if</span> (<span class="kw">this</span>.status == PAID) <span class="kw">return</span>;   <span class="cm">// 두 번째 호출은 아무 일도 안 한다</span></span>
+    <span class="kw">if</span> (<span class="kw">this</span>.status != PAYING)
+        <span class="kw">throw new</span> IllegalStateException(<span class="st">"PAYING이 아닌 주문: "</span> + status);
+    <span class="kw">this</span>.status = PAID;
+    <span class="kw">this</span>.approvalNo = approvalNo;
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">겹 2</span> 저장 쪽 멱등 — DB가 두 번째 INSERT를 무해하게 만든다</div>
+<pre><code><span class="kw">ALTER TABLE</span> payment_history
+  <span class="kw">ADD CONSTRAINT</span> uq_payment_key <span class="kw">UNIQUE</span> (payment_key);
+
+<span class="kw">INSERT INTO</span> payment_history (payment_key, order_id, approval_no, amount)
+<span class="kw">VALUES</span> ($1, $2, $3, $4)
+<span class="ln-good"><span class="kw">ON CONFLICT</span> (payment_key) <span class="kw">DO NOTHING</span>;  <span class="cm">-- 재실행이면 0행</span></span>
+<span class="cm">-- 예외도, 중복 행도 없다</span></code></pre>
+  </div>
+</div>
+
+<p><b>겹 3은 외부 호출의 멱등</b>이다. PG 요청에 멱등 키를 실어 <b>"응답을 못 받아서 다시 보냈더니 두 번 결제"</b>를 PG 쪽에서 막는다. 4-6절 청크 커밋의 <code>WHERE ... AND status = 'ACTIVE'</code>도 같은 원리다 — <b>재실행이 가능해야 부분 완료가 사고가 아니라 진행 상태가 된다.</b></p>
+
+<div class="memo green">
+  <h4>되사는 세 장치 암기 — <b>상 · 보 · 멱</b></h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">상 — 상태 머신</div><div class="d">중간 상태에 <b>이름</b>을 붙여 쿼리로 찾을 수 있게. 전이 조건이 곧 <b>중복 방지</b>(<code>WHERE status = 'READY'</code>).</div></div>
+    <div class="tile"><div class="k">보 — 보상 + 보정 배치</div><div class="d">되돌리는 동작을 직접 만들고, <b>그 보상도 실패할 수 있으므로</b> 주기적 대사가 마지막 그물.</div></div>
+    <div class="tile ok"><div class="k">멱 — 재시도 + 멱등</div><div class="d">세 겹 — <b>도메인</b>(PAID면 무시) · <b>저장</b>(유니크 + <code>ON CONFLICT</code>) · <b>외부 호출</b>(멱등 키).</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">"쪼개면 원자성을 잃는다"에서 멈추지 않고 <b>잃은 원자성을 어떤 장치로 되사 오는지</b>까지 말하는 것이 이 대목의 채점 기준이다.</p>
+</div>
+
+<h3>5-4. 그래서, 언제 쪼개지 <b>않는가</b></h3>
+
+<p>양면을 완성하려면 반대편도 말해야 한다. <b>순수 DB 작업만으로 이루어져 있고, 실패 시 함께 되돌려야 하며, 실행 시간이 원래 수 ms인 트랜잭션은 쪼개지 않는다.</b> 계좌이체의 출금 UPDATE와 입금 UPDATE를 "짧게 하자"고 두 트랜잭션으로 나누는 것은 <b>짧아지는 것도 없이 원자성만 버리는 일</b>이다.</p>
+
+<div class="split">
+  <div class="pane b"><h4>기준 ① 트랜잭션 안에 블로킹 I/O가 있는가</h4><p style="margin:0;font-size:.94rem">외부 호출·파일·사용자 대기. <b>있으면 그것을 뺀다</b>(기법 ①②).</p></div>
+  <div class="pane b"><h4>기준 ② 이 부분이 실패하면 본 처리도 되돌려야 하는가</h4><p style="margin:0;font-size:.94rem"><b>"아니오"면 이벤트로 넘긴다</b>(기법 ④). 둘 다 아니면 <b>그대로 둔다.</b></p></div>
+</div>
+
+<div class="rule">면접용 한 문장 — 이대로 외운다<br><span style="font-size:.95rem;font-weight:600">"쪼개기는 <b>락·커넥션·bloat·복제 지연을 사는 대신 원자성을 파는 거래</b>이고, 판 원자성은 <b>상태 머신·보상·멱등</b>으로 다시 사 와야 하므로, <b>블로킹 I/O가 없고 실패 시 함께 되돌려야 하는 작업은 쪼개지 않습니다.</b>"</span></div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 안전망 — "조심하자"가 아니라 "못 어기게"</h2>
+
+<p>긴 트랜잭션은 <b>평소에는 아무 문제가 없다.</b> PG가 200ms에 응답하는 날엔 4-1절의 원본 코드도 잘 돈다. 문제는 <b>PG가 느려지는 날, 프로모션으로 트래픽이 3배인 날 한꺼번에</b> 터진다. 그래서 <b>리뷰어의 주의력이나 팀 위키의 규칙에 맡길 수 없다</b> — 세 층으로 장치를 둔다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="긴 트랜잭션 코드에서 자원 점유, 대기와 정체, 풀과 스레드 고갈을 거쳐 전면 장애로 이어지는 도미노 위에 세 층의 안전망이 어느 지점을 끊는지 표시한 도식. ArchUnit은 코드 단계에서, 타임아웃들은 DB와 풀 단계에서 각각 다른 칸을 끊고, pg_stat_activity 알람은 앞의 두 층이 뚫린 뒤를 관측한다">
+    <defs>
+      <marker id="lt-h2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+      <marker id="lt-i" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d97706"/></marker>
+    </defs>
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">세 층의 안전망이 각각 도미노의 다른 칸을 끊는다</text>
+
+    <!-- gates labels -->
+    <rect x="151" y="46" width="200" height="56" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="251" y="64" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">① 코드 단계 · ArchUnit</text>
+    <text x="251" y="80" font-size="10.5" fill="#166534" text-anchor="middle">외부 I/O가 트랜잭션 경계 안에</text>
+    <text x="251" y="94" font-size="10.5" fill="#166534" text-anchor="middle">들어오는 것 자체를 막는다</text>
+
+    <rect x="357" y="46" width="200" height="56" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="457" y="64" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">② DB 단계</text>
+    <text x="457" y="79" font-size="9.5" fill="#1e40af" text-anchor="middle" class="mono">idle_in_transaction_session_timeout</text>
+    <text x="457" y="94" font-size="9.5" fill="#1e40af" text-anchor="middle" class="mono">statement_timeout</text>
+
+    <rect x="563" y="46" width="200" height="56" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="663" y="64" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">② DB 단계</text>
+    <text x="663" y="80" font-size="10.5" fill="#1e40af" text-anchor="middle" class="mono">lock_timeout</text>
+    <text x="663" y="94" font-size="10.5" fill="#1e40af" text-anchor="middle">대기 큐 길이를 끊는다</text>
+
+    <rect x="769" y="46" width="200" height="56" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="869" y="64" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">② 풀 단계</text>
+    <text x="869" y="80" font-size="10.5" fill="#1e40af" text-anchor="middle" class="mono">HikariCP connection-timeout</text>
+    <text x="869" y="94" font-size="10.5" fill="#1e40af" text-anchor="middle">빨리 실패시켜 스레드를 돌려준다</text>
+
+    <line x1="251" y1="102" x2="251" y2="160" stroke="#16a34a" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <line x1="457" y1="102" x2="457" y2="160" stroke="#2563eb" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <line x1="663" y1="102" x2="663" y2="160" stroke="#2563eb" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <line x1="869" y1="102" x2="869" y2="160" stroke="#2563eb" stroke-width="1.4" stroke-dasharray="4 3"/>
+
+    <!-- chain -->
+    <g>
+      <rect x="58" y="150" width="180" height="56" rx="9" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="148" y="174" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">긴 트랜잭션 코드</text>
+      <text x="148" y="191" font-size="10.5" fill="#64748b" text-anchor="middle">@Transactional 안의 외부 호출</text>
+
+      <rect x="264" y="150" width="180" height="56" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="354" y="174" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">자원 점유</text>
+      <text x="354" y="191" font-size="10.5" fill="#1e40af" text-anchor="middle">커넥션 · 락 · 지평선</text>
+
+      <rect x="470" y="150" width="180" height="56" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+      <text x="560" y="174" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">대기 · 정체</text>
+      <text x="560" y="191" font-size="10.5" fill="#b45309" text-anchor="middle">락 대기 큐 · VACUUM 정지</text>
+
+      <rect x="676" y="150" width="180" height="56" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+      <text x="766" y="174" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">풀 · 스레드 고갈</text>
+      <text x="766" y="191" font-size="10.5" fill="#7f1d1d" text-anchor="middle">무관한 요청까지 대기</text>
+
+      <rect x="882" y="150" width="180" height="56" rx="9" fill="#dc2626"/>
+      <text x="972" y="174" font-size="11.5" fill="#fff" text-anchor="middle" font-weight="700">전면 장애</text>
+      <text x="972" y="191" font-size="10.5" fill="#fecaca" text-anchor="middle">헬스체크까지 실패</text>
+
+      <line x1="240" y1="178" x2="260" y2="178" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-h2)"/>
+      <line x1="446" y1="178" x2="466" y2="178" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-h2)"/>
+      <line x1="652" y1="178" x2="672" y2="178" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-h2)"/>
+      <line x1="858" y1="178" x2="878" y2="178" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#lt-h2)"/>
+    </g>
+
+    <!-- cut marks -->
+    <g>
+      <circle cx="251" cy="178" r="13" fill="#fff" stroke="#16a34a" stroke-width="2"/>
+      <path d="M245 172 L257 184 M257 172 L245 184" stroke="#16a34a" stroke-width="2"/>
+      <circle cx="457" cy="178" r="13" fill="#fff" stroke="#2563eb" stroke-width="2"/>
+      <path d="M451 172 L463 184 M463 172 L451 184" stroke="#2563eb" stroke-width="2"/>
+      <circle cx="663" cy="178" r="13" fill="#fff" stroke="#2563eb" stroke-width="2"/>
+      <path d="M657 172 L669 184 M669 172 L657 184" stroke="#2563eb" stroke-width="2"/>
+      <circle cx="869" cy="178" r="13" fill="#fff" stroke="#2563eb" stroke-width="2"/>
+      <path d="M863 172 L875 184 M875 172 L863 184" stroke="#2563eb" stroke-width="2"/>
+    </g>
+
+    <!-- ops layer -->
+    <line x1="354" y1="240" x2="354" y2="210" stroke="#d97706" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#lt-i)"/>
+    <line x1="560" y1="240" x2="560" y2="210" stroke="#d97706" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#lt-i)"/>
+    <line x1="766" y1="240" x2="766" y2="210" stroke="#d97706" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#lt-i)"/>
+    <rect x="151" y="242" width="818" height="50" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="560" y="262" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">③ 운영 단계 · pg_stat_activity 알람 — 앞의 두 층이 뚫린 뒤를 숫자로 본다</text>
+    <text x="560" y="280" font-size="10.5" fill="#b45309" text-anchor="middle">긴 트랜잭션 최대 나이 · 지평선 정체 · 죽은 튜플 비율 · 복제 지연 — 알람이 울렸다는 것은 ①②가 뚫렸다는 뜻이다</text>
+  </svg>
+  <figcaption>세 층은 <b>대체재가 아니라 서로 다른 시점</b>이다 — ①은 <b>합쳐지기 전</b>, ②는 <b>번지는 중</b>, ③은 <b>이미 번진 뒤</b>. 그래서 셋 다 필요하고, ③의 알람이 울렸다면 <b>①②의 어느 경로가 뚫렸는지</b>를 사후에 반드시 채워야 한다.</figcaption>
+</figure>
+
+<h3>6-1. 코드 단계 — ArchUnit으로 빌드에서 막는다</h3>
+
+<div class="codehead good"><span class="tag">Test</span> 세 가지 룰 — 규율이 아니라 장치로</div>
+<pre><code><span class="kw">@AnalyzeClasses</span>(packages = <span class="st">"com.example"</span>)
+<span class="kw">class</span> TransactionLengthRulesTest {
+
+    <span class="cm">// 규칙 1: @Transactional 메서드는 네트워크·파일 계층에 접근하지 않는다</span>
+    <span class="kw">@ArchTest</span>
+    <span class="kw">static final</span> ArchRule 트랜잭션_안에서_외부_IO를_하지_않는다 =
+        noMethods().that().areAnnotatedWith(Transactional.class)
+            .or().areDeclaredInClassesThat().areAnnotatedWith(Transactional.class)
+            .should().accessClassesThat().resideInAnyPackage(
+                <span class="st">"org.springframework.web.client.."</span>,     <span class="cm">// RestTemplate, RestClient</span>
+                <span class="st">"org.springframework.web.reactive.function.client.."</span>,  <span class="cm">// WebClient</span>
+                <span class="st">"java.net.http.."</span>,                       <span class="cm">// HttpClient</span>
+                <span class="st">"java.nio.file.."</span>, <span class="st">"java.io.."</span>,          <span class="cm">// 파일</span>
+                <span class="st">"software.amazon.awssdk.."</span>,              <span class="cm">// S3 등</span>
+                <span class="st">"org.springframework.mail.."</span>)            <span class="cm">// 메일</span>
+            .because(<span class="st">"외부 I/O 응답 시간이 그대로 락 보유 시간·커넥션 점유 시간·VACUUM 정지 시간이 된다"</span>);
+
+    <span class="cm">// 규칙 2: 클래스 레벨 @Transactional 금지 — 모든 public 메서드가 트랜잭션이 되어 경계가 조용히 넓어진다</span>
+    <span class="kw">@ArchTest</span>
+    <span class="kw">static final</span> ArchRule 클래스_레벨_Transactional을_쓰지_않는다 =
+        noClasses().should().beAnnotatedWith(Transactional.class);
+
+    <span class="cm">// 규칙 3: 진입 계층에는 @Transactional 을 두지 않는다 — TransactionTemplate 블록이 합류해 버린다</span>
+    <span class="kw">@ArchTest</span>
+    <span class="kw">static final</span> ArchRule 컨트롤러와_파사드는_트랜잭션을_열지_않는다 =
+        noMethods().that().areDeclaredInClassesThat().resideInAnyPackage(<span class="st">"..controller.."</span>, <span class="st">"..facade.."</span>)
+            .should().beAnnotatedWith(Transactional.class);
+}</code></pre>
+
+<div class="callout warn"><span class="t">한계도 같이 말한다 — 그게 오히려 점수가 된다</span>
+  <b>인터페이스 뒤에 숨긴 클라이언트</b>(<code>PgClient</code> 인터페이스의 구현체가 RestTemplate을 쓰는 경우)는 직접 접근이 아니라 <b>못 잡는다.</b> 그래서 규칙 1에 팀의 클라이언트 인터페이스 패키지(<code>..infrastructure.client..</code>)를 명시적으로 추가한다. 완벽하진 않지만 <b>가장 흔한 위반을 막고, 우회하려면 룰을 고쳐야 하니 논의가 강제된다</b>는 것이 가치다.
+</div>
+
+<h3>6-2. DB·풀 단계 — 사슬을 중간에 끊는 타임아웃</h3>
+
+<div class="memo red">
+  <h4>PostgreSQL의 타임아웃 세 개는 <b>전부 기본값 0 = 꺼짐</b>이다</h4>
+  <div class="rule red">아무것도 안 하면 <b>무한 대기 · 무한 실행 · 무한 idle</b>이 기본값<br><span style="font-size:.93rem;font-weight:600">MySQL(<code>innodb_lock_wait_timeout</code> 기본 50초)과의 첫 번째 운영 차이 — <b>"반드시 직접 정해야 한다"</b></span></div>
+</div>
+
+<table class="wide">
+  <caption>각 타임아웃이 <b>어느 사슬의 어느 칸</b>을 끊는지 매핑해 두면 설정값의 의미가 분명해진다</caption>
+  <thead><tr><th>설정</th><th>끊는 지점</th><th>기본값이 위험한 이유 · 출발점</th></tr></thead>
+  <tbody>
+    <tr><td><code>lock_timeout</code></td><td>사슬 <b>(b)②</b> 락 대기 큐의 길이 — 행 락과 테이블 락(DDL) 모두</td><td class="bad">0 = 무한 대기. 온라인 트랜잭션은 수 초, DDL 세션은 더 짧게</td></tr>
+    <tr><td><code>statement_timeout</code></td><td>문장 하나의 실행 시간 — 사슬 <b>(a)</b>의 "30초짜리 조회"</td><td class="bad">0 = 무한. 온라인은 수 초, 배치는 세션에서 따로 올린다</td></tr>
+    <tr class="hl"><td><code>idle_in_transaction_session_timeout</code></td><td>사슬 <b>(a)(d)</b> — <b>쿼리 없이 열린 트랜잭션 자체</b></td><td class="bad">0 = 무한. 켜면 "열어놓고 잊은" 트랜잭션을 DB가 <b>세션째</b> 끊는다 (온라인 역할에 30초 안팎이 흔한 출발점)</td></tr>
+    <tr><td>HikariCP <code>connection-timeout</code></td><td>사슬 <b>(b)(d)</b> ③→④ 풀 대기가 <b>스레드 대기로 번지는 것</b></td><td>30초 — 빨리 실패시켜 스레드를 돌려줘야 헬스체크가 산다</td></tr>
+    <tr><td><code>@Transactional(timeout = n)</code></td><td>애플리케이션 쪽 트랜잭션 수명 상한</td><td class="bad">없음 — 단, <b>동작 방식에 함정</b>이 있다(7절 꼬리질문)</td></tr>
+  </tbody>
+</table>
+
+<div class="codehead plain"><span class="tag">SQL</span> 어디에 설정하나 — 전역값보다 <b>역할 단위</b></div>
+<pre><code><span class="cm">-- 온라인 서비스 계정</span>
+<span class="kw">ALTER ROLE</span> app_user <span class="kw">SET</span> idle_in_transaction_session_timeout = <span class="st">'30s'</span>;
+<span class="kw">ALTER ROLE</span> app_user <span class="kw">SET</span> lock_timeout = <span class="st">'3s'</span>;
+<span class="kw">ALTER ROLE</span> app_user <span class="kw">SET</span> statement_timeout = <span class="st">'10s'</span>;
+<span class="cm">-- 배치 계정은 다른 값으로. HikariCP connectionInitSql 로 SET 을 보낼 수도 있지만,
+-- 앞에 PgBouncer(transaction pooling)가 있으면 세션 상태를 믿을 수 없으므로 역할 설정이 안전하다.</span></code></pre>
+
+<div class="callout trap"><span class="t">타임아웃이 터지면 트랜잭션은 어떻게 되나 <span class="badge bonus">가산점</span></span>
+  PostgreSQL에서는 <code>lock_timeout</code>(<code>55P03</code>)이든 <code>statement_timeout</code>(<code>57014</code>)이든 <b>에러가 나는 순간 트랜잭션 전체가 실패 상태</b>가 되고, ROLLBACK을 보낼 때까지 그 커넥션의 모든 문장은 <code>25P02 current transaction is aborted, commands ignored until end of transaction block</code>으로 거부된다. 스프링은 예외를 받아 롤백하므로 보통은 깨끗이 끝나지만, <b>그 예외를 <code>catch</code>로 삼키고 다음 SQL을 치면 "이유 모를 25P02 폭풍"</b>이 된다 — <b>에러가 났으면 그 트랜잭션은 끝난 것이다.</b>
+</div>
+
+<div class="callout info"><span class="t">한 겹 더 — 트랜잭션 전체 수명을 끊는 설정</span>
+  PostgreSQL 17부터는 문장이 아니라 <b>트랜잭션 전체의 수명</b>을 벽시계로 끊는 <code>transaction_timeout</code>도 있다 — 7절 <code>@Transactional(timeout)</code> 꼬리질문의 구멍을 <b>DB 쪽에서 막는</b> 설정이다. <b>운영 버전이 지원하는지 확인하고 쓴다.</b>
+</div>
+
+<div class="callout warn"><span class="t">MySQL 대조 — 방향은 반대, 결론은 같다</span>
+  MySQL의 <code>innodb_lock_wait_timeout</code>(기본 50초)은 기본 설정에서 <b>그 문장만 롤백하고 트랜잭션은 열린 채 남긴다</b>(앞서 잡은 락은 그대로, 통째로 롤백은 <code>innodb_rollback_on_timeout=ON</code>). PostgreSQL은 <b>항상 트랜잭션 전체가 실패 상태</b>가 된다. 방향은 반대지만 결론은 같다 — <b>"예외를 삼키지 말고 롤백하라".</b>
+</div>
+
+<h3>6-3. 운영 단계 — <code>pg_stat_activity</code>로 긴 트랜잭션을 숫자로 본다</h3>
+
+<p>"트랜잭션이 길다"는 <b>측정하지 않으면 감상</b>이다. PostgreSQL은 현재 모든 백엔드의 상태를 <code>pg_stat_activity</code>에 노출한다 — 트랜잭션 시작 시각, 상태, 무엇을 기다리는지, 그리고 <b>지평선을 얼마나 붙들고 있는지</b>까지.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> 30초 넘게 열려 있는 트랜잭션 — 진단용 전체 판</div>
+<pre><code><span class="kw">SELECT</span> pid,
+       application_name,
+       state,                                                 <span class="cm">-- active / idle in transaction / idle in transaction (aborted)</span>
+       now() - xact_start                    <span class="kw">AS</span> xact_age,     <span class="cm">-- 트랜잭션이 열린 지</span>
+       now() - state_change                  <span class="kw">AS</span> state_age,    <span class="cm">-- 이 상태로 머문 지</span>
+       wait_event_type, wait_event,                           <span class="cm">-- 'Lock' / 'transactionid' 면 사슬 (b)의 피해자</span>
+       backend_xid,                                           <span class="cm">-- 쓰기를 했으면 배정된 XID (이 순간부터 지평선에 박힘)</span>
+       backend_xmin,                                          <span class="cm">-- 쥐고 있는 스냅샷의 xmin</span>
+       greatest(age(backend_xid), age(backend_xmin)) <span class="kw">AS</span> horizon_hold,   <span class="cm">-- 지평선을 몇 XID 뒤로 붙드나</span>
+       left(query, <span class="st">80</span>)                       <span class="kw">AS</span> last_query    <span class="cm">-- idle in transaction 이면 "멈추기 직전에 친 문장"</span>
+<span class="kw">FROM</span> pg_stat_activity
+<span class="kw">WHERE</span> backend_type = <span class="st">'client backend'</span>
+  <span class="kw">AND</span> xact_start &lt; now() - <span class="kw">interval</span> <span class="st">'30 seconds'</span>
+<span class="kw">ORDER BY</span> xact_start;</code></pre>
+
+<div class="memo">
+  <h4>읽는 법 — 네 칸만 보면 범인이 나온다</h4>
+  <div class="grid g2">
+    <div class="tile red"><div class="k">state = 'idle in transaction' + 큰 xact_age</div><div class="d">애플리케이션이 트랜잭션을 열어놓고 <b>DB 밖에서 무언가를 기다리는 중</b>(사슬 d의 전형). 이때 <code>last_query</code>는 MySQL과 달리 NULL이 아니라 <b>멈추기 직전에 실행한 문장</b>이라 <b>코드의 어느 줄 다음에서 멈췄나</b>를 바로 가리킨다.</div></div>
+    <div class="tile"><div class="k">backend_xid 가 있다</div><div class="d">쓰기를 한 트랜잭션이니 <b>사슬 (a)가 확실히 진행 중</b>이다. <code>horizon_hold</code>가 큰 순으로 정렬하면 <b>VACUUM을 막는 범인</b>이 맨 위에 온다.</div></div>
+    <div class="tile"><div class="k">wait_event_type = 'Lock'</div><div class="d">이 트랜잭션도 <b>피해자</b>다 — 누가 막는지는 <code>pg_blocking_pids(pid)</code>로 즉시 특정한다. <b>가해자와 피해자를 가르는 것이 첫 단계다.</b></div></div>
+    <div class="tile"><div class="k">결과 쪽은 pg_stat_user_tables</div><div class="d"><code>n_dead_tup</code>·<code>n_live_tup</code>·<code>last_autovacuum</code>을 <b>죽은 튜플 많은 순</b>으로 본다 — 사슬 (a)가 만든 <b>결과</b>가 여기 쌓인다.</div></div>
+  </div>
+</div>
+
+<h4>알람으로 승격할 지표 네 개</h4>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">① 긴 트랜잭션 최대 나이</div><div class="d">위 쿼리의 <code>max(xact_age)</code>(<code>idle in transaction</code>은 따로). postgres_exporter의 <code>pg_stat_activity_max_tx_duration</code>이 이것이다. <b>0이 아니면 경고, N분 이상이면 즉시 알림.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">② 지평선 정체</div><div class="d"><code>max(greatest(age(backend_xid), age(backend_xmin)))</code>, 세션이 아닌 범인까지 잡으려면 <code>pg_replication_slots</code>의 <code>age(xmin)</code>·<code>age(catalog_xmin)</code>과 <code>pg_prepared_xacts</code> 행 수. wraparound는 <code>max(age(datfrozenxid))</code>가 <code>autovacuum_freeze_max_age</code>에 다가가는지로 본다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">③ 죽은 튜플 비율</div><div class="d">핵심 테이블의 <code>n_dead_tup / (n_live_tup + n_dead_tup)</code>과 <code>last_autovacuum</code>의 낡음. <b>autovacuum이 돌았는데도 비율이 안 떨어지면</b> "돌긴 도는데 못 치우는" 상태 = <b>지평선 정체</b>다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">④ 복제 지연</div><div class="d">물리는 <code>pg_stat_replication.replay_lag</code>, 논리는 <code>pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn)</code>. <b>계단처럼 뛰면 방금 큰 트랜잭션이 커밋된 것</b>이다(사슬 c).</div></div>
+</div>
+
+<div class="rule">읽는 규칙 한 줄 — <b>DB 쪽 지표(긴 트랜잭션·지평선 정체)와 앱 쪽 지표(풀 대기)가 같은 시각에 같이 오르면 원인은 긴 트랜잭션</b></div>
+
+<h3>6-4. 테스트로 고정</h3>
+<div class="split">
+  <div class="pane g"><h4>트랜잭션 길이 회귀 테스트</h4><p style="margin:0;font-size:.94rem">결제 서비스의 <code>pay()</code>를 호출하면서 <code>TransactionSynchronization</code>에 훅을 걸어 각 트랜잭션의 시작~종료 시간을 기록하고, <b>PG 클라이언트를 3초 지연 스텁으로 바꿔도 트랜잭션 시간이 100ms 미만</b>임을 단정한다. <b>외부 호출이 트랜잭션 안으로 다시 들어가면 이 테스트가 즉시 깨진다.</b></p></div>
+  <div class="pane g"><h4>Testcontainers — H2로는 검증되지 않는다</h4><p style="margin:0;font-size:.94rem">락 대기, <code>ACCESS EXCLUSIVE</code> 대기열, 에러 후 <code>25P02</code>, 데드락 감지는 <b>H2와 PostgreSQL이 다르다.</b> 사슬 (b)를 검증하려면 <b>운영과 같은 엔진</b>이어야 한다.</p></div>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>7-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">"긴 트랜잭션"의 정의?</div><div class="d">벽시계가 아니라 <b>붙든 자원</b> — "다른 트랜잭션에 영향을 줄 만큼 오래·많이 자원을 붙든 트랜잭션". 축은 둘, <b>오래 열려 있거나 · 많이 바꾸거나.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">붙드는 자원 넷?</div><div class="d"><b>스 · 락 · 변 · 커</b> — 스냅샷·XID(지평선) / 행·테이블 락 / 변경량(죽은 튜플·WAL) / 커넥션(=프로세스). <b>놓아주는 시점은 넷 다 커밋·롤백.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">사슬 (a)의 끝 칸?</div><div class="d">지평선 고정 → VACUUM 정지 → <b>bloat</b> → 무관한 조회 지연 + Index Only Scan 퇴화 + 통계 왜곡 → <b>XID wraparound로 쓰기 거부.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">사슬 (b)의 끝 칸?</div><div class="d">락 보유 → 대기 큐 → <b>대기자가 커넥션 점유 → 풀 고갈</b> → 톰캣 스레드 고갈 → <b>헬스체크까지 실패 = 전면 장애.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">SELECT만 해도 지평선을 붙드는 조건?</div><div class="d"><b>ⓐ 스냅샷을 쥔 상태</b>(RR은 처음부터 끝까지, RC는 문장 실행 중·열린 커서) <b>ⓑ XID를 배정받은 상태</b>(무언가 쓴 뒤 커밋까지).</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">짧게 만드는 다섯 기법?</div><div class="d"><b>밖 · 블 · 읽 · 뒤 · 쪼</b> — 외부 I/O 밖으로 / <code>TransactionTemplate</code> 블록 / 읽기 분리 / <code>AFTER_COMMIT</code>·Outbox / 청크 커밋. <b>①②가 사슬 셋을 한 번에 끊는다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">쪼갠 대가와 되사는 장치?</div><div class="d">대가 = <b>중간 상태(원자성 상실)</b>. 되사기 = <b>상 · 보 · 멱</b> — 상태 머신 / 보상+보정 배치 / 재시도+멱등(도메인·저장·외부 호출 세 겹).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">PostgreSQL 타임아웃 3종의 기본값?</div><div class="d"><code>lock_timeout</code>·<code>statement_timeout</code>·<code>idle_in_transaction_session_timeout</code> <b>전부 0 = 꺼짐.</b> 안 정하면 무한 대기·무한 실행·무한 idle.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">리틀의 법칙 숫자?</div><div class="d">동시 커넥션 ≈ <b>초당 요청 × 점유 시간</b>. 20건 × 3초 = <b>60개</b>(풀 10이면 즉시 고갈) vs 20건 × 10ms = <b>0.2개</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">롤백 비용 — PostgreSQL vs MySQL?</div><div class="d">PG는 CLOG에 abort 표시만 하는 <b>O(1)</b>(비용은 VACUUM으로 이월). InnoDB는 undo를 되감아 <b>변경량에 비례</b>하고 그동안 락을 쥔다.</div></div>
+</div>
+
+<h3>7-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>SELECT만 하는 트랜잭션도 길면 해로운가요? 락도 안 잡는데요. <span class="badge core">필수</span><span class="hint">힌트: 세 가지 이유. 단 "어떤 SELECT냐"를 한 겹 더 구분해야 정확하다</span></summary><div class="a">
+  <p><b>해롭다, 세 가지 이유로.</b></p>
+  <p><b>① 사슬 (a)</b> — 스냅샷을 쥐고 있는 동안은 그보다 나중에 죽은 튜플을 VACUUM이 치우지 못한다. REPEATABLE READ 이상이면 <b>첫 문장부터 끝까지</b>, 기본값 READ COMMITTED면 <b>문장이 실행되는 동안</b>만 쥔다 — 그러나 <b>30초짜리 GROUP BY 하나는 30초를 쥐고</b>, 앞서 UPDATE 한 줄이라도 쳤다면 XID가 배정돼 <b>문장 사이에도</b> 지평선에 박힌다. 그 사이 핫 로우의 죽은 버전이 쌓여 그 행을 읽는 모든 쿼리가 힙을 반복해 찌르고, visibility map이 꺼져 <b>Index Only Scan이 힙 페치로 퇴화</b>한다.</p>
+  <p><b>② 사슬 (d)</b> — 커넥션(= 백엔드 프로세스) 하나를 그 시간 내내 점유한다.</p>
+  <p><b>③ 테이블 락</b> — SELECT도 읽은 테이블에 <code>ACCESS SHARE</code>를 <b>트랜잭션 끝까지</b> 쥐므로, 그 사이 ALTER가 오면 ALTER가 막히고 <b>그 뒤의 모든 쿼리가 막힌다.</b></p>
+  <div class="rule red" style="margin-bottom:0">처방 — <b>격리 수준을 올리지 말고</b> 문장 단위로 쪼개거나 <b>레플리카</b>로 보낸다<br><span style="font-size:.92rem;font-weight:600">REPEATABLE READ로 "일관성"을 사면 30분 내내 지평선을 사는 것이다. 단 <code>hot_standby_feedback = on</code>이면 그 긴 조회가 <b>복제선을 타고 프라이머리 VACUUM을 막으므로</b>, 리포트용 레플리카는 feedback을 끄고 취소(<code>max_standby_streaming_delay</code>)를 감수하는 쪽이 정석이다.</span></div>
+</div></details>
+
+<details class="q"><summary>트랜잭션을 [A]→[PG]→[B]로 쪼갰는데 PG 승인 직후 서버가 죽었습니다. 주문은 PAYING인데 PG는 승인 상태예요. 어떻게 하시겠어요? <span class="badge core">필수</span><span class="hint">힌트: 먼저 "이건 쪼개기가 만든 문제가 아니다"를 짚고 시작한다</span></summary><div class="a">
+  <p>먼저 이 상태가 <b>원래의 한 트랜잭션 구조에서도 똑같이 생겼을 상태</b>임을 짚는다 — <b>PG 승인은 DB 롤백으로 취소되지 않으므로</b>, 쪼개기가 만든 문제가 아니라 <b>외부 시스템이 트랜잭션에 참여하지 않는 데서 오는 본질적 문제</b>다.</p>
+  <p>처방은 세 겹이다. <b>① 상태 머신</b> — <code>PAYING</code>을 정식 상태로 두어 "PAYING인데 5분 넘은 주문"을 <b>쿼리로 찾을 수 있게</b> 한다. <b>② 보정 배치</b> — 그 주문의 <b>멱등 키로 PG에 상태를 조회</b>해 승인이면 [B]를 재실행하고 아니면 실패 처리한다. <b>③ 멱등</b> — [B]는 두 번 실행돼도 안전해야 하고(<code>payment_key</code> 유니크 + <code>ON CONFLICT DO NOTHING</code>, 이미 <code>PAID</code>면 무시), PG 요청에는 멱등 키가 실려 <b>재시도가 이중 결제를 만들지 않아야</b> 한다.</p>
+  <p style="margin-bottom:0"><b>"쪼개면 원자성을 잃는다"에서 멈추지 않고 잃은 원자성을 어떤 장치로 되사 오는지까지 말하는 것</b>이 이 질문의 채점 기준이다.</p>
+</div></details>
+
+<details class="q"><summary><code>@Transactional(timeout = 3)</code>을 걸었는데 안에서 외부 API가 10초 걸려도 안 끊깁니다. 왜죠? <span class="badge trap">함정</span><span class="hint">힌트: "별도 스레드가 끊어준다"고 생각하면 틀린다. 무엇을 할 때 검사하는지를 떠올린다</span></summary><div class="a">
+  <p>스프링의 트랜잭션 타임아웃은 <b>별도 스레드가 트랜잭션을 강제로 끊는 방식이 아니다.</b> 시작 시점에 <b>마감 시각을 기록</b>해 두고, 이후 그 트랜잭션에서 <b>SQL을 실행하려 할 때</b> 남은 시간을 계산해 문장 타임아웃으로 붙이거나, 이미 지났으면 그 시점에 <code>TransactionTimedOutException</code>을 던진다.</p>
+  <p><b>외부 API를 기다리는 동안은 SQL이 없으니 아무 일도 일어나지 않고</b>, 10초 뒤 돌아와 다음 쿼리를 날리는 순간에야 터진다 — <b>그 10초 동안 락·커넥션·지평선은 그대로 잡혀 있었다.</b></p>
+  <div class="rule red"><code>timeout</code>은 "느린 쿼리에 대한 상한"이지 <b>"트랜잭션 안의 외부 호출에 대한 방어"가 아니다</b></div>
+  <p style="margin-bottom:0">진짜 방어는 <b>외부 호출을 트랜잭션 밖으로 빼는 것</b>(기법 ①)과 <b>외부 클라이언트 자체의 연결·읽기 타임아웃</b>이다. DB 쪽에서 이 구멍을 막아 주는 것은 <code>idle_in_transaction_session_timeout</code>(<b>문장 사이의 공백</b>을 벽시계로 재서 세션째 끊는다)이고, PostgreSQL 17의 <code>transaction_timeout</code>은 <b>트랜잭션 전체 수명</b>을 끊는다 — <b>앱이 놓쳐도 DB가 끊는 마지막 그물.</b></p>
+</div></details>
+
+<details class="q"><summary>긴 트랜잭션 알람이 울렸습니다. 해당 세션을 끊으면 되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 다섯 단계. 그리고 cancel과 terminate를 구분한다</span></summary><div class="a">
+  <p><b>바로 끊지 않는다</b> — 다만 이유가 MySQL과 다르다. PostgreSQL의 롤백은 <code>pg_xact</code>에 abort 표시만 하는 <b>O(1)</b>이라 "KILL했더니 롤백이 실행 시간만큼 걸리며 락을 쥔다"는 함정은 없고, <b>끊는 순간 락과 지평선은 즉시 풀린다.</b> 그래도 순서가 있다.</p>
+  <p><b>① 정체 파악</b> — <code>state</code>가 <code>idle in transaction</code>이면 외부 대기 중인 애플리케이션 트랜잭션(<code>query</code>의 마지막 문장으로 코드 위치를 짚고 앱 스레드 덤프 확인), <code>active</code>면 느린 SQL, <code>wait_event_type = 'Lock'</code>이면 <b>이 트랜잭션도 피해자</b>다 — <code>pg_blocking_pids()</code>로 진짜 가해자를 찾는다.</p>
+  <p><b>② 피해 범위</b> — 이 pid에 막힌 세션 수, <code>horizon_hold</code> 크기, 풀 대기 추이.</p>
+  <p><b>③ 어떻게 끊나</b> — <code>active</code>면 먼저 <code>pg_cancel_backend(pid)</code>(<b>문장만 취소</b>, 커넥션은 살려 앱이 예외를 받고 스스로 롤백하게), <code>idle in transaction</code>은 <b>취소할 문장이 없으니</b> <code>pg_terminate_backend(pid)</code>(세션 종료 — 앱은 다음 SQL에서 끊김 예외를 받고 HikariCP가 그 커넥션을 폐기한다).</p>
+  <p><b>④ 비용 비교</b> — 롤백은 싸지만 <b>그 트랜잭션이 만든 죽은 튜플은 그대로 VACUUM 몫</b>이고, 곧 끝날 대량 배치라면 "처음부터 다시" 비용과 지금 대기자들의 피해를 저울질한다.</p>
+  <p><b>⑤ 사후</b> — 알람이 울렸다는 것은 <b>6-1·6-2절 장치가 뚫렸다는 뜻</b>이므로 그 경로를 룰에 추가하고 <code>idle_in_transaction_session_timeout</code>이 왜 안 끊었는지(설정 누락? 배치 계정?)를 확인한다.</p>
+  <p style="margin-bottom:0"><b>"끊으면 됩니다"</b>와 <b>"가해자인지 피해자인지 가르고, cancel과 terminate를 구분하고, 죽은 튜플 후유증을 계산합니다"</b>의 차이가 시니어 변별점이다.</p>
+</div></details>
+
+<details class="q"><summary>트래픽이 거의 없는 테이블에 컬럼 하나 추가했는데 서비스 전체가 멈췄습니다. 긴 트랜잭션과 무슨 관계죠? <span class="badge bonus">가산점</span><span class="hint">힌트: 느린 건 ALTER가 아니다. 대기열에 새치기가 없다는 사실이 핵심</span></summary><div class="a">
+  <p><b><code>ACCESS EXCLUSIVE</code> 대기열 사슬</b>이다. 어떤 긴 트랜잭션이 그 테이블을 <b>한 번이라도 읽은 적이 있으면</b> 트랜잭션 끝까지 <code>ACCESS SHARE</code>를 쥔다. <code>ALTER TABLE ... ADD COLUMN</code>은 <code>ACCESS EXCLUSIVE</code>가 필요하므로 그 트랜잭션이 끝날 때까지 대기하고, <b>PostgreSQL의 락 대기열은 새치기를 허용하지 않으므로 ALTER 뒤에 도착한 모든 쿼리 — 단순 SELECT까지 — 가 ALTER 뒤에 줄을 선다.</b></p>
+  <p>트래픽이 적은 테이블이어도 <b>그 테이블을 조인하는 쿼리는 전부 멈추고</b>, 그 쿼리들이 커넥션을 쥔 채 대기하니 <b>사슬 (b)의 ③④</b>로 이어진다.</p>
+  <div class="rule red">함정 — <b>ADD COLUMN 자체는 PostgreSQL 11부터 상수 DEFAULT여도 카탈로그만 고치는 순간 작업</b>이다<br><span style="font-size:.92rem;font-weight:600">느린 건 ALTER가 아니라 <b>락을 얻기까지의 대기</b>다</span></div>
+  <p style="margin-bottom:0"><b>처방</b>: DDL 세션에서 <code>SET lock_timeout = '2s'</code>로 "못 잡으면 빨리 실패"하게 하고 잠시 후 재시도하는 루프로 돌리며, 실행 전 <code>pg_stat_activity</code>로 <b>그 테이블을 쥔 긴 트랜잭션이 없는지</b> 확인하고, 인덱스는 <code>CREATE INDEX CONCURRENTLY</code>로 <code>ACCESS EXCLUSIVE</code> 자체를 피한다. <b>"행 락 타임아웃과 DDL 대기 타임아웃이 PostgreSQL에선 <code>lock_timeout</code> 하나"</b>까지 말하면 운영 경험이 드러난다.</p>
+</div></details>
+
+<details class="q"><summary>긴 트랜잭션이 하나도 없는데 <code>n_dead_tup</code>이 계속 오릅니다. VACUUM은 도는데 왜 못 치우죠? <span class="badge bonus">가산점</span><span class="hint">힌트: 지평선을 붙드는 것은 세션만이 아니다 — 셋을 순서대로</span></summary><div class="a">
+  <p><b>지평선을 붙드는 주체가 세션 말고도 셋 더 있다.</b> <code>pg_stat_activity</code>만 보고 "긴 트랜잭션 없음"이라고 결론 내리면 여기서 막힌다.</p>
+  <div class="grid g3" style="margin:10px 0">
+    <div class="tile red"><div class="k">① 죽은 논리 복제 슬롯</div><div class="d">구독자가 사라졌는데 슬롯이 남아 있으면 <code>pg_replication_slots</code>의 <code>xmin</code>·<code>catalog_xmin</code>이 <b>그 자리에 못 박힌다.</b> WAL도 함께 쌓여 디스크까지 위협한다.</div></div>
+    <div class="tile red"><div class="k">② 고아 2PC</div><div class="d">커밋도 롤백도 안 된 <code>PREPARE TRANSACTION</code>이 <code>pg_prepared_xacts</code>에 남아 있으면 <b>영원히 열린 트랜잭션</b>과 같다.</div></div>
+    <div class="tile red"><div class="k">③ 레플리카의 긴 쿼리</div><div class="d"><code>hot_standby_feedback = on</code>이면 스탠바이의 스냅샷이 프라이머리로 전달돼(<code>pg_stat_replication.backend_xmin</code>) <b>프라이머리 VACUUM을 막는다</b> — 사슬 (a)가 복제선을 타고 넘어온다.</div></div>
+  </div>
+  <p style="margin-bottom:0">그래서 진단은 <b>네 곳을 함께 본다</b> — <code>pg_stat_activity</code>의 최고령 <code>backend_xmin</code>, <code>pg_replication_slots</code>의 <code>age(xmin)</code>/<code>age(catalog_xmin)</code>, <code>pg_prepared_xacts</code>, <code>pg_stat_replication.backend_xmin</code>. <b>이 넷 중 가장 오래된 값이 지평선</b>이고, 그것이 곧 범인이다.</p>
+</div></details>
+
+<details class="q"><summary>청크로 쪼개면 죽은 튜플 총량이 줄어드나요? 청크 크기는 어떻게 정하죠? <span class="badge trap">함정</span><span class="hint">힌트: "줄어든다"고 답하면 함정에 빠진다. 줄어드는 건 총량이 아니라 다른 것</span></summary><div class="a">
+  <p><b>총량은 줄지 않는다.</b> 500만 행을 바꾸면 죽은 튜플 500만 개는 <b>어차피 생긴다.</b> 청크 커밋이 바꾸는 것은 두 가지다 — <b>① "치울 수 있게 되는 시점"</b>(청크마다 커밋되므로 5,000개 단위로 즉시 회수 대상이 된다) <b>② "한 번에 쏟아지는 양"</b>(autovacuum이 사이사이 따라오고, 논리 복제도 5,000행 단위로 흘러간다). 덤으로 <b>중간에 실패해도 앞의 것은 남는다.</b></p>
+  <p><b>청크 크기는 양면 거래다.</b> 작을수록 락·지평선·복제 지연은 줄지만 <b>커밋 횟수(WAL fsync·왕복)가 늘어 총 소요 시간이 길어진다.</b> 그래서 숫자를 단정하지 말고 <b>"1,000~10,000에서 시작해 복제 지연·<code>n_dead_tup</code>·처리 시간을 보며 조정한다"</b>처럼 <b>측정으로 정한다</b>고 답한다.</p>
+  <p style="margin-bottom:0">설계에 반드시 함께 넣을 것 — <b>청크 사이에 autovacuum이 따라올 여유</b>(짧은 sleep, 배치 끝의 <code>VACUUM (ANALYZE)</code>)와 <b>재실행 가능성</b>(<code>WHERE ... AND status = 'ACTIVE'</code>). 청크 커밋은 중간 상태를 만들기 때문에 <b>멱등이 곧 세트</b>다.</p>
+</div></details>
+
+<details class="q"><summary><code>TransactionTemplate</code>으로 블록을 나눴는데 트랜잭션 길이가 그대로입니다. 왜죠? <span class="badge trap">함정</span><span class="hint">힌트: 기본 전파 속성이 무엇인지</span></summary><div class="a">
+  <p><b>호출자가 이미 트랜잭션 안이기 때문이다.</b> <code>TransactionTemplate</code>의 기본 전파는 <code>REQUIRED</code>라서 <b>진행 중인 트랜잭션이 있으면 블록들이 전부 거기에 합류</b>한다. 컨트롤러나 파사드에 <code>@Transactional</code>이 붙어 있거나, 서비스 메서드 자체에 <code>@Transactional</code>을 남겨 뒀다면 <b>블록마다 커밋되지 않고 바깥 경계가 끝날 때 한꺼번에 커밋</b>된다 — <b>에러도 경고도 없이 원본과 똑같은 긴 트랜잭션</b>이 된다.</p>
+  <p>가장 잔인한 점은 <b>기능 테스트가 전부 통과한다</b>는 것이다. 결과는 같고 트랜잭션 경계만 다르므로 <b>운영에서 PG가 느려지는 날에야</b> 드러난다.</p>
+  <p style="margin-bottom:0"><b>막는 방법은 두 겹.</b> ① 진입점에서 <code>TransactionSynchronizationManager.isActualTransactionActive()</code>가 <code>false</code>임을 단정하는 테스트, ② ArchUnit으로 <b>"컨트롤러·파사드에는 <code>@Transactional</code>을 붙이지 않는다"</b>와 <b>"클래스 레벨 <code>@Transactional</code> 금지"</b>를 고정. 여기에 <b>PG 3초 지연 스텁으로도 트랜잭션이 100ms 미만</b>임을 단정하는 회귀 테스트를 더하면 되돌아가는 것 자체가 막힌다.</p>
+</div></details>
+
+<details class="q"><summary>리포트 조회에 "일관된 스냅샷"이 필요합니다. <code>REPEATABLE READ</code>로 올리면 안 되나요?<span class="hint">힌트: 올려도 된다. 다만 무엇을 지불하는지 알고 올려야 한다</span></summary><div class="a">
+  <p><b>올릴 수 있지만, 무엇을 지불하는지 알고 올려야 한다.</b> READ COMMITTED에서는 스냅샷이 <b>문장 단위</b>라 문장이 끝나면 지평선을 놓지만, REPEATABLE READ는 <b>첫 문장에서 찍은 스냅샷을 트랜잭션 끝까지</b> 쥔다. 30분짜리 리포트라면 <b>30분 내내 지평선을 붙드는 것</b>이고, 그동안 <b>운영 테이블 전체</b>의 죽은 튜플이 회수되지 않는다.</p>
+  <div class="rule">즉 이것은 <b>"일관성을 bloat로 사는 거래"</b>다 — 대가를 알고 하면 설계, 모르고 하면 사고</div>
+  <p><b>대안은 순서대로 셋이다.</b> ① <b>문장 하나로 끝내기</b> — 여러 쿼리의 일관성이 필요해서 격리 수준을 올리는 경우가 많은데, 하나의 문장(CTE·조인)으로 합칠 수 있으면 READ COMMITTED에서도 그 문장 안에서는 일관된 스냅샷이다. ② <b>레플리카로 보내기</b> — 프라이머리의 지평선·락과 분리된다. 단 <code>hot_standby_feedback = on</code>이면 <b>그 긴 조회가 복제선을 타고 프라이머리 VACUUM을 막으므로</b>, 리포트용 레플리카는 feedback을 끄고 쿼리 취소(<code>max_standby_streaming_delay</code>)를 감수하는 쪽이 정석이다. ③ <b>집계 테이블·사전 계산 배치</b> — 애초에 긴 조회 자체를 없앤다.</p>
+  <p style="margin-bottom:0"><b>답변 태도</b>: "올리면 안 됩니다"가 아니라 <b>"올리면 지평선을 트랜잭션 전체 길이만큼 사게 되니, 먼저 한 문장으로 합칠 수 있는지 보고, 안 되면 레플리카로 보냅니다"</b>가 정확하다.</p>
+</div></details>
+
+<details class="q"><summary>그럼 트랜잭션은 무조건 잘게 쪼개는 게 좋은 건가요? 계좌이체도요? <span class="badge core">필수</span><span class="hint">힌트: 반대편을 말해야 답이 완성된다. 판단 기준 두 개</span></summary><div class="a">
+  <p><b>아니다.</b> <b>순수 DB 작업만으로 이루어져 있고, 실패 시 함께 되돌려야 하며, 원래 수 ms인 트랜잭션은 쪼개지 않는다.</b> 계좌이체의 출금 UPDATE와 입금 UPDATE를 "짧게 하자"고 두 트랜잭션으로 나누는 것은 <b>짧아지는 것도 없이 원자성만 버리는 일</b>이다 — 출금만 되고 입금이 안 된 상태를 <b>보상 로직으로 직접 메워야</b> 하는데, 그건 DB가 공짜로 해 주던 일이다.</p>
+  <p><b>판단 기준은 둘.</b> ① <b>트랜잭션 안에 블로킹 I/O(외부 호출·파일·사용자 대기)가 있는가</b> → 있으면 그것을 뺀다. ② <b>이 부분이 실패하면 본 처리도 되돌려야 하는가</b> → "아니오"면 이벤트로 넘긴다. <b>둘 다 아니면 그대로 둔다.</b></p>
+  <p style="margin-bottom:0">한 문장으로 — <b>"쪼개기는 락·커넥션·bloat·복제 지연을 사는 대신 원자성을 파는 거래이고, 판 원자성은 상태 머신·보상·멱등으로 다시 사 와야 하므로, 블로킹 I/O가 없고 실패 시 함께 되돌려야 하는 작업은 쪼개지 않습니다."</b></p>
+</div></details>
+
+<details class="q"><summary>MySQL로 물어보면 답이 달라지는 부분은? <span class="badge senior">경험 대조</span><span class="hint">힌트: 다섯 지점 — 저장 위치 · 롤백 · 락 타임아웃 · 복제 · 관측 창구</span></summary><div class="a">
+  <p><b>다섯 지점이다.</b></p>
+  <p><b>① 옛 버전이 사는 곳 → 해악의 이름</b>: InnoDB는 <b>undo 로그</b>에 두고 <b>purge</b>가 치우므로 "History list length 증가·버전 체인 순회", PostgreSQL은 <b>힙 안에</b> 두고 <b>VACUUM</b>이 치우므로 "bloat·visibility map 퇴화·wraparound" — <b>원리는 같고 계산서의 이름만 다르다.</b></p>
+  <p><b>② 롤백 비용</b>: InnoDB는 undo를 되감아 <b>변경량에 비례</b>하고 그동안 락을 쥔다("KILL이 상황을 늘린다"). PostgreSQL은 <b>O(1)</b>이라 그 함정은 없지만 <b>죽은 튜플 청소가 VACUUM으로 이월</b>된다.</p>
+  <p><b>③ 락 타임아웃</b>: MySQL은 <b>행 락 50초 + MDL 무제한</b>의 두 변수, PostgreSQL은 <code>lock_timeout</code> <b>하나에 기본 0(무한)</b> — 반드시 직접 정해야 한다. 타임아웃 후 MySQL은 <b>문장만 롤백하고 트랜잭션을 살려 두지만</b> PostgreSQL은 <b>트랜잭션 전체가 실패 상태</b>(<code>25P02</code>)다.</p>
+  <p><b>④ 복제 지연의 모양</b>: MySQL binlog는 <b>커밋 순간 한 덩어리</b> → 계단식 지연. PostgreSQL은 <b>물리 복제면 WAL이 실시간으로 흘러</b> 계단이 덜하고, <b>논리 복제·CDC만</b> MySQL과 같은 양상이다.</p>
+  <p><b>⑤ 관측 창구</b>: MySQL은 <code>information_schema.innodb_trx</code>(<code>trx_query</code>가 NULL이면 외부 대기), PostgreSQL은 <code>pg_stat_activity</code>(<code>idle in transaction</code> + <b>마지막 문장</b> + <code>backend_xmin</code>으로 <b>지평선 정체까지 한 뷰에서</b>).</p>
+  <p style="margin-bottom:0">이 다섯을 짚으면 <b>"저장 구조의 차이에서 운영 차이를 도출한다"</b>로 들린다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  긴 트랜잭션은 벽시계 시간이 아니라 <b>붙들고 있는 자원</b>으로 정의되며, 해악은 "느려진다"가 아니라 <b>스냅샷·XID(지평선을 고정해 VACUUM을 멈춰 bloat·Index Only Scan 퇴화·wraparound로) · 락(대기 큐 → 커넥션 → 스레드 → 전면 장애, DDL이 끼면 <code>ACCESS EXCLUSIVE</code> 대기열) · 변경량(죽은 튜플·WAL 한 덩어리 → autovacuum 폭주·논리 복제 지연 급증) · 커넥션(락 없이도 프로세스 하나 독점 → 풀 고갈)</b> 네 자원에서 출발하는 <b>네 사슬</b>의 문제이고, 처방은 <b>외부 호출 밖으로 / <code>TransactionTemplate</code> 블록 축소 / 읽기 분리 / <code>AFTER_COMMIT</code>·Outbox / 청크 커밋</b> 다섯 가지인데 <b>각각이 어떤 자원을 언제 놓아주는지</b>로 외워야 인출이 되며, 쪼개는 순간 원자성을 내주므로 <b>상태 머신·보상·재시도+멱등</b>으로 되사 와야 하고, 이 모든 것은 사람의 주의가 아니라 <b>ArchUnit·<code>lock_timeout</code>·<code>statement_timeout</code>·<code>idle_in_transaction_session_timeout</code>·<code>pg_stat_activity</code> 알람</b>으로 못 어기게 고정해야 비로소 <b>"트랜잭션은 짧게"가 격언이 아니라 시스템의 성질</b>이 된다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/04-rdb-sql/16-long-transaction-harm-and-shortening.md</code> · 이어서 볼 문서: MVCC와 VACUUM의 부품(<code>11-mvcc-postgresql.md</code>) · 커넥션 수와 처리량(<code>15-connection-count-vs-throughput.md</code>) · 무중단 스키마 변경(<code>14-online-ddl-zero-downtime-schema-change.md</code>) · 트랜잭션 ACID(<code>05-transaction-acid.md</code>) · <code>@Transactional</code> 기본 동작과 롤백(<code>02-spring/07-transactional-default-behavior-rollback.md</code>) · HikariCP 커넥션 풀 고갈(<code>02-spring/26-hikaricp-connection-pool-exhaustion.md</code>) · 트랜잭션 경계와 도메인 이벤트(<code>03-jpa-orm/22-transaction-boundary-and-domain-events.md</code>) · 대량 처리와 JDBC 배치(<code>03-jpa-orm/21-bulk-insert-jdbc-batch.md</code>)</p>
+</main>
+</body>
+</html>

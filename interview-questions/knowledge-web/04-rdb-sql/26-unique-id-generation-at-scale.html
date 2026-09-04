@@ -1,0 +1,2138 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>대용량 유니크 채번 설계 — "주문번호"와 "PK"는 다른 물건이고, PG의 시퀀스는 AUTO_INCREMENT가 아니다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">04 RDB · SQL &nbsp;|&nbsp; 고난이도⭐⭐⭐ &nbsp;|&nbsp; PostgreSQL 기준 (MySQL 대조 포함) &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>대용량 유니크 채번 설계<br><span class="sub">"주문번호"와 "PK"는 다른 물건이고, PostgreSQL의 시퀀스는 AUTO_INCREMENT가 아니다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"유니크 채번(주문번호 등)을 대용량 트래픽에서 어떻게 설계하나요? (Auto Increment 한계, Snowflake, 채번 테이블, UUID v7 비교)"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 채번 질문의 정답은 <b>방식 이름이 아니라 요구사항을 쪼개는 순서</b>다. 먼저 <b>내부 PK(조인·인덱스의 축)</b>와 <b>외부 주문번호(고객·CS·정산이 부르는 업무 식별자)</b>를 분리한다 — 두 식별자에 걸리는 요구가 다르기 때문이다. 내부 PK는 <b>① 작고(8바이트) ② 단조 증가</b>해야 하는데, <b>PostgreSQL에서 이 두 원칙의 근거는 클러스터드 인덱스가 아니다.</b> 테이블은 힙이라 랜덤 PK에 무관하고, 아픈 곳은 <b>PK B-tree의 삽입 위치 · 자식 테이블의 FK 인덱스 · <code>full_page_writes</code>로 부푸는 WAL</b>이다. 후보는 <code>bigint GENERATED ALWAYS AS IDENTITY</code>(시퀀스) 또는 Snowflake. <b>PG의 시퀀스는 AUTO_INCREMENT와 결정적으로 다르다 — 테이블과 독립된 객체이고 트랜잭션 밖에서 동작해 <code>nextval()</code>을 INSERT 전에 미리 부를 수 있다.</b> 그래서 "Auto Increment 한계" 넷 중 하나(INSERT 전 ID 미확보)는 PG에서 애초에 성립하지 않고 JPA 쓰기 지연 배치도 살아난다. 대신 비트랜잭션성의 대가로 <b>빈 번호가 정상</b>이고, <code>CACHE</code>가 세션별 블록을 선점해 발급 순서와 값의 대소가 어긋나며, 다중 노드 충돌은 그대로 남는다. UUID는 네이티브 <code>uuid</code> 16바이트 — <b>v4는 힙이 아니라 PK B-tree를 앓고</b>, v7은 그 사슬을 끊지만 16바이트라는 계수는 남는다. 외부 주문번호는 채번 테이블(+블록 할당, <code>UPDATE ... RETURNING</code>, 별도 짧은 트랜잭션)로 업무 의미를 담되 <b>유니크 제약을 최후 방어선</b>으로 둔다. 그리고 각 방식이 내는 대가 — 시퀀스의 단일 노드 의존과 연속 번호 노출, 채번 테이블의 핫 로우 직렬화·죽은 튜플·재기동 시 구멍, Snowflake의 시계 역행·워커 ID 배포, UUID v7의 크기와 생성 시각 노출 — 를 <b>얻는 것과 같은 호흡에</b> 붙여야 고난이도 답이 된다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>방식 이름보다 먼저 요구를 쪼갠다</b> — "유니크"는 최소 조건일 뿐이고 실제 설계는 <b>유일성 · 정렬성 · 분산 생성 · 노출 안전성 · 크기 · 업무 의미</b> 여섯 성질 중 무엇을 어디까지 요구하느냐로 갈린다. 이 여섯은 서로를 배반하므로(정렬성↔노출 안전성, 크기↔업무 의미) <b>한 컬럼으로는 불가능</b>하다 → <b>내부 PK와 외부 주문번호를 분리</b>하는 것이 결론이다.</div></li>
+    <li><span class="n">2</span><div><b>내부 PK는 8바이트 단조 증가 — 단, PG에서 그 근거는 클러스터드 인덱스가 아니다</b> — 테이블은 <b>힙</b>이라 PK가 무엇이든 새 행은 끝 페이지로 간다. 대신 <b>삽입 위치를 값이 결정하는 구조</b>가 남아 있다 — <b>PK B-tree와 자식 FK 인덱스</b>. 무작위 키는 여기서 <b>캐시 미스 → 페이지 분할 → 적재율 저하 → 랜덤 I/O → <code>full_page_writes</code>로 INSERT 한 건에 8KB FPI</b>의 사슬을 돈다.</div></li>
+    <li><span class="n">3</span><div><b>단일 DB면 시퀀스가 여전히 첫 정답이고, 분산이 실제 요구면 Snowflake 또는 UUID v7이다</b> — PG 시퀀스는 <b>테이블 밖 독립 객체</b>라 <code>nextval()</code>을 INSERT 전에 부를 수 있어 AUTO_INCREMENT의 한계 하나가 사라진다(JPA 배치 유지). 대가는 <b>빈 번호 · <code>CACHE</code>의 순서 교차 · 단일 노드 의존</b>. 외부 주문번호는 <b>채번 테이블 + 블록 할당 + 유니크 제약</b>으로 따로 만든다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">요구를 쪼갠다 — 여섯 성질과 두 식별자</a></li>
+    <li><a href="#s2">비용의 단위 — 페이지 · 워킹셋 · WAL FPI</a></li>
+    <li><a href="#s3">PG에서 정렬성은 힙이 아니라 B-tree의 문제</a></li>
+    <li><a href="#s4">크기 계수는 사라진 게 아니라 자리를 옮겼다</a></li>
+    <li><a href="#s5">방식 ① 시퀀스 / IDENTITY — 그리고 반전</a></li>
+    <li><a href="#s6">방식 ② 채번 테이블 — 핫 로우를 어떻게 식히나</a></li>
+    <li><a href="#s7">방식 ③ Snowflake — 시계와 워커 ID</a></li>
+    <li><a href="#s8">방식 ④ UUID — v4의 사슬과 v7의 절단</a></li>
+    <li><a href="#s9">4방식 비교표 · 선택 기준 6가지</a></li>
+    <li><a href="#s10">실무 설계 — 분리하고 안전망을 코드로 고정</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "유니크 채번(주문번호 등)을 대용량 트래픽에서 어떻게 설계하나요? (Auto Increment 한계, Snowflake, 채번 테이블, UUID v7 비교)"</p>
+  <p><b>PostgreSQL 기준 재해석</b>: "PG의 시퀀스(<code>GENERATED ALWAYS AS IDENTITY</code>)는 <b>어디까지 되고 어디서 막히는가</b> — 비트랜잭션성·<code>CACHE</code>·다중 노드 충돌을 포함해 — 그리고 Snowflake·채번 테이블·<code>uuid</code>(v4/v7)와 어떻게 조합하는가?"</p>
+  <p><b>출제 의도</b>: rationale의 표현 그대로 — "Auto Increment의 한계(샤딩, 노출 위험)에서 출발해 Snowflake/UUID v7의 트레이드오프(정렬성, 인덱스 지역성)까지 — <b>작은 주제 하나에 분산 시스템 지식이 압축돼 있어 깊이 측정에 효율적이다.</b>"</p>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">채점 지점 ⑴ 메커니즘</div><div class="d">각 방식이 <b>"왜" 빠르고 "왜" 막히는지</b>를 <b>저장 구조(힙 + B-tree + WAL)</b>와 <b>분산 시스템(시계·조율)</b> 두 층으로 설명하는가.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">채점 지점 ⑵ 같은 축의 비교</div><div class="d">4방식을 <b>같은 축</b>으로 비교하고 각각에 <b>대가를 붙이는가</b>. 얻는 것만 말하면 절반이다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">채점 지점 ⑶ 착지</div><div class="d">"주문번호"라는 단어에 숨은 <b>두 요구(내부 식별 vs 외부 노출)</b>를 분리해 <b>설계로 착지</b>시키는가.</div></div>
+  </div>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 네 지점</span>
+    ① <b>비용을 이름 붙은 사슬로</b> — "UUID는 인덱스에 안 좋다"에서 멈추지 않는다. 2·3·8절에서 <b>고리 하나씩</b> 이어 붙인다.<br>
+    ② <b>트레이드오프를 양면으로</b> — 5~8절 각 절 말미에 <b>대차대조표(얻는 것 / 내는 것)</b>를 한 쌍으로 붙인다.<br>
+    ③ <b>안전망을 코드로 고정</b> — "조심하면 된다"가 아니라 <b>시계 역행 감지 · 워커 ID 임대 · 유니크 제약 + 새 트랜잭션 재시도 · 동시성 테스트 · 소진 감시</b>로(10절).<br>
+    ④ <b>목록 인출</b> — <b>여섯 성질 · 비교표 6축 · 선택 기준 6가지 · 빈 번호 4경로 · v4 사슬 6고리</b>를 세트로 꺼낸다(11절 인출 카드).
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">옆 문항과의 경계</span>
+  <b>클러스터드 vs 세컨더리 인덱스</b>(<code>03</code>)는 PG의 힙 구조에서 <b>PK 설계 2원칙(작게·단조 증가)을 도출</b>하고 "곱셈 계수가 FK 인덱스로 자리를 옮겼다"는 계산을 다뤘다 — 이 문서는 그 원칙을 <b>전제</b>로 "어떤 채번 방식이 그 원칙을 만족하며 분산까지 확장되는가"를 다룬다. <b>대량 INSERT와 JDBC batch</b>(<code>03-jpa-orm/21</code>)는 <code>IDENTITY</code> 전략이 쓰기 지연을 무력화하는 메커니즘과 <code>allocationSize</code>를 다뤘다 — 이 문서는 그 무력화를 <b>PG에서는 시퀀스 전략으로 피할 수 있다</b>는 점을 5절에서 짚는다.
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 요구를 쪼갠다 — 여섯 성질, 그리고 두 식별자</h2>
+
+<p>"주문번호를 어떻게 채번하나요"에 <b>방식 이름부터 대면 감점</b>이다. "유니크"는 최소 조건일 뿐이고, 실제 설계는 아래 <b>여섯 성질 중 무엇을 어디까지 요구하느냐</b>로 갈린다. 지금은 성질만 세운다 — 각 성질이 왜 비용이 되는지는 2절부터, 어느 방식이 그 성질을 만족하는지는 5~8절에서 다룬다.</p>
+
+<div class="memo">
+  <h4>암기 대상 ① — 채번 요구의 여섯 성질 (2 · 2 · 2로 묶어서 외운다)</h4>
+  <div class="grid g3">
+    <div class="tile ok">
+      <div class="k">공통 요구 — 유일 · 분산</div>
+      <div class="s">두 식별자 모두가 원한다</div>
+      <div class="d"><b>① 유일성</b> — 전역에서 절대 겹치지 않는가. <b>겹치면 어디서 걸러지는가.</b><br><b>③ 분산 생성 가능성</b> — DB 한 대에 묻지 않고 만들 수 있는가. 그리고 <b>INSERT 전에 ID를 알 수 있는가</b> — <b>PG에서는 이 둘이 갈라진다</b>(5절).</div>
+    </div>
+    <div class="tile">
+      <div class="k">내부 PK가 원함 — 정렬 · 크기</div>
+      <div class="s">기계가 원하는 성질</div>
+      <div class="d"><b>② 정렬성(시간 순)</b> — 나중에 만든 ID가 더 큰가. 즉 <b>"값의 대소"와 "만들어진 순서"가 같은 방향</b>인가.<br><b>⑤ 크기</b> — 8바이트인가 16바이트인가 36바이트 문자열인가.</div>
+    </div>
+    <div class="tile red">
+      <div class="k">외부 번호가 원함 — 노출 · 의미</div>
+      <div class="s">사람과 업무가 원하는 성질</div>
+      <div class="d"><b>④ 노출 안전성</b> — 외부에 보여도 <b>다음 번호·총량·증가율·생성 시각</b>이 새지 않는가.<br><b>⑥ 업무 의미(가독성)</b> — 날짜·채널 코드·체크 디짓을 담아 <b>사람이 읽고 불러줄 수</b> 있어야 하는가.</div>
+    </div>
+  </div>
+  <p class="sub" style="margin-bottom:0">여섯 개를 순서 없이 외우면 면접장에서 두세 개가 빠진다. <b>"공통 둘 → 안쪽 둘 → 바깥 둘"</b>이라는 <b>자리 순서</b>로 외우면 하나만 떠올려도 나머지가 따라오고, 그대로 <b>"그래서 분리한다"</b>는 결론까지 이어진다.</p>
+</div>
+
+<p>이 여섯을 놓고 보면 <b>한 컬럼으로 전부 만족시키는 방식은 없다</b>는 게 바로 보인다. <b>성질끼리 서로를 배반하기 때문</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 360" role="img" aria-label="왼쪽 내부 PK가 원하는 성질(정렬성, 크기)과 오른쪽 외부 주문번호가 원하는 성질(노출 안전성, 업무 의미)이 각각 양방향 화살표로 충돌하고, 아래에는 두 자리가 공통으로 요구하는 유일성과 분산 생성이 놓여 있으며, 결론은 두 식별자를 분리하는 것이라는 도식">
+    <defs>
+      <marker id="c1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="c1s" markerWidth="9" markerHeight="9" refX="1" refY="4.5" orient="auto-start-reverse"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">여섯 성질은 서로를 배반한다 — 그래서 한 컬럼으로는 끝나지 않는다</text>
+
+    <!-- left -->
+    <rect x="30" y="46" width="440" height="210" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="250" y="72" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">내부 PK — 조인 · FK · 인덱스의 축</text>
+    <text x="250" y="91" font-size="11.5" fill="#1e40af" text-anchor="middle" class="mono">orders.id — 서비스 밖으로 나가지 않는다</text>
+
+    <rect x="52" y="104" width="396" height="56" rx="9" fill="#fff" stroke="#bfdbfe"/>
+    <text x="68" y="126" font-size="12.5" font-weight="700" fill="#1d4ed8">② 정렬성 — 나중에 만든 값이 더 커야 한다</text>
+    <text x="68" y="146" font-size="11.5" fill="#334155">PK B-tree 끝 페이지에 이어 붙이기 · 캐시 미스 0 · FPI 최소</text>
+
+    <rect x="52" y="170" width="396" height="56" rx="9" fill="#fff" stroke="#bfdbfe"/>
+    <text x="68" y="192" font-size="12.5" font-weight="700" fill="#1d4ed8">⑤ 크기 — 8바이트여야 한다</text>
+    <text x="68" y="212" font-size="11.5" fill="#334155">자식 테이블 FK 컬럼 · FK 인덱스가 이 크기를 그대로 받는다</text>
+
+    <!-- right -->
+    <rect x="650" y="46" width="440" height="210" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="870" y="72" font-size="13.5" font-weight="700" fill="#b45309" text-anchor="middle">외부 주문번호 — 고객 · CS · 정산이 부르는 번호</text>
+    <text x="870" y="91" font-size="11.5" fill="#92400e" text-anchor="middle" class="mono">order_no — URL · 영수증 · 상담 화면 · 정산 파일</text>
+
+    <rect x="672" y="104" width="396" height="56" rx="9" fill="#fff" stroke="#fde68a"/>
+    <text x="688" y="126" font-size="12.5" font-weight="700" fill="#b45309">④ 노출 안전성 — 다음 번호가 새면 안 된다</text>
+    <text x="688" y="146" font-size="11.5" fill="#334155">연속 번호는 하루 주문량 · 증가율을 그대로 보여준다</text>
+
+    <rect x="672" y="170" width="396" height="56" rx="9" fill="#fff" stroke="#fde68a"/>
+    <text x="688" y="192" font-size="12.5" font-weight="700" fill="#b45309">⑥ 업무 의미 — 날짜 · 채널 · 체크 디짓</text>
+    <text x="688" y="212" font-size="11.5" fill="#334155">사람이 눈으로 읽고 전화로 불러줄 수 있어야 한다</text>
+
+    <!-- conflicts -->
+    <line x1="474" y1="132" x2="516" y2="132" stroke="#dc2626" stroke-width="2" marker-start="url(#c1s)"/>
+    <line x1="604" y1="132" x2="646" y2="132" stroke="#dc2626" stroke-width="2" marker-end="url(#c1)"/>
+    <rect x="518" y="116" width="84" height="32" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="560" y="137" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">충돌</text>
+
+    <line x1="474" y1="198" x2="516" y2="198" stroke="#dc2626" stroke-width="2" marker-start="url(#c1s)"/>
+    <line x1="604" y1="198" x2="646" y2="198" stroke="#dc2626" stroke-width="2" marker-end="url(#c1)"/>
+    <rect x="518" y="182" width="84" height="32" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="560" y="203" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">충돌</text>
+
+    <text x="560" y="163" font-size="10.5" fill="#7f1d1d" text-anchor="middle">"나중 것이 더 크다" ≒ "다음 번호를 추측할 수 있다"</text>
+    <text x="560" y="229" font-size="10.5" fill="#7f1d1d" text-anchor="middle">의미를 담으면 길어지고, 길어지면 적재율이 떨어진다</text>
+
+    <!-- common band -->
+    <rect x="30" y="268" width="1060" height="34" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="560" y="290" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">① 유일성 · ③ 분산 생성 가능성 — 두 자리가 함께 요구한다 (공통 요구)</text>
+
+    <!-- conclusion -->
+    <rect x="30" y="312" width="1060" height="38" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="337" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">결론은 먼저 정해져 있다 — 내부 PK와 외부 주문번호를 분리하고, 각자에게 맞는 채번을 붙인다</text>
+  </svg>
+  <figcaption><b>②와 ④는 정면으로 부딪힌다</b> — "나중 것이 더 크다"를 만족하는 값은 곧 "다음 번호를 추측할 수 있다"에 가깝기 때문이다. <b>⑤와 ⑥도 마찬가지</b>다 — 날짜·채널·체크 디짓을 담으면 값이 길어지고, 값이 길어지면 인덱스 적재율이 떨어진다(4절에서 숫자로 계산한다). 그래서 이 문서는 <b>결론을 먼저 말하고</b>, 4방식은 <b>"각 자리에 어떤 후보가 어울리는가"를 따지는 재료</b>로 쓴다.</figcaption>
+</figure>
+
+<div class="rule">면접 첫 문장은 이것이다 — <b>"채번은 방식 선택 문제가 아니라 식별자 분리 문제입니다. 먼저 내부 PK와 외부 주문번호를 나눕니다."</b></div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 비용의 단위 — 페이지 · 워킹셋 · WAL의 FPI</h2>
+
+<p>성질을 세웠으니 이제 <b>비용의 단위</b>를 정해야 한다. "UUID는 느리다"가 아니라 <b>"UUID는 무엇을 몇 번 더 하게 만드는가"</b>로 말하려면, 그 "무엇"의 이름이 먼저 있어야 한다. 이 문서 전체를 관통하는 비용 모델이라 여기서 한 번 못 박는다. 앞의 셋은 DB 공통이고, <b>마지막 하나는 PostgreSQL 고유 항목</b>이다.</p>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k" style="font-family:inherit">페이지(page) — 비용을 세는 최소 단위</div>
+    <div class="d">DB가 디스크와 메모리 사이에서 데이터를 주고받는 <b>최소 단위 덩어리</b>. PostgreSQL은 <b>8KB(8,192바이트)</b>다. 8바이트짜리 <code>bigint</code> 하나만 필요해도 <b>그 값이 든 8KB 페이지를 통째로</b> 읽어 온다. 그래서 이 문서에서 "비싸다"는 말은 항상 <b>페이지를 몇 장 만졌는가</b>로 환산된다.</div>
+  </div>
+  <div class="tile">
+    <div class="k" style="font-family:inherit">순차 I/O vs 랜덤 I/O — 같은 장수라도 값이 다르다</div>
+    <div class="d"><b>순차</b>는 이웃한 페이지를 이어서 읽고 쓰는 접근이라 페이지당 비용이 작고, <b>랜덤</b>은 흩어진 위치를 하나씩 찾아가므로 <b>페이지마다 위치 이동 비용</b>을 따로 낸다. PG 플래너의 비용 모델에 숫자로 박혀 있다 — <code>random_page_cost</code> <b>4.0</b> 대 <code>seq_page_cost</code> <b>1.0</b>. <b>랜덤 한 장을 순차 네 장만큼 비싸게 친다.</b></div>
+  </div>
+  <div class="tile">
+    <div class="k" style="font-family:inherit">shared_buffers — 공급</div>
+    <div class="d">PG가 디스크 페이지를 담아두는 <b>고정 크기 메모리 캐시</b>(기본 128MB, 운영에서는 대개 물리 메모리의 25% 안팎). 뒤에 OS 페이지 캐시가 한 겹 더 있는 <b>이중 캐시</b>다. 찾는 페이지가 여기 있으면 <code>EXPLAIN (ANALYZE, BUFFERS)</code>에 <code>shared hit</code>, 없으면 <code>shared read</code>(= 디스크 I/O)로 찍힌다.</div>
+  </div>
+  <div class="tile">
+    <div class="k" style="font-family:inherit">워킹셋(working set) — 수요</div>
+    <div class="d"><b>어떤 부하를 처리하는 동안 실제로 손대는 페이지들의 집합.</b> "테이블 전체 크기"가 아니라 <b>"지금 이 작업이 반복해서 만지는 페이지들"</b>이라는 점이 핵심이다. 100GB 테이블이라도 INSERT만 하는 부하의 워킹셋은 <b>맨 끝 페이지 몇 장</b>일 수 있다.</div>
+  </div>
+</div>
+
+<div class="callout warn">
+  <span class="t">이 둘의 관계가 이 문서에서 가장 중요한 비선형성을 만든다</span>
+  워킹셋이 <code>shared_buffers</code> <b>안에</b> 들어가면 필요한 페이지가 거의 항상 메모리에 있어(<code>shared hit</code>) <b>응답 시간이 데이터 증가에 거의 둔감</b>하다. 워킹셋이 캐시를 <b>넘치는</b> 순간, 만지는 페이지마다 캐시에 없을 확률이 높아지고(<code>shared read</code> = 디스크 랜덤 I/O), 새 페이지를 넣으려면 기존 페이지를 밀어내므로 <b>서로가 서로를 쫓아낸다</b>(캐시 오염). <b>성능은 선형이 아니라 계단식으로 무너진다</b> — 그래서 "조금 느려졌다"가 아니라 <b>"어느 날 갑자기 못 쓰게 됐다"</b>로 나타난다.
+</div>
+
+<p><b>채번 방식이 워킹셋을 결정한다</b>는 것이 이 문서의 첫 번째 축이다. 단조 증가 키는 <b>항상 같은 자리(맨 끝)</b>를 만지므로 워킹셋이 몇 페이지로 고정되고, 무작위 키는 매번 다른 자리를 만지므로 워킹셋이 <b>인덱스 전체</b>로 부푼다. 그리고 여기에 PG 고유 항목이 하나 더 붙는다.</p>
+
+<h3>2-1. WAL과 <code>full_page_writes</code> — PG 고유의 비용 축</h3>
+
+<p><b>WAL(Write-Ahead Log)</b> 은 데이터 파일을 고치기 <b>전에</b> "무엇을 어떻게 고칠 것인지"를 먼저 적어두는 로그다. 크래시가 나도 이 로그만 있으면 데이터 파일을 정합한 상태로 되돌릴 수 있다. 여기까지는 어느 DB나 비슷하다.</p>
+
+<p>PG 고유 항목은 <b><code>full_page_writes</code></b> 다. 체크포인트(디스크에 변경분을 반영하는 정기 작업) 이후 <b>어떤 페이지를 처음 건드릴 때는 변경분이 아니라 8KB 페이지 전체 이미지(FPI, Full Page Image)</b> 가 WAL에 실린다. 쓰기 도중 전원이 끊겨 페이지가 반쯤만 쓰인 상태(torn page)가 돼도 <b>통째 이미지로 덮어써 고칠 수 있게</b> 하기 위해서다.</p>
+
+<div class="callout info">
+  <span class="t">비유 — 서류 한 장을 고칠 때마다 "그 장 전체를 복사기에 올리는" 규칙</span>
+  체크포인트 이후 <b>어떤 서류를 처음 고칠 때는 그 장을 통째로 복사해</b> 백업 상자에 넣어야 한다. 두 번째부터는 <b>"3번째 줄을 이렇게 바꿈"이라는 메모 한 줄</b>이면 된다. 그래서 <b>같은 장을 계속 고치는 사람</b>은 복사기를 한 번만 쓰고, <b>매번 다른 장을 고치는 사람</b>은 고칠 때마다 복사기 앞에 선다. <b>고치는 양은 같은데 복사 비용이 수십 배 차이 난다</b> — 이것이 채번 방식이 WAL에 청구되는 방식이다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 430" role="img" aria-label="왼쪽은 단조 증가 키의 INSERT로 항상 맨 오른쪽 리프 한 장만 만지고 WAL에는 체크포인트당 FPI가 한 번만 실려 초당 0.5MB인 반면, 오른쪽은 무작위 키의 INSERT로 매번 다른 리프를 만져 캐시 미스가 나고 INSERT마다 8KB FPI가 실려 초당 41MB가 되는 것을 대비한 도식">
+    <defs>
+      <marker id="w1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="w2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 "초당 5,000건 INSERT" — 만지는 페이지가 다르면 WAL이 80배 달라진다</text>
+
+    <!-- LEFT -->
+    <rect x="30" y="44" width="515" height="340" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="287" y="68" font-size="13.5" font-weight="700" fill="#166534" text-anchor="middle">단조 증가 키 — IDENTITY · Snowflake · UUID v7</text>
+
+    <g>
+      <rect x="48" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#86efac"/>
+      <rect x="94" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#86efac"/>
+      <rect x="140" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#86efac"/>
+      <rect x="186" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#86efac"/>
+      <rect x="232" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#86efac"/>
+      <rect x="278" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#86efac"/>
+      <rect x="324" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#86efac"/>
+      <rect x="370" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#86efac"/>
+      <rect x="416" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#86efac"/>
+      <rect x="462" y="86" width="42" height="34" rx="5" fill="#16a34a" stroke="#166534"/>
+    </g>
+    <text x="48" y="136" font-size="11" fill="#166534">PK B-tree 리프 페이지들</text>
+    <line x1="483" y1="146" x2="483" y2="126" stroke="#16a34a" stroke-width="2" marker-end="url(#w1)"/>
+    <text x="504" y="150" font-size="11" fill="#166534" text-anchor="end" font-weight="700">모든 INSERT가 여기로</text>
+
+    <rect x="48" y="158" width="456" height="46" rx="9" fill="#fff" stroke="#86efac"/>
+    <text x="64" y="178" font-size="12" font-weight="700" fill="#166534">워킹셋 = 맨 끝 리프 1~2장 + 루트에서 거기까지의 브랜치 경로</text>
+    <text x="64" y="195" font-size="11.5" fill="#334155">방금 만졌으니 shared_buffers에 반드시 있다 → <tspan font-weight="700">캐시 미스 0</tspan></text>
+
+    <rect x="48" y="214" width="456" height="76" rx="9" fill="#1e293b"/>
+    <text x="64" y="234" font-size="11" fill="#94a3b8" class="mono">체크포인트 ─▶ INSERT 1: 리프 A 첫 접촉</text>
+    <text x="330" y="234" font-size="11" fill="#fbbf24" class="mono">→ FPI 8KB</text>
+    <text x="64" y="254" font-size="11" fill="#e2e8f0" class="mono">              INSERT 2: 리프 A 재접촉</text>
+    <text x="330" y="254" font-size="11" fill="#86efac" class="mono">→ 변경분 수십 B</text>
+    <text x="64" y="274" font-size="11" fill="#e2e8f0" class="mono">              INSERT 3..N: 리프 A 재접촉</text>
+    <text x="330" y="274" font-size="11" fill="#86efac" class="mono">→ 변경분 수십 B</text>
+
+    <rect x="48" y="300" width="456" height="66" rx="9" fill="#fff" stroke="#16a34a" stroke-width="2"/>
+    <text x="276" y="328" font-size="18" font-weight="800" fill="#166534" text-anchor="middle" class="mono">5,000 × 100B ≈ 0.5MB/s</text>
+    <text x="276" y="352" font-size="11.5" fill="#166534" text-anchor="middle">적재율 거의 100% — 끝 삽입은 반반 분할이 아니라 <tspan font-weight="700">오른쪽에 이어 붙이기</tspan></text>
+
+    <!-- RIGHT -->
+    <rect x="575" y="44" width="515" height="340" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="832" y="68" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">무작위 키 — UUID v4</text>
+
+    <g>
+      <rect x="593" y="86" width="42" height="34" rx="5" fill="#dc2626" stroke="#991b1b"/>
+      <rect x="639" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#fca5a5"/>
+      <rect x="685" y="86" width="42" height="34" rx="5" fill="#dc2626" stroke="#991b1b"/>
+      <rect x="731" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#fca5a5"/>
+      <rect x="777" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#fca5a5"/>
+      <rect x="823" y="86" width="42" height="34" rx="5" fill="#dc2626" stroke="#991b1b"/>
+      <rect x="869" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#fca5a5"/>
+      <rect x="915" y="86" width="42" height="34" rx="5" fill="#dc2626" stroke="#991b1b"/>
+      <rect x="961" y="86" width="42" height="34" rx="5" fill="#fff" stroke="#fca5a5"/>
+      <rect x="1007" y="86" width="42" height="34" rx="5" fill="#dc2626" stroke="#991b1b"/>
+    </g>
+    <text x="593" y="136" font-size="11" fill="#b91c1c">색칠 = 이번 1초 동안 만진 리프</text>
+    <line x1="700" y1="146" x2="700" y2="126" stroke="#dc2626" stroke-width="2" marker-end="url(#w2)"/>
+    <line x1="930" y1="146" x2="930" y2="126" stroke="#dc2626" stroke-width="2" marker-end="url(#w2)"/>
+    <text x="1049" y="150" font-size="11" fill="#b91c1c" text-anchor="end" font-weight="700">INSERT마다 다른 리프</text>
+
+    <rect x="593" y="158" width="456" height="46" rx="9" fill="#fff" stroke="#fca5a5"/>
+    <text x="609" y="178" font-size="12" font-weight="700" fill="#b91c1c">워킹셋 = 사실상 인덱스 전체</text>
+    <text x="609" y="195" font-size="11.5" fill="#334155">캐시에 있을 확률 ≈ shared_buffers ÷ 인덱스 크기 → <tspan font-weight="700">쓰기가 랜덤 읽기를 부른다</tspan></text>
+
+    <rect x="593" y="214" width="456" height="76" rx="9" fill="#1e293b"/>
+    <text x="609" y="234" font-size="11" fill="#94a3b8" class="mono">체크포인트 ─▶ INSERT 1: 리프 A 첫 접촉</text>
+    <text x="875" y="234" font-size="11" fill="#fbbf24" class="mono">→ FPI 8KB</text>
+    <text x="609" y="254" font-size="11" fill="#e2e8f0" class="mono">              INSERT 2: 리프 K 첫 접촉</text>
+    <text x="875" y="254" font-size="11" fill="#fbbf24" class="mono">→ FPI 8KB</text>
+    <text x="609" y="274" font-size="11" fill="#e2e8f0" class="mono">              INSERT 3: 리프 C 첫 접촉</text>
+    <text x="875" y="274" font-size="11" fill="#fbbf24" class="mono">→ FPI 8KB</text>
+
+    <rect x="593" y="300" width="456" height="66" rx="9" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+    <text x="821" y="328" font-size="18" font-weight="800" fill="#b91c1c" text-anchor="middle" class="mono">5,000 × 8,192B = 41MB/s</text>
+    <text x="821" y="352" font-size="11.5" fill="#b91c1c" text-anchor="middle">시간당 약 <tspan font-weight="700">147GB</tspan> — 게다가 가득 찬 페이지는 <tspan font-weight="700">반반 분할</tspan></text>
+
+    <!-- bottom -->
+    <rect x="30" y="392" width="1060" height="34" rx="9" fill="#1e293b"/>
+    <text x="560" y="414" font-size="13" font-weight="700" fill="#fbbf24" text-anchor="middle">80배 차이는 튜닝으로 메울 수 있는 종류가 아니다 — WAL은 복제로도, 아카이브로도 흐른다</text>
+  </svg>
+  <figcaption>WAL 볼륨은 디스크에서 끝나지 않는다 — <b>WAL 볼륨 증가 → 체크포인트 I/O 증가 → 복제 지연(스탠바이가 못 따라온다) → 백업/아카이브 저장 비용 증가 → PITR 재생 시간 증가.</b> 관찰은 <code>EXPLAIN (ANALYZE, WAL)</code>의 <code>WAL: fpi=</code>와 <code>pg_stat_wal</code>(PG 14+)의 <code>wal_fpi</code>로 한다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>암기 대상 ② — 숫자 세 개만 들고 가면 이 절이 재생된다</h4>
+  <div class="grid g3">
+    <div class="tile big"><div class="k">8KB</div><div class="s">PG 페이지 크기 = 비용의 단위</div></div>
+    <div class="tile big"><div class="k">4.0 : 1.0</div><div class="s"><code>random_page_cost</code> : <code>seq_page_cost</code></div></div>
+    <div class="tile big red"><div class="k">41 : 0.5</div><div class="s">초당 5,000 INSERT의 WAL(MB/s) — 무작위 : 단조</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">면접에서 <b>"UUID는 인덱스에 안 좋습니다"</b>는 절반짜리 답이다. <b>"초당 5,000건이면 FPI만으로 41MB/s, 시간당 147GB가 나옵니다"</b>까지 가야 <b>비용을 세어 본 사람</b>으로 들린다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. PG에서 "정렬성"은 힙이 아니라 인덱스의 문제다</h2>
+
+<p>여기가 이 주제에서 <b>가장 자주 오해되는 지점</b>이라 한 절을 따로 쓴다.</p>
+
+<p>MySQL/InnoDB를 기준으로 배운 사람은 <b>"PK가 무작위면 테이블이 흩어진다"</b>고 기억한다. InnoDB의 테이블은 <b>PK로 정렬된 B-tree 그 자체(클러스터드 인덱스)</b>라서 맞는 말이다. 그런데 <b>PostgreSQL의 테이블은 힙(heap)</b> 이다.</p>
+
+<p><b>힙</b>은 <b>"정렬 규칙 없이 빈자리에 던져 넣는 저장 구조"</b>다. PG는 새 행을 넣을 때 <b>FSM(Free Space Map, 페이지별 여유 공간 지도)</b>에게 "지금 여유 있는 페이지 아무거나"를 물어 그곳에 쓴다. 대개 파일 끝의 페이지다. <b>행의 PK 값이 1이든 999999든 <code>f47ac10b-...</code>든, 들어가는 자리는 똑같다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="왼쪽은 PostgreSQL 힙으로 새 행이 PK 값과 무관하게 파일 끝 페이지에 들어가는 모습이고, 오른쪽은 PK B-tree로 키가 95라면 반드시 81에서 120 구간의 리프에만 들어갈 수 있음을 보여주는 대비 도식">
+    <defs>
+      <marker id="h1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="h2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"자리를 고를 수 있는 구조"와 "키가 자리를 강제하는 구조"</text>
+
+    <!-- LEFT: heap -->
+    <rect x="30" y="44" width="515" height="238" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="287" y="68" font-size="13.5" font-weight="700" fill="#166534" text-anchor="middle">PostgreSQL 힙 — append-only에 가깝다</text>
+    <text x="287" y="87" font-size="11.5" fill="#166534" text-anchor="middle">FSM이 "여유 있는 페이지"를 알려주고, 대개 파일 끝이다</text>
+
+    <g>
+      <rect x="60" y="104" width="126" height="86" rx="8" fill="#fff" stroke="#86efac"/>
+      <text x="123" y="124" font-size="11.5" fill="#64748b" text-anchor="middle">페이지 0</text>
+      <text x="123" y="146" font-size="12" fill="#334155" text-anchor="middle" class="mono">id = 7</text>
+      <text x="123" y="166" font-size="12" fill="#334155" text-anchor="middle" class="mono">id = 2</text>
+
+      <rect x="200" y="104" width="126" height="86" rx="8" fill="#fff" stroke="#86efac"/>
+      <text x="263" y="124" font-size="11.5" fill="#64748b" text-anchor="middle">페이지 1</text>
+      <text x="263" y="146" font-size="12" fill="#334155" text-anchor="middle" class="mono">id = 3</text>
+      <text x="263" y="166" font-size="12" fill="#334155" text-anchor="middle" class="mono">id = 51</text>
+
+      <rect x="340" y="104" width="126" height="86" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+      <text x="403" y="124" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">페이지 2 (지금 여기)</text>
+      <text x="403" y="146" font-size="12" fill="#334155" text-anchor="middle" class="mono">id = 99</text>
+      <text x="403" y="168" font-size="12" fill="#166534" text-anchor="middle" class="mono" font-weight="700">새 행 ←</text>
+    </g>
+    <line x1="480" y1="150" x2="472" y2="150" stroke="#16a34a" stroke-width="2" marker-end="url(#h1)"/>
+    <text x="486" y="146" font-size="11" fill="#166534">PK가 1이든</text>
+    <text x="486" y="162" font-size="11" fill="#166534" class="mono">f47ac10b</text>
+    <text x="486" y="177" font-size="11" fill="#166534">이든 같은 자리</text>
+
+    <rect x="60" y="206" width="456" height="58" rx="9" fill="#fff" stroke="#86efac"/>
+    <text x="76" y="228" font-size="12.5" font-weight="700" fill="#166534">힙 쪽 워킹셋 — 채번 방식과 무관하게 끝 페이지 한두 장</text>
+    <text x="76" y="248" font-size="11.5" fill="#334155">"PG는 클러스터드가 아니라서 UUID에 강하다"는 <tspan font-weight="700">여기까지만</tspan> 맞다</text>
+
+    <!-- RIGHT: btree -->
+    <rect x="575" y="44" width="515" height="238" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="832" y="68" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">PK B-tree — 값의 순서가 자리를 강제한다</text>
+    <text x="832" y="87" font-size="11.5" fill="#b91c1c" text-anchor="middle">키 순서대로 리프가 늘어서 있고, 다른 선택지가 없다</text>
+
+    <g class="mono">
+      <rect x="600" y="112" width="100" height="40" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="650" y="137" font-size="12" fill="#334155" text-anchor="middle">1 … 40</text>
+      <rect x="712" y="112" width="100" height="40" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="762" y="137" font-size="12" fill="#334155" text-anchor="middle">41 … 80</text>
+      <rect x="824" y="112" width="100" height="40" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+      <text x="874" y="137" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">81 … 120</text>
+      <rect x="936" y="112" width="100" height="40" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="986" y="137" font-size="12" fill="#334155" text-anchor="middle">121 … 160</text>
+    </g>
+    <line x1="700" y1="132" x2="710" y2="132" stroke="#94a3b8" stroke-width="1.5"/>
+    <line x1="812" y1="132" x2="822" y2="132" stroke="#94a3b8" stroke-width="1.5"/>
+    <line x1="924" y1="132" x2="934" y2="132" stroke="#94a3b8" stroke-width="1.5"/>
+
+    <line x1="874" y1="182" x2="874" y2="158" stroke="#dc2626" stroke-width="2" marker-end="url(#h2)"/>
+    <text x="874" y="200" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">키가 95라면 반드시 이 리프</text>
+
+    <rect x="600" y="206" width="456" height="58" rx="9" fill="#fff" stroke="#fca5a5"/>
+    <text x="616" y="228" font-size="12.5" font-weight="700" fill="#b91c1c">B-tree 쪽 워킹셋 — 채번 방식이 그대로 결정한다</text>
+    <text x="616" y="248" font-size="11.5" fill="#334155">단조 증가면 <tspan font-weight="700">맨 오른쪽 리프 한 장</tspan>, 무작위면 <tspan font-weight="700">인덱스 전체</tspan></text>
+
+    <!-- bottom -->
+    <rect x="30" y="292" width="1060" height="38" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="317" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">힙은 "어디에 넣어도 되니까" 삽입 위치를 고를 수 있고, B-tree는 "키가 자리를 정하니까" 고를 수 없다</text>
+  </svg>
+  <figcaption>그래서 <b>"PG는 힙이라 UUID를 써도 괜찮다"는 명제는 절반만 맞다.</b> 테이블은 정말 무관하다. 하지만 <b>삽입 위치를 값이 결정하는 구조가 하나 남아 있고</b>, 그것이 <b>PK B-tree와 그 값을 받는 자식 테이블의 FK 인덱스들</b>이다. 정렬성이 걸리는 곳은 거기다.</figcaption>
+</figure>
+
+<div class="rule ok">이제 이 문서의 질문은 이렇게 바뀐다 — <b>"이 채번 방식이 만드는 INSERT의 워킹셋은 몇 페이지이고, 그 INSERT는 WAL에 페이지 이미지를 몇 번 싣는가."</b></div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 크기 계수는 사라진 게 아니라 자리를 옮겼다</h2>
+
+<p>1절의 성질 ⑤(크기)도 <b>엔진에 따라 청구서가 오는 자리가 다르다.</b> 이것도 정면으로 계산해 두는 편이 낫다.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>MySQL/InnoDB — PK 크기는 곱셈 계수였다</h4>
+    <p style="margin:0;font-size:.94rem">InnoDB의 세컨더리 인덱스는 리프에 <b>"인덱스 키 + PK 값"</b>을 담는다. 행의 물리 주소가 아니라 PK를 담는 이유는, <b>클러스터드 인덱스에서 행이 이사를 다녀도 PK는 안 변하기 때문</b>이다. 그래서 세컨더리 인덱스가 5개면 <b>PK 값이 5벌 복제</b>된다.</p>
+  </div>
+  <div class="pane b">
+    <h4>PostgreSQL — 그 곱셈이 없다</h4>
+    <p style="margin:0;font-size:.94rem">PG의 인덱스 리프에는 PK가 아니라 <b>TID(Tuple ID, 6바이트 — 힙의 몇 번째 페이지 몇 번째 슬롯인지)</b>가 들어간다. <b>인덱스가 몇 개든 PK 크기는 그 인덱스들에 영향을 주지 않는다.</b></p>
+  </div>
+</div>
+
+<p><b>그런데 계수가 사라진 게 아니라 자리를 옮겼다.</b> 부모의 PK 값을 <b>그대로 들고 있어야 하는 곳</b>이 하나 더 있기 때문이다 — <b>자식 테이블의 FK 컬럼, 그리고 그 컬럼에 건 인덱스.</b> <code>orders.id</code>가 16바이트가 되면 <code>order_items.order_id</code>도 16바이트가 되고, <code>payments.order_id</code>도, <code>shipments.order_id</code>도 그렇게 된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 420" role="img" aria-label="위쪽 왼편은 InnoDB에서 세컨더리 인덱스마다 PK가 복제되어 곱셈 계수가 되는 구조, 오른편은 PostgreSQL에서 인덱스 리프에 TID가 들어가 곱셈이 없는 대신 자식 테이블의 FK 컬럼과 FK 인덱스로 크기 계수가 옮겨간 구조. 아래는 8KB 페이지당 엔트리 수가 bigint 366개에서 uuid 262개로 28퍼센트 줄어드는 막대 비교">
+    <defs>
+      <marker id="s4a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="s4b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"PK를 16바이트로 키우면 어디가 커지는가" — 엔진마다 청구서가 오는 자리가 다르다</text>
+
+    <!-- LEFT: InnoDB -->
+    <rect x="30" y="44" width="515" height="200" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="287" y="68" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">MySQL / InnoDB — 곱셈</text>
+
+    <rect x="56" y="82" width="150" height="120" rx="9" fill="#fff" stroke="#fca5a5"/>
+    <text x="131" y="103" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">클러스터드 인덱스</text>
+    <text x="131" y="122" font-size="11" fill="#64748b" text-anchor="middle">= 테이블 그 자체</text>
+    <text x="131" y="148" font-size="12" fill="#334155" text-anchor="middle" class="mono">리프 = PK + 행 전체</text>
+    <text x="131" y="176" font-size="11" fill="#b91c1c" text-anchor="middle">PK가 자리를 정한다</text>
+
+    <g class="mono">
+      <rect x="250" y="82" width="270" height="34" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="266" y="104" font-size="11.5" fill="#334155">세컨더리 ①  리프 = 키 + <tspan fill="#b91c1c" font-weight="700">PK 값</tspan></text>
+      <rect x="250" y="122" width="270" height="34" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="266" y="144" font-size="11.5" fill="#334155">세컨더리 ②  리프 = 키 + <tspan fill="#b91c1c" font-weight="700">PK 값</tspan></text>
+      <rect x="250" y="162" width="270" height="34" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="266" y="184" font-size="11.5" fill="#334155">세컨더리 ③…⑤ 리프 = 키 + <tspan fill="#b91c1c" font-weight="700">PK 값</tspan></text>
+    </g>
+    <line x1="212" y1="140" x2="244" y2="140" stroke="#dc2626" stroke-width="1.8" marker-end="url(#s4a)"/>
+    <text x="287" y="222" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">인덱스 5개 = PK 값 5벌 복제 → PK 크기가 곧 곱셈 계수</text>
+
+    <!-- RIGHT: PG -->
+    <rect x="575" y="44" width="515" height="200" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="832" y="68" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">PostgreSQL — 곱셈은 없다, 대신 자리를 옮겼다</text>
+
+    <rect x="600" y="82" width="180" height="60" rx="9" fill="#fff" stroke="#bfdbfe"/>
+    <text x="690" y="103" font-size="12" font-weight="700" fill="#1d4ed8" text-anchor="middle">인덱스 리프</text>
+    <text x="690" y="124" font-size="11.5" fill="#166534" text-anchor="middle" class="mono">키 + TID 6B</text>
+    <text x="690" y="160" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">인덱스가 몇 개든 PK 크기와 무관</text>
+
+    <g class="mono">
+      <rect x="812" y="82" width="250" height="30" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="826" y="102" font-size="11" fill="#334155">order_items.<tspan fill="#b91c1c" font-weight="700">order_id</tspan> + 그 인덱스</text>
+      <rect x="812" y="118" width="250" height="30" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="826" y="138" font-size="11" fill="#334155">payments.<tspan fill="#b91c1c" font-weight="700">order_id</tspan> + 그 인덱스</text>
+      <rect x="812" y="154" width="250" height="30" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="826" y="174" font-size="11" fill="#334155">shipments.<tspan fill="#b91c1c" font-weight="700">order_id</tspan> + 그 인덱스</text>
+    </g>
+    <line x1="784" y1="133" x2="806" y2="133" stroke="#2563eb" stroke-width="1.8" marker-end="url(#s4b)"/>
+    <text x="832" y="222" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">부모 PK 값을 그대로 들고 있어야 하는 곳 = 자식 FK 컬럼과 FK 인덱스</text>
+
+    <!-- bars -->
+    <rect x="30" y="258" width="1060" height="152" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="50" y="282" font-size="13" font-weight="700" fill="#1f2937">8KB 페이지 하나에 들어가는 FK 인덱스 엔트리 수 (유효 공간 8,152B · fillfactor 90)</text>
+    <text x="50" y="301" font-size="11.5" fill="#6b7280">엔트리 하나 = 라인 포인터 4B + 인덱스 튜플 헤더 8B + 키</text>
+
+    <text x="186" y="333" font-size="12.5" font-weight="700" fill="#166534" text-anchor="end" class="mono">bigint 키 20B</text>
+    <rect x="200" y="316" width="400" height="24" rx="5" fill="#16a34a"/>
+    <text x="614" y="333" font-size="13" font-weight="800" fill="#166534" class="mono">366개 / 페이지</text>
+    <text x="740" y="333" font-size="12" fill="#334155">1억 행 → 인덱스 약 <tspan font-weight="700">2.23GB</tspan></text>
+
+    <text x="186" y="371" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="end" class="mono">uuid 키 28B</text>
+    <rect x="200" y="354" width="286" height="24" rx="5" fill="#dc2626"/>
+    <text x="500" y="371" font-size="13" font-weight="800" fill="#b91c1c" class="mono">262개 / 페이지</text>
+    <text x="740" y="371" font-size="12" fill="#334155">1억 행 → 인덱스 약 <tspan font-weight="700">3.13GB</tspan> (차이 0.89GB)</text>
+
+    <text x="50" y="398" font-size="12.5" font-weight="700" fill="#b45309">페이지당 −28% = 같은 행 수에 페이지가 1.4배 필요 = shared_buffers 적재율 1.4배 악화 = "계단"에 1.4배 빨리 도달</text>
+  </svg>
+  <figcaption>"2배"가 아니라 <b>"1.4배 안팎"</b>인 이유는 <b>라인 포인터와 인덱스 튜플 헤더 12바이트</b>가 키 크기 차이를 희석하기 때문이다. 하지만 <b>방향은 바뀌지 않는다.</b> 2절에서 봤듯 <b>워킹셋이 캐시를 넘는 순간 성능은 계단식으로 무너지므로</b>, "1.4배"는 <b>"1.4배 느려진다"가 아니라 "계단에 1.4배 빨리 도달한다"</b>로 읽어야 한다. 자식 테이블이 셋이면 이 일이 세 벌 일어나고, 힙의 FK 컬럼 자체도 8B → 16B로 늘어난다(1억 행이면 0.8GB).</figcaption>
+</figure>
+
+<div class="callout trap">
+  <span class="t">"PG 13의 중복 제거(deduplication)가 해결해 주지 않나요?" <span class="badge trap">함정</span></span>
+  PG 13부터 B-tree는 <b>중복 키를 posting list 하나로 묶는 중복 제거</b>를 하지만, <b>유니크한 무작위 키에는 도움이 안 된다</b> — <b>중복이 없으니 묶을 것도 없다.</b> 이 최적화는 "같은 값이 여러 번 나오는 인덱스"(예: 상태 컬럼)를 위한 것이다.
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 방식 ① 시퀀스 / <code>IDENTITY</code> — DB 한 대의 카운터, 단 <b>테이블 밖에 있는 객체</b></h2>
+
+<p><b>메커니즘.</b> PG의 자동 증가는 <b>컬럼의 속성이 아니라 독립된 시퀀스 객체</b>다. 표준 문법인 <code>GENERATED ALWAYS AS IDENTITY</code>를 쓰면 컬럼에 딸린 시퀀스가 자동으로 만들어지고 소유권까지 묶인다.</p>
+
+<div class="codehead good"><span class="tag">good</span> 신규 설계의 기본형 (PG 10+ 표준 문법)</div>
+<pre><code><span class="kw">CREATE TABLE</span> orders (
+<span class="ln-good">    id         bigint      <span class="kw">GENERATED ALWAYS AS IDENTITY</span> <span class="kw">PRIMARY KEY</span>,</span>
+    created_at timestamptz <span class="kw">NOT NULL DEFAULT</span> <span class="fn">now</span>()
+);
+
+<span class="cm">-- 구식: serial / bigserial — "bigint + 시퀀스 + DEFAULT nextval()"의 축약.
+--   소유권·권한·DDL에서 잔손질이 필요해 신규 설계에서는 IDENTITY를 쓴다.</span>
+
+<span class="cm">-- 앱이 값을 미리 받아 명시적으로 넣어야 한다면(아래 '반전') 독립 시퀀스로 둔다</span>
+<span class="kw">CREATE SEQUENCE</span> orders_id_seq <span class="kw">AS</span> bigint;
+<span class="kw">ALTER TABLE</span> orders <span class="kw">ALTER COLUMN</span> id <span class="kw">SET DEFAULT</span> <span class="fn">nextval</span>(<span class="st">'orders_id_seq'</span>);</code></pre>
+
+<div class="memo red">
+  <h4>함정 ① — <code>ALWAYS</code>와 <code>BY DEFAULT</code>를 잘못 고르면 이관 스크립트가 통째로 막힌다</h4>
+  <p><code>GENERATED ALWAYS</code>는 앱이 <code>id</code>를 직접 넣는 INSERT를 <b>거부한다</b>(<code>OVERRIDING SYSTEM VALUE</code>를 붙여야 통과). 데이터 이관이나 JPA 시퀀스 전략처럼 <b>앱이 값을 들고 들어오는 구조</b>라면 <code>GENERATED BY DEFAULT AS IDENTITY</code>이거나 <b>독립 시퀀스</b>여야 한다.</p>
+  <div class="rule red" style="margin-bottom:0">판별식 — <b>"이 컬럼에 앱이 값을 넣을 일이 한 번이라도 있는가?" → 있으면 <code>BY DEFAULT</code> 또는 독립 시퀀스</b></div>
+</div>
+
+<h3>5-1. 왜 순차 I/O가 되는가 — 사슬로</h3>
+
+<div class="chain">
+  <span class="chip b">새 PK가 항상 최댓값</span><span class="arrow">→</span>
+  <span class="chip b">삽입 위치 = 맨 오른쪽 리프 한 장</span><span class="arrow">→</span>
+  <span class="chip g">방금 만졌으니 캐시 히트 100%</span><span class="arrow">→</span>
+  <span class="chip g">페이지가 차면 반반 분할이 아니라 <b>오른쪽에 이어 붙이기</b></span>
+</div>
+<div class="chain">
+  <span class="chip g">같은 리프를 수백 번 → FPI는 체크포인트당 1회</span><span class="arrow">→</span>
+  <span class="chip g">힙은 애초에 PK와 무관(FSM이 끝 페이지)</span><span class="arrow">→</span>
+  <span class="chip b"><b>shared_buffers가 테이블보다 훨씬 작아도 INSERT 처리량 유지</b></span>
+</div>
+
+<p><b>접수창구 비유</b> — 서류를 늘 서류철 <b>맨 뒤에 끼우니</b> 서류철을 열어볼 필요도, 중간을 벌릴 필요도, 통째로 복사기에 올릴 필요도 없다. (fillfactor는 B-tree 기본 90이고, <b>중간 삽입만 반반 분할</b>이다 — 끝 삽입은 최적화되어 있다.)</p>
+
+<h3>5-2. 반전 — PG에서는 "INSERT 전에 ID를 알 수 없다"가 성립하지 않는다</h3>
+
+<p>여기가 이 문항을 <b>MySQL 기준으로 외운 사람과 갈리는 지점</b>이다. 시퀀스는 <b>테이블 밖의 독립 객체</b>이므로 <b>INSERT와 무관하게 <code>nextval()</code>을 먼저 부를 수 있다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="위쪽은 orders 테이블과 orders_id_seq 시퀀스가 별개의 객체이며 앱이 시퀀스에 직접 nextval을 호출할 수 있음을 보여주고, 아래쪽은 MySQL AUTO_INCREMENT에서 persist마다 INSERT가 즉시 나가 배치가 무력화되는 타임라인과 PG 시퀀스에서 nextval 한 번으로 50개를 받아 INSERT를 뒤로 미뤄 배치가 유지되는 타임라인을 대비한 도식">
+    <defs>
+      <marker id="q1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="q2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="q3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">시퀀스는 컬럼의 속성이 아니라 <tspan class="mono">테이블 밖의 객체</tspan>다 — 그래서 미리 부를 수 있다</text>
+
+    <rect x="60" y="46" width="340" height="96" rx="10" fill="#fff" stroke="#94a3b8"/>
+    <text x="230" y="70" font-size="13" font-weight="700" fill="#334155" text-anchor="middle" class="mono">orders (테이블)</text>
+    <text x="230" y="94" font-size="11.5" fill="#334155" text-anchor="middle" class="mono">id bigint PRIMARY KEY</text>
+    <text x="230" y="120" font-size="11" fill="#64748b" text-anchor="middle">DEFAULT로 시퀀스를 부를 뿐, 소유하지 않는다</text>
+
+    <rect x="470" y="46" width="340" height="96" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="640" y="70" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle" class="mono">orders_id_seq (독립 객체)</text>
+    <text x="640" y="94" font-size="11.5" fill="#1e40af" text-anchor="middle">트랜잭션 밖에서 동작하는 카운터</text>
+    <text x="640" y="120" font-size="11" fill="#1d4ed8" text-anchor="middle">INCREMENT BY · CACHE · setval 을 가진 <tspan font-weight="700">스키마 객체</tspan></text>
+
+    <line x1="466" y1="94" x2="406" y2="94" stroke="#2563eb" stroke-width="2" marker-end="url(#q1)"/>
+    <text x="436" y="84" font-size="10.5" fill="#1d4ed8" text-anchor="middle">컬럼 DEFAULT</text>
+
+    <rect x="880" y="46" width="180" height="96" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="970" y="72" font-size="12.5" font-weight="700" fill="#166534" text-anchor="middle">애플리케이션</text>
+    <text x="970" y="94" font-size="11" fill="#166534" text-anchor="middle" class="mono">SELECT nextval(…)</text>
+    <text x="970" y="116" font-size="11" fill="#166534" text-anchor="middle">아직 어떤 행도</text>
+    <text x="970" y="131" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">만들지 않았다</text>
+    <line x1="816" y1="94" x2="876" y2="94" stroke="#16a34a" stroke-width="2" marker-end="url(#q2)"/>
+
+    <!-- MySQL timeline -->
+    <rect x="30" y="164" width="1060" height="96" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="50" y="188" font-size="12.5" font-weight="700" fill="#b91c1c">MySQL AUTO_INCREMENT — 값은 테이블의 속성이라 INSERT를 해야만 나온다 (JPA <tspan class="mono">GenerationType.IDENTITY</tspan>)</text>
+    <g class="mono">
+      <rect x="50" y="200" width="150" height="40" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="125" y="225" font-size="11.5" fill="#334155" text-anchor="middle">persist() ①</text>
+      <rect x="222" y="200" width="180" height="40" rx="7" fill="#fee2e2" stroke="#dc2626"/>
+      <text x="312" y="219" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">INSERT 즉시 실행</text>
+      <text x="312" y="234" font-size="10" fill="#b91c1c" text-anchor="middle">키를 받으려고</text>
+      <rect x="424" y="200" width="150" height="40" rx="7" fill="#fff" stroke="#fca5a5"/>
+      <text x="499" y="225" font-size="11.5" fill="#334155" text-anchor="middle">persist() ②</text>
+      <rect x="596" y="200" width="180" height="40" rx="7" fill="#fee2e2" stroke="#dc2626"/>
+      <text x="686" y="225" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">INSERT 즉시 실행</text>
+    </g>
+    <line x1="204" y1="220" x2="218" y2="220" stroke="#dc2626" stroke-width="1.6" marker-end="url(#q3)"/>
+    <line x1="406" y1="220" x2="420" y2="220" stroke="#dc2626" stroke-width="1.6" marker-end="url(#q3)"/>
+    <line x1="578" y1="220" x2="592" y2="220" stroke="#dc2626" stroke-width="1.6" marker-end="url(#q3)"/>
+    <text x="940" y="216" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">쓰기 지연 배치 무력화</text>
+    <text x="940" y="234" font-size="11" fill="#7f1d1d" text-anchor="middle">건수만큼 왕복한다</text>
+
+    <!-- PG timeline -->
+    <rect x="30" y="276" width="1060" height="110" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="50" y="300" font-size="12.5" font-weight="700" fill="#166534">PostgreSQL 시퀀스 — 값을 먼저 받고, INSERT는 나중에 (JPA <tspan class="mono">GenerationType.SEQUENCE</tspan> + <tspan class="mono">allocationSize = 50</tspan>)</text>
+    <g class="mono">
+      <rect x="50" y="312" width="190" height="44" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+      <text x="145" y="331" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">nextval() 1회</text>
+      <text x="145" y="347" font-size="10" fill="#166534" text-anchor="middle">50개 블록 확보</text>
+      <rect x="262" y="312" width="200" height="44" rx="7" fill="#fff" stroke="#86efac"/>
+      <text x="362" y="331" font-size="11.5" fill="#334155" text-anchor="middle">메모리에서 id 배분</text>
+      <text x="362" y="347" font-size="10" fill="#64748b" text-anchor="middle">DB 왕복 0</text>
+      <rect x="484" y="312" width="250" height="44" rx="7" fill="#fff" stroke="#86efac"/>
+      <text x="609" y="331" font-size="11.5" fill="#334155" text-anchor="middle">이벤트 발행 · 멱등 키 · 로그 상관관계</text>
+      <text x="609" y="347" font-size="10" fill="#64748b" text-anchor="middle">아직 INSERT 전인데 ID를 쓴다</text>
+      <rect x="756" y="312" width="200" height="44" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+      <text x="856" y="331" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">flush 시 INSERT 50건</text>
+      <text x="856" y="347" font-size="10" fill="#166534" text-anchor="middle">JDBC 배치 한 번</text>
+    </g>
+    <line x1="244" y1="334" x2="258" y2="334" stroke="#16a34a" stroke-width="1.6" marker-end="url(#q2)"/>
+    <line x1="466" y1="334" x2="480" y2="334" stroke="#16a34a" stroke-width="1.6" marker-end="url(#q2)"/>
+    <line x1="738" y1="334" x2="752" y2="334" stroke="#16a34a" stroke-width="1.6" marker-end="url(#q2)"/>
+    <text x="1022" y="330" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">배치가 산다</text>
+    <text x="1022" y="348" font-size="11" fill="#166534" text-anchor="middle">왕복 1 + 1</text>
+  </svg>
+  <figcaption>그래서 이 문항의 정형화된 답 <b>"Auto Increment는 INSERT 전에 ID를 알 수 없다"</b>는 <b>PG에서는 애초에 성립하지 않는다.</b> <code>SELECT nextval('orders_id_seq')</code>로 <b>1042</b>를 먼저 받아 이벤트·멱등 키·로그에 쓰고, <code>INSERT INTO orders (id, ...) VALUES (1042, ...)</code>는 나중에 해도 된다. <b>MySQL에서라면 Snowflake로 넘어갈 이유 하나가 여기서 사라진다.</b></figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead good"><span class="tag">good</span> PG에서 배치를 살리는 JPA 매핑</div>
+<pre><code><span class="cm">// 시퀀스에서 50개씩 받아 메모리에서 나눠 쓴다</span>
+<span class="kw">@Id</span>
+<span class="kw">@GeneratedValue</span>(strategy = GenerationType.<span class="fn">SEQUENCE</span>,
+                generator = <span class="st">"orders_seq"</span>)
+<span class="kw">@SequenceGenerator</span>(name = <span class="st">"orders_seq"</span>,
+                   sequenceName = <span class="st">"orders_id_seq"</span>,
+<span class="ln-good">                   allocationSize = <span class="st">50</span>)</span>
+<span class="kw">private</span> Long id;</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">good</span> 짝이 되는 DDL — 반드시 같은 PR에서 함께 바꾼다</div>
+<pre><code><span class="cm">-- INCREMENT BY 가 allocationSize 와 같아야 한다</span>
+<span class="kw">CREATE SEQUENCE</span> orders_id_seq <span class="kw">AS</span> bigint
+<span class="ln-good">    <span class="kw">INCREMENT BY</span> 50;</span>
+
+<span class="cm">-- 불일치하면? 하이버네이트는 "받은 값이 50개 블록의 끝"
+-- 이라고 가정하고 값을 나눠 주므로
+-- 인스턴스 두 대가 같은 번호를 발급한다.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>함정 ② — <code>allocationSize = 50</code>인데 DDL이 <code>INCREMENT BY 1</code> <span class="badge bonus">가산점</span></h4>
+  <p>하이버네이트는 <code>nextval()</code>이 돌려준 값을 <b>"내가 쓸 블록의 경계"</b>로 해석해 그 값으로부터 <code>allocationSize</code>만큼을 <b>메모리에서 나눠 준다.</b> DB가 실제로는 1씩만 밀고 있으면 <b>두 인스턴스의 블록이 겹치고, 같은 번호가 두 번 발급된다.</b> 하이버네이트 6에는 이 불일치를 기동 시 알려주는 설정(<code>hibernate.id.sequence.increment_size_mismatch_strategy</code>)이 있지만 <b>기본 동작은 버전마다 다르므로</b>, <b>DDL과 <code>allocationSize</code>를 같은 PR에서 함께 바꾸는 규칙</b>으로 고정하는 편이 안전하다.</p>
+  <div class="rule red" style="margin-bottom:0">증상이 "PK 중복"으로 나타나는데 원인은 <b>스키마와 코드의 숫자 불일치</b>다 — 로그만 봐서는 절대 안 잡힌다</div>
+</div>
+
+<h3>5-3. 비트랜잭션성 — <b>빈 번호는 버그가 아니라 성질이다</b></h3>
+
+<p><code>nextval()</code>은 <b>트랜잭션 밖에서</b> 동작한다. 롤백해도 소모된 값은 돌아오지 않고, 두 세션이 동시에 불러도 <b>서로 기다리지 않는다</b>(그래서 빠르다).</p>
+
+<pre><code><span class="kw">BEGIN</span>;
+<span class="kw">SELECT</span> <span class="fn">nextval</span>(<span class="st">'orders_id_seq'</span>);   <span class="cm">-- 101</span>
+<span class="kw">ROLLBACK</span>;
+<span class="kw">SELECT</span> <span class="fn">nextval</span>(<span class="st">'orders_id_seq'</span>);   <span class="cm">-- 102  ← 101은 영원히 비어 있다</span></code></pre>
+
+<div class="callout info">
+  <span class="t">왜 이렇게 만들었는가 — 이유까지 말하면 답이 한 단계 올라간다</span>
+  <code>nextval()</code>이 트랜잭션을 따랐다면, 값을 받은 세션이 <b>커밋할 때까지 다음 세션은 기다려야 한다</b> — <b>시퀀스 자체가 6절의 핫 로우가 되는 것</b>이다. PG는 그 직렬화를 피하려고 <b>연속성을 포기하는 쪽</b>을 골랐다. 즉 <b>빈 번호는 성능을 산 대가</b>다. <b>비유하면 은행 번호표 기계</b> — 번호표를 뽑고 그냥 나가버려도 기계는 그 번호를 되돌려주지 않는다. 되돌려주려면 <b>모든 손님이 창구를 나설 때까지 기계가 멈춰 서 있어야</b> 하기 때문이다.
+</div>
+
+<div class="memo">
+  <h4>암기 대상 ③ — 빈 번호가 생기는 네 경로 <b>"롤 · 업 · 캐 · 크"</b></h4>
+  <div class="grid g4">
+    <div class="tile"><div class="k">롤 — 롤백 · 에러</div><div class="d">소모된 값은 돌아오지 않는다</div></div>
+    <div class="tile"><div class="k">업 — UPSERT</div><div class="d"><code>ON CONFLICT DO NOTHING</code>이면 <b>행이 안 들어가도 DEFAULT의 <code>nextval()</code>은 먼저 평가</b>되어 소모 (대량 UPSERT의 단골)</div></div>
+    <div class="tile"><div class="k">캐 — CACHE 폐기</div><div class="d">세션이 선점한 블록의 잔여분이 <b>세션 종료로 폐기</b></div></div>
+    <div class="tile"><div class="k">크 — 크래시</div><div class="d">PG는 시퀀스 값을 <b>일정 개수 단위로 미리 WAL에 기록</b>하므로 재시작 시 번호가 <b>앞으로 건너뛴다</b></div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">결론 — <b>시퀀스로는 gapless(빈 번호 없음)를 보장할 수 없다.</b> 유실 판단은 번호 연속성이 아니라 <b>별도 대사(reconciliation)</b>로 한다</div>
+</div>
+
+<h3>5-4. <code>CACHE</code> — 성능을 사면 전역 순서를 내준다</h3>
+
+<figure>
+  <svg viewBox="0 0 960 300" role="img" aria-label="세션 A가 1부터 20까지, 세션 B가 21부터 40까지 선점한 상태에서 시간 순으로 A가 1, B가 21, A가 2, B가 22, A가 3, 4를 발급해 값의 대소와 발급 순서가 어긋나고 A 종료 시 5부터 20까지가 버려지는 것을 보여주는 도식">
+    <text x="480" y="26" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle"><tspan class="mono">ALTER SEQUENCE orders_id_seq CACHE 20;</tspan> — 무엇을 사고 무엇을 내주는가</text>
+
+    <rect x="30" y="48" width="200" height="52" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="130" y="70" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">세션 A</text>
+    <text x="130" y="89" font-size="11.5" fill="#1e40af" text-anchor="middle" class="mono">1 ~ 20 선점</text>
+
+    <rect x="30" y="126" width="200" height="52" rx="9" fill="#fffbeb" stroke="#d97706"/>
+    <text x="130" y="148" font-size="12.5" font-weight="700" fill="#b45309" text-anchor="middle">세션 B</text>
+    <text x="130" y="167" font-size="11.5" fill="#92400e" text-anchor="middle" class="mono">21 ~ 40 선점</text>
+
+    <!-- lanes -->
+    <line x1="250" y1="74" x2="920" y2="74" stroke="#bfdbfe" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <line x1="250" y1="152" x2="920" y2="152" stroke="#fde68a" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+    <g class="mono">
+      <circle cx="300" cy="74" r="19" fill="#2563eb"/><text x="300" y="79" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+      <circle cx="420" cy="152" r="19" fill="#d97706"/><text x="420" y="157" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">21</text>
+      <circle cx="540" cy="74" r="19" fill="#2563eb"/><text x="540" y="79" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+      <circle cx="660" cy="152" r="19" fill="#d97706"/><text x="660" y="157" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">22</text>
+      <circle cx="780" cy="74" r="19" fill="#2563eb"/><text x="780" y="79" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+      <circle cx="880" cy="74" r="19" fill="#2563eb"/><text x="880" y="79" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">4</text>
+    </g>
+
+    <line x1="300" y1="93" x2="300" y2="206" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+    <line x1="420" y1="171" x2="420" y2="206" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+    <line x1="540" y1="93" x2="540" y2="206" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+    <line x1="660" y1="171" x2="660" y2="206" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+    <line x1="780" y1="93" x2="780" y2="206" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+    <line x1="880" y1="93" x2="880" y2="206" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
+
+    <line x1="250" y1="206" x2="930" y2="206" stroke="#64748b" stroke-width="1.8"/>
+    <text x="930" y="226" font-size="11.5" fill="#64748b" text-anchor="end">시간 (발급 순서) →</text>
+
+    <rect x="30" y="234" width="900" height="52" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="48" y="256" font-size="12.5" font-weight="700" fill="#b91c1c">시간상 나중인 B의 <tspan class="mono">22</tspan>가, 그 뒤에 나온 A의 <tspan class="mono">3 · 4</tspan>보다 크다 → <tspan text-decoration="underline">발급 순서 ≠ 값의 대소</tspan></text>
+    <text x="48" y="276" font-size="12" fill="#7f1d1d">그리고 A가 <tspan class="mono">4</tspan>까지 쓰고 종료하면 <tspan class="mono" font-weight="700">5 ~ 20은 버려진다</tspan> (구멍이 커진다)</text>
+  </svg>
+  <figcaption><code>CACHE</code>는 <b>DB가 대신 해 주는 블록 할당(hi/lo)</b>이다. 시퀀스 객체 방문 횟수를 <b>1/N</b>로 줄여 경합과 WAL 기록을 줄이지만, 그 대가로 <b>세션 간 발급 순서가 교차</b>하고 구멍이 커진다. 6절에서 우리가 직접 짜야 했던 트레이드오프가 <b>PG에는 설정 한 줄로 내장돼 있다</b> — <b>기본값은 1</b>이라 안전 쪽에 서 있고, 초당 삽입이 아주 많을 때만 올린다.</figcaption>
+</figure>
+
+<h3>5-5. 어디서 막히는가 — 단일 노드 의존의 사슬</h3>
+
+<div class="chain">
+  <span class="chip b">시퀀스는 <b>그 데이터베이스 안의 객체</b></span><span class="arrow">→</span>
+  <span class="chip w">값을 받으려면 <b>그 인스턴스에 질의</b>해야 한다</span>
+</div>
+<div class="grid g4">
+  <div class="tile red"><div class="k">⑴ 샤딩</div><div class="d">샤드마다 시퀀스가 따로 돌아 <b>같은 값이 여러 샤드에서 나온다</b></div></div>
+  <div class="tile red"><div class="k">⑵ 다중 마스터</div><div class="d"><code>INCREMENT BY n</code> + <code>START WITH k</code>로 잔여류를 갈라 쓸 수 있지만 <b>노드 수가 스키마에 박힌다</b></div></div>
+  <div class="tile red"><div class="k">⑶ 처리량 상한</div><div class="d">쓰기 처리량의 상한이 <b>"그 한 대"의 상한</b>이다</div></div>
+  <div class="tile red"><div class="k">⑷ 클라이언트 생성</div><div class="d">클라이언트·오프라인 기기에서 <b>미리 만들 수 없다</b></div></div>
+</div>
+
+<pre><code><span class="cm">-- 노드 2대를 짝수/홀수로 가르기 (MySQL의 auto_increment_increment/offset에 해당하는 PG 판)
+-- 노드 1:  CREATE SEQUENCE orders_id_seq INCREMENT BY 2 START WITH 1;
+-- 노드 2:  CREATE SEQUENCE orders_id_seq INCREMENT BY 2 START WITH 2;
+-- 대가: 노드 수가 스키마에 박힌다. 3대로 늘리려면 전 노드 시퀀스를 재설계.</span></code></pre>
+
+<div class="callout trap">
+  <span class="t">복제·이관에서 시퀀스가 사라지는 사고 <span class="badge bonus">가산점</span></span>
+  <b>스트리밍(물리) 복제</b>는 바이트 단위 복제라 시퀀스 상태까지 그대로 따라오지만, <b>논리 복제는 시퀀스를 복제하지 않는다.</b> 논리 복제로 새 클러스터에 이관하고 전환할 때 <code>setval()</code>로 시퀀스를 앞당겨 놓지 않으면, <b>새 프라이머리가 1번부터 다시 발급해 PK 중복 폭탄</b>이 터진다. 전환 체크리스트에 <b>"모든 시퀀스 <code>setval</code> 확인"</b>을 넣는 것이 정석이다.
+</div>
+
+<h3>5-6. 노출 위험과 타입 고갈</h3>
+
+<p><b>노출 위험.</b> 값이 연속이라 외부에 보이면 ⑴ <b>하루 주문량·증가율이 그대로 새고</b> ⑵ <code>/orders/10231</code> 다음은 <code>10232</code>라고 누구나 추측할 수 있어 권한 검사가 한 곳이라도 빠지면 남의 주문이 열린다(<b>IDOR</b> — Insecure Direct Object Reference, "식별자를 바꿔 넣으면 남의 자원이 열리는" 취약점). <b>이건 시퀀스의 결함이 아니라 내부 PK를 외부에 그대로 노출한 설계의 결함</b>이다 — 그래서 <b>분리</b>가 결론이다.</p>
+
+<div class="memo red">
+  <h4>암기 대상 ④ — <code>serial</code>(int)의 소진 속도, 직접 계산해서 외운다</h4>
+  <div class="grid g4">
+    <div class="tile big red"><div class="k">21억</div><div class="s"><code>int</code> 상한 2,147,483,647</div></div>
+    <div class="tile big"><div class="k">5.9년</div><div class="s">일 100만 건 발급 시</div></div>
+    <div class="tile big"><div class="k">7개월</div><div class="s">일 1,000만 건 (약 215일)</div></div>
+    <div class="tile big red"><div class="k">21일</div><div class="s">일 1억 건</div></div>
+  </div>
+  <p><code>bigint</code> 상한은 9,223,372,036,854,775,807 — <b>일 10억 건이어도 약 2,500만 년</b>이다. 게다가 UPSERT는 <b>행이 안 들어가도 <code>nextval()</code>을 소모</b>하므로 실제 소모는 행 수보다 훨씬 빠르다.</p>
+  <div class="rule red" style="margin-bottom:0">마르는 순간 모든 INSERT가 <code>ERROR: nextval: reached maximum value of sequence</code>로 죽고,<br><code>int</code> → <code>bigint</code> 타입 변경은 <b>테이블 재작성 + <code>ACCESS EXCLUSIVE</code> 잠금</b>이다 → <b>신규 PK는 무조건 <code>bigint</code></b></div>
+</div>
+
+<div class="callout info">
+  <span class="t">MySQL 대조 — 같은 자리에 다른 어휘가 있다</span>
+  MySQL의 AUTO_INCREMENT는 <b>테이블의 속성</b>이라 값을 미리 받을 수 없고(그래서 "INSERT 전 ID 미확보"가 <b>진짜 한계</b>다), 카운터가 메모리에 있어 <b>MySQL 8.0 이전에는 재기동 시 <code>MAX(id)+1</code>로 재계산돼 지웠던 끝 번호가 재사용</b>되는 함정이 있었다(8.0부터 영속). 동시 삽입 시에는 <code>innodb_autoinc_lock_mode</code> 설정에 따라 짧은 뮤텍스 또는 테이블 수준 AUTO-INC 락을 잡는다. <b>PG는 시퀀스가 별도 객체라 이 락 모드 논의 자체가 없고, 대신 비트랜잭션성·<code>CACHE</code>·<code>setval</code>이라는 다른 어휘를 쓴다.</b>
+</div>
+
+<div class="split">
+  <div class="pane g">
+    <h4>얻는 것</h4>
+    <ul>
+      <li><b>8바이트</b>, 완전한 단조 증가(순차 I/O, FPI 최소)</li>
+      <li>외부 의존성 0, 구현 0</li>
+      <li><b>INSERT 전 채번 가능 → JPA 배치 유지</b></li>
+      <li>여러 앱 인스턴스가 같은 시퀀스를 공유해도 문제없음</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>내는 것</h4>
+    <ul>
+      <li>단일 DB 의존(샤딩·다중 리전·클라이언트 생성 불가)</li>
+      <li>빈 번호(<b>gapless 불가</b>), <code>CACHE</code>를 올리면 세션 간 순서 교차</li>
+      <li>연속 번호 노출 위험(IDOR·규모 추측)</li>
+      <li>논리 복제·이관 시 <code>setval</code> 누락 사고, <code>int</code>로 고르면 고갈</li>
+    </ul>
+  </div>
+</div>
+
+<div class="rule ok">언제 정답인가 — <b>DB가 한 대(+레플리카)이고 ID를 외부에 직접 노출하지 않는다면 여전히 첫 번째 정답</b><br><span style="font-size:.92rem;font-weight:600">"요즘은 다 Snowflake 쓰지 않나요"에 흔들리지 않는 것이 시니어다 — 인프라를 늘리지 않고 되는 일을 늘려서 하지 않는다.</span></div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 방식 ② 채번 테이블(+블록 할당) — 핫 로우를 어떻게 식히는가</h2>
+
+<p><b>메커니즘.</b> <code>id_sequences(seq_name, next_val)</code> 같은 테이블에 <b>이름별 카운터 행</b>을 두고, 채번할 때마다 그 행을 <code>UPDATE ... SET next_val = next_val + 1</code>로 밀어 값을 받는다. <b>날짜별로 행을 따로 두면</b> <code>20260901-000123</code>처럼 <b>매일 1번부터 다시 시작하는 업무 번호</b>를 만들 수 있다.</p>
+
+<div class="callout info">
+  <span class="t">먼저 경계를 긋는다 — PG에서 이 방식의 존재 이유는 "분산"이 아니다</span>
+  MySQL에서는 채번 테이블이 <b>"여러 앱 인스턴스가 INSERT 전에 ID를 받는" 유일한 길</b>이었지만, <b>PG에서는 시퀀스가 이미 그 일을 한다</b>(5절). 그래서 PG에서 채번 테이블이 남는 자리는 딱 하나 — <b>시퀀스가 못 하는 포맷 요구</b>다. <b>날짜별 리셋, 채널별 접두어, 체크 디짓</b>처럼 "값 자체에 업무 의미를 담아야 하는" 외부 식별자. <b>이 경계를 먼저 말하고 들어가야</b> "옛날 패턴을 습관으로 쓴다"로 들리지 않는다.
+</div>
+
+<h3>6-1. 왜 병목이 되는가 — 핫 로우 사슬</h3>
+
+<p>이 사슬을 <b>"성능 저하"나 "락 경합" 한 단어로 뭉뚱그리지 않는다.</b> 고리를 하나씩 이어 붙인다.</p>
+
+<div class="chain">
+  <span class="chip r">모든 요청이 <b>같은 한 행</b>을 UPDATE</span><span class="arrow">→</span>
+  <span class="chip r">튜플 헤더 <code>xmax</code>에 배타 락 표시</span><span class="arrow">→</span>
+  <span class="chip r">문장이 끝나도 안 풀리고 <b>커밋까지 유지</b></span><span class="arrow">→</span>
+  <span class="chip r">주문 처리 전체 길이만큼 <b>다음 주문이 줄을 선다</b></span>
+</div>
+<div class="chain">
+  <span class="chip r">처리량 상한 = <b>1 / 트랜잭션 한 건의 길이</b></span><span class="arrow">→</span>
+  <span class="chip r">대기자가 <b>커넥션(= OS 프로세스)</b>을 쥔 채 대기</span><span class="arrow">→</span>
+  <span class="chip r">커넥션 풀 고갈 → <b>채번과 무관한 API까지 지연</b></span><span class="arrow">→</span>
+  <span class="chip r">락 대기 + 데드락</span>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="위쪽 before 타임라인은 주문 트랜잭션 안에서 채번 행 락을 잡아 재고 차감과 외부 결제 호출과 주문 저장이 끝날 때까지 락이 유지되고 다른 트랜잭션들이 그동안 커넥션을 쥔 채 대기하는 모습이고, 아래쪽 after 타임라인은 채번을 별도의 짧은 트랜잭션으로 분리해 락 보유가 UPDATE 한 문장으로 줄고 블록 할당으로 이후 499건은 채번 행을 방문조차 하지 않는 모습">
+    <defs>
+      <marker id="t1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <pattern id="hatch" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <rect width="8" height="8" fill="#fecaca"/><line x1="0" y1="0" x2="0" y2="8" stroke="#dc2626" stroke-width="3"/>
+      </pattern>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">락을 <tspan text-decoration="underline">얼마나 오래</tspan> 쥐고 있는가 — 채번 테이블의 처리량은 그것으로 결정된다</text>
+
+    <!-- BEFORE -->
+    <rect x="30" y="44" width="1060" height="160" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="50" y="68" font-size="12.5" font-weight="700" fill="#b91c1c">before — 주문 트랜잭션 안에서 채번 행을 잡는다 (<tspan class="mono">SELECT … FOR UPDATE</tspan> + UPDATE)</text>
+
+    <g class="mono" font-size="10.5">
+      <rect x="80" y="86" width="80" height="30" rx="5" fill="#dc2626"/><text x="120" y="105" fill="#fff" text-anchor="middle" font-weight="700">채번</text>
+      <rect x="160" y="86" width="160" height="30" rx="0" fill="#fff" stroke="#fca5a5"/><text x="240" y="105" fill="#334155" text-anchor="middle">재고 차감</text>
+      <rect x="320" y="86" width="280" height="30" rx="0" fill="#fff" stroke="#fca5a5"/><text x="460" y="105" fill="#334155" text-anchor="middle">결제 승인 (외부 HTTP — 언제 끝날지 모른다)</text>
+      <rect x="600" y="86" width="120" height="30" rx="0" fill="#fff" stroke="#fca5a5"/><text x="660" y="105" fill="#334155" text-anchor="middle">주문 저장</text>
+      <rect x="720" y="86" width="60" height="30" rx="5" fill="#94a3b8"/><text x="750" y="105" fill="#fff" text-anchor="middle">COMMIT</text>
+    </g>
+
+    <rect x="80" y="122" width="700" height="16" rx="4" fill="url(#hatch)"/>
+    <text x="430" y="134" font-size="10.5" fill="#7f1d1d" text-anchor="middle" font-weight="700">id_sequences 행의 배타 락 — 커밋될 때까지 유지된다</text>
+
+    <rect x="110" y="146" width="670" height="18" rx="4" fill="#e5e7eb" stroke="#cbd5e1"/>
+    <text x="445" y="159" font-size="10.5" fill="#475569" text-anchor="middle">T2 대기 — <tspan class="mono">wait_event = 'transactionid'</tspan> · 커넥션(OS 프로세스)을 쥔 채</text>
+    <rect x="140" y="170" width="640" height="18" rx="4" fill="#e5e7eb" stroke="#cbd5e1"/>
+    <text x="460" y="183" font-size="10.5" fill="#475569" text-anchor="middle">T3 대기 — 뒤로 갈수록 대기열이 길어진다 → 풀 고갈 → 무관한 API까지 지연</text>
+
+    <text x="800" y="104" font-size="12" fill="#b91c1c" font-weight="700">처리량 상한 =</text>
+    <text x="800" y="122" font-size="12" fill="#b91c1c" font-weight="700">1 / 트랜잭션 길이</text>
+    <text x="800" y="146" font-size="11" fill="#7f1d1d">외부 HTTP가 1초면</text>
+    <text x="800" y="163" font-size="11" fill="#7f1d1d" font-weight="700">초당 1건이 상한이다</text>
+
+    <!-- AFTER -->
+    <rect x="30" y="220" width="1060" height="170" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="50" y="244" font-size="12.5" font-weight="700" fill="#166534">after — 별도 짧은 트랜잭션(<tspan class="mono">REQUIRES_NEW</tspan>) + <tspan class="mono">UPDATE … RETURNING</tspan> 한 문장 + 블록 할당 500</text>
+
+    <g class="mono" font-size="10.5">
+      <rect x="80" y="262" width="120" height="30" rx="5" fill="#16a34a"/><text x="140" y="281" fill="#fff" text-anchor="middle" font-weight="700">채번 TX (즉시 커밋)</text>
+      <rect x="220" y="262" width="160" height="30" rx="0" fill="#fff" stroke="#86efac"/><text x="300" y="281" fill="#334155" text-anchor="middle">재고 차감</text>
+      <rect x="380" y="262" width="280" height="30" rx="0" fill="#fff" stroke="#86efac"/><text x="520" y="281" fill="#334155" text-anchor="middle">결제 승인 (외부 HTTP)</text>
+      <rect x="660" y="262" width="120" height="30" rx="0" fill="#fff" stroke="#86efac"/><text x="720" y="281" fill="#334155" text-anchor="middle">주문 저장</text>
+    </g>
+    <text x="500" y="256" font-size="10.5" fill="#166534" text-anchor="middle">← 주문 트랜잭션은 채번 행 락을 <tspan font-weight="700">한 순간도 쥐지 않는다</tspan> →</text>
+
+    <rect x="80" y="298" width="120" height="16" rx="4" fill="url(#hatch)"/>
+    <text x="210" y="311" font-size="11" fill="#166534" font-weight="700">락 보유 시간 = UPDATE 한 문장 + 커밋</text>
+
+    <rect x="80" y="326" width="700" height="44" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-dasharray="5 4"/>
+    <text x="430" y="345" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">이 한 번의 방문으로 500개를 선점했다 → 다음 499건은 채번 행을 방문조차 하지 않는다</text>
+    <text x="430" y="362" font-size="11" fill="#166534" text-anchor="middle">채번 행 방문 횟수 = 1/N · 핫 로우 경합도 그만큼 준다</text>
+
+    <line x1="790" y1="348" x2="812" y2="348" stroke="#16a34a" stroke-width="2" marker-end="url(#t1)"/>
+    <text x="950" y="284" font-size="12" fill="#166534" font-weight="700" text-anchor="middle">처리량 상한 =</text>
+    <text x="950" y="302" font-size="12" fill="#166534" font-weight="700" text-anchor="middle">1 / (UPDATE 한 문장) × 500</text>
+    <text x="950" y="344" font-size="11" fill="#166534" text-anchor="middle">두 처방은 <tspan font-weight="700">둘 다</tspan> 해야 한다</text>
+    <text x="950" y="361" font-size="11" fill="#166534" text-anchor="middle">(락 보유 시간 ↓ · 방문 횟수 ↓)</text>
+  </svg>
+  <figcaption>대기자는 <code>pg_stat_activity</code>에서 <code>wait_event_type = 'Lock'</code>, <code>wait_event = 'transactionid'</code>로 보인다. <b>PG의 커넥션은 스레드가 아니라 OS 프로세스</b>라 대기 중 점유가 더 비싸고, 그래서 <b>채번 한 지점의 병목이 서비스 전체의 커넥션 풀 고갈로 번진다.</b></figcaption>
+</figure>
+
+<h3>6-2. PG에는 고리가 하나 더 붙는다 — 죽은 튜플과 HOT</h3>
+
+<p>PG의 UPDATE는 <b>제자리 갱신이 아니라 새 튜플 버전을 만들고 옛 버전을 죽은 튜플로 남기는</b> 것이다. 초당 수천 번 갱신되는 채번 행은 그 페이지에 <b>죽은 튜플을 계속 쌓고</b>, autovacuum이 추격에 실패하면 페이지가 부풀어 <b>한 행 읽는 데 여러 페이지를 훑게</b> 된다.</p>
+
+<p>다행히 채번 테이블은 <b>HOT(Heap-Only Tuple) 업데이트 조건을 만족한다.</b> HOT은 <b>"바뀐 컬럼이 어떤 인덱스에도 들어 있지 않고, 새 버전이 같은 페이지 안에 들어갈 자리가 있으면, 인덱스를 하나도 건드리지 않고 힙 안에서만 새 버전을 만드는"</b> 최적화다. 채번 테이블에서 바뀌는 <code>next_val</code>은 어떤 인덱스에도 없으므로(인덱스는 <code>seq_name</code> PK뿐) <b>조건 절반은 이미 충족</b>이고, 남은 조건은 <b>"같은 페이지에 자리가 있는가"</b>뿐이다.</p>
+
+<div class="codehead good"><span class="tag">good</span> 그래서 처방이 하나 더 생긴다 — <code>fillfactor</code>를 낮춰 새 버전 자리를 미리 비워 둔다</div>
+<pre><code><span class="kw">CREATE TABLE</span> id_sequences (
+    seq_name text   <span class="kw">PRIMARY KEY</span>,
+    next_val bigint <span class="kw">NOT NULL</span>
+<span class="ln-good">) <span class="kw">WITH</span> (fillfactor = <span class="st">70</span>);      <span class="cm">-- 같은 페이지 안에 새 버전 자리를 남긴다 → HOT 유지</span></span>
+
+<span class="cm">-- 확인: HOT 비율이 떨어지면 인덱스까지 갱신되고 있다는 뜻</span>
+<span class="kw">SELECT</span> relname, n_tup_upd, n_tup_hot_upd, n_dead_tup, last_autovacuum
+<span class="kw">FROM</span> pg_stat_user_tables <span class="kw">WHERE</span> relname = <span class="st">'id_sequences'</span>;</code></pre>
+
+<div class="memo green">
+  <h4>암기 대상 ⑤ — 채번 테이블 처방 세 가지는 <b>세트로</b> 꺼낸다</h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k">① 짧은 트랜잭션</div><div class="d"><code>REQUIRES_NEW</code>로 분리하고 <b><code>UPDATE ... RETURNING</code> 한 문장</b>으로 값을 받는다 — <code>SELECT ... FOR UPDATE</code>를 쓰면 <b>조회와 갱신 사이의 경쟁 구간</b>이 생기는데, <code>RETURNING</code>은 그 구간 자체를 없앤다 <span class="badge bonus">가산점</span></div></div>
+    <div class="tile ok"><div class="k">② 블록 할당 (hi/lo)</div><div class="d">한 번에 <b>N개(예: 500)</b>를 선점하고 나머지는 인스턴스 메모리에서 배분 → 방문 횟수 <b>1/N</b>. JPA <code>@TableGenerator</code> + <code>allocationSize</code>가 이 방식이고 <b>PG 시퀀스의 <code>CACHE</code>도 원리가 같다</b></div></div>
+    <div class="tile ok"><div class="k">③ fillfactor 70</div><div class="d">HOT 업데이트를 유지해 <b>죽은 튜플·인덱스 갱신·autovacuum 부담</b>을 줄인다. <code>n_tup_hot_upd</code> 비율로 검증</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">①과 ②는 <b>다른 것을 줄인다</b> — ①은 <b>락을 쥐는 시간</b>을, ②는 <b>락을 잡는 횟수</b>를 줄인다. 그래서 <b>둘 다 해야 한다.</b> ③은 PG에서만 붙는 고리다.</p>
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">bad</span> 주문 트랜잭션 안에서 채번 행을 잡는다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public</span> Order <span class="fn">place</span>(PlaceOrderCommand cmd) {
+<span class="ln-bad">    <span class="kw">long</span> seq = jdbc.<span class="fn">queryForObject</span>(
+        <span class="st">"SELECT next_val FROM id_sequences "</span>
+      + <span class="st">"WHERE seq_name = 'order' FOR UPDATE"</span>, Long.class);</span>
+    jdbc.<span class="fn">update</span>(<span class="st">"UPDATE id_sequences SET next_val = ? "</span>
+              + <span class="st">"WHERE seq_name = 'order'"</span>, seq + 1);
+
+<span class="cm">    // ↓ 재고 차감·결제 승인(외부 HTTP)·주문 저장이 끝나
+    //   커밋될 때까지 다른 모든 주문이 id_sequences 행
+    //   앞에서 대기한다 → 커넥션 풀 고갈로 번진다</span>
+    inventory.<span class="fn">reserve</span>(cmd);
+    payment.<span class="fn">approve</span>(cmd);
+    <span class="kw">return</span> orderRepository.<span class="fn">save</span>(Order.<span class="fn">of</span>(cmd, seq));
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">good</span> 블록 할당 + 별도 짧은 트랜잭션 (한 문장·한 왕복)</div>
+<pre><code><span class="kw">@Component</span>
+<span class="kw">public class</span> SequenceBlockAllocator {
+
+<span class="cm">    // 행이 없으면 만들고, 있으면 블록만큼 밀어서,
+    // 시작값을 한 문장으로 돌려받는다</span>
+    <span class="kw">private static final</span> String ALLOCATE = <span class="st">"""
+        INSERT INTO id_sequences (seq_name, next_val)
+        VALUES (?, ?)
+        ON CONFLICT (seq_name)
+        DO UPDATE SET next_val =
+             id_sequences.next_val + EXCLUDED.next_val
+        RETURNING next_val - ? AS block_start
+        """</span>;
+
+<span class="ln-good">    <span class="kw">@Transactional</span>(propagation = Propagation.REQUIRES_NEW)</span>
+    <span class="kw">public long</span> <span class="fn">allocate</span>(String name, <span class="kw">int</span> blockSize) {
+        <span class="kw">return</span> jdbc.<span class="fn">queryForObject</span>(ALLOCATE, Long.class,
+                   name, blockSize, blockSize);
+<span class="cm">        // 최초 삽입이면 블록 [0, blockSize)
+        // 충돌이면   블록 [기존, 기존 + blockSize)</span>
+    }
+}</code></pre>
+  </div>
+</div>
+
+<p><code>ON CONFLICT</code>가 <b>"행이 없으면 만들고 있으면 민다"를 한 문장·한 왕복</b>으로 끝내는 것이 PG판의 핵심이다. MySQL 예제에서 <code>INSERT IGNORE</code> → 재귀 호출로 풀던 자리가 <b>통째로 사라졌다.</b></p>
+
+<h3>6-3. 블록 할당이 <b>새로 지불하는</b> 대가 — 반드시 같은 호흡에</h3>
+
+<div class="grid g3">
+  <div class="tile red">
+    <div class="k">재기동하면 구멍이 난다</div>
+    <div class="d">500개를 선점하고 <b>120개 쓴 뒤 재배포</b>되면 380개는 버려진다. 인스턴스가 10대면 <b>배포 한 번에 최대 수천 개</b>가 빈다(10대 × 최대 499개 ≈ <b>5,000개</b>). <b>"주문번호는 연속이 아니다"를 정책으로 명문화</b>해야 한다 — 회계·CS·정산이 <b>"번호가 비었는데 주문이 유실된 것 아니냐"</b>고 묻는 순간이 반드시 온다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k">인스턴스 간 순서가 섞인다</div>
+    <div class="d">A가 [0,500), B가 [500,1000)을 들고 있으면 <b>시간상 나중인 A의 3번이 B의 501번보다 작다.</b> "번호 순 = 시간 순"이 아니다 — <b>시간 순 정렬은 <code>created_at</code>으로</b> 한다. (시퀀스 <code>CACHE</code>가 내는 대가와 <b>정확히 같은 성질</b>이다.)</div>
+  </div>
+  <div class="tile red">
+    <div class="k">가용성 결합점이 된다</div>
+    <div class="d">그 행이 잠기거나 <b>그 DB가 죽으면 채번이 멈춘다.</b> 블록이 클수록 방문이 드물어 버티는 시간이 길어진다 — <b>블록 크기는 "재기동 시 버릴 수 있는 양"과 "DB 장애 시 버틸 시간"의 거래</b>다.</div>
+  </div>
+</div>
+
+<div class="callout trap">
+  <span class="t">연속성이 진짜 규제 요건이라면 이 방식을 쓸 수 없다 <span class="badge senior">시니어 변별</span></span>
+  일부 국가의 <b>세금 계산서 일련번호</b>처럼 <b>gapless가 법적 요건</b>이라면 블록 할당도, 시퀀스도 쓸 수 없다. <b>건별 채번 + 짧은 트랜잭션으로 돌아가 처리량을 포기</b>해야 한다. <b>gapless와 처리량은 맞바꾸는 관계</b>라고 말하고, 이 선택을 <b>ADR 한 장으로 남긴다</b>고 덧붙이면 요구를 비용으로 번역할 줄 아는 것으로 들린다.
+</div>
+
+<div class="callout info">
+  <span class="t">MySQL 대조 — <code>RETURNING</code>이 없는 자리에 세션 변수 트릭이 있다</span>
+  MySQL에는 <code>RETURNING</code>이 없어(최근 MariaDB 계열 제외) <code>UPDATE id_sequences SET next_val = LAST_INSERT_ID(next_val + ?)</code> 뒤에 <code>SELECT LAST_INSERT_ID()</code>를 붙이는 관용구로 같은 일을 한다. <b>세션 변수를 경유하는 트릭이라 커넥션 풀·프록시에서 세션이 바뀌면 깨질 수 있는데</b>, PG의 <code>RETURNING</code>은 <b>문장 자체가 값을 돌려주므로</b> 그 위험이 없다.
+</div>
+
+<div class="split">
+  <div class="pane g">
+    <h4>얻는 것</h4>
+    <ul>
+      <li><b>업무 의미 자유</b> — 날짜별 리셋 · 채널 접두어 · 체크 디짓</li>
+      <li>INSERT 전 ID 확보</li>
+      <li>DB 외 인프라 0, 포맷을 원하는 대로</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>내는 것</h4>
+    <ul>
+      <li><b>핫 로우</b>(분리 트랜잭션 + 블록 + <code>fillfactor</code>로 완화)</li>
+      <li>죽은 튜플 · autovacuum 부담</li>
+      <li>재기동 시 구멍, 인스턴스 간 순서 교차, 채번 테이블 가용성 의존</li>
+      <li>연속 노출 시 추측 위험은 그대로. <b>그리고 PG에서는 "분산 생성"이 더 이상 이 방식만의 장점이 아니다</b></li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 방식 ③ Snowflake — 시계와 워커 ID로 <b>조율 없이</b> 만든다</h2>
+
+<p><b>메커니즘.</b> 64비트 정수 하나를 <b>세 조각</b>으로 나눈다(트위터가 공개한 설계라 이 이름으로 불린다). 각 서버가 <b>자기 시계 + 자기 워커 ID + 같은 ms 안의 카운터</b>로 <b>로컬에서</b> 만들므로 <b>DB 왕복도, 서버 간 합의도 없다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="64비트를 부호 1비트, 타임스탬프 41비트, 워커 아이디 10비트, 시퀀스 12비트로 나눈 비트 배치도와 각 조각의 검산 결과. 41비트는 약 69.7년, 10비트는 1024대, 12비트는 밀리초당 4096개를 뜻한다">
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">Snowflake 64비트 배치 — 그리고 "왜 하필 41 / 10 / 12인가"를 직접 검산한다</text>
+
+    <g>
+      <rect x="40" y="64" width="16" height="52" fill="#94a3b8"/>
+      <rect x="56" y="64" width="666" height="52" fill="#2563eb"/>
+      <rect x="722" y="64" width="162" height="52" fill="#16a34a"/>
+      <rect x="884" y="64" width="195" height="52" fill="#d97706"/>
+    </g>
+    <text x="389" y="88" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">41비트 타임스탬프 (ms, 서비스 에포크 기준)</text>
+    <text x="389" y="107" font-size="11" fill="#dbeafe" text-anchor="middle">상위 비트가 시간이다 → 값의 대소가 곧 대략의 시간 순</text>
+    <text x="803" y="88" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">10비트 워커 ID</text>
+    <text x="803" y="106" font-size="10.5" fill="#dcfce7" text-anchor="middle">누가 만들었는가</text>
+    <text x="981" y="88" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">12비트 시퀀스</text>
+    <text x="981" y="106" font-size="10.5" fill="#fef3c7" text-anchor="middle">같은 ms 안의 카운터</text>
+
+    <text x="48" y="56" font-size="10.5" fill="#475569" text-anchor="middle">1</text>
+    <text x="150" y="140" font-size="11" fill="#b91c1c" font-weight="700">↑ 부호 비트 — 항상 0</text>
+    <text x="150" y="156" font-size="10.5" fill="#7f1d1d">bigint는 부호 있는 정수라, 최상위 비트를 쓰면 음수가 되어 정렬이 뒤집힌다</text>
+    <line x1="48" y1="120" x2="48" y2="134" stroke="#dc2626" stroke-width="1.5"/>
+
+    <!-- calc cards -->
+    <rect x="40" y="172" width="336" height="112" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="56" y="194" font-size="12.5" font-weight="700" fill="#1d4ed8">41비트 타임스탬프 — 몇 년을 표현하는가</text>
+    <g class="mono" font-size="11" fill="#1e40af">
+      <text x="56" y="215">2^41 = 2,199,023,255,552 ms</text>
+      <text x="56" y="233">÷ 1,000 ÷ 86,400 ÷ 365.25</text>
+      <text x="56" y="255" font-size="14" font-weight="700">≈ 69.7년</text>
+    </g>
+    <text x="56" y="275" font-size="10.5" fill="#1d4ed8">에포크를 2025년으로 잡으면 2094년까지</text>
+
+    <rect x="392" y="172" width="336" height="112" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="408" y="194" font-size="12.5" font-weight="700" fill="#166534">10비트 워커 ID — 몇 대인가</text>
+    <g class="mono" font-size="11" fill="#166534">
+      <text x="408" y="215">2^10 = 1,024  →  워커 ID 0 ~ 1,023</text>
+      <text x="408" y="240" font-size="14" font-weight="700">최대 1,024대</text>
+    </g>
+    <text x="408" y="262" font-size="10.5" fill="#166534">파드가 1,024개를 넘으면 ID를 더 못 나눠 준다.</text>
+    <text x="408" y="277" font-size="10.5" fill="#166534">비트 재설계 = 정렬성 훼손 = 사실상 마이그레이션</text>
+
+    <rect x="744" y="172" width="336" height="112" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="760" y="194" font-size="12.5" font-weight="700" fill="#b45309">12비트 시퀀스 — 같은 ms에 몇 개인가</text>
+    <g class="mono" font-size="11" fill="#92400e">
+      <text x="760" y="215">2^12 = 4,096 개 / ms / 워커</text>
+      <text x="760" y="236" font-size="13" font-weight="700">= 4,096,000 개 / 초 / 워커</text>
+      <text x="760" y="256">1,024대 전부면 이론상 초당 약 41억</text>
+    </g>
+    <text x="760" y="276" font-size="10.5" fill="#b45309">넘기면 실패가 아니라 <tspan font-weight="700">다음 ms까지 스핀 대기</tspan>로 흡수</text>
+
+    <rect x="40" y="296" width="1040" height="34" rx="9" fill="#1e293b"/>
+    <text x="560" y="318" font-size="13" font-weight="700" fill="#fbbf24" text-anchor="middle" class="mono">합계 검산: 1 + 41 + 10 + 12 = 64비트 = bigint 한 칸. 딱 맞는다.</text>
+  </svg>
+  <figcaption>이 검산을 직접 해 두면 <b>"왜 하필 41/10/12인가"와 "언제 고갈되는가"를 같이</b> 말할 수 있다. 특히 <b>"에포크를 한 번 정하면 바꿀 수 없다"</b>는 제약이 여기서 나온다 — <b>에포크를 바꾸면 기존 ID보다 작은 값이 새로 나와 정렬성이 깨진다.</b></figcaption>
+</figure>
+
+<h3>7-1. 왜 PG의 PK로도 좋은가</h3>
+
+<div class="chain">
+  <span class="chip b">시간이 상위 비트</span><span class="arrow">→</span>
+  <span class="chip b">새 ID는 거의 항상 PK B-tree <b>오른쪽 끝 근처</b></span><span class="arrow">→</span>
+  <span class="chip g">섞임은 <b>맨 끝 페이지 몇 장 안</b>에서만</span><span class="arrow">→</span>
+  <span class="chip g">워킹셋·FPI 수가 <b>시퀀스와 거의 같다</b></span>
+</div>
+
+<p>크기도 <b>8바이트</b>라 4절에서 계산한 <b>자식 테이블 FK 컬럼·FK 인덱스의 계수가 <code>IDENTITY</code>와 동일</b>하다. 즉 <b>분산 생성을 얻으면서 순차 I/O와 WAL 효율을 거의 포기하지 않는다.</b> 이것이 Snowflake가 대용량에서 표준 답이 된 이유다.</p>
+
+<div class="callout info">
+  <span class="t">비유 — 본사에 전화하지 않는 지점 발급 번호</span>
+  모든 지점이 <b>본사(=DB)에 전화해 번호를 받아 오는</b> 방식이 시퀀스라면, Snowflake는 각 지점이 <b>"오늘 시각 + 우리 지점 번호 + 오늘 우리 지점의 몇 번째"</b>로 <b>스스로 번호를 만드는</b> 방식이다. 전화가 필요 없으니 <b>본사가 죽어도 번호는 나오고</b>, 지점을 늘려도 본사 회선이 병목이 되지 않는다. 대신 두 가지를 지점이 직접 책임져야 한다 — <b>지점 시계가 정확할 것</b>, 그리고 <b>두 지점이 같은 지점 번호를 갖지 않을 것.</b> 그 둘이 아래의 두 의존이다.
+</div>
+
+<h3>7-2. 어디서 위험한가 — <b>두 가지 의존</b></h3>
+
+<div class="split">
+  <div class="pane r">
+    <h4>⑴ 시계 의존</h4>
+    <p style="margin:0;font-size:.94rem">유일성이 <b>"같은 워커에서 시간은 뒤로 가지 않는다"</b>에 걸려 있다. <b>NTP</b>(Network Time Protocol, 서버 시계를 표준 시각에 맞추는 프로토콜)가 시계를 뒤로 맞추거나, <b>VM 마이그레이션·절전 복귀</b>로 시계가 튀면 <b>이미 발급한 ms로 되돌아가 같은 ID를 다시 만들 수 있다.</b></p>
+    <p style="margin:8px 0 0;font-size:.92rem;color:#b91c1c"><b>대응</b> — 발급기가 마지막 발급 시각을 기억하고 <b>역행을 감지</b>한다. 작은 역행(수 ms)은 <b>기다리고</b>, 큰 역행은 <b>발급을 거부</b>한다(10절 코드). 운영 쪽 짝은 <b>NTP를 step이 아니라 slew로</b> 설정하는 것.</p>
+  </div>
+  <div class="pane r">
+    <h4>⑵ 워커 ID 배포</h4>
+    <p style="margin:0;font-size:.94rem">두 서버가 <b>같은 워커 ID</b>를 들면 같은 ms에 같은 ID가 나온다. 오토스케일링·컨테이너 환경에서 <b>"설정 파일에 1, 2, 3 적어두기"는 배포 한 번에 무너진다.</b></p>
+    <p style="margin:8px 0 0;font-size:.92rem;color:#b91c1c"><b>대응</b> — 워커 ID는 <b>중앙에서 유일하게 임대</b>한다. DB 테이블에 기동 시 INSERT해 받은 값(10절), K8s StatefulSet의 순번, ZooKeeper 순차 노드, Redis 임대 + 하트비트 등. 어느 것이든 <b>"프로세스가 죽으면 회수, 살아 있으면 갱신"</b>이 있어야 재사용 충돌이 없다.</p>
+  </div>
+</div>
+
+<h3>7-3. 그 밖의 대가</h3>
+
+<div class="grid g2">
+  <div class="tile red"><div class="k">생성 시각이 값에 드러난다</div><div class="d">상위 41비트를 풀면 <b>ms 단위 생성 시각</b>이 나오고, 시퀀스 비트로 <b>"그 ms에 몇 건"</b>도 어느 정도 읽힌다. 총량 추측은 연속 번호보다 훨씬 어렵지만 <b>"언제 만들었는지도 숨겨라"</b>는 요건이면 부적합.</div></div>
+  <div class="tile red"><div class="k">전역 순서는 ms 단위 근사다</div><div class="d">워커 간 시계가 몇 ms 어긋나면 <b>나중에 만든 ID가 더 작을 수 있다.</b> "ID 순 = 정확한 시간 순"으로 <b>커서 페이지네이션</b>을 짜면 경계에서 <b>건너뛰기</b>가 생긴다.</div></div>
+  <div class="tile red"><div class="k">에포크를 한 번 정하면 바꿀 수 없다</div><div class="d">41비트는 에포크로부터 약 <b>69년</b>. 에포크를 바꾸면 <b>기존 ID보다 작은 값이 새로 나와 정렬성이 깨진다.</b></div></div>
+  <div class="tile red"><div class="k">업무 의미는 없다</div><div class="d">사람이 <b>읽거나 불러줄 수 없다.</b> 주문번호로 고객에게 안내할 수 없다 → 외부 식별자는 따로 필요하다.</div></div>
+</div>
+
+<div class="memo red">
+  <h4>함정 ③ — JSON 직렬화에서 <b>끝자리가 조용히 반올림</b>된다 <span class="badge bonus">가산점</span></h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">JavaScript 안전 정수 한계</div><div class="d"><code>2^53 − 1 = 9,007,199,254,740,991</code> → <b>16자리</b></div></div>
+    <div class="tile red"><div class="k">오늘 발급한 Snowflake ID</div><div class="d">2025년 에포크 기준 <code>(경과 ms) &lt;&lt; 22</code> ≈ <code>2.2 × 10^17</code> → <b>18자리</b></div></div>
+  </div>
+  <p style="margin-bottom:0">브라우저가 파싱하면서 <b>끝자리가 조용히 반올림된다</b> — <b>에러가 아니라 값이 살짝 달라지는 형태</b>라 더 위험하다. 조회는 되는데 <b>"가끔" 없는 주문</b>이 되는 식으로 나타난다. <b>API 응답에서는 문자열로 내보내야 한다.</b></p>
+</div>
+
+<div class="split">
+  <div class="pane g">
+    <h4>얻는 것</h4>
+    <ul>
+      <li><b>8바이트</b>, 거의 단조 증가(순차 I/O·FPI 효율 유지)</li>
+      <li><b>조율 없는 분산 생성</b>, INSERT 전 ID 확보, DB 왕복 0</li>
+      <li>초당 워커당 약 <b>410만 개</b></li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>내는 것</h4>
+    <ul>
+      <li><b>시계 역행 감지 의무</b>, <b>워커 ID 임대 인프라</b></li>
+      <li>생성 시각 노출, ms 단위 근사 순서</li>
+      <li>에포크 고정(<b>69년 · 1,024대 상한</b>), 문자열 직렬화 필요</li>
+      <li>업무 의미 없음</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 방식 ④ UUID — v4가 아픈 곳은 힙이 아니라 PK B-tree다</h2>
+
+<h3>8-1. 먼저 저장 타입 — 이건 논쟁거리가 아니라 전제다</h3>
+
+<p>PG에는 <b><code>uuid</code> 타입</b>이 있다 — <b>16바이트 고정, 비교는 바이트 비교</b>다. 문자열로 저장하면 <code>varchar(36)</code>은 <b>36바이트</b>에 더해 비교가 <b>collation(문자 정렬 규칙)을 타서</b> 정수 비교보다 훨씬 비싸다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">bad</span> 36바이트 + collation 비교</div>
+<pre><code><span class="ln-bad">id <span class="kw">varchar</span>(36) <span class="kw">PRIMARY KEY</span></span>
+<span class="cm">-- 인덱스도 힙도 2배 이상으로 부푼다
+-- v7을 써도 "크기" 문제는 v4와 똑같아진다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">good</span> 16바이트 네이티브</div>
+<pre><code><span class="ln-good">id <span class="kw">uuid</span> <span class="kw">PRIMARY KEY DEFAULT</span> <span class="fn">gen_random_uuid</span>()</span>
+<span class="cm">-- gen_random_uuid()는 v4 (PG 13+ 내장)
+-- 드라이버가 java.util.UUID로 그대로 매핑한다</span></code></pre>
+  </div>
+</div>
+
+<h3>8-2. v4가 왜 문제인가 — 이 문서에서 가장 중요한 사슬</h3>
+
+<p>UUID v4는 128비트 중 대부분이 난수다. PG에서 이 값을 PK로 쓰면 <b>힙은 멀쩡한데 PK B-tree가 앓는다.</b> 3절의 <b>"힙은 자리를 고를 수 있고 B-tree는 못 고른다"</b>가 여기서 청구서로 돌아온다.</p>
+
+<div class="memo red">
+  <h4>암기 대상 ⑥ — v4 사슬 여섯 고리 <b>"무 · 캐 · 분 · 적 · 랜 · 왈"</b></h4>
+  <div class="chain">
+    <span class="chip r"><b>무</b>작위 삽입 위치</span><span class="arrow">→</span>
+    <span class="chip r"><b>캐</b>시 미스 (쓰기가 랜덤 읽기를 부른다)</span><span class="arrow">→</span>
+    <span class="chip r">페이지 반반 <b>분</b>할</span>
+  </div>
+  <div class="chain">
+    <span class="chip r"><b>적</b>재율 저하 (인덱스 bloat)</span><span class="arrow">→</span>
+    <span class="chip r">논리/물리 순서 어긋나 범위 스캔 <b>랜</b>덤화</span><span class="arrow">→</span>
+    <span class="chip r">WAL FPI 증폭 (<b>왈</b>)</span>
+  </div>
+  <p style="margin-bottom:0" class="sub">"인덱스가 깨진다", "정렬이 안 돼서 느리다"로 줄이면 <b>기본 문항에서 했던 뭉뚱그리기의 반복</b>이다. <b>고리를 다 말해야 한다.</b> 관찰은 <code>EXPLAIN (ANALYZE, WAL)</code>의 <code>WAL: fpi=</code>와 <code>pg_stat_wal</code>(PG 14+)의 <code>wal_fpi</code>로 한다.</p>
+</div>
+
+<p>고리를 문장으로 이어 붙이면 이렇게 된다. <b>힙은 무관하다</b> — 새 행은 FSM이 가리키는 빈 공간(대개 파일 끝)에 들어가고, PK가 <code>bigint</code>든 <code>uuid</code>든 힙 쪽 워킹셋은 같다. <b>문제는 삽입 위치를 값이 결정하는 구조가 하나 남아 있다는 것</b> — PK B-tree, 그리고 그 값을 받는 자식 테이블의 FK 인덱스들.</p>
+
+<div class="grid g2">
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">가득 찬 페이지를 만났을 때 — 여기가 v4와 순차 키가 갈리는 결정적 지점</div>
+    <div class="d"><b>끝 삽입</b>이면 오른쪽에 <b>새 페이지를 이어 붙인다</b>(적재율 거의 100%). <b>중간 삽입</b>이면 <b>반반 페이지 분할</b>이다 — 쪼개고, 새 페이지를 파일 끝에 붙이고, 부모에 분리 키를 추가한다. 반쯤 빈 페이지가 전역에 쌓여 <b>적재율이 평균 약 70%까지 떨어지고</b>(분할 직후 50%, 채워지며 회복), 같은 엔트리 수에 페이지가 더 필요해지는 <b>악순환</b>이 된다.</div>
+  </div>
+  <div class="tile red">
+    <div class="k" style="font-family:inherit">그리고 논리 순서와 물리 순서가 어긋난다</div>
+    <div class="d">새 페이지가 <b>파일 끝에 붙으므로</b> 키 순서(논리)와 파일 배치(물리)가 어긋나고, <b>범위 스캔이 순차에서 랜덤으로 전락</b>한다. 2절의 <code>random_page_cost</code> 4.0 : <code>seq_page_cost</code> 1.0이 여기서 청구된다.</div>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>캐시 히트 확률이 어떻게 무너지는지 — 숫자로 (shared_buffers 8GB 가정, 4절의 262개/페이지로 계산)</h4>
+  <div class="scroll">
+  <table>
+    <caption>같은 UUID PK라도 <b>행 수가 늘면 어느 순간 계단을 밟는다</b> — 그 시점이 언제인지가 설계의 관전 포인트다</caption>
+    <tr><th>행 수 / PK 타입</th><th>PK 인덱스 크기</th><th>8GB 캐시 대비</th><th>INSERT에 무슨 일이</th></tr>
+    <tr class="hl"><td><code>uuid</code> 1억 행</td><td>약 3.13GB</td><td class="good">전부 들어간다</td><td>히트율 사실상 100% — <b>이 구간에서는 문제가 안 보인다</b></td></tr>
+    <tr><td><code>uuid</code> 5억 행</td><td>약 15.6GB</td><td class="bad">8 / 15.6 ≈ 51%</td><td class="bad"><b>INSERT 두 건 중 한 건</b>이 디스크 랜덤 읽기를 유발</td></tr>
+    <tr><td><code>bigint</code> 5억 행</td><td>약 11.2GB</td><td>8 / 11.2 ≈ 72%</td><td>100%는 아니지만 <b>계단에 도달하는 시점 자체가 훨씬 뒤</b></td></tr>
+  </table>
+  </div>
+  <div class="rule red" style="margin-bottom:0">그래서 UUID v4의 사고는 <b>"처음부터 느림"이 아니라 "어느 날 갑자기 못 쓰게 됨"</b>으로 온다 — 인덱스가 캐시를 넘는 날</div>
+</div>
+
+<h3>8-3. v7은 무엇을 고쳤는가</h3>
+
+<p>RFC 9562의 <b>UUID v7</b>은 앞 <b>48비트를 Unix ms 타임스탬프</b>로, 나머지를 버전·변형 비트와 난수로 채운다. <b>상위 비트가 시간이므로 삽입 위치가 오른쪽 끝 근처로 모이고</b>, 위의 사슬이 한꺼번에 끊긴다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="UUID v4는 앞 48비트까지 난수여서 삽입 위치가 인덱스 전역에 흩어지는 반면, UUID v7은 앞 48비트가 밀리초 타임스탬프여서 삽입 위치가 오른쪽 끝 리프로 모이는 것을 비트 배치와 미니 B-tree로 대비한 도식">
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 128비트, 같은 16바이트 — 다른 것은 <tspan text-decoration="underline">앞 48비트에 무엇이 있는가</tspan> 하나뿐이다</text>
+
+    <!-- v4 -->
+    <text x="98" y="82" font-size="13" font-weight="700" fill="#b91c1c" text-anchor="end" class="mono">UUID v4</text>
+    <g>
+      <rect x="110" y="56" width="292" height="40" fill="#dc2626"/>
+      <rect x="402" y="56" width="25" height="40" fill="#64748b"/>
+      <rect x="427" y="56" width="73" height="40" fill="#dc2626"/>
+      <rect x="500" y="56" width="12" height="40" fill="#64748b"/>
+      <rect x="512" y="56" width="378" height="40" fill="#dc2626"/>
+    </g>
+    <text x="256" y="81" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">난수 48비트</text>
+    <text x="701" y="81" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">난수 (합계 122비트가 무작위)</text>
+    <text x="414" y="112" font-size="9.5" fill="#475569" text-anchor="middle">ver</text>
+    <text x="506" y="112" font-size="9.5" fill="#475569" text-anchor="middle">var</text>
+    <text x="110" y="126" font-size="11.5" fill="#b91c1c" font-weight="700">앞자리가 난수 → 삽입 지점이 트리 전역에 흩어진다</text>
+
+    <g>
+      <rect x="916" y="52" width="30" height="30" rx="4" fill="#dc2626"/>
+      <rect x="950" y="52" width="30" height="30" rx="4" fill="#fff" stroke="#fca5a5"/>
+      <rect x="984" y="52" width="30" height="30" rx="4" fill="#dc2626"/>
+      <rect x="1018" y="52" width="30" height="30" rx="4" fill="#fff" stroke="#fca5a5"/>
+      <rect x="1052" y="52" width="30" height="30" rx="4" fill="#dc2626"/>
+    </g>
+    <text x="999" y="100" font-size="10.5" fill="#b91c1c" text-anchor="middle">PK B-tree 리프 — 매번 다른 자리</text>
+    <text x="999" y="116" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">캐시 미스 · 분할 · FPI 증폭</text>
+
+    <!-- divider -->
+    <line x1="40" y1="146" x2="1080" y2="146" stroke="#e5e7eb" stroke-width="1.5"/>
+
+    <!-- v7 -->
+    <text x="98" y="196" font-size="13" font-weight="700" fill="#166534" text-anchor="end" class="mono">UUID v7</text>
+    <g>
+      <rect x="110" y="170" width="292" height="40" fill="#2563eb"/>
+      <rect x="402" y="170" width="25" height="40" fill="#64748b"/>
+      <rect x="427" y="170" width="73" height="40" fill="#16a34a"/>
+      <rect x="500" y="170" width="12" height="40" fill="#64748b"/>
+      <rect x="512" y="170" width="378" height="40" fill="#16a34a"/>
+    </g>
+    <text x="256" y="195" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">48비트 unix_ts_ms</text>
+    <text x="463" y="195" font-size="10" fill="#fff" text-anchor="middle">rand_a 12</text>
+    <text x="701" y="195" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">rand_b 62비트</text>
+    <text x="414" y="226" font-size="9.5" fill="#475569" text-anchor="middle">ver=7</text>
+    <text x="506" y="226" font-size="9.5" fill="#475569" text-anchor="middle">var</text>
+    <text x="110" y="240" font-size="11.5" fill="#166534" font-weight="700">앞자리가 시간 → 삽입 지점이 오른쪽 끝으로 모인다</text>
+
+    <g>
+      <rect x="916" y="166" width="30" height="30" rx="4" fill="#fff" stroke="#86efac"/>
+      <rect x="950" y="166" width="30" height="30" rx="4" fill="#fff" stroke="#86efac"/>
+      <rect x="984" y="166" width="30" height="30" rx="4" fill="#fff" stroke="#86efac"/>
+      <rect x="1018" y="166" width="30" height="30" rx="4" fill="#fff" stroke="#86efac"/>
+      <rect x="1052" y="166" width="30" height="30" rx="4" fill="#16a34a"/>
+    </g>
+    <text x="999" y="214" font-size="10.5" fill="#166534" text-anchor="middle">PK B-tree 리프 — 항상 끝 근처</text>
+    <text x="999" y="230" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">사슬 여섯 고리가 한꺼번에 끊긴다</text>
+
+    <!-- bottom -->
+    <rect x="40" y="262" width="1040" height="52" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="284" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">48비트 밀리초 ≈ 8,900년치(Snowflake의 41비트 69년과 대조) · 난수 12 + 62 = 74비트 → 같은 ms 충돌 확률 사실상 0</text>
+    <text x="560" y="304" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">그러나 128비트 = 16바이트라는 계수는 그대로 남는다 — 정렬성은 회복했지만 원칙 ①"작게"는 여전히 어긴다</text>
+  </svg>
+  <figcaption>난수 비트가 <b>74개</b>나 되어 <b>같은 ms에 시계가 역행해도 충돌 확률이 사실상 0</b>이고, <b>워커 ID 배포도 필요 없다</b> — <b>Snowflake가 짊어진 두 의존이 모두 사라진다.</b> 표준이라 언어·DB 어디서나 통하고, 클라이언트나 오프라인 기기에서 미리 만들 수도 있다.</figcaption>
+</figure>
+
+<pre><code><span class="cm">-- PG 18부터는 서버 내장 함수가 있다</span>
+id <span class="kw">uuid</span> <span class="kw">PRIMARY KEY DEFAULT</span> <span class="fn">uuidv7</span>()
+
+<span class="cm">-- 그 이전 버전이면 애플리케이션에서 생성하거나 확장을 쓴다.
+-- (DB 기본값으로 두면 'INSERT 전 ID 확보'라는 장점을 스스로 버리게 되므로,
+--  분산 채번이 목적이라면 애초에 앱에서 만들어 넣는 편이 일관된다.)</span></code></pre>
+
+<div class="grid g2">
+  <div class="tile red"><div class="k">무엇이 남는가 ① 16바이트</div><div class="d"><code>bigint</code>의 두 배. 4절의 표대로 <b>자식 FK 컬럼·FK 인덱스와 PK 인덱스 자체에서 적재율로 청구</b>된다(페이지당 366 → 262).</div></div>
+  <div class="tile red"><div class="k">② 문자열로 저장하면 최악</div><div class="d"><code>varchar(36)</code>은 <b>v4와 다를 바 없는 크기 문제</b>를 그대로 되살린다 — <code>uuid</code> 타입이 전제다.</div></div>
+  <div class="tile red"><div class="k">③ 생성 시각이 드러난다</div><div class="d">Snowflake와 같다. <b>가독성·업무 의미도 0</b>이라 주문번호로 고객에게 불러줄 수 없다.</div></div>
+  <div class="tile red"><div class="k">④ JDK 표준은 v4다</div><div class="d"><code>UUID.randomUUID()</code>는 <b>v4</b>다. v7은 <b>별도 라이브러리나 직접 구현</b>이 필요하다. 하이버네이트 6.x 계열은 <code>@UuidGenerator</code>로 시간 정렬 스타일을 지원하지만, <b>사용 중인 버전에서 지원 여부를 반드시 확인</b>하고 쓴다.</div></div>
+</div>
+
+<div class="split">
+  <div class="pane g">
+    <h4>얻는 것 (v7)</h4>
+    <ul>
+      <li><b>조율·시계 역행·워커 ID 걱정이 없는 완전 무의존 분산 생성</b></li>
+      <li>거의 단조 증가 → 순차 I/O·WAL 효율 회복</li>
+      <li>표준(RFC 9562), 클라이언트 생성 가능, 총량 추측 불가</li>
+      <li>PG 네이티브 타입·드라이버 매핑(<code>java.util.UUID</code> 그대로)</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>내는 것 (v7)</h4>
+    <ul>
+      <li><b>16바이트 계수</b> — PK 인덱스 + 자식 FK 컬럼·인덱스의 적재율 저하</li>
+      <li>생성 시각 노출, 가독성 0</li>
+      <li>저장 타입을 잘못 고르면(문자열) <b>v4와 다를 바 없는 크기</b></li>
+      <li>JDK 표준 미지원</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">MySQL 대조 — "UUID PK가 나쁘다"의 강도는 엔진마다 다르다</span>
+  MySQL의 InnoDB에서는 이 모든 일이 <b>테이블 그 자체</b>(클러스터드 인덱스의 리프 = 행 전체)에서 벌어지므로 <b>랜덤 PK의 피해 규모가 "PK 인덱스 크기"가 아니라 "테이블 크기"</b>다 — 훨씬 치명적이다. 게다가 MySQL에는 <b>UUID 전용 타입이 없어</b> <code>BINARY(16)</code> + <code>UUID_TO_BIN()</code>/<code>BIN_TO_UUID()</code>로 손수 변환해야 하고, <code>UUID_TO_BIN(uuid, 1)</code>의 <b>스왑 플래그는 시간 필드가 뒤에 있는 v1을 앞으로 돌리는 용도라 v7에 걸면 오히려 정렬성이 깨진다.</b> PG는 <code>uuid</code> 타입과 드라이버 매핑이 그 수공업을 없앤다. <b>정리하면 — PG는 덜 아프지만 안 아픈 게 아니다.</b>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 4방식 비교표 · 선택 기준 6가지</h2>
+
+<h3>9-1. 먼저, 단조 증가에도 대가는 있다 <span class="badge bonus">가산점</span></h3>
+
+<p>트레이드오프를 양면으로 말하려면 <b>"정렬성이 무조건 좋다"에서도 한 걸음 물러설 줄</b> 알아야 한다. 모든 INSERT가 <b>맨 오른쪽 리프 한 장</b>에 몰리면 <b>그 페이지의 버퍼 잠금을 두고 백엔드들이 경합</b>한다 — <code>pg_stat_activity</code>에서 <code>wait_event_type = 'LWLock'</code>으로 관측되는 종류의 대기다. <b>LWLock(Lightweight Lock)</b>은 트랜잭션 락이 아니라 <b>메모리 구조 하나를 아주 짧게 보호하는 내부 잠금</b>이라 대개 마이크로초 단위로 끝나지만, 같은 페이지에 초당 수만 건이 몰리면 그 짧은 대기가 쌓여 병목이 된다.</p>
+
+<div class="memo green">
+  <h4>그런데 완화책은 "랜덤 키로 돌아가기"가 아니다 — 이 판단이 시니어 변별점이다</h4>
+  <div class="split" style="margin:10px 0">
+    <div class="pane g"><h4>맞는 완화책</h4><p style="margin:0;font-size:.93rem"><b>해시 파티셔닝으로 끝 페이지를 여러 개로 나누거나</b>, 샤딩한다. 끝 페이지가 N개가 되면 경합도 1/N이 된다.</p></div>
+    <div class="pane r"><h4>틀린 완화책</h4><p style="margin:0;font-size:.93rem"><b>랜덤 키로 돌아가는 것.</b> 랜덤 키는 락 경합 대신 <b>디스크 I/O와 WAL 볼륨</b>을 지불하는데, <b>그쪽이 수천 배 비싸다.</b></p></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">마이크로초짜리 LWLock 경합을 피하려고 <b>80배의 WAL(41MB/s vs 0.5MB/s)을 사는 것은 거래가 아니다</b></div>
+</div>
+
+<h3>9-2. 4방식 비교표 (PostgreSQL 기준)</h3>
+
+<p>표를 외우는 게 아니라 <b>축 여섯 개(정렬성 · 분산성 · 크기 · 노출 · 의존성 · 업무 의미)를 먼저 말하고 각 칸을 채우는 순서</b>를 몸에 붙인다.</p>
+
+<table class="wide">
+  <caption>면접에서 <b>"UUID v7과 Snowflake 중 뭐가 낫나요"</b>가 오면 <b>표의 열 두 개를 나란히 읽으면 된다</b> — 같은 정렬성 · 같은 분산성, 크기 8 vs 16, 의존성은 Snowflake가 무겁고 UUID v7이 가볍다.</caption>
+  <tr><th>축</th><th>시퀀스 / IDENTITY</th><th>채번 테이블(+블록)</th><th>Snowflake</th><th>UUID v7</th></tr>
+  <tr>
+    <th>정렬성(시간 순)</th>
+    <td class="good">완전 단조<br><span class="sub">(<code>CACHE</code>&gt;1이면 세션 간 교차)</span></td>
+    <td>블록 단위<br><span class="sub">(인스턴스 간 교차)</span></td>
+    <td>ms 단위 근사 단조</td>
+    <td>ms 단위 근사 단조</td>
+  </tr>
+  <tr>
+    <th>분산 생성</th>
+    <td>부분적 — DB 한 대 안에서는 <b>앱 인스턴스 무제한</b></td>
+    <td>부분적 — DB 왕복 필요, 핫 로우</td>
+    <td class="good">가능 — 로컬 생성, 조율 0</td>
+    <td class="good">가능 — 로컬 생성, 조율 0</td>
+  </tr>
+  <tr class="hl">
+    <th>INSERT 전 ID 확보</th>
+    <td class="good"><b>가능 (<code>nextval()</code>)</b><br><span class="sub">← MySQL과 갈리는 칸</span></td>
+    <td class="good">가능</td>
+    <td class="good">가능</td>
+    <td class="good">가능</td>
+  </tr>
+  <tr>
+    <th>크기</th>
+    <td class="good">8B</td>
+    <td>8B(정수) 또는 포맷 문자열</td>
+    <td class="good">8B</td>
+    <td class="bad">16B (<code>uuid</code> 타입)</td>
+  </tr>
+  <tr>
+    <th>노출 위험</th>
+    <td class="bad">연속 → 총량·다음 값 추측</td>
+    <td class="bad">연속 → 동일</td>
+    <td>생성 시각 · ms당 건수 노출</td>
+    <td>생성 시각 노출</td>
+  </tr>
+  <tr>
+    <th>의존성</th>
+    <td>DB 노드 1대</td>
+    <td>채번 행의 락 · 가용성</td>
+    <td class="bad">시계 규율 + 워커 ID 임대</td>
+    <td>시계<br><span class="sub">(역행은 난수 74비트가 완충)</span></td>
+  </tr>
+  <tr>
+    <th>업무 의미 부여</th>
+    <td class="dash">불가</td>
+    <td class="good">가능 — 날짜·채널·체크 디짓 자유</td>
+    <td class="dash">불가</td>
+    <td class="dash">불가</td>
+  </tr>
+  <tr>
+    <th>PG 고유 대가</th>
+    <td>빈 번호(비트랜잭션), 논리 복제 시 <code>setval</code> 누락</td>
+    <td>죽은 튜플·autovacuum, HOT 유지용 <code>fillfactor</code></td>
+    <td class="dash">없음</td>
+    <td>PK B-tree 적재율 · FK 인덱스 계수</td>
+  </tr>
+  <tr>
+    <th>대표 대가</th>
+    <td class="bad">샤딩 불가</td>
+    <td class="bad">핫 로우, 재기동 시 구멍</td>
+    <td class="bad">시계 역행, 워커 ID 충돌, 69년·1,024대 상한</td>
+    <td class="bad">크기 2배, JDK 미지원</td>
+  </tr>
+</table>
+
+<div class="rule">그리고 PG에서는 <b>3행 "INSERT 전 ID 확보 가능"</b>이 표 전체의 결론을 바꾼다 — <b>MySQL 기준 비교표에서 시퀀스 계열이 탈락하던 사유 하나가 여기서는 없다</b></div>
+
+<h3>9-3. 선택 기준 6가지 — 이 순서로 되묻는다</h3>
+
+<div class="step"><span class="n">1</span><div class="body"><b>생성 지점이 하나인가 여럿인가.</b> DB 한 대(+레플리카)면 <code>bigint IDENTITY</code>로 충분하다 — <b>앱 인스턴스가 몇 대든 시퀀스 하나를 같이 쓴다.</b> 샤딩·다중 리전·클라이언트 생성이 요구되면 Snowflake / UUID v7로 간다. <b>PG에서 채번 테이블은 "분산"의 답이 아니라 "포맷"의 답이다.</b></div></div>
+<div class="step"><span class="n">2</span><div class="body"><b>INSERT 전에 ID가 필요한가.</b> 이벤트를 먼저 발행하거나, 멱등 키로 쓰거나, JPA 쓰기 지연 배치를 살려야 하는 경우 — <b>MySQL이면 여기서 AUTO_INCREMENT가 탈락하지만 PG는 시퀀스 전략으로 그대로 통과</b>한다.</div></div>
+<div class="step"><span class="n">3</span><div class="body"><b>외부에 노출되는가, 노출되면 무엇이 새는가.</b> <b>총량·증가율</b>이 문제면 연속 번호가 탈락, <b>생성 시각까지</b> 숨겨야 하면 시간 정렬 ID도 탈락 → <b>내부 PK와 별개의 무작위 외부 식별자</b>가 필요하다.</div></div>
+<div class="step"><span class="n">4</span><div class="body"><b>업무 의미(날짜·채널·체크 디짓) 요구가 있는가.</b> 있으면 <b>어차피 PK와 분리해야 하고</b>, 외부 식별자 쪽은 <b>채번 테이블 + 포맷 조립</b>이 답이다.</div></div>
+<div class="step"><span class="n">5</span><div class="body"><b>저장 구조를 정확히 반영했는가.</b> <b>"PG는 힙이라 UUID를 써도 된다"는 반쪽 명제</b>다. 힙은 무관하지만 <b>PK B-tree의 무작위 삽입 · 자식 FK 인덱스의 크기 계수 · <code>full_page_writes</code>로 부푸는 WAL</b>은 그대로다. <b>허용 범위가 InnoDB보다 넓어진 것이지 비용이 사라진 것이 아니다.</b></div></div>
+<div class="step ok"><span class="n">6</span><div class="body"><b>팀이 감당할 의존성은 어디까지인가.</b> Snowflake는 <b>워커 ID 임대와 시계 규율이라는 상시 운영 의무</b>를 사고, 채번 테이블은 <b>DB 가용성</b>에 묶이며, UUID v7은 <b>의존성 대신 16바이트</b>를 낸다. <b>"인프라를 늘리지 않고 되는 일을 늘려서 하지 않는다"가 기본값이다.</b></div></div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 실무 설계 — 분리하고, 안전망을 코드로 고정한다</h2>
+
+<h3>10-1. 스키마와 JPA 매핑 — before / after</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">bad</span> UUID v4 문자열 하나가 PK이자 주문번호</div>
+<pre><code><span class="kw">@Entity</span>
+<span class="kw">@Table</span>(name = <span class="st">"orders"</span>)
+<span class="kw">public class</span> Order {
+    <span class="kw">@Id</span>
+<span class="ln-bad">    <span class="kw">@Column</span>(length = 36)
+    <span class="kw">private</span> String id = UUID.<span class="fn">randomUUID</span>().<span class="fn">toString</span>();</span>
+
+<span class="cm">    // ① 36바이트 키 + collation 비교
+    //    — uuid 타입(16B, 바이트 비교)을 두고 최악을 골랐다
+    // ② 삽입 위치 무작위 → PK B-tree 캐시 미스 → 페이지 분할
+    //    → 적재율↓ → INSERT마다 랜덤 읽기
+    //    → full_page_writes로 WAL에 8KB 이미지 한 장씩
+    // ③ 자식 테이블 FK 컬럼·FK 인덱스가 전부 이 크기를 받는다
+    //    (페이지당 엔트리 −28%)
+    // ④ 이 값을 그대로 고객·CS에 노출 → 불러줄 수도,
+    //    날짜를 읽을 수도 없다
+    // ⑤ id가 이미 채워진 채 save() → Spring Data는
+    //    "새 엔티티 아님"으로 보고 merge → SELECT가 한 번 더</span>
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">good</span> 내부 PK(bigint, 시간 순) + 외부 주문번호(업무 포맷, 유니크)</div>
+<pre><code><span class="kw">@Entity</span>
+<span class="kw">@Table</span>(name = <span class="st">"orders"</span>,
+   uniqueConstraints = <span class="kw">@UniqueConstraint</span>(
+       name = <span class="st">"uk_orders_order_no"</span>, columnNames = <span class="st">"order_no"</span>))
+<span class="kw">public class</span> Order {
+
+<span class="cm">    // 분산이 요구사항이면 Snowflake, 단일 DB면 시퀀스 전략.
+    // PG에서는 어느 쪽이든 INSERT 전에 값이 손에 들어와
+    // JDBC 배치가 살아 있다.</span>
+    <span class="kw">@Id</span>
+<span class="ln-good">    <span class="kw">@GeneratedValue</span>(strategy = GenerationType.SEQUENCE,
+                    generator = <span class="st">"orders_seq"</span>)
+    <span class="kw">@SequenceGenerator</span>(name = <span class="st">"orders_seq"</span>,
+        sequenceName = <span class="st">"orders_id_seq"</span>, allocationSize = 50)
+    <span class="kw">private</span> Long id;              <span class="cm">// 8B, 조인·FK·인덱스의 축</span></span>
+
+<span class="ln-good">    <span class="kw">@Column</span>(name = <span class="st">"order_no"</span>, nullable = <span class="kw">false</span>,
+            updatable = <span class="kw">false</span>, length = 20)
+    <span class="kw">private</span> String orderNo;      <span class="cm">// 20260901-A-004821-7</span></span>
+
+    <span class="kw">@Column</span>(name = <span class="st">"created_at"</span>, nullable = <span class="kw">false</span>,
+            updatable = <span class="kw">false</span>)
+    <span class="kw">private</span> Instant createdAt;   <span class="cm">// 시간 순 정렬·커서는 이 컬럼으로</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="codehead good"><span class="tag">good</span> 짝이 되는 DDL — FK 인덱스는 <b>직접</b> 만든다</div>
+<pre><code><span class="kw">CREATE SEQUENCE</span> orders_id_seq <span class="kw">AS</span> bigint <span class="kw">INCREMENT BY</span> 50;
+
+<span class="kw">CREATE TABLE</span> orders (
+    id          bigint      <span class="kw">PRIMARY KEY DEFAULT</span> <span class="fn">nextval</span>(<span class="st">'orders_id_seq'</span>),
+    order_no    varchar(20) <span class="kw">NOT NULL</span>,
+    customer_id bigint      <span class="kw">NOT NULL</span>,
+    status      varchar(20) <span class="kw">NOT NULL</span>,
+    created_at  timestamptz <span class="kw">NOT NULL DEFAULT</span> <span class="fn">now</span>(),
+<span class="ln-good">    <span class="kw">CONSTRAINT</span> uk_orders_order_no <span class="kw">UNIQUE</span> (order_no)   <span class="cm">-- 최후 방어선</span></span>
+);
+<span class="kw">CREATE INDEX</span> ix_orders_customer_created <span class="kw">ON</span> orders (customer_id, created_at <span class="kw">DESC</span>);
+
+<span class="cm">-- 자식 테이블: FK 컬럼에 인덱스를 "직접" 만든다.
+-- PG는 FK 인덱스를 자동 생성하지 않으므로, 없으면 부모 DELETE/키 UPDATE마다
+-- 자식 전체 스캔이다. PK를 작게 유지해야 하는 진짜 이유도 여기에 있다.</span>
+<span class="kw">CREATE TABLE</span> order_items (
+    id       bigint <span class="kw">GENERATED ALWAYS AS IDENTITY PRIMARY KEY</span>,
+    order_id bigint <span class="kw">NOT NULL REFERENCES</span> orders(id)
+);
+<span class="ln-good"><span class="kw">CREATE INDEX</span> ix_order_items_order_id <span class="kw">ON</span> order_items (order_id);</span></code></pre>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="가운데 orders 테이블에 id와 order_no와 created_at 세 컬럼이 있고, id는 왼쪽의 자식 테이블 FK와 인덱스로만 연결되며 서비스 경계를 넘지 않고, order_no는 오른쪽의 고객 URL과 CS 화면과 정산 파일로 나가며, created_at은 시간 순 정렬과 커서 페이지네이션에 쓰인다는 도식">
+    <defs>
+      <marker id="f1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="f2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">두 요구가 한 컬럼에서 싸우던 것이 애초의 문제였다 — 컬럼을 나누면 둘 다 이긴다</text>
+
+    <line x1="762" y1="44" x2="762" y2="300" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 5"/>
+    <text x="770" y="58" font-size="11" fill="#475569" font-weight="700">서비스 경계 — <tspan class="mono">id</tspan>는 이 선을 넘지 않는다</text>
+
+    <!-- center table -->
+    <rect x="400" y="70" width="300" height="170" rx="10" fill="#fff" stroke="#334155" stroke-width="2"/>
+    <text x="550" y="94" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">orders</text>
+    <rect x="416" y="104" width="268" height="34" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="430" y="126" font-size="11.5" fill="#1d4ed8" class="mono" font-weight="700">id  bigint  PRIMARY KEY</text>
+    <rect x="416" y="142" width="268" height="34" rx="6" fill="#fffbeb" stroke="#d97706"/>
+    <text x="430" y="164" font-size="11.5" fill="#b45309" class="mono" font-weight="700">order_no  varchar(20) UNIQUE</text>
+    <rect x="416" y="180" width="268" height="34" rx="6" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="430" y="202" font-size="11.5" fill="#334155" class="mono">created_at  timestamptz</text>
+
+    <!-- left children -->
+    <g>
+      <rect x="60" y="76" width="290" height="40" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="76" y="101" font-size="11.5" fill="#1d4ed8" class="mono">order_items.order_id  bigint + 인덱스</text>
+      <rect x="60" y="126" width="290" height="40" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="76" y="151" font-size="11.5" fill="#1d4ed8" class="mono">payments.order_id     bigint + 인덱스</text>
+      <rect x="60" y="176" width="290" height="40" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+      <text x="76" y="201" font-size="11.5" fill="#1d4ed8" class="mono">shipments.order_id    bigint + 인덱스</text>
+    </g>
+    <line x1="396" y1="118" x2="356" y2="98" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f1)"/>
+    <line x1="396" y1="121" x2="356" y2="146" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f1)"/>
+    <line x1="396" y1="124" x2="356" y2="196" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f1)"/>
+    <text x="205" y="238" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">8바이트 단조 증가가 여기를 전부 결정한다</text>
+    <text x="205" y="255" font-size="10.5" fill="#334155" text-anchor="middle">끝 페이지 append · FPI 최소 · 페이지당 366 엔트리</text>
+
+    <!-- right consumers -->
+    <g>
+      <rect x="790" y="76" width="290" height="40" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+      <text x="806" y="101" font-size="11.5" fill="#b45309">고객 화면 · URL · 주문 확인 메일</text>
+      <rect x="790" y="126" width="290" height="40" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+      <text x="806" y="151" font-size="11.5" fill="#b45309">CS 상담 — 전화로 불러주는 번호</text>
+      <rect x="790" y="176" width="290" height="40" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+      <text x="806" y="201" font-size="11.5" fill="#b45309">정산 파일 · 영수증 · 세금 서류</text>
+    </g>
+    <line x1="704" y1="156" x2="786" y2="98" stroke="#d97706" stroke-width="1.8" marker-end="url(#f2)"/>
+    <line x1="704" y1="159" x2="786" y2="146" stroke="#d97706" stroke-width="1.8" marker-end="url(#f2)"/>
+    <line x1="704" y1="162" x2="786" y2="196" stroke="#d97706" stroke-width="1.8" marker-end="url(#f2)"/>
+    <text x="935" y="238" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">날짜 · 채널 · 체크 디짓을 담는다</text>
+    <text x="935" y="255" font-size="10.5" fill="#334155" text-anchor="middle">유니크 제약이 최후 방어선 · 재시도는 새 트랜잭션에서</text>
+
+    <!-- bottom -->
+    <rect x="60" y="272" width="1020" height="40" rx="9" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="570" y="297" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700"><tspan class="mono">created_at</tspan> 은 세 번째 역할을 맡는다 — 시간 순 정렬과 커서 페이지네이션은 여기로. <tspan fill="#b91c1c">ID 순서를 시간 순으로 믿지 않는다.</tspan></text>
+  </svg>
+  <figcaption><b>이 구조가 한 번에 해결하는 것</b> — PK B-tree의 삽입 비용과 WAL 볼륨은 <b>8바이트 단조 증가 PK</b>가 감당하고, 노출·가독성·업무 의미는 <code>order_no</code>가 감당한다. <b>외부 API·URL·이메일·영수증에는 <code>order_no</code>만 나가고, <code>id</code>는 서비스 밖으로 나가지 않는다.</b></figcaption>
+</figure>
+
+<h3>10-2. 안전망 ① Snowflake 발급기 — 시계 역행 감지와 시퀀스 고갈 대기</h3>
+
+<pre><code><span class="kw">public final class</span> Snowflake {
+    <span class="kw">private static final long</span> EPOCH = 1_735_689_600_000L;  <span class="cm">// 2025-01-01T00:00:00Z — 한 번 정하면 못 바꾼다</span>
+    <span class="kw">private static final long</span> WORKER_BITS = 10, SEQ_BITS = 12;
+    <span class="kw">private static final long</span> MAX_WORKER = (1L &lt;&lt; WORKER_BITS) - 1;   <span class="cm">// 1023</span>
+    <span class="kw">private static final long</span> SEQ_MASK   = (1L &lt;&lt; SEQ_BITS) - 1;      <span class="cm">// 4095</span>
+    <span class="kw">private static final long</span> TOLERABLE_BACKWARD_MS = 5;    <span class="cm">// 이 이하 역행은 기다리고, 초과는 거부</span>
+
+    <span class="kw">private final long</span> workerId;
+    <span class="kw">private long</span> lastTs = -1L;
+    <span class="kw">private long</span> seq = 0L;
+
+    <span class="kw">public</span> <span class="fn">Snowflake</span>(<span class="kw">long</span> workerId) {
+<span class="cm">        // 범위를 벗어난 워커 ID는 비트가 겹쳐 다른 워커의 ID를 침범한다 — 기동 실패가 정답</span>
+<span class="ln-good">        <span class="kw">if</span> (workerId &lt; 0 || workerId &gt; MAX_WORKER) <span class="kw">throw new</span> <span class="fn">IllegalArgumentException</span>(<span class="st">"workerId out of range"</span>);</span>
+        <span class="kw">this</span>.workerId = workerId;
+    }
+
+    <span class="kw">public synchronized long</span> <span class="fn">nextId</span>() {
+        <span class="kw">long</span> now = System.<span class="fn">currentTimeMillis</span>();
+
+<span class="ln-good">        <span class="kw">if</span> (now &lt; lastTs) {                                   <span class="cm">// ── 시계 역행 감지 ──</span>
+            <span class="kw">long</span> backward = lastTs - now;
+            <span class="kw">if</span> (backward &gt; TOLERABLE_BACKWARD_MS) {
+                <span class="cm">// 큰 역행: 같은 ms를 다시 쓰면 중복이므로 발급을 거부한다. 알람 대상.</span>
+                <span class="kw">throw new</span> <span class="fn">ClockMovedBackwardsException</span>(backward);
+            }
+            now = <span class="fn">spinUntil</span>(lastTs);                          <span class="cm">// 작은 역행: 마지막 발급 시각까지 기다린다</span>
+        }</span>
+
+        <span class="kw">if</span> (now == lastTs) {
+            seq = (seq + 1) &amp; SEQ_MASK;                       <span class="cm">// 같은 ms 안이면 카운터를 올린다</span>
+<span class="ln-good">            <span class="kw">if</span> (seq == 0) now = <span class="fn">spinUntil</span>(lastTs + 1);        <span class="cm">// 4096개를 다 썼다 → 다음 ms까지 대기</span></span>
+        } <span class="kw">else</span> {
+            seq = 0L;                                         <span class="cm">// ms가 바뀌었으니 카운터 리셋</span>
+        }
+        lastTs = now;
+
+        <span class="cm">// 상위부터 자리를 맞춰 OR로 합친다: [타임스탬프][워커][시퀀스]</span>
+        <span class="kw">return</span> ((now - EPOCH) &lt;&lt; (WORKER_BITS + SEQ_BITS)) | (workerId &lt;&lt; SEQ_BITS) | seq;
+    }
+
+    <span class="kw">private static long</span> <span class="fn">spinUntil</span>(<span class="kw">long</span> targetTs) {
+        <span class="kw">long</span> now;
+        <span class="kw">do</span> { now = System.<span class="fn">currentTimeMillis</span>(); } <span class="kw">while</span> (now &lt; targetTs);
+        <span class="kw">return</span> now;
+    }
+}</code></pre>
+
+<div class="callout trap">
+  <span class="t"><code>ClockMovedBackwardsException</code>은 삼키지 않는다</span>
+  주문 API는 <b>실패로 응답하고 알람이 울려야</b> 한다. <b>"조용히 새 ID를 만들어 내는" 발급기는 중복 ID를 만들어 내는 발급기다.</b> 운영 쪽 짝은 <b>NTP를 step이 아니라 slew로</b> 맞추도록 설정하는 것이다 — <b>step</b>은 시계를 한 번에 목표 시각으로 <b>점프</b>시키고, <b>slew</b>는 클럭 속도를 미세하게 늦춰 <b>천천히 수렴</b>시킨다. <b>후자는 시계가 뒤로 "가지" 않는다.</b>
+</div>
+
+<h3>10-3. 안전망 ② 워커 ID 임대 — <b>설정 파일이 아니라 등록 테이블</b></h3>
+
+<pre><code><span class="cm">-- 기동 시 자기 자신을 등록하고, 살아 있는 동안 하트비트를 갱신한다.</span>
+<span class="kw">CREATE TABLE</span> id_workers (
+    worker_id    smallint    <span class="kw">PRIMARY KEY</span>,        <span class="cm">-- 0 ~ 1023</span>
+    owner        text        <span class="kw">NOT NULL</span>,           <span class="cm">-- 호스트명/파드명</span>
+    heartbeat_at timestamptz <span class="kw">NOT NULL DEFAULT</span> <span class="fn">now</span>()
+);</code></pre>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead plain"><span class="tag">①</span> 죽은 슬롯을 빼앗는다</div>
+<pre><code><span class="cm">-- 하트비트가 끊긴 슬롯(죽은 프로세스)만 회수한다.
+-- SKIP LOCKED 로 다른 기동 중인 인스턴스와
+-- 부딪히지 않고 지나간다.</span>
+<span class="kw">UPDATE</span> id_workers <span class="kw">SET</span> owner = ?, heartbeat_at = <span class="fn">now</span>()
+<span class="kw">WHERE</span> worker_id = (
+    <span class="kw">SELECT</span> worker_id <span class="kw">FROM</span> id_workers
+    <span class="kw">WHERE</span> heartbeat_at &lt; <span class="fn">now</span>() - <span class="kw">interval</span> <span class="st">'5 minutes'</span>
+    <span class="kw">ORDER BY</span> heartbeat_at
+    <span class="kw">LIMIT</span> 1
+<span class="ln-good">    <span class="kw">FOR UPDATE SKIP LOCKED</span></span>
+)
+<span class="kw">RETURNING</span> worker_id</code></pre>
+  </div>
+  <div>
+    <div class="codehead plain"><span class="tag">②</span> 빈 슬롯을 하나 집는다</div>
+<pre><code><span class="cm">-- 경쟁자가 먼저 가져갔으면 ON CONFLICT 로
+-- 조용히 비켜서고(반환 행 없음) 호출부가 다시 시도.
+-- PK 충돌을 "이미 누가 가져갔다"의 신호로 쓴다.</span>
+<span class="kw">INSERT INTO</span> id_workers (worker_id, owner, heartbeat_at)
+<span class="kw">SELECT</span> g, ?, <span class="fn">now</span>()
+<span class="kw">FROM</span> <span class="fn">generate_series</span>(0, 1023) <span class="kw">AS</span> g
+<span class="kw">WHERE NOT EXISTS</span> (
+    <span class="kw">SELECT</span> 1 <span class="kw">FROM</span> id_workers w <span class="kw">WHERE</span> w.worker_id = g)
+<span class="kw">ORDER BY</span> g
+<span class="kw">LIMIT</span> 1
+<span class="ln-good"><span class="kw">ON CONFLICT</span> (worker_id) <span class="kw">DO NOTHING</span></span>
+<span class="kw">RETURNING</span> worker_id</code></pre>
+  </div>
+</div>
+
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public int</span> <span class="fn">acquire</span>(String owner) {
+    <span class="kw">for</span> (<span class="kw">int</span> attempt = 0; attempt &lt; 10; attempt++) {
+        Integer stolen  = <span class="fn">queryForNullableInt</span>(STEAL_STALE, owner);   <span class="cm">// 죽은 슬롯 회수 우선</span>
+        <span class="kw">if</span> (stolen != <span class="kw">null</span>) <span class="kw">return</span> stolen;
+        Integer claimed = <span class="fn">queryForNullableInt</span>(CLAIM_FREE, owner);    <span class="cm">// 없으면 빈 슬롯</span>
+        <span class="kw">if</span> (claimed != <span class="kw">null</span>) <span class="kw">return</span> claimed;
+    }
+    <span class="kw">throw new</span> <span class="fn">IllegalStateException</span>(<span class="st">"no free worker id"</span>);   <span class="cm">// 1024대 초과 — 기동 실패가 정답</span>
+}
+
+<span class="kw">@Scheduled</span>(fixedDelay = 30_000)
+<span class="kw">public void</span> <span class="fn">heartbeat</span>() {
+    jdbc.<span class="fn">update</span>(<span class="st">"UPDATE id_workers SET heartbeat_at = now() WHERE worker_id = ?"</span>, myWorkerId);
+}</code></pre>
+
+<div class="memo">
+  <h4>암기 대상 ⑦ — 숫자의 <b>비율</b>이 안전을 만든다: 하트비트 30초 : 만료 5분 = <b>1 : 10</b></h4>
+  <div class="split" style="margin:10px 0">
+    <div class="pane g"><h4>10배로 벌려두면</h4><p style="margin:0;font-size:.93rem"><b>GC로 잠깐 멈춘 살아 있는 프로세스</b>의 번호를 빼앗지 않는다. 하트비트를 <b>아홉 번 연속 놓쳐야</b> 죽었다고 판정한다.</p></div>
+    <div class="pane r"><h4>2배쯤으로 좁히면</h4><p style="margin:0;font-size:.93rem"><b>긴 GC 한 번에 워커 ID가 도둑맞고</b>, 두 프로세스가 같은 ID로 발급해 <b>중복 ID가 나온다.</b> 그런데 그 사고는 <b>몇 달 뒤 "가끔 PK 중복"으로</b> 나타난다.</p></div>
+  </div>
+  <p style="margin-bottom:0">핵심 세 줄 — <b>① PK 충돌을 "이미 누가 가져갔다"의 신호로 쓴다</b>(DB의 유니크 보장을 조율 도구로 쓰는 것) <b>② 하트비트가 끊긴 슬롯만 회수한다 ③ <code>SKIP LOCKED</code>로 동시 기동이 서로 기다리지 않게 한다.</b> 슬롯이 아니라 <b>프로세스 단위의 짧은 상호배제</b>만 필요하다면 PG에는 <code>pg_advisory_lock</code> 계열도 있다 — <b>세션이 끊기면 자동 해제</b>되므로 하트비트 없이도 "살아 있는 동안만 점유"가 성립한다 <span class="badge bonus">가산점</span>. ZooKeeper·etcd·Redis 임대도 <b>같은 구조를 다른 저장소로</b> 구현한 것이다.</p>
+</div>
+
+<h3>10-4. 안전망 ③ 주문번호 생성기 — 블록 할당 + 유니크 제약 + <b>새 트랜잭션에서</b> 재시도</h3>
+
+<pre><code><span class="kw">@Component</span>
+<span class="kw">public class</span> OrderNoGenerator {
+    <span class="kw">private static final int</span> BLOCK = 500;
+    <span class="kw">private final</span> SequenceBlockAllocator allocator;   <span class="cm">// §6-2의 REQUIRES_NEW 할당기</span>
+    <span class="kw">private final</span> Clock clock;
+
+    <span class="kw">private</span> LocalDate blockDate;                      <span class="cm">// 현재 블록의 날짜</span>
+    <span class="kw">private long</span> next, limit;                         <span class="cm">// 현재 블록 [next, limit)</span>
+
+    <span class="kw">public synchronized</span> String <span class="fn">next</span>(Channel channel) {
+        LocalDate today = LocalDate.<span class="fn">now</span>(clock);
+        <span class="kw">if</span> (!today.<span class="fn">equals</span>(blockDate) || next &gt;= limit) {          <span class="cm">// 날짜가 바뀌었거나 블록 소진</span>
+            <span class="kw">long</span> start = allocator.<span class="fn">allocate</span>(<span class="st">"order:"</span> + today, BLOCK);
+            blockDate = today; next = start; limit = start + BLOCK;
+        }
+        <span class="kw">long</span> serial = next++;
+        String body = today.<span class="fn">format</span>(DateTimeFormatter.BASIC_ISO_DATE) + <span class="st">"-"</span> + channel.<span class="fn">code</span>() + <span class="st">"-"</span>
+                    + String.<span class="fn">format</span>(<span class="st">"%06d"</span>, serial);
+<span class="ln-good">        <span class="kw">return</span> body + <span class="st">"-"</span> + <span class="fn">luhnCheckDigit</span>(body);                 <span class="cm">// 체크 디짓: CS 오타 입력을 걸러 준다</span></span>
+    }
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">체크 디짓(check digit)이 무엇인가 — 한 줄로</span>
+  앞자리들로 정해진 규칙에 따라 계산한 <b>검산용 마지막 한 자리</b>다. 사람이 번호를 <b>한 자리 잘못 부르거나 두 자리를 바꿔 부르면</b> 계산이 안 맞아 <b>DB에 물어보기 전에</b> 걸러진다. 신용카드 번호에 쓰는 <b>Luhn 알고리즘</b>이 대표적이다.
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">bad</span> 재시도 루프를 <code>@Transactional</code> <b>안</b>에 두었다</div>
+<pre><code><span class="ln-bad"><span class="kw">@Transactional</span></span>
+<span class="kw">public</span> Order <span class="fn">place</span>(PlaceOrderCommand cmd) {
+    <span class="kw">for</span> (<span class="kw">int</span> attempt = 1; ; attempt++) {
+        <span class="kw">try</span> {
+            String orderNo = orderNoGenerator.<span class="fn">next</span>(cmd.<span class="fn">channel</span>());
+            <span class="kw">return</span> orderRepository.<span class="fn">save</span>(Order.<span class="fn">place</span>(orderNo, cmd));
+        } <span class="kw">catch</span> (DuplicateKeyException dup) {
+<span class="ln-bad">            <span class="cm">// PG: 이 시점에 트랜잭션 전체가 이미 실패 상태다.
+            // 다음 시도의 모든 문장이 25P02로 거부된다.</span></span>
+            <span class="kw">if</span> (attempt &gt;= 3) <span class="kw">throw</span> dup;
+        }
+    }
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">good</span> 루프는 트랜잭션 <b>밖</b>, 시도마다 새 트랜잭션</div>
+<pre><code><span class="cm">// 트랜잭션은 여기 밖에서 시작하지 않는다
+// — 충돌 시 "새 트랜잭션"으로 재시도해야 하기 때문</span>
+<span class="kw">public</span> Order <span class="fn">place</span>(PlaceOrderCommand cmd) {
+    <span class="kw">for</span> (<span class="kw">int</span> attempt = 1; ; attempt++) {
+        <span class="kw">try</span> {
+<span class="ln-good">            <span class="kw">return</span> tx.<span class="fn">execute</span>(status -&gt; {   <span class="cm">// 시도마다 새 트랜잭션</span></span>
+                String orderNo = orderNoGenerator.<span class="fn">next</span>(cmd.<span class="fn">channel</span>());
+                <span class="kw">return</span> orderRepository.<span class="fn">save</span>(Order.<span class="fn">place</span>(orderNo, cmd));
+            });
+        } <span class="kw">catch</span> (DuplicateKeyException dup) {   <span class="cm">// SQLSTATE 23505</span>
+            <span class="kw">if</span> (attempt &gt;= MAX_ATTEMPTS) <span class="kw">throw</span> dup;
+            log.<span class="fn">warn</span>(<span class="st">"order_no collision, retrying attempt={}"</span>, attempt + 1);
+        }
+    }
+}</code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>함정 ④ — PG에서 재시도를 같은 트랜잭션 안에서 하면 <b>전부 25P02로 죽는다</b> <span class="badge bonus">가산점</span></h4>
+  <p>MySQL이라면 문장 하나가 실패해도 같은 트랜잭션을 이어 쓸 수 있지만, <b>PG는 트랜잭션 안에서 에러가 나는 순간 그 트랜잭션 전체가 실패 상태로 들어가</b> 이후 모든 문장이 <code>ERROR 25P02 current transaction is aborted, commands ignored until end of transaction block</code>으로 거부된다. 같은 트랜잭션 안에서 재시도하려면 <b><code>SAVEPOINT</code></b>(스프링의 <code>Propagation.NESTED</code>)로 감싸야 하고, 그게 아니라면 <b>재시도 루프는 트랜잭션 밖</b>에 있어야 한다.</p>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k">유니크 제약 = 최후 방어선</div><div class="d">블록 할당기에 버그가 있어도, 두 인스턴스가 어떤 경로로든 같은 번호를 만들어도 <b>DB가 거절한다</b>(<code>23505</code>). <b>채번 로직의 정확성을 믿는 것과 별개로 이 제약은 반드시 있어야 한다.</b></div></div>
+    <div class="tile ok"><div class="k">재시도는 새 트랜잭션에서</div><div class="d">PG에서는 <b>선택이 아니라 강제</b>다.</div></div>
+    <div class="tile ok"><div class="k">구멍 허용은 정책이다</div><div class="d">블록 할당을 택한 순간 <b>"주문번호는 연속이 아니다"가 시스템의 성질</b>이 된다. <b>코드 주석이 아니라 ADR과 운영 문서에</b> 적고 CS·회계에 사전에 알린다.</div></div>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">한 걸음 더 — 예외 없이 충돌을 판정하는 길 <span class="badge bonus">가산점</span></span>
+  재시도 자체를 없애고 싶다면 PG에서는 <code>INSERT ... ON CONFLICT (order_no) DO NOTHING RETURNING id</code>로 바꿔 <b>예외 없이</b> 충돌을 판정할 수 있다(반환 행이 없으면 이미 있는 번호). <b>예외를 던지지 않으니 트랜잭션이 실패 상태로 가지도 않는다.</b> 다만 이건 <b>"충돌해도 괜찮다"</b>는 의미가 되므로, <b>주문번호처럼 반드시 새 번호를 받아야 하는 경우에는 재시도가 맞고</b>, <b>멱등 키처럼 "이미 있으면 그걸 쓰면 되는" 경우에 적합</b>하다.
+</div>
+
+<div class="memo red">
+  <h4>함정 ⑤ — 날짜별 연속 일련번호는 <b>하루 주문량을 그대로 보여준다</b> <span class="badge bonus">가산점</span></h4>
+  <p><code>20260901-A-004821</code>은 사람이 읽기 좋지만, <b>1절의 성질 ④(노출 안전성)를 성질 ⑥(업무 의미)에 팔아넘긴 셈</b>이다. 규모 추측까지 막아야 한다면 두 갈래다.</p>
+  <div class="split" style="margin:10px 0">
+    <div class="pane b"><h4>⑴ 전단사 치환으로 섞는다</h4><p style="margin:0;font-size:.93rem">Feistel 네트워크 같은 <b>전단사 치환</b>(입력과 출력이 1:1로 대응해 <b>유일성은 유지되면서 값은 뒤섞이는</b> 변환)으로 일련 부분을 무작위처럼 보이게 한다.</p></div>
+    <div class="pane b"><h4>⑵ 일련 대신 난수</h4><p style="margin:0;font-size:.93rem">난수 6~8자리를 쓰고 <b>유니크 충돌 시 재시도</b>한다. 대신 <b>충돌 확률 관리</b>가 따라온다.</p></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">어느 쪽이든 먼저 확정할 것 — <b>"누가 이 번호를 보고 무엇을 알아낼 수 있는가"</b></div>
+</div>
+
+<h3>10-5. 안전망 ④ 동시성 채번 테스트와 시퀀스 소진 감시</h3>
+
+<p>"유니크할 것"은 <b>코드 리뷰로 확인되지 않는다.</b> 스레드 수십 개가 동시에 뽑아도 겹치지 않는다는 사실을 <b>테스트로 고정</b>한다.</p>
+
+<pre><code><span class="kw">@Test</span>
+<span class="kw">void</span> <span class="fn">concurrentGenerationProducesNoDuplicates</span>() <span class="kw">throws</span> Exception {
+    <span class="kw">int</span> threads = 32, perThread = 2_000;
+    ExecutorService pool = Executors.<span class="fn">newFixedThreadPool</span>(threads);
+    CountDownLatch start = <span class="kw">new</span> <span class="fn">CountDownLatch</span>(1);
+<span class="ln-good">    Set&lt;Long&gt; ids = ConcurrentHashMap.<span class="fn">newKeySet</span>();   <span class="cm">// 중복은 조용히 흡수된다 → 크기가 곧 증거</span></span>
+
+    <span class="kw">for</span> (<span class="kw">int</span> t = 0; t &lt; threads; t++) {
+        pool.<span class="fn">submit</span>(() -&gt; { start.<span class="fn">await</span>(); <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; perThread; i++) ids.<span class="fn">add</span>(snowflake.<span class="fn">nextId</span>()); <span class="kw">return null</span>; });
+    }
+    start.<span class="fn">countDown</span>();                                   <span class="cm">// 32개 스레드를 같은 순간에 출발시킨다</span>
+    pool.<span class="fn">shutdown</span>(); pool.<span class="fn">awaitTermination</span>(30, TimeUnit.SECONDS);
+
+<span class="ln-good">    <span class="fn">assertThat</span>(ids).<span class="fn">hasSize</span>(threads * perThread);        <span class="cm">// 64,000개. 하나라도 겹치면 Set 크기가 줄어든다</span></span>
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">이 테스트가 실제로 밟는 경로</span>
+  <b>32스레드 × 2,000개 = 64,000개</b>는 Snowflake의 <b>ms당 4,096개 상한</b>(7절)을 넘으므로, 이 테스트는 <code>seq == 0</code> 분기(<b>다음 ms까지 스핀 대기</b>)까지 실제로 밟게 된다. 같은 형태로 <code>OrderNoGenerator</code>도 검증하고, Testcontainers로 실제 PostgreSQL을 띄워 <b>유니크 제약이 엔티티 어노테이션이 아니라 DDL에</b> 걸려 있는지 카탈로그로 확인하는 테스트를 하나 더 둔다 — <b>유니크 제약이 없는 운영 DB는 최후 방어선이 없는 시스템이다.</b>
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead plain"><span class="tag">검증</span> 제약이 DDL에 실제로 있는가</div>
+<pre><code><span class="cm">-- 테스트에서 단정할 것</span>
+<span class="kw">SELECT</span> conname <span class="kw">FROM</span> pg_constraint
+<span class="kw">WHERE</span> conrelid = <span class="st">'orders'</span>::regclass
+  <span class="kw">AND</span> contype = <span class="st">'u'</span>;
+<span class="cm">--   uk_orders_order_no</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead plain"><span class="tag">감시</span> 시퀀스 소진률 상위</div>
+<pre><code><span class="kw">SELECT</span> schemaname, sequencename, last_value, max_value,
+       <span class="fn">round</span>(last_value::numeric * 100 / max_value, 2) <span class="kw">AS</span> pct_used
+<span class="kw">FROM</span> pg_sequences
+<span class="kw">WHERE</span> last_value <span class="kw">IS NOT NULL</span>
+<span class="kw">ORDER BY</span> pct_used <span class="kw">DESC</span> <span class="kw">LIMIT</span> 20;
+<span class="cm">--   int(serial) 시퀀스가 상위에 올라오면 그 자체가 리팩터링 신호
+--   (int 상한 21억 — 5-6절의 소모 속도 계산 참고)</span></code></pre>
+  </div>
+</div>
+
+<div class="rule red">시퀀스 소진은 <b>알람으로 미리 잡는다</b> — 고갈되는 날 모든 INSERT가 멈추고,<br>그때는 <b>타입 변경(테이블 재작성 + <code>ACCESS EXCLUSIVE</code>)</b>밖에 남지 않기 때문이다</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>11-1. 면접 전날 이 카드만 본다</h3>
+
+<div class="memo">
+  <h4>목록 다섯 세트 — 손가락으로 꼽으며 말한다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">여섯 성질 (2·2·2)</div><div class="d"><b>공통</b> 유일 · 분산 → <b>내부 PK</b> 정렬 · 크기 → <b>외부 번호</b> 노출 · 의미</div></div>
+    <div class="tile red"><div class="k">v4 사슬 (무캐분적랜왈)</div><div class="d"><b>무</b>작위 위치 → <b>캐</b>시 미스 → 페이지 <b>분</b>할 → <b>적</b>재율 저하 → <b>랜</b>덤 I/O → WAL FPI 증폭(<b>왈</b>)</div></div>
+    <div class="tile"><div class="k">빈 번호 4경로 (롤업캐크)</div><div class="d"><b>롤</b>백 · UPSERT(<b>업</b>) · <b>캐</b>시 폐기 · <b>크</b>래시 건너뜀</div></div>
+    <div class="tile"><div class="k">비교표 6축</div><div class="d">정렬성 · 분산성 · 크기 · 노출 · 의존성 · 업무 의미 <span class="sub">(+ PG에서는 "INSERT 전 ID 확보" 한 줄이 결론을 바꾼다)</span></div></div>
+    <div class="tile ok"><div class="k">선택 기준 6</div><div class="d">생성 지점 · INSERT 전 필요 · 노출 · 업무 의미 · 저장 구조 · <b>팀이 감당할 의존성</b></div></div>
+    <div class="tile ok"><div class="k">안전망 4</div><div class="d">시계 역행 감지 · 워커 ID 임대(1:10) · 유니크 제약 + 새 TX 재시도 · 동시성 테스트 + 소진 감시</div></div>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>숫자 카드 — 하나만 붙여도 답의 밀도가 달라진다</h4>
+  <div class="grid g4">
+    <div class="tile big"><div class="k">41 / 10 / 12</div><div class="s">Snowflake 비트 = 69년 / 1,024대 / ms당 4,096개</div></div>
+    <div class="tile big"><div class="k">366 → 262</div><div class="s">8KB 페이지당 인덱스 엔트리 (bigint → uuid, −28%)</div></div>
+    <div class="tile big red"><div class="k">41MB/s</div><div class="s">무작위 키 초당 5,000 INSERT의 FPI (시간당 147GB)</div></div>
+    <div class="tile big red"><div class="k">21억</div><div class="s"><code>int</code> 상한 — 일 1,000만 건이면 7개월</div></div>
+    <div class="tile big"><div class="k">2^53−1</div><div class="s">JS 안전 정수 16자리 vs Snowflake 18자리 → 문자열로</div></div>
+    <div class="tile big"><div class="k">74비트</div><div class="s">UUID v7의 난수 — 시계 역행을 완충한다</div></div>
+    <div class="tile big"><div class="k">8,900년</div><div class="s">UUID v7의 48비트 ms (vs Snowflake 69년)</div></div>
+    <div class="tile big ok"><div class="k">1 : 10</div><div class="s">하트비트 30초 : 워커 만료 5분</div></div>
+  </div>
+</div>
+
+<h3>11-2. 꼬리질문 — 먼저 스스로 답하고 펼친다</h3>
+
+<details class="q"><summary>UUID v4를 PK로 쓰면 PostgreSQL에서 왜 INSERT가 느려지나요? PG는 힙이라 괜찮다던데요? <span class="badge core">필수</span><span class="hint">힌트: "절반만 맞다"로 시작해서 사슬 여섯 고리 + 숫자 하나</span></summary><div class="a">
+  <p><b>절반만 맞다.</b> 힙은 정말 무관하다 — 새 행은 FSM이 가리키는 빈 공간(대개 파일 끝)에 들어가므로 <b>PK가 뭐든 힙 워킹셋은 끝 페이지 한두 장</b>이다. MySQL의 InnoDB에서 UUID PK가 <b>테이블 자체</b>를 흩뜨리던 피해는 PG에 없다.</p>
+  <p><b>그런데 삽입 위치를 값이 결정하는 구조가 하나 남아 있다 — PK B-tree, 그리고 그 값을 받는 자식 FK 인덱스들.</b> 힙은 append-only에 가까워 자리를 고를 수 있지만 <b>B-tree는 키 순서가 자리를 강제</b>하기 때문이다.</p>
+  <div class="chain">
+    <span class="chip r">무작위 삽입 지점</span><span class="arrow">→</span>
+    <span class="chip r">대상 리프가 캐시에 없을 확률↑ → <b>INSERT마다 디스크 랜덤 읽기</b></span><span class="arrow">→</span>
+    <span class="chip r">가득 찬 페이지는 <b>반반 분할</b></span>
+  </div>
+  <div class="chain">
+    <span class="chip r">인덱스 bloat · 적재율 저하</span><span class="arrow">→</span>
+    <span class="chip r">논리/물리 순서 어긋나 범위 스캔 랜덤화</span><span class="arrow">→</span>
+    <span class="chip r">PG 고유: <code>full_page_writes</code> <b>FPI 증폭</b></span><span class="arrow">→</span>
+    <span class="chip r">WAL 볼륨 · 체크포인트 I/O · 복제 지연</span>
+  </div>
+  <p><b>숫자를 하나 붙이면 강하다</b> — 초당 5,000 INSERT에서 무작위 키는 FPI만으로 <code>5,000 × 8KB = 41MB/s</code>(시간당 약 147GB), 단조 증가 키는 인덱스 레코드 수십~수백 바이트로 <b>1MB/s 미만</b>이다.</p>
+  <p style="margin-bottom:0"><b>v7은 시간을 상위 비트에 두어 삽입 위치를 오른쪽 끝으로 모으므로 이 사슬 전체가 끊긴다.</b> 남는 것은 크기다 — <code>uuid</code> 16바이트는 자식 테이블 FK 컬럼·FK 인덱스에서 <b>페이지당 엔트리 366 → 262(약 28% 감소)</b>로 청구된다. <b>"완전히 해결"이 아니라 "두 문제 중 치명적인 하나를 해결"</b>이 정확한 답이고, <code>varchar(36)</code>으로 저장하면 v7이어도 크기 문제는 v4와 같다.</p>
+</div></details>
+
+<details class="q"><summary>시퀀스 번호가 군데군데 비어 있습니다. 데이터가 유실된 건가요? <span class="badge bonus">가산점</span><span class="hint">힌트: "정상이다" + <b>왜 그렇게 설계했는지</b>까지 말한다</span></summary><div class="a">
+  <p><b>아니다 — 정상이다.</b> <code>nextval()</code>은 <b>트랜잭션 밖에서</b> 동작하도록 설계돼 있다.</p>
+  <p><b>왜 그렇게 만들었는지까지 말하면 좋다</b> — 트랜잭션을 따랐다면 값을 받은 세션이 <b>커밋할 때까지 다음 세션이 기다려야</b> 하고, 그러면 <b>시퀀스 자체가 핫 로우가 된다.</b> <b>PG는 직렬화를 피하려고 연속성을 포기했다.</b> 그래서 롤백해도 소모된 값은 돌아오지 않는다.</p>
+  <p>구멍이 생기는 경로는 넷 — ⑴ <b>롤백·에러</b> ⑵ <code>INSERT ... ON CONFLICT DO NOTHING</code>처럼 <b>행이 안 들어가도 컬럼 DEFAULT의 <code>nextval()</code>은 먼저 평가</b>되어 소모 ⑶ <code>CACHE</code>로 선점한 값이 <b>세션 종료로 폐기</b> ⑷ <b>크래시 후 재시작</b> 시 미리 WAL에 기록해 둔 지점까지 건너뜀.</p>
+  <div class="rule red">번호 연속성으로 유실을 판단하면 안 된다 — 유실 판단은 <b>별도 대사(reconciliation)</b>로 한다</div>
+  <p style="margin-bottom:0">연속성이 진짜 요건(세금 계산서 일련번호 등)이라면 시퀀스로는 불가능하고 <b>채번 테이블을 트랜잭션 안에서 UPDATE</b>해야 하는데, 그건 <b>핫 로우 직렬화를 그대로 받아들인다는 뜻</b>이다 — <b>gapless와 처리량은 맞바꾸는 관계</b>라고 말하면 <b>요구를 비용으로 번역할 줄 아는 것</b>으로 들린다.</p>
+</div></details>
+
+<details class="q"><summary>채번 테이블이 왜 트래픽에서 병목이 되나요? PostgreSQL이라 더한 점이 있나요? <span class="badge core">필수</span><span class="hint">힌트: 락 사슬 → PG 고유의 죽은 튜플 한 겹 → 처방 둘 + fillfactor</span></summary><div class="a">
+  <p><b>핫 로우 사슬</b> — 모든 요청이 <b>같은 행</b>을 UPDATE → 튜플 헤더 <code>xmax</code>에 기록되는 배타 락 → 락은 <b>트랜잭션 커밋까지</b> 유지 → 채번을 주문 트랜잭션 안에서 하면 <b>주문 처리 전체 길이만큼</b> 다음 요청이 대기(<code>pg_stat_activity</code>의 <code>wait_event = 'transactionid'</code>) → <b>처리량 상한 = 1/트랜잭션 길이</b> → 대기자가 <b>커넥션(= OS 프로세스)</b>을 쥔 채 서므로 <b>풀 고갈</b>로 다른 API까지 번진다.</p>
+  <p><b>PG에서 한 겹 더 있는 것</b>은 UPDATE가 제자리 갱신이 아니라 <b>새 튜플 버전을 만든다</b>는 점이다 — 죽은 튜플이 그 페이지에 쌓이고 autovacuum이 추격해야 한다. 다행히 <code>next_val</code>은 <b>어떤 인덱스에도 없으므로 HOT 업데이트가 가능</b>하니 <code>fillfactor</code>를 낮춰(예: 70) 같은 페이지에 새 버전 자리를 비워 두고, <code>n_tup_hot_upd</code> 비율로 확인한다.</p>
+  <p>처방은 그 위에 둘 — <b>① <code>REQUIRES_NEW</code>로 채번 트랜잭션을 <code>UPDATE ... RETURNING</code> 한 문장으로 짧게 분리</b>하고, <b>② 블록 할당으로 방문 횟수를 1/N로</b> 줄인다. 블록 할당 후 남는 것은 ⑴ 재기동 시 구멍 ⑵ 인스턴스 간 순서 교차 ⑶ 채번 테이블 가용성 의존이다.</p>
+  <p style="margin-bottom:0"><b>덧붙일 한마디</b> — PG에서는 이 블록 할당을 <b>시퀀스의 <code>CACHE</code>가 이미 제공</b>하므로, 채번 테이블을 직접 쓰는 이유는 <b>"분산"이 아니라 "날짜별 리셋 같은 업무 포맷"</b>이어야 한다.</p>
+</div></details>
+
+<details class="q"><summary>주문번호에 날짜와 채널 코드를 넣어 달라는 요구가 왔습니다. PK를 바꾸시겠어요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 요구를 한 단계 쪼갠다. 그리고 되물을 것 세 가지</span></summary><div class="a">
+  <p><b>바꾸지 않는다.</b> 이 요구는 <b>"외부 식별자에 업무 의미를 담아 달라"</b>는 요구이지 <b>"내부 식별자를 바꿔 달라"</b>는 요구가 아니다.</p>
+  <p>PK는 <b>조인·FK·인덱스의 축</b>이라 <b>작고 단조 증가하는 정수</b>여야 하고, 날짜·채널이 들어간 문자열은 <b>그 두 원칙을 다 어긴다</b> — 크기는 <b>자식 테이블 FK 컬럼·FK 인덱스로 번지고</b>, 채널별로 삽입 위치가 갈라져 <b>PK B-tree 끝 페이지 append가 깨진다.</b> 그래서 PK는 그대로 두고 <code>order_no</code> 컬럼을 <b>유니크 제약과 함께</b> 추가한다.</p>
+  <p><b>이어서 되물어야 할 것 세 가지</b> — ① <b>"일련번호가 연속이면 하루 주문량이 노출되는데 괜찮은가"</b> ② <b>"채널 코드가 바뀌면 기존 번호는 어떻게 하는가"</b>(번호는 불변, 채널 매핑은 별도 테이블) ③ <b>"체크 디짓을 넣어 CS 오입력을 막을까".</b></p>
+  <p style="margin-bottom:0">요구를 한 단계 쪼개 <b>어느 성질이 진짜 필요한지 되묻고</b>, <b>PK와 업무 식별자를 겸용하던 것이 애초의 문제</b>였다고 짚는 것이 시니어의 답이다.</p>
+</div></details>
+
+<details class="q"><summary>우리 서비스는 DB 한 대로 충분한데, 그래도 Snowflake를 미리 도입해야 할까요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 의존성 비용 → 지금 해 둘 것 하나 → 넘어가는 신호 셋</span></summary><div class="a">
+  <p><b>아니다 — 의존성 비용을 먼저 말한다.</b> Snowflake는 <b>워커 ID 임대 인프라(레지스트리·하트비트·회수)</b>와 <b>시계 규율(NTP slew, 역행 감지·알람)</b>이라는 <b>상시 운영 의무</b>를 산다. DB 한 대인 지금은 <code>bigint IDENTITY</code>가 <b>순차 I/O, 8바이트, 의존성 0</b>을 공짜로 준다.</p>
+  <p><b>게다가 PG에서는 "INSERT 전에 ID를 못 받는다"는 이유로 넘어갈 필요도 없다</b> — <code>nextval()</code>을 미리 부르면 되고, JPA도 <b>시퀀스 전략 + <code>allocationSize</code></b>로 배치가 살아 있다.</p>
+  <div class="rule ok">다만 <b>미리 해 둘 것은 하나</b> — 내부 PK를 외부에 노출하지 않도록 <code>order_no</code>를 <b>지금부터 분리</b>해 두는 것</div>
+  <p>그러면 나중에 샤딩이나 다중 리전이 실제 요구가 됐을 때 <b>바뀌는 것은 <code>@GeneratedValue</code> 전략 한 줄과 마이그레이션</b>이고, <b>외부 계약(주문번호 포맷)은 그대로</b>다.</p>
+  <p><b>넘어가는 신호도 정해 둔다</b> — ⑴ 샤딩/다중 마스터 결정 ⑵ 클라이언트·오프라인 생성 요구 ⑶ 단일 노드 쓰기 처리량 한계 관측.</p>
+  <p style="margin-bottom:0"><b>가산점 한 줄</b> — 넘어갈 때는 <b>기존 시퀀스 값과 Snowflake 값이 같은 <code>bigint</code> 컬럼에서 겹치지 않는지</b> 확인한다. 계산은 간단하다 — 에포크로부터 <b>30일만 지나도</b> Snowflake 값은 <code>(30 × 86,400,000 ms) &lt;&lt; 22 ≈ 1.1 × 10^16</code>이라 시퀀스가 1부터 세는 값(수억~수십억 대)과 <b>자릿수부터 다르다.</b> 즉 <b>에포크를 충분히 과거로 잡지만 않으면 겹칠 일이 없다.</b> 그리고 시퀀스를 계속 쓸 경로가 남는다면 <code>setval</code>로 앞당겨 두는 마이그레이션 체크까지 말하면 끝이다.</p>
+</div></details>
+
+<details class="q"><summary>Snowflake에서 서버 시계가 뒤로 가면 무슨 일이 생기고, 어떻게 막나요? <span class="badge core">필수</span><span class="hint">힌트: 가정이 무엇이었는지 → 코드에서 하는 일 → 운영에서 하는 일 → v7과의 연결</span></summary><div class="a">
+  <p>유일성이 <b>"같은 워커에서 시간은 단조"</b>라는 가정에 걸려 있으므로, 시계가 <b>이미 발급한 ms로 되돌아가면 같은 (시각, 워커, 시퀀스) 조합이 다시 나올 수 있다.</b></p>
+  <p><b>코드에서</b>: 발급기는 마지막 발급 시각을 들고 있다가 <b>역행을 감지</b>해야 한다 — <b>수 ms 이내면 그 시각까지 기다리고, 그 이상이면 예외로 발급을 거부하고 알람</b>을 울린다. <b>예외를 삼키고 계속 발급하는 것이 최악</b>이다.</p>
+  <p><b>운영에서</b>: NTP를 <b>step(한 번에 되돌림)이 아니라 slew(클럭 속도를 늦춰 천천히 보정)</b>로 설정하고, <b>VM 마이그레이션·절전 복귀 뒤 시계 점프</b>를 모니터링한다.</p>
+  <p style="margin-bottom:0"><b>가산점</b> — <b>UUID v7은 같은 상황에서 난수 74비트가 완충</b>하므로 역행 감지 코드가 필요 없다. <b>Snowflake의 시계 의존을 16바이트로 산 것</b>이라고 연결하면 트레이드오프 서술이 완성된다.</p>
+</div></details>
+
+<details class="q"><summary>Snowflake ID로 정렬하면 정확한 시간 순이 되나요? 커서 페이지네이션 키로 써도 되나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 워커 안 / 워커 간을 갈라 말하고, 역할을 나눈다</span></summary><div class="a">
+  <p><b>워커 안에서는 단조, 워커 간에는 ms 단위 근사</b>다. 두 서버의 시계가 몇 ms 어긋나면 <b>나중에 만든 ID가 더 작을 수 있고</b>, 같은 ms 안의 순서는 <b>워커 ID 순이지 실제 발생 순이 아니다.</b></p>
+  <p>따라서 "최근 주문순" 목록의 정렬 키로는 <code>created_at</code>(+ 타이브레이커로 <code>id</code>)을 쓰고, <b>ID는 유일성과 인덱스 지역성을 위한 것</b>이라고 역할을 나눈다.</p>
+  <p style="margin-bottom:0">UUID v7도 같은 성질이고, <b>PG 시퀀스도 <code>CACHE</code>를 1보다 크게 잡으면 세션별 블록 선점 때문에 같은 현상</b>이 생긴다 — <b>"시간 정렬 ID"라는 말은 "인덱스 삽입 위치가 모인다"는 뜻이지 "정확한 발생 순서를 보장한다"는 뜻이 아니다.</b> 키셋 페이지네이션은 <code>(created_at, id)</code> <b>행 비교</b>로 짜는 것이 안전하다.</p>
+</div></details>
+
+<details class="q"><summary>MySQL로 물어보면 답이 달라지는 부분은? <span class="badge senior">경험 대조</span><span class="hint">힌트: 다섯 지점 — 자동 증가의 정체 / UUID 피해 규모 / 채번 관용구 / UUID 저장 / 재시도</span></summary><div class="a">
+  <div class="scroll">
+  <table>
+    <tr><th>지점</th><th>MySQL</th><th>PostgreSQL</th></tr>
+    <tr><th>① 자동 증가의 정체</th><td>AUTO_INCREMENT는 <b>테이블 속성</b> → 값을 미리 못 받음 → "INSERT 전 ID 미확보"가 <b>진짜 한계</b></td><td class="good">시퀀스는 <b>독립 객체</b> → <code>nextval()</code>을 먼저 호출 → <b>JPA 배치를 살리려고 외부 채번으로 갈 이유가 하나 준다</b></td></tr>
+    <tr><th>② UUID PK 피해 규모</th><td class="bad">클러스터드라 랜덤 PK가 <b>테이블 자체</b>를 흩뜨리고, 세컨더리 리프마다 PK가 복제</td><td>힙이라 <b>테이블은 무관</b>. 대신 <b>PK B-tree · 자식 FK 인덱스 · <code>full_page_writes</code> WAL 증폭</b>이 청구서</td></tr>
+    <tr><th>③ 채번 테이블 관용구</th><td><code>LAST_INSERT_ID(next_val + n)</code> <b>세션 변수 트릭</b>(세션이 바뀌면 깨질 수 있음)</td><td class="good"><code>UPDATE ... RETURNING</code> / <code>INSERT ... ON CONFLICT ... RETURNING</code> <b>한 문장</b></td></tr>
+    <tr><th>④ UUID 저장</th><td><code>BINARY(16)</code> + <code>UUID_TO_BIN</code>/<code>BIN_TO_UUID</code> 수공업. <b>스왑 플래그를 v7에 걸면 정렬성이 깨진다</b></td><td class="good"><code>uuid</code> 네이티브 타입 + 드라이버 매핑</td></tr>
+    <tr><th>⑤ 충돌 후 재시도</th><td>문장 하나가 실패해도 <b>같은 트랜잭션을 이어 쓸 수 있다</b></td><td class="bad">트랜잭션 전체가 실패 상태(<code>25P02</code>) → <b><code>SAVEPOINT</code> 없이는 이어 쓸 수 없다</b></td></tr>
+  </table>
+  </div>
+  <p style="margin-bottom:0">이 다섯을 짚으면 <b>"한쪽만 써봤다"가 아니라 "차이를 저장 구조에서 이해했다"</b>로 들린다.</p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>UUID v7과 Snowflake 중 하나만 고른다면? 판단 기준을 말해보세요. <span class="badge senior">시니어 변별</span><span class="hint">힌트: 비교표의 두 열을 나란히 읽고, 마지막에 "무엇을 살 여유가 있는가"로 닫는다</span></summary><div class="a">
+  <p><b>비교표의 두 열을 나란히 읽는 것</b>이 정확한 답변 형식이다 — <b>정렬성 같음</b>(둘 다 ms 단위 근사 단조), <b>분산성 같음</b>(둘 다 로컬 생성·조율 0), <b>크기 8 vs 16</b>, <b>의존성은 Snowflake가 무겁고 UUID v7이 가볍다.</b></p>
+  <div class="split" style="margin:10px 0">
+    <div class="pane b"><h4>Snowflake를 고르는 조건</h4><p style="margin:0;font-size:.93rem"><b>8바이트가 가치 있을 만큼</b> 자식 테이블·FK 인덱스가 크고, <b>워커 ID 레지스트리와 NTP 규율을 상시 운영할 여력</b>이 있는 팀. 즉 <b>운영 비용을 내고 크기를 사는</b> 선택.</p></div>
+    <div class="pane g"><h4>UUID v7을 고르는 조건</h4><p style="margin:0;font-size:.93rem">그 <b>상시 운영 의무를 지고 싶지 않은</b> 팀. <b>16바이트를 내고 단순함을 사는</b> 선택이며, 클라이언트·오프라인 생성이 필요하면 더욱 유리하다.</p></div>
+  </div>
+  <div class="rule">정리 한 문장 — <b>"의존성을 살 여유가 있으면 Snowflake, 없으면 UUID v7이 크기를 내고 단순함을 산다."</b></div>
+  <p style="margin-bottom:0"><b>그리고 반드시 앞에 붙일 것</b> — <b>"그 전에, 정말 분산 생성이 요구사항인가"</b>를 되묻는다. DB 한 대라면 두 후보 모두 <code>bigint IDENTITY</code>에 진다.</p>
+</div></details>
+
+<details class="q"><summary>PG에서 <code>GENERATED ALWAYS AS IDENTITY</code>로 만들었더니 데이터 이관 스크립트가 전부 막힙니다. 왜죠? <span class="badge trap">함정</span><span class="hint">힌트: ALWAYS의 의미 하나 + 대안 두 가지 + 이관 후 반드시 할 일 하나</span></summary><div class="a">
+  <p><code>GENERATED ALWAYS</code>는 <b>앱이 <code>id</code>를 직접 넣는 INSERT를 거부</b>하기 때문이다. 통과시키려면 문장마다 <code>OVERRIDING SYSTEM VALUE</code>를 붙여야 한다.</p>
+  <p><b>대안은 둘</b> — ① <code>GENERATED BY DEFAULT AS IDENTITY</code>(앱이 값을 넣으면 그 값을 쓰고, 안 넣으면 시퀀스가 채운다) ② <b>독립 시퀀스 + <code>DEFAULT nextval()</code></b>. JPA 시퀀스 전략처럼 <b>앱이 값을 들고 들어오는 구조</b>라면 둘 중 하나여야 한다.</p>
+  <div class="rule red">이관 후 반드시 — <b><code>setval()</code>로 시퀀스를 옮긴 데이터의 최댓값 뒤로 앞당긴다</b></div>
+  <p style="margin-bottom:0">이걸 빼먹으면 <b>시퀀스는 1부터 세는데 테이블에는 이미 큰 값이 있어</b> 다음 INSERT부터 <b>PK 중복</b>이 난다. <b>판별식은 하나</b> — <b>"이 컬럼에 앱이 값을 넣을 일이 한 번이라도 있는가?"</b></p>
+</div></details>
+
+<details class="q"><summary><code>allocationSize</code>를 50으로 올렸더니 가끔 PK 중복이 납니다. 어디를 보시겠어요? <span class="badge trap">함정</span><span class="hint">힌트: 로그가 아니라 DDL을 본다</span></summary><div class="a">
+  <p><b>DDL의 <code>INCREMENT BY</code>를 본다.</b> 하이버네이트는 <code>nextval()</code>이 돌려준 값을 <b>"내가 쓸 블록의 경계"</b>로 해석해 그 값으로부터 <code>allocationSize</code>만큼을 <b>메모리에서 나눠 준다.</b> DB가 실제로는 <b>1씩만 밀고 있으면</b>(<code>INCREMENT BY 1</code>) <b>두 인스턴스의 블록이 겹치고, 같은 번호가 두 번 발급된다.</b></p>
+  <p>하이버네이트 6에는 이 불일치를 <b>기동 시 알려주는 설정</b>(<code>hibernate.id.sequence.increment_size_mismatch_strategy</code>)이 있지만 <b>기본 동작은 버전마다 다르므로</b> 이것에 의존하지 않는다.</p>
+  <div class="rule red">팀 규칙으로 고정한다 — <b>DDL의 <code>INCREMENT BY</code>와 <code>allocationSize</code>는 같은 PR에서 함께 바꾼다</b></div>
+  <p style="margin-bottom:0"><b>증상이 "PK 중복"으로 나타나는데 원인은 "스키마와 코드의 숫자 불일치"</b>라는 점이 이 함정의 악질적인 부분이다 — <b>애플리케이션 로그만 봐서는 절대 안 잡히고</b>, 인스턴스가 한 대인 개발 환경에서는 <b>재현조차 되지 않는다.</b></p>
+</div></details>
+
+<details class="q"><summary>Snowflake ID를 JSON으로 내려줬더니 프런트에서 "없는 주문"이 됩니다. <span class="badge trap">함정</span><span class="hint">힌트: 에러가 아니라 값이 조용히 달라지는 종류의 사고</span></summary><div class="a">
+  <p><b>JavaScript <code>Number</code>의 안전 정수 범위를 넘었기 때문</b>이다. 한계는 <code>2^53 − 1 = 9,007,199,254,740,991</code>로 <b>16자리</b>인데, 2025년 에포크로 오늘 발급한 Snowflake ID는 <code>(경과 ms) &lt;&lt; 22</code>라 약 <code>2.2 × 10^17</code>, 즉 <b>18자리</b>다.</p>
+  <p><b>브라우저가 파싱하면서 끝자리가 조용히 반올림된다</b> — <b>예외가 나지 않고 값만 살짝 달라지므로</b> "조회는 되는데 가끔 없는 주문"이라는 형태로 나타난다. 서버 로그에는 <b>존재하지 않는 ID로 조회한 정상 요청</b>만 남는다.</p>
+  <div class="rule red">처방 — <b>API 응답에서 64비트 ID는 문자열로 내보낸다</b> (직렬화 설정 또는 DTO 타입으로 고정)</div>
+  <p style="margin-bottom:0"><b>같은 함정이 붙는 다른 자리</b> — 로그 수집기·BI 도구·스프레드시트로 ID를 옮길 때도 <b>숫자로 해석되면 같은 반올림</b>이 일어난다. <b>애초에 외부로는 <code>order_no</code>만 내보내는 설계</b>가 이 문제까지 같이 막는다.</p>
+</div></details>
+
+<details class="q"><summary>논리 복제로 새 클러스터에 이관하고 전환했더니 PK 중복이 터졌습니다. <span class="badge bonus">가산점</span><span class="hint">힌트: 물리 복제와 논리 복제가 옮기는 것이 다르다</span></summary><div class="a">
+  <p><b>논리 복제는 시퀀스를 복제하지 않기 때문</b>이다. <b>스트리밍(물리) 복제</b>는 바이트 단위 복제라 <b>시퀀스 상태까지 그대로</b> 따라오지만, <b>논리 복제는 테이블 행의 변경만</b> 옮긴다.</p>
+  <p>그래서 전환 시점에 새 프라이머리의 시퀀스는 <b>초기 상태(1부터)</b>이고, 테이블에는 이미 큰 <code>id</code>들이 들어 있다. <b>첫 INSERT부터 <code>23505 duplicate key</code>가 쏟아진다.</b></p>
+  <div class="rule red">전환 체크리스트에 못 박는다 — <b>"모든 시퀀스 <code>setval</code> 확인"</b></div>
+  <p style="margin-bottom:0">이 사고의 성질이 나쁜 이유는 <b>전환 리허설에서 테이블 행 수만 비교하면 통과한다</b>는 데 있다. <b>검증 항목에 "시퀀스 <code>last_value</code> vs 테이블 <code>MAX(id)</code>"를 넣어야</b> 잡힌다.</p>
+</div></details>
+
+<details class="q"><summary>단조 증가 PK는 끝 페이지 한 장에 경합이 몰린다던데, 그럼 랜덤 키가 낫지 않나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 경합의 종류를 구분하고, 두 비용의 자릿수를 비교한다</span></summary><div class="a">
+  <p><b>경합이 있는 것은 사실이다</b> — 모든 INSERT가 맨 오른쪽 리프 한 장에 몰리면 <b>그 페이지의 버퍼 잠금</b>을 두고 백엔드들이 경합하고, <code>pg_stat_activity</code>에 <code>wait_event_type = 'LWLock'</code>으로 관측된다.</p>
+  <p><b>그런데 그 대기의 단위가 다르다.</b> LWLock은 <b>트랜잭션 락이 아니라 메모리 구조 하나를 아주 짧게 보호하는 내부 잠금</b>이라 <b>대개 마이크로초 단위</b>로 끝난다. 반면 랜덤 키가 사는 것은 <b>디스크 랜덤 I/O와 WAL 볼륨</b>이다.</p>
+  <div class="rule red">마이크로초짜리 LWLock 경합을 피하려고 <b>80배의 WAL(41MB/s vs 0.5MB/s)</b>을 사는 것은 거래가 아니다</div>
+  <p style="margin-bottom:0"><b>맞는 완화책은 방향이 다르다</b> — <b>해시 파티셔닝으로 끝 페이지를 여러 개로 나누거나</b> 샤딩한다. 끝 페이지가 N개가 되면 경합도 1/N이 되고, <b>각 파티션 안에서는 여전히 끝 삽입</b>이라 순차 I/O와 FPI 효율을 유지한다. <b>"랜덤으로 되돌아가기"는 문제를 더 비싼 문제로 바꾸는 것</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>세금계산서 일련번호처럼 "빈 번호가 절대 없어야 한다"가 요건이면 어떻게 하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 무엇을 포기해야 하는지를 먼저 계산해서 보여준다</span></summary><div class="a">
+  <p><b>먼저 "그것은 처리량을 사는 대신 포기하는 것"이라고 번역한다.</b> gapless를 만족시키려면 <b>번호를 준 트랜잭션이 커밋될 때까지 다음 번호를 줄 수 없다</b> — 즉 <b>채번을 트랜잭션 안에 넣어 직렬화를 받아들이는 것</b>이 유일한 길이다.</p>
+  <p><b>그래서 탈락하는 것들</b> — 시퀀스(비트랜잭션이라 롤백·UPSERT·<code>CACHE</code>·크래시로 구멍), 블록 할당(재기동 시 구멍), Snowflake·UUID(애초에 연속이 아님). <b>남는 것은 채번 테이블을 업무 트랜잭션 안에서 UPDATE하는 방식뿐</b>이다.</p>
+  <p><b>그러면 처리량 상한이 계산된다</b> — <code>1 / (그 트랜잭션 한 건의 길이)</code>. 그래서 이 경로에서는 <b>트랜잭션 안에 외부 HTTP 호출을 절대 넣지 않고</b>, 트랜잭션을 <b>DB 작업만으로 최소화</b>하는 것이 핵심 설계가 된다.</p>
+  <div class="rule">범위를 좁히는 것이 실무의 답이다 — <b>gapless가 필요한 것은 "세금 문서 번호"이지 "모든 주문"이 아니다</b></div>
+  <p style="margin-bottom:0"><b>내부 PK는 그대로 시퀀스</b>로 두고, <b>gapless가 필요한 문서 번호만</b> 별도 채번으로 분리한다. 그리고 <b>이 선택(무엇을 포기했는지)을 ADR 한 장으로 남긴다.</b></p>
+</div></details>
+
+<details class="q"><summary>워커 ID를 등록 테이블 대신 K8s StatefulSet의 파드 순번으로 쓰면 안 되나요?<span class="hint">힌트: "된다, 단 조건이 있다" — 그 조건이 무엇을 보장해야 하는지로 답한다</span></summary><div class="a">
+  <p><b>된다.</b> StatefulSet의 순번은 <b>"중앙에서 유일하게 배정된 번호"</b>라는 요건을 이미 만족하는 한 가지 구현이다. 요건 자체는 저장소가 무엇이냐가 아니라 <b>"같은 순간에 두 프로세스가 같은 워커 ID를 들지 않는다"</b> 하나다.</p>
+  <p><b>조건 세 가지를 확인하고 쓴다.</b> ① <b>Deployment가 아니라 StatefulSet</b>이어야 한다 — Deployment의 파드 이름에는 안정적인 순번이 없다. ② 순번이 <b>0~1,023 범위 안</b>이어야 한다(10비트). ③ <b>같은 순번의 파드가 동시에 둘 존재하는 상황이 없어야</b> 한다 — 블루/그린으로 두 세트를 동시에 띄우거나, 여러 클러스터·리전에 같은 StatefulSet을 배포하면 <b>순번이 겹친다.</b></p>
+  <div class="rule red">③이 흔들리는 순간 <b>같은 ms에 같은 ID</b>가 나온다 — 그리고 그 사고는 <b>"가끔 PK 중복"</b>으로만 보인다</div>
+  <p style="margin-bottom:0"><b>등록 테이블 임대가 더 안전한 이유</b>는 <b>어떤 배포 형태에서도 "유일성"을 DB의 PK 제약이 보증</b>하기 때문이다. 반대로 <b>운영을 단순하게 유지하고 싶다면</b> 조건 ③을 <b>배포 파이프라인의 규칙</b>으로 고정한 뒤 순번을 쓰는 것도 합리적인 선택이다 — <b>어느 쪽이든 "죽으면 회수, 살아 있으면 갱신"이 성립하는지</b>를 말할 수 있어야 한다.</p>
+</div></details>
+
+<details class="q"><summary>기존 서비스의 PK가 이미 <code>varchar(36)</code> UUID v4입니다. 지금 무엇부터 하시겠어요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "전부 바꾼다"가 아니라 순서 — 관측 → 경계 분리 → 타입 → PK</span></summary><div class="a">
+  <p><b>PK 교체는 마지막이다.</b> PK를 바꾸는 것은 <b>자식 테이블 FK 전부 + 모든 인덱스 + 애플리케이션 코드 + 외부에 노출된 값</b>까지 함께 움직이는 일이라, <b>먼저 싼 것부터</b> 한다.</p>
+  <div class="step"><span class="n">1</span><div class="body"><b>관측으로 현재 위치를 확인한다.</b> PK 인덱스 크기 vs <code>shared_buffers</code>, <code>EXPLAIN (ANALYZE, BUFFERS, WAL)</code>의 <code>shared read</code>와 <code>fpi=</code>, <code>pg_stat_wal</code>의 <code>wal_fpi</code>. <b>이미 계단을 밟았는지, 아직 여유가 있는지</b>가 이후 결정의 근거다.</div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>외부 식별자를 먼저 분리한다.</b> <code>order_no</code>를 유니크 제약과 함께 추가하고 <b>외부 계약을 그쪽으로 옮긴다.</b> 이 단계는 PK를 건드리지 않으면서 <b>나중에 PK를 바꿀 자유</b>를 만든다 — <b>가장 싸고 가장 효과가 큰 한 걸음.</b></div></div>
+  <div class="step"><span class="n">3</span><div class="body"><b>타입만이라도 <code>varchar(36)</code> → <code>uuid</code>로 옮긴다.</b> 36바이트 + collation 비교가 <b>16바이트 + 바이트 비교</b>가 된다. 값의 의미는 그대로라 <b>애플리케이션 변경이 작다.</b></div></div>
+  <div class="step ok"><span class="n">4</span><div class="body"><b>그다음에야 PK 후보를 고른다.</b> 분산이 실제 요구가 아니면 <code>bigint</code> 시퀀스, 요구면 Snowflake / UUID v7. 새 컬럼을 추가해 <b>이중 쓰기 → 백필 → 참조 전환 → 구 컬럼 제거</b>의 온라인 절차로 옮기고, <b>각 단계가 되돌릴 수 있는지</b>를 확인한다.</div></div>
+  <p style="margin-bottom:0"><b>이 순서 자체가 답변의 내용이다</b> — "UUID v4는 나쁘니 bigint로 바꾸겠습니다"는 <b>비용을 세어보지 않은 답</b>으로 들린다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  채번 설계의 답은 <b>방식 이름이 아니라 분리</b>다 — 내부 PK는 작고(8바이트) 단조 증가해야 하는데, PostgreSQL에서 그 근거는 클러스터드 인덱스가 아니라 <b>PK B-tree의 삽입 위치 · 자식 FK 인덱스의 적재율 · <code>full_page_writes</code>로 부푸는 WAL</b>이다(힙은 자리를 고를 수 있고 B-tree는 키가 자리를 강제하기 때문). 단일 DB면 <code>bigint GENERATED ALWAYS AS IDENTITY</code>가 첫 정답이고, PG의 시퀀스는 <b>테이블과 독립된 객체</b>라 <code>nextval()</code>을 INSERT 전에 미리 부를 수 있어 <b>AUTO_INCREMENT의 한계 하나가 애초에 없다</b> — 대신 비트랜잭션성 때문에 <b>빈 번호는 정상</b>이고 <code>CACHE</code>는 세션 간 순서를 교차시키며 다중 노드 충돌은 남는다. 분산이 실제 요구면 <b>Snowflake</b>(41비트 약 69년 + 10비트 1,024대 + 12비트 ms당 4,096개, <b>시계 역행 감지와 워커 ID 임대를 코드로</b>) 또는 <b>UUID v7</b>이고, v4는 힙이 아니라 PK B-tree에서 <b>무작위 삽입 → 캐시 미스 → 페이지 분할 → 적재율 저하 → 랜덤 I/O → WAL FPI 증폭</b>의 사슬로 실격, v7은 그 사슬을 끊되 <b>16바이트</b>를 낸다(페이지당 엔트리 366 → 262). 외부 주문번호는 채번 테이블(+블록 할당, <code>UPDATE ... RETURNING</code>, 별도 짧은 트랜잭션, <code>fillfactor</code>로 HOT 유지, <b>구멍 허용 정책 명문화</b>)로 업무 의미를 담고, <b>유니크 제약을 최후 방어선</b>으로 두되 재시도는 반드시 <b>새 트랜잭션</b>에서 한다. 4방식은 <b>정렬성 · 분산성 · 크기 · 노출 · 의존성 · 업무 의미</b> 여섯 축으로 비교하고, 각 방식의 <b>얻는 것과 내는 것을 같은 호흡에</b> 붙인다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/04-rdb-sql/26-unique-id-generation-at-scale.md</code> · 이어서 볼 문서: 클러스터드 vs 세컨더리 인덱스(<code>03-clustered-vs-secondary-index.md</code>) · 초고빈도 카운터와 핫 로우(<code>23-high-frequency-counter-hot-row.md</code>) · 샤딩 시점과 샤드 키(<code>24-sharding-timing-shard-key-and-cross-shard.md</code>) · 커서 페이지네이션(<code>13-deep-pagination-offset-vs-cursor.md</code>) · 온라인 DDL(<code>14-online-ddl-zero-downtime-schema-change.md</code>) · 대량 INSERT와 JDBC batch(<code>03-jpa-orm/21-bulk-insert-jdbc-batch.md</code>)</p>
+</main>
+</body>
+</html>
