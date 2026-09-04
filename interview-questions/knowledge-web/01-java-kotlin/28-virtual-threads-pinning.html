@@ -1,0 +1,2116 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Virtual Thread(Java 21+) — 스레드 모델의 차이, Continuation 원리, pinning, @Transactional 함정</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo.warn{border-color:var(--warn)}.memo.warn::before{background:var(--warn);content:"진단"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+.formula{font-family:var(--mono);font-size:1.12rem;font-weight:700;text-align:center;padding:16px 12px;border-radius:12px;background:#1e293b;color:#e2e8f0;margin:12px 0;line-height:1.9}
+.formula .hi{color:#fcd34d}
+.formula .hi2{color:#86efac}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+tr.bad td{background:var(--danger-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.mono{font-family:var(--mono)}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.split.g3{grid-template-columns:1fr 1fr 1fr}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane.w{background:var(--warn-soft);border-color:var(--warn-line)}
+.pane.w h4{color:var(--warn)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+pre.wide{width:1120px;margin-left:calc(50% - 560px)}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.ln-warn{display:block;background:rgba(217,119,6,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--warn)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.nm{color:#fca5a5}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+<style>
+.cmp.g3{grid-template-columns:1fr 1fr 1fr}
+.formula.small{font-size:.95rem;line-height:1.85;text-align:left}
+.chk{list-style:none;padding:0;margin:8px 0}
+.chk li{padding-left:26px;position:relative;margin:6px 0;font-size:.95rem}
+.chk li::before{content:"\2713";position:absolute;left:4px;color:var(--ok);font-weight:800}
+.chk.x li::before{content:"\2715";color:var(--danger)}
+.layer{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card);margin:12px 0}
+.layer .lt{font-weight:800;font-size:1.02rem;margin-bottom:6px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:.94rem;margin:8px 0}
+.kv dt{font-family:var(--mono);font-weight:700;color:var(--accent);white-space:nowrap}
+.kv dd{margin:0}
+.kv dt.r{color:var(--danger)}
+mark{background:#fde68a;padding:0 3px;border-radius:3px}
+.eq{font-family:var(--mono);font-weight:800;font-size:1.02rem;text-align:center;padding:10px;border-radius:10px;background:#fff;border:1px dashed var(--line);margin:8px 0}
+.q0{background:#111827;color:#e5e7eb;border-radius:12px;padding:14px 18px;margin:14px 0;font-size:1rem;line-height:1.7}
+.q0 b{color:#fcd34d}
+.fact{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:baseline;margin:10px 0}
+.fact .lb{font-size:.74rem;font-weight:800;padding:2px 9px;border-radius:999px;background:var(--accent);color:#fff;white-space:nowrap}
+.fact .lb.r{background:var(--danger)}.fact .lb.g{background:var(--ok)}.fact .lb.w{background:var(--warn)}
+.fact .tx{font-size:.95rem}
+.bigrule{font-size:1.18rem;font-weight:800;text-align:center;padding:18px 14px;border-radius:14px;background:linear-gradient(135deg,#eff6ff,#f5f3ff);border:2px solid var(--accent-line);color:#1e3a8a;margin:16px 0;line-height:1.6}
+.bigrule u{text-decoration-color:var(--accent);text-underline-offset:4px}
+.ladder{display:grid;gap:8px;margin:14px 0}
+.ladder .rung{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--card)}
+.ladder .rung .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.ladder .rung .tagr{font-size:.76rem;font-weight:800;padding:2px 10px;border-radius:999px;white-space:nowrap}
+.ladder .rung .tagr.rev{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-line)}
+.ladder .rung .tagr.irr{background:var(--danger-soft);color:var(--danger);border:1px solid var(--danger-line)}
+.vs{display:grid;grid-template-columns:1fr 56px 1fr;gap:10px;align-items:stretch;margin:14px 0}
+.vs .col{border:2px solid var(--line);border-radius:12px;background:var(--card);padding:12px 14px}
+.vs .col.b{border-color:var(--accent)}
+.vs .col.b .hd{color:var(--accent)}
+.vs .col.w{border-color:var(--warn)}
+.vs .col.w .hd{color:var(--warn)}
+.vs .col.r{border-color:var(--danger)}
+.vs .col.r .hd{color:var(--danger)}
+.vs .col.g{border-color:var(--ok)}
+.vs .col.g .hd{color:var(--ok)}
+.vs .col .hd{font-weight:800;margin-bottom:6px;font-size:.98rem}
+.vs .col ul{margin:6px 0 0;padding-left:18px}
+.vs .col li{margin:4px 0;font-size:.93rem}
+.vs .mid{display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--muted);font-size:.86rem}
+.pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:.8rem;font-weight:700;border:1px solid var(--line);background:#fff;margin:2px 4px 2px 0}
+.pill.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.pill.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.pill.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+</style>
+<style>
+/* 시리즈 공통 보강 */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+.miniq{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:11px 15px;font-size:.95rem;margin:14px 0;line-height:1.7}
+.miniq b{color:#fcd34d}
+.flowline{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;margin:6px 0;font-size:.94rem}
+.flowline .tg{font-family:var(--mono);font-size:.78rem;font-weight:800;padding:2px 8px;border-radius:6px;background:var(--accent);color:#fff;white-space:nowrap}
+.flowline .tg.r{background:var(--danger)}.flowline .tg.g{background:var(--ok)}.flowline .tg.w{background:var(--warn)}
+.guar{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0}
+.guar .g1{border:2px solid var(--line);border-radius:14px;background:var(--card);padding:14px 14px 12px;position:relative;text-align:center}
+.guar .g1 .mk{font-size:1.9rem;font-weight:800;line-height:1.1}
+.guar .g1 .hd{font-weight:800;font-size:1.02rem;margin:2px 0 4px}
+.guar .g1 .d{font-size:.9rem;color:#475569;text-align:left;margin-top:6px}
+.guar .g1.y{border-color:var(--ok)}.guar .g1.y .mk,.guar .g1.y .hd{color:var(--ok)}
+.guar .g1.n{border-color:var(--danger)}.guar .g1.n .mk,.guar .g1.n .hd{color:var(--danger)}
+.cond{display:grid;gap:8px;margin:12px 0}
+.cond .c1{display:grid;grid-template-columns:34px 1fr auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 14px}
+.cond .c1 .n{width:28px;height:28px;border-radius:8px;background:var(--ok);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.86rem}
+.cond .c1 .ex{font-size:.8rem;color:var(--danger);font-weight:700;white-space:nowrap}
+.bigrule2{font-size:1.16rem;font-weight:800;text-align:center;padding:18px 14px;border-radius:14px;background:linear-gradient(135deg,#eff6ff,#ecfdf5);border:2px solid var(--accent-line);color:#1e3a8a;margin:16px 0;line-height:1.65}
+.bigrule2 .r{color:var(--danger)}
+.bigrule2 .g{color:#15803d}
+.side{display:grid;grid-template-columns:1fr 1fr;gap:0;border:2px solid var(--line);border-radius:12px;overflow:hidden;margin:14px 0}
+.side .h{padding:8px 14px;font-weight:800;font-size:.95rem;color:#fff}
+.side .lft .h{background:var(--accent)}
+.side .rgt .h{background:var(--danger)}
+.side .bd{padding:12px 14px;background:var(--card);height:100%}
+.side .bd ul{margin:6px 0 0;padding-left:18px}
+.side .bd li{margin:4px 0;font-size:.93rem}
+.side .rgt{border-left:2px solid var(--line)}
+.tagline{display:inline-block;font-family:var(--mono);font-size:.78rem;font-weight:800;padding:2px 9px;border-radius:6px;background:#1e293b;color:#fcd34d;margin-right:6px}
+.bignum{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0}
+.bignum .bn{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 12px;text-align:center}
+.bignum .bn .k{font-family:var(--mono);font-size:1.7rem;font-weight:800;color:var(--accent);line-height:1.15}
+.bignum .bn .t{font-weight:800;font-size:.92rem;margin-top:4px}
+.bignum .bn .d{font-size:.85rem;color:var(--muted);margin-top:4px}
+.bignum .bn.r{border-color:var(--danger)}.bignum .bn.r .k{color:var(--danger)}
+.bignum .bn.g{border-color:var(--ok)}.bignum .bn.g .k{color:var(--ok)}
+</style>
+<style>
+/* 26 동기화 도구 선택 전용 보강 */
+.tool4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
+.tool4.wide{width:1120px;margin-left:calc(50% - 560px)}
+.tool4 .t1{border:2px solid var(--line);border-radius:14px;background:var(--card);padding:13px 14px;display:flex;flex-direction:column}
+.tool4 .t1 .nm2{font-family:var(--mono);font-weight:800;font-size:.96rem;line-height:1.3}
+.tool4 .t1 .one{font-size:.82rem;color:var(--muted);margin-top:3px}
+.tool4 .t1 .d{font-size:.89rem;margin-top:8px}
+.tool4 .t1 .why{margin-top:auto;padding-top:9px;border-top:1px dashed var(--line);font-size:.85rem}
+.tool4 .t1.a{border-color:var(--accent)}.tool4 .t1.a .nm2{color:var(--accent)}
+.tool4 .t1.g{border-color:var(--ok)}.tool4 .t1.g .nm2{color:var(--ok)}
+.tool4 .t1.w{border-color:var(--warn)}.tool4 .t1.w .nm2{color:var(--warn)}
+.tool4 .t1.r{border-color:var(--danger)}.tool4 .t1.r .nm2{color:var(--danger)}
+.axisrow{display:grid;grid-template-columns:38px 1fr;gap:12px;align-items:start;margin:10px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 15px}
+.axisrow .ax{width:32px;height:32px;border-radius:9px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.82rem}
+.axisrow h4{margin:2px 0 5px;font-size:1rem}
+.axisrow .qq{font-size:.9rem;color:var(--muted);margin:0 0 4px}
+.axisrow p{margin:6px 0 0;font-size:.95rem}
+.axisrow.r .ax{background:var(--danger)}
+.axisrow.g .ax{background:var(--ok)}
+.axisrow.w .ax{background:var(--warn)}
+.dump{background:#0f172a;color:#e2e8f0;font-family:var(--mono);font-size:.79rem;line-height:1.75;border-radius:10px;padding:13px 16px;margin:10px 0;overflow-x:auto;white-space:pre}
+.dump .k1{color:#fcd34d;font-weight:700}
+.dump .a1{color:#93c5fd;font-weight:700}
+.dump .b1{color:#fca5a5;font-weight:700}
+.dump .g1{color:#86efac;font-weight:700}
+.dump .mut{color:#64748b}
+.dump .hlx{display:block;background:rgba(220,38,38,.22);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.script30{background:var(--card);border:2px solid var(--accent);border-radius:14px;padding:16px 18px;margin:16px 0;position:relative}
+.script30::before{content:"30초 답변 스크립트";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px}
+.script30 ol{margin:8px 0 0;padding-left:20px}
+.script30 li{margin:8px 0}
+.gate{display:grid;gap:9px;margin:14px 0}
+.gate .g{display:grid;grid-template-columns:132px 1fr;gap:14px;align-items:center;border:1px solid var(--line);border-left:6px solid var(--ok);border-radius:11px;background:var(--card);padding:11px 15px}
+.gate .g .lbl{font-family:var(--mono);font-weight:800;font-size:.88rem;color:var(--ok)}
+.gate .g.last{border-left-color:var(--accent)}
+.gate .g.last .lbl{color:var(--accent)}
+.gate .g .tx{font-size:.94rem}
+</style>
+<style>
+/* 28 가상 스레드 전용 보강 */
+.vtline{display:grid;grid-template-columns:104px 1fr;gap:12px;align-items:center;margin:8px 0}
+.vtline .lb2{font-family:var(--mono);font-size:.8rem;font-weight:800;padding:3px 9px;border-radius:7px;text-align:center;color:#fff;background:var(--accent)}
+.vtline .lb2.r{background:var(--danger)}.vtline .lb2.g{background:var(--ok)}.vtline .lb2.w{background:var(--warn)}
+.owner{display:grid;grid-template-columns:1fr 1fr;gap:0;border:2px solid var(--line);border-radius:12px;overflow:hidden;margin:14px 0}
+.owner .oh{padding:9px 14px;font-weight:800;font-size:.94rem;color:#fff}
+.owner .l .oh{background:var(--danger)}
+.owner .r2 .oh{background:var(--ok)}
+.owner .ob{padding:12px 14px;background:var(--card);height:100%;font-size:.94rem}
+.owner .r2{border-left:2px solid var(--line)}
+.four{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
+.four .f1{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:12px 13px}
+.four .f1 .ttl{font-weight:800;font-size:.95rem;color:var(--accent);margin-bottom:4px}
+.four .f1 .who{font-family:var(--mono);font-size:.82rem;color:var(--muted)}
+.four .f1 .d{font-size:.88rem;margin-top:7px}
+.four .f1.g{border-color:var(--ok)}.four .f1.g .ttl{color:var(--ok)}
+.four .f1.w{border-color:var(--warn)}.four .f1.w .ttl{color:var(--warn)}
+.four .f1.r{border-color:var(--danger)}.four .f1.r .ttl{color:var(--danger)}
+.calc{background:#0f172a;color:#e2e8f0;font-family:var(--mono);font-size:.83rem;line-height:1.95;border-radius:12px;padding:14px 18px;margin:12px 0;white-space:pre;overflow-x:auto}
+.calc .k1{color:#fcd34d;font-weight:700}
+.calc .r1{color:#fca5a5;font-weight:700}
+.calc .g1{color:#86efac;font-weight:700}
+.calc .mut{color:#64748b}
+.verbox{display:grid;grid-template-columns:118px 1fr;gap:0;border:2px solid var(--line);border-radius:12px;overflow:hidden;margin:10px 0}
+.verbox .vh{background:#1e293b;color:#fcd34d;font-family:var(--mono);font-weight:800;font-size:.86rem;display:flex;align-items:center;justify-content:center;padding:10px 8px;text-align:center}
+.verbox .vb{padding:11px 15px;background:var(--card);font-size:.94rem}
+.verbox.ok2{border-color:var(--ok-line)}
+.verbox.ok2 .vh{background:#14532d;color:#bbf7d0}
+.verbox.bad2{border-color:var(--danger-line)}
+.verbox.bad2 .vh{background:#7f1d1d;color:#fecaca}
+.myth{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+.myth .m1{border-radius:12px;padding:12px 15px;border:1px solid}
+.myth .m1.x{background:var(--danger-soft);border-color:var(--danger-line)}
+.myth .m1.o{background:var(--ok-soft);border-color:var(--ok-line)}
+.myth .m1 .h5{font-weight:800;font-size:.93rem;margin-bottom:5px}
+.myth .m1.x .h5{color:var(--danger)}
+.myth .m1.o .h5{color:var(--ok)}
+.myth .m1 p{margin:4px 0;font-size:.93rem}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">01 Java · Kotlin &nbsp;|&nbsp; Virtual Thread &amp; pinning &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>Virtual Thread(Java 21+) — 스레드 모델의 차이, Continuation 원리, pinning, <span class="mono">@Transactional</span> 함정<br><span class="sub"><b>"가상 스레드는 빨라진다"가 아니다.</b> <b>대기 중 동시성</b>을 높이는 기술이고, 그 대가로 <b>pinning</b>과 <b>커넥션 풀 고갈</b>이라는 두 함정이 따라온다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"Virtual Thread(Project Loom)는 기존 스레드 모델과 무엇이 다른가요? pinning 문제란?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 가상 스레드는 <b>처리 속도가 아니라 "대기 중 동시성"을 높이는 기술</b>이다.
+    스레드란 결국 <b>"콜 스택 + 실행 위치"라는 데이터</b>인데, 과거엔 블로킹이 <b>커널 안에서</b> 일어나 JVM이 개입할 타이밍이 없었기에 1:1일 수밖에 없었다.
+    Loom은 <b>JDK가 시스템 콜 직전 경로를 소유한다</b>는 점을 이용해, 블로킹 대신 <b>"epoll 등록 + 스스로 스택을 힙에 얼리고(freeze) 물러나기"</b>로 바꿔치기했다 — 블로킹 스타일 코드 그대로 리액티브급 동시성을 얻는다.
+    도입 시 함정 두 가지: <b>(1)</b> JVM이 경로를 소유하지 못한 지점(<code>synchronized</code>·JNI)에서 블로킹하면 캐리어에 못박히는 <b>pinning</b>(JDK 24의 JEP 491에서 <code>synchronized</code>는 해소, 네이티브는 그대로),
+    <b>(2)</b> 가상 스레드는 <b>스레드만 해방시킬 뿐 DB 커넥션은 못 푼다</b> — <code>@Transactional</code> 안 외부 API 콜은 동시성이 폭증한 만큼 <b>커넥션 풀 고갈로 더 크게 터진다.</b>
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>모델의 차이부터 한 문장으로.</b> 기존 플랫폼 스레드는 <b>OS 스레드와 1:1</b>이라 <b>"자바 스레드가 기다린다 = 비싼 OS 스레드가 논다"</b>였는데, 가상 스레드는 <b>M:N</b>입니다 — 블로킹을 만나면 <b>실행 상태(콜 스택)를 힙으로 옮기고 캐리어 스레드에서 내려와</b>, 그 OS 스레드는 즉시 다른 가상 스레드를 태웁니다. <b>덕분에 블로킹 스타일 코드를 그대로 두고도 수만 건의 대기를 담을 수 있습니다.</b></div></li>
+    <li><span class="n">2</span><div><b>pinning은 "내려오지 못하는 경우"입니다.</b> 원인이 둘인데 성격이 다릅니다 — <b><code>synchronized</code></b>는 모니터 소유자가 <b>OS 스레드 단위로 기록</b>돼 프레임만 옮기면 잠금 장부가 어긋나므로 JVM이 <b>옮기지 않는 쪽을 택</b>한 것이고(<b>JDK 21~23</b>), <b>네이티브(JNI) 프레임</b>은 JVM이 구조를 몰라 <b>힙으로 옮길 수 없어</b> 구조적으로 남습니다. 핀이 나면 <b>캐리어(=코어 수만큼뿐인 OS 스레드)가 통째로 잠들어</b> 확장성이 무너집니다.</div></li>
+    <li><span class="n">3</span><div><b>버전과 실무 함정까지 붙이면 완성입니다.</b> <code>synchronized</code> 핀은 <b>JDK 24의 JEP 491</b>에서 해소됐지만 <b>잠금의 직렬화는 그대로</b>이고, 네이티브 핀은 남습니다(탐지는 <b>JFR <code>jdk.VirtualThreadPinned</code></b> — <code>-Djdk.tracePinnedThreads</code>는 JDK 24에서 제거). 더 실무적인 함정은 <b>가상 스레드가 값싸게 만든 것은 자바 스레드일 뿐 DB 커넥션이 아니라는 것</b> — 톰캣 200 스레드가 해 주던 <b>암묵적 부하 제한</b>이 사라져 커넥션 풀 고갈이 <b>더 크게</b> 터집니다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 버전 범위 선언</a></li>
+    <li><a href="#s1">왜 필요한가 — 플랫폼 스레드 1:1의 청구서</a></li>
+    <li><a href="#s2">2층 구조 — 캐리어 위에 올라타는 가상 스레드 <span class="badge core">필수 도식</span></a></li>
+    <li><a href="#s3">스레드의 정체 — "콜 스택 + 실행 위치"라는 데이터</a></li>
+    <li><a href="#s4">freeze / thaw — 스택과 힙을 오간다 <span class="badge core">필수 도식</span></a></li>
+    <li><a href="#s5">블로킹 한 번의 타임라인 — 플랫폼 vs 가상</a></li>
+    <li><a href="#s6">왜 과거엔 못 했나 — 개입 타이밍과 그린 스레드</a></li>
+    <li><a href="#s7">역할 분담과 오버헤드 — 마법은 캐리어가 아니다</a></li>
+    <li><a href="#s8">pinning — 왜 캐리어에서 못 내려오는가 <span class="badge trap">함정 1</span></a></li>
+    <li><a href="#s9"><code>@Transactional</code> — 스레드는 풀렸는데 커넥션이 안 풀린다 <span class="badge trap">함정 2</span></a></li>
+    <li><a href="#s10">ThreadLocal — 고장 나는 건 도구가 아니라 사용 패턴</a></li>
+    <li><a href="#s11">도입 체크포인트 다섯 · 관측 지표 재설계</a></li>
+    <li><a href="#s12">리액티브와의 선택 · 30초 답변 스크립트 · 암기 총정리</a></li>
+    <li><a href="#s13">꼬리질문 셀프 테스트 (16문항)</a></li>
+  </ol>
+</nav>
+
+<h2 id="s0">0. 질문 + 출제 의도 · 버전 범위 선언</h2>
+
+<div class="q0">
+  <b>질문</b> — "<b>Virtual Thread(Project Loom)</b>는 기존 스레드 모델과 무엇이 다른가요? <b>pinning 문제</b>란?"
+</div>
+
+<div class="card">
+  <p style="margin-top:0"><b>출제 의도</b> — 이 질문은 <b>새 기술 도입 판단의 시금석</b>이다. "가상 스레드 쓰면 다 해결"이 아니라 <b>pinning 같은 제약과 기존 코드베이스의 궁합</b>을 먼저 따지는 사람인지 — 즉 <b>하이프와 실제를 구분하는 습관</b>이 있는지를 본다.</p>
+  <div class="fact"><span class="lb r">약점 A</span><span class="tx"><b>"가상 스레드는 빠릅니다"</b> — 속도와 동시성을 구분하지 못하는 답. 요청 하나가 350ms 걸리던 것이 <b>300ms가 되지는 않는다.</b> 늘어나는 것은 <b>"동시에 기다릴 수 있는 개수"</b>다.</span></div>
+  <div class="fact"><span class="lb r">약점 B</span><span class="tx"><b>"OS 스레드보다 가벼운 스레드입니다"에서 멈추는 것</b> — 왜 가벼운지, 즉 <b>"스택을 상시 보유하지 않고 대기 중엔 힙에 쓴 만큼만 얼려 둔다"</b>는 메커니즘을 대지 못하면 외운 문장이다.</span></div>
+  <div class="fact"><span class="lb r">약점 C</span><span class="tx"><b>pinning을 "synchronized 쓰면 문제된다"로만 아는 것</b> — <b>왜</b> 못 내려오는지(모니터 소유자가 OS 스레드 단위로 기록됨)와 <b>구조적으로 남는 원인</b>(네이티브 프레임)을 나눠 말하지 못하면 암기다.</span></div>
+  <div class="fact"><span class="lb r">약점 D</span><span class="tx"><b>버전을 뭉개는 것</b> — JDK 24의 JEP 491로 <code>synchronized</code> 핀은 해소됐다. "핀 됩니다"만 말해도, "이제 안 됩니다"만 말해도 <b>둘 다 반쪽</b>이다.</span></div>
+  <div class="fact"><span class="lb r">약점 E</span><span class="tx"><b>도입 함정을 스레드 안에서만 찾는 것</b> — 실무에서 실제로 터지는 것은 <b><code>@Transactional</code> + 외부 API + 커넥션 풀</b>이다. <b>가상 스레드는 스레드를 해방시킬 뿐 커넥션을 풀어 주지 않는다.</b></span></div>
+  <div class="fact"><span class="lb g">합격선</span><span class="tx"><b>모델 차이(1:1 → M:N)</b>를 <b>"실행 상태의 소유권 이동"</b>으로 설명하고 → <b>freeze/thaw</b>로 메커니즘을 대고 → <b>pinning 원인 둘을 성격별로</b> 나누고 → <b>버전(21~23 / 24+)을 명시</b>하고 → <b>커넥션 풀·부하 제한</b>까지 끌고 간다.</span></div>
+</div>
+
+<div class="callout warn">
+  <span class="t">이 문서가 다루는 버전 범위 — 먼저 못 박고 시작한다</span>
+  기준선은 <b>JDK 21</b>(가상 스레드가 정식 기능이 된 첫 LTS)이다. <b>JDK 24에서 pinning 동작이 크게 바뀌었으므로</b>, 달라지는 지점마다
+  <b>"JDK 21~23 기준 / JDK 24 이후"</b>를 명시해 구분한다. <b>이 구분을 흐리게 말하면 면접에서 오답이 되기 쉬운 주제다.</b>
+</div>
+
+<div class="callout info">
+  <span class="t">이 문서의 진행 방향 — 문제 → 메커니즘 → 함정</span>
+  1절은 <b>왜 필요했나</b>(플랫폼 스레드 1:1의 청구서), 2~5절은 <b>어떻게 동작하나</b>(캐리어 · Continuation · freeze/thaw · 타임라인),
+  6~7절은 <b>왜 지금에서야 가능한가</b>(개입 타이밍 · GC 능력의 재활용 · 역할 분담), 8~11절은 <b>실무 함정</b>(pinning · 트랜잭션 · ThreadLocal · 도입 체크포인트)이다.
+  <b>면접 답변 순서도 같다 — 메커니즘으로 신뢰를 얻고, 함정으로 점수를 얻는다.</b>
+</div>
+
+<h2 id="s1">1. 왜 필요한가 — 플랫폼 스레드 1:1의 청구서</h2>
+
+<p>지금까지 우리가 써 온 <code>new Thread()</code>, 톰캣의 워커 스레드, <code>Executors.newFixedThreadPool(200)</code>이 만드는 스레드는 전부 같은 종류다.
+<b>운영체제가 만들어 준 진짜 스레드 하나를 자바 객체로 얇게 감싼 것</b>이고, 가상 스레드와 구분하기 위해 이것을 <b>플랫폼 스레드(platform thread)</b>라 부른다.
+"플랫폼"은 그 아래 깔린 실행 플랫폼, 즉 <b>OS의 스레드에 그대로 대응</b>한다는 뜻이다.</p>
+
+<div class="bigrule">자바 스레드에 대해 하는 모든 일은 <u>OS에 그대로 청구서로 넘어간다</u></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="왼쪽은 자바 힙의 Thread 객체 세 개, 가운데는 1대1 화살표, 오른쪽은 커널의 OS 스레드 세 개와 각각에 딸린 네이티브 스택 예약 영역을 보여주고, 맨 오른쪽에는 스택 예약·생성 시 clone 시스템 콜·컨텍스트 스위칭이라는 세 가지 비용이 적힌 청구서 카드가 있으며, 아래 붉은 띠는 스레드 1만 개를 만들면 힙이 남아돌아도 네이티브 스레드 생성 실패가 난다는 결론을 보여주는 도식.">
+    <defs>
+      <marker id="a28a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <rect x="16" y="14" width="352" height="238" rx="13" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="34" y="40" font-size="14" font-weight="800" fill="#2563eb">자바 세계 — 힙 위의 <tspan class="mono">Thread</tspan> 객체</text>
+    <text x="34" y="60" font-size="11.5" fill="#475569">객체 자체는 몇십 바이트짜리 얇은 껍데기다</text>
+    <rect x="40" y="76" width="300" height="42" rx="9" fill="#ffffff" stroke="#93c5fd"/><text x="56" y="102" font-size="12.5" class="mono" fill="#1f2937">Thread "http-nio-exec-1"</text>
+    <rect x="40" y="126" width="300" height="42" rx="9" fill="#ffffff" stroke="#93c5fd"/><text x="56" y="152" font-size="12.5" class="mono" fill="#1f2937">Thread "http-nio-exec-2"</text>
+    <rect x="40" y="176" width="300" height="42" rx="9" fill="#ffffff" stroke="#93c5fd"/><text x="56" y="202" font-size="12.5" class="mono" fill="#1f2937">Thread "http-nio-exec-3"</text>
+    <text x="34" y="240" font-size="11.5" fill="#64748b">… 톰캣 기본 200개</text>
+
+    <line x1="372" y1="97" x2="432" y2="97" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a28a)"/>
+    <line x1="372" y1="147" x2="432" y2="147" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a28a)"/>
+    <line x1="372" y1="197" x2="432" y2="197" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a28a)"/>
+    <rect x="376" y="112" width="52" height="22" rx="11" fill="#2563eb"/><text x="402" y="127" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">1 : 1</text>
+
+    <rect x="440" y="14" width="366" height="238" rx="13" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+    <text x="458" y="40" font-size="14" font-weight="800" fill="#334155">커널 세계 — 진짜 OS 스레드</text>
+    <text x="458" y="60" font-size="11.5" fill="#64748b">여기부터가 값이 붙는 자원이다</text>
+    <rect x="462" y="76" width="146" height="42" rx="9" fill="#ffffff" stroke="#94a3b8"/><text x="478" y="102" font-size="12.5" class="mono" fill="#1f2937">OS thread #1</text>
+    <rect x="462" y="126" width="146" height="42" rx="9" fill="#ffffff" stroke="#94a3b8"/><text x="478" y="152" font-size="12.5" class="mono" fill="#1f2937">OS thread #2</text>
+    <rect x="462" y="176" width="146" height="42" rx="9" fill="#ffffff" stroke="#94a3b8"/><text x="478" y="202" font-size="12.5" class="mono" fill="#1f2937">OS thread #3</text>
+    <rect x="618" y="76" width="172" height="42" rx="9" fill="#fef2f2" stroke="#fecaca"/><text x="704" y="94" font-size="11.5" font-weight="700" fill="#dc2626" text-anchor="middle">네이티브 스택 예약</text><text x="704" y="110" font-size="11" fill="#7f1d1d" text-anchor="middle">수백 KB ~ 2MB (플랫폼 의존)</text>
+    <rect x="618" y="126" width="172" height="42" rx="9" fill="#fef2f2" stroke="#fecaca"/><text x="704" y="144" font-size="11.5" font-weight="700" fill="#dc2626" text-anchor="middle">네이티브 스택 예약</text><text x="704" y="160" font-size="11" fill="#7f1d1d" text-anchor="middle">힙이 아니다 — 별도 주소 공간</text>
+    <rect x="618" y="176" width="172" height="42" rx="9" fill="#fef2f2" stroke="#fecaca"/><text x="704" y="194" font-size="11.5" font-weight="700" fill="#dc2626" text-anchor="middle">네이티브 스택 예약</text><text x="704" y="210" font-size="11" fill="#7f1d1d" text-anchor="middle">커널 자료구조도 함께</text>
+
+    <rect x="822" y="14" width="282" height="238" rx="13" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
+    <rect x="822" y="14" width="282" height="30" rx="13" fill="#dc2626"/><rect x="822" y="32" width="282" height="12" fill="#dc2626"/>
+    <text x="963" y="35" font-size="13" font-weight="800" fill="#ffffff" text-anchor="middle">OS가 보내는 청구서 3장</text>
+    <text x="840" y="72" font-size="12.5" font-weight="800" fill="#dc2626">① 스택을 위한 큰 예약</text>
+    <text x="840" y="90" font-size="11.5" fill="#334155"><tspan class="mono">-Xss</tspan> 기본값은 플랫폼마다 다르다</text>
+    <text x="840" y="106" font-size="11.5" fill="#334155">(<tspan class="mono">{pd product}</tspan> = platform dependent)</text>
+    <text x="840" y="136" font-size="12.5" font-weight="800" fill="#dc2626">② 생성마다 커널이 개입</text>
+    <text x="840" y="154" font-size="11.5" fill="#334155">리눅스에서 <tspan class="mono">clone</tspan> 시스템 콜</text>
+    <text x="840" y="170" font-size="11.5" fill="#334155">→ 그래서 <tspan font-weight="700">풀에 담아 돌려 쓴다</tspan></text>
+    <text x="840" y="200" font-size="12.5" font-weight="800" fill="#dc2626">③ 컨텍스트 스위칭 비용</text>
+    <text x="840" y="218" font-size="11.5" fill="#334155">레지스터 저장·복원 + 커널 진입</text>
+    <text x="840" y="234" font-size="11.5" fill="#334155">+ <tspan font-weight="700">CPU 캐시 오염</tspan>(덜 보이고 더 아프다)</text>
+
+    <rect x="16" y="268" width="1088" height="42" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="36" y="294" font-size="13" fill="#7f1d1d">예약은 <tspan font-weight="800">reserve</tspan>지 즉시 소모하는 물리 메모리가 아니다. 그런데도 <tspan font-weight="800" fill="#dc2626">주소 공간과 커널 자료구조는 스레드 수에 정직하게 비례</tspan>하므로 —</text>
+    <rect x="16" y="320" width="1088" height="38" rx="11" fill="#1e293b"/>
+    <text x="36" y="345" font-size="13" class="mono" fill="#fca5a5">힙에 여유가 넘쳐도 &nbsp; java.lang.OutOfMemoryError: unable to create new native thread &nbsp; <tspan fill="#94a3b8">← 스레드 1만 개를 만들려는 순간</tspan></text>
+  </svg>
+  <figcaption><b>1:1이라는 관계가 모든 제약의 출발점이다.</b> 자바 스레드 하나를 만들면 OS 스레드 하나가 생기고, 자바 스레드가 잠들면 OS 스레드가 잠든다. 그래서 <b>"OS 스레드가 비싸다" = "자바 스레드가 비싸다"</b>가 된다.</figcaption>
+</figure>
+
+<div class="callout info">
+  <span class="t">"스레드 하나에 1MB"는 어림값이다 — 정확히 말하는 법</span>
+  <pre style="margin:8px 0 6px"><code><span class="cm">$</span> java -XX:+PrintFlagsFinal -version | grep ThreadStackSize
+     intx ThreadStackSize     = 2048     <span class="st">{pd product}</span> {default}
+
+<span class="cm"># macOS / AArch64 / OpenJDK 21 기준 = 2048KB = 2MB</span>
+<span class="cm"># 리눅스 x86-64에서는 통상 1024KB(1MB)가 기본값이다</span></code></pre>
+  플래그 옆의 <code>{pd product}</code>가 <b>platform dependent(플랫폼 의존)</b> 표시다. 그러니 정확한 문장은
+  <b>"수백 KB~2MB 수준이며 플랫폼과 JVM 설정에 따라 다르다"</b>이다.
+</div>
+
+<h3>1-1. 낭비의 구조 — 스레드가 "일하는 데"가 아니라 "기다리는 데" 쓰인다</h3>
+
+<pre><code><span class="cm">// 톰캣 기본 스레드 풀 200개인 서버에서</span>
+<span class="kw">public</span> Order <span class="fn">getOrder</span>(Long id) {
+<span class="ln-warn">    Member member = memberClient.get(id);   <span class="cm">// 외부 API 300ms — 이 워커는 잠들어 있다</span></span>
+<span class="ln-warn">    Order order = orderRepository.find(id); <span class="cm">// DB 조회 50ms — 여기서도 잠들어 있다</span></span>
+    <span class="kw">return</span> order;                           <span class="cm">// 계산은 몇 ms면 끝난다</span>
+}</code></pre>
+
+<figure>
+  <svg viewBox="0 0 880 268" role="img" aria-label="요청 하나가 톰캣 워커 7번을 350밀리초 동안 점유하는 타임라인으로, 실제 CPU를 쓰는 구간은 합쳐 5밀리초에 불과하고 나머지 345밀리초는 외부 API 응답과 DB 응답을 기다리며 잠들어 있는 구간임을 보여주고, 아래에 98.6퍼센트가 대기라는 비율 막대가 있는 도식.">
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">요청 하나가 워커 #7(= OS 스레드 하나)을 점유하는 350ms</text>
+
+    <line x1="60" y1="52" x2="840" y2="52" stroke="#cbd5e1" stroke-width="1.4"/>
+    <text x="60" y="46" font-size="10.5" fill="#94a3b8">0ms</text>
+    <text x="820" y="46" font-size="10.5" fill="#94a3b8">350ms</text>
+
+    <rect x="60" y="62" width="14" height="46" rx="3" fill="#2563eb"/>
+    <rect x="74" y="62" width="474" height="46" rx="3" fill="#e2e8f0" stroke="#cbd5e1"/>
+    <rect x="548" y="62" width="12" height="46" rx="3" fill="#2563eb"/>
+    <rect x="560" y="62" width="250" height="46" rx="3" fill="#e2e8f0" stroke="#cbd5e1"/>
+    <rect x="810" y="62" width="14" height="46" rx="3" fill="#2563eb"/>
+    <text x="311" y="90" font-size="12.5" font-weight="700" fill="#475569" text-anchor="middle">외부 API 응답 대기 300ms — 스레드는 커널이 재워 둔 상태</text>
+    <text x="685" y="90" font-size="12.5" font-weight="700" fill="#475569" text-anchor="middle">DB 응답 대기 50ms</text>
+
+    <rect x="60" y="122" width="16" height="16" rx="3" fill="#2563eb"/>
+    <text x="84" y="135" font-size="12" fill="#1f2937">CPU를 실제로 쓰는 구간 — 다 합쳐 <tspan font-weight="800" fill="#2563eb">5ms 남짓</tspan> (그림에서는 보이도록 과장해 그렸다)</text>
+    <rect x="60" y="146" width="16" height="16" rx="3" fill="#e2e8f0" stroke="#cbd5e1"/>
+    <text x="84" y="159" font-size="12" fill="#1f2937">잠든 채 응답만 기다리는 구간 — <tspan font-weight="800" fill="#dc2626">345ms</tspan>. 이 동안 비싼 OS 스레드가 통째로 묶여 있다.</text>
+
+    <rect x="60" y="180" width="780" height="34" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <rect x="60" y="180" width="11" height="34" rx="8" fill="#2563eb"/><rect x="66" y="180" width="6" height="34" fill="#2563eb"/>
+    <text x="455" y="202" font-size="13" font-weight="800" fill="#dc2626" text-anchor="middle">워커 점유 시간의 98.6%가 "기다림" 그 자체에 소모된다</text>
+
+    <rect x="60" y="226" width="780" height="30" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="76" y="246" font-size="12.5" fill="#1e3a8a">병목은 <tspan font-weight="800">계산 능력</tspan>이 아니라 <tspan font-weight="800">"기다림을 담아 둘 그릇"의 개수</tspan>이고, 그 그릇이 하필 <tspan font-weight="800">비싼 OS 스레드</tspan>다.</text>
+  </svg>
+  <figcaption>이 요청은 CPU를 거의 쓰지 않는다. 그런데도 워커 하나를 350ms 동안 통째로 붙잡는다 — <b>기다림의 비용이 OS 스레드 하나</b>이기 때문이다.</figcaption>
+</figure>
+
+<p>이게 처리량 상한으로 어떻게 이어지는지 한 단계씩 계산해 보자.</p>
+
+<div class="calc"><span class="mut">① 동시 진행 가능한 요청</span>  = 워커 수                    = <span class="k1">200건</span>
+<span class="mut">② 워커 하나의 초당 처리량</span> = 1 / 0.35s                  = <span class="k1">2.86 건/s</span>
+<span class="mut">③ 서버 전체 처리량 상한</span>   = 200 × 2.86                 = <span class="r1">571 req/s</span>   <span class="mut">← 여기서 막힌다</span>
+<span class="mut">④ 그때 실제 필요한 CPU</span>    = 571 × 5ms                  = <span class="g1">2.9초/초</span>  <span class="mut">≈ 코어 3개면 충분</span>
+
+<span class="mut">⇒ 8코어 서버라면</span> <span class="k1">CPU 사용률 36% 언저리에서 처리량이 막힌다.</span>
+<span class="mut">⇒ 201번째 요청은?</span> 워커가 빌 때까지 <span class="r1">톰캣 수락 큐에서 대기</span> — 사용자에겐 "CPU는 노는데 느린 서버"</div>
+
+<div class="memo">
+  <h4>면접에서 그대로 쓰는 숫자 세트 — 이 다섯 개만 외운다</h4>
+  <div class="bignum">
+    <div class="bn"><div class="k">350ms</div><div class="t">요청 하나의 워커 점유</div><div class="d">외부 API 300 + DB 50</div></div>
+    <div class="bn g"><div class="k">5ms</div><div class="t">그중 실제 CPU 시간</div><div class="d">= 대기 비중 98%</div></div>
+    <div class="bn r"><div class="k">571<span style="font-size:.9rem">req/s</span></div><div class="t">워커 200개의 처리량 상한</div><div class="d">CPU 36%에서 천장</div></div>
+  </div>
+  <p style="margin:6px 0 0"><b>이 숫자들이 하는 말은 하나다</b> — <b>CPU가 놀고 있는데 더 못 받는다.</b> 가상 스레드는 바로 이 천장을 걷어내는 기술이고, <b>천장을 걷어낸 뒤 무엇이 다음 병목이 되는지</b>가 9절의 주제다.</p>
+</div>
+
+<h3>1-2. 방향은 논리적으로 둘뿐이다 — 리액티브와 그 대가</h3>
+
+<div class="vs">
+  <div class="col b">
+    <div class="hd">방향 A — 기다림을 스레드에 담지 않는다</div>
+    <p style="margin:6px 0 0;font-size:.93rem">"결과를 기다렸다가 다음 줄로 간다" 대신 <b>"결과가 오면 이 함수를 실행해 달라"</b>고 콜백을 등록하고 스레드는 즉시 반납한다.</p>
+    <ul><li><b>리액티브(WebFlux, Reactor)</b></li><li>스레드 몇 개로 수만 건의 대기를 감당</li><li>대가: <b>코드를 전부 바꿔야 한다</b></li></ul>
+  </div>
+  <div class="mid">VS</div>
+  <div class="col g">
+    <div class="hd">방향 B — 기다림을 담는 그릇을 싸게 만든다</div>
+    <p style="margin:6px 0 0;font-size:.93rem">코드는 그대로 두고 <b>스레드의 구현만 갈아 끼운다.</b> 기다림의 비용을 OS 스레드에서 <b>힙의 몇 KB짜리 객체</b>로 낮춘다.</p>
+    <ul><li><b>가상 스레드(Project Loom)</b></li><li>순차·블로킹 스타일 그대로</li><li>대가: <b>pinning과 부하 제한 소실</b>(8·9절)</li></ul>
+  </div>
+</div>
+
+<pre><code><span class="cm">// 리액티브: 기다리지 않고 "오면 이걸 해라"를 등록한다</span>
+<span class="kw">public</span> Mono&lt;Order&gt; <span class="fn">getOrder</span>(Long id) {
+    <span class="kw">return</span> memberClient.get(id)
+            .flatMap(member -&gt; orderRepository.find(id))
+            .map(<span class="kw">this</span>::toResponse);
+}</code></pre>
+
+<div class="callout trap">
+  <span class="t">리액티브의 대가 — 핵심은 "호출 스택이 사라진다"는 것</span>
+  예외가 터지면 스택트레이스에 <b>내 비즈니스 로직 대신 리액터 내부 프레임</b>이 잔뜩 찍히고, "어느 요청 처리 중이었는지"를 알려면 별도 장치가 필요하다.
+  <b>디버거로 한 줄씩 따라가는 것도, <code>try-catch-finally</code>도, ThreadLocal 기반 도구(트랜잭션 · MDC · SecurityContext)도 그대로는 안 통한다.</b>
+  게다가 이 전염은 국소적이지 않다 — <b>경로 위의 라이브러리 하나라도 블로킹이면 전체가 무너지므로 스택 전체를 리액티브로 바꿔야 한다.</b>
+</div>
+
+<h2 id="s2">2. 2층 구조 — 캐리어 위에 올라타는 가상 스레드</h2>
+
+<p><b>가상 스레드(virtual thread)</b>는 OS 스레드와의 1:1 매핑을 끊고 <b>JVM이 직접 스케줄링하는 경량 스레드</b>다.
+이걸 만든 OpenJDK 프로젝트의 코드명이 <b>Loom</b>이다. 2017년에 시작해 <b>2023년 Java 21에 정식 기능</b>으로 들어갔다.
+loom은 "베틀"이라는 뜻으로, <b>스레드(실)를 짜는 도구</b>라는 말장난이다.</p>
+
+<div class="memo">
+  <h4>동작의 뼈대는 네 줄이다 — 이 네 줄이 답변의 골격</h4>
+  <div class="ladder">
+    <div class="rung"><span class="n">1</span><div>소수의 OS 스레드가 <b>실행대</b> 역할을 한다. 이 스레드를 <b>캐리어 스레드(carrier thread)</b>라 부른다 — 가상 스레드를 <b>태워 나른다(carry)</b>는 뜻이다.</div><span class="tagr rev">기본 개수 = CPU 코어 수</span></div>
+    <div class="rung"><span class="n">2</span><div>가상 스레드는 캐리어 위에 <b>올라타서(mount)</b> 실행된다.</div><span class="tagr rev">이 순간엔 평범한 스레드</span></div>
+    <div class="rung"><span class="n">3</span><div>블로킹 I/O를 만나면 JVM이 그 가상 스레드의 <b>실행 상태를 힙에 떼어 저장</b>하고 <b>캐리어에서 내린다(unmount)</b>.</div><span class="tagr irr">여기가 핵심</span></div>
+    <div class="rung"><span class="n">4</span><div>비워진 캐리어는 즉시 다른 가상 스레드를 태운다. I/O가 끝나면 그 가상 스레드는 <b>아무 캐리어에나</b> 다시 올라타 이어서 실행된다.</div><span class="tagr rev">캐리어를 갈아타도 무방</span></div>
+  </div>
+</div>
+
+<h3>2-1. 플랫폼 스레드 풀 모델과 나란히 놓고 본다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 424" role="img" aria-label="왼쪽은 플랫폼 스레드 풀 모델로 요청 1만 건이 톰캣 수락 큐에서 대기하다 워커 200개에 1대1로 붙고 그 200개가 다시 OS 스레드 200개와 1대1 대응해 8코어 위에서 도는 구조이며, 오른쪽은 가상 스레드 모델로 요청 1만 건이 각각 힙의 가상 스레드 객체가 되어 JVM 스케줄러 대기열에 들어가고 캐리어 8개가 그것을 번갈아 태우는 M대N 구조임을 보여주는 대비 도식.">
+    <defs>
+      <marker id="a28b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+      <marker id="a28g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <rect x="14" y="12" width="540" height="400" rx="14" fill="#fef2f2" stroke="#fecaca" stroke-width="2"/>
+    <text x="34" y="40" font-size="14.5" font-weight="800" fill="#dc2626">플랫폼 스레드 풀 모델 — 1 : 1</text>
+    <text x="34" y="60" font-size="11.5" fill="#7f1d1d">"기다림을 담을 그릇"이 비싸서 개수를 정해 놓고 아껴 쓴다</text>
+
+    <rect x="34" y="74" width="500" height="46" rx="9" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="284" y="94" font-size="12.5" font-weight="700" fill="#1f2937" text-anchor="middle">동시 요청 10,000건</text>
+    <text x="284" y="111" font-size="11.5" fill="#dc2626" text-anchor="middle">200건만 입장 · 나머지 9,800건은 톰캣 수락 큐에서 대기 (= 암묵적 부하 제한)</text>
+    <line x1="284" y1="120" x2="284" y2="140" stroke="#64748b" stroke-width="1.8" marker-end="url(#a28b)"/>
+
+    <rect x="34" y="144" width="500" height="60" rx="9" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="46" y="164" font-size="12" font-weight="700" fill="#1f2937">톰캣 워커 200개 (플랫폼 스레드)</text>
+    <g fill="#fecaca" stroke="#dc2626" stroke-width="1">
+      <rect x="46" y="172" width="22" height="22" rx="4"/><rect x="72" y="172" width="22" height="22" rx="4"/><rect x="98" y="172" width="22" height="22" rx="4"/><rect x="124" y="172" width="22" height="22" rx="4"/><rect x="150" y="172" width="22" height="22" rx="4"/><rect x="176" y="172" width="22" height="22" rx="4"/><rect x="202" y="172" width="22" height="22" rx="4"/><rect x="228" y="172" width="22" height="22" rx="4"/><rect x="254" y="172" width="22" height="22" rx="4"/><rect x="280" y="172" width="22" height="22" rx="4"/>
+    </g>
+    <text x="312" y="189" font-size="11.5" fill="#7f1d1d">… ×200 &nbsp; <tspan font-weight="700">전원이 "기다림" 상태로 묶여 있다</tspan></text>
+    <line x1="284" y1="204" x2="284" y2="226" stroke="#64748b" stroke-width="1.8" marker-end="url(#a28b)"/>
+    <rect x="188" y="206" width="192" height="20" rx="10" fill="#dc2626"/><text x="284" y="221" font-size="11.5" font-weight="800" fill="#ffffff" text-anchor="middle">1 : 1 강제 — 예외 없음</text>
+
+    <rect x="34" y="232" width="500" height="60" rx="9" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="46" y="252" font-size="12" font-weight="700" fill="#1f2937">OS 스레드 200개 (커널 자원)</text>
+    <text x="46" y="272" font-size="11.5" fill="#7f1d1d">스택 예약 200 × (수백KB~2MB) + 커널 자료구조 200벌</text>
+    <text x="46" y="286" font-size="11.5" fill="#dc2626" font-weight="700">그중 196개는 지금 잠들어 있다 — 자원만 쥔 채</text>
+    <line x1="284" y1="292" x2="284" y2="312" stroke="#64748b" stroke-width="1.8" marker-end="url(#a28b)"/>
+
+    <rect x="34" y="316" width="500" height="42" rx="9" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="284" y="342" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">CPU 코어 8개 — 사용률 36%에서 천장</text>
+
+    <rect x="34" y="368" width="500" height="32" rx="8" fill="#1e293b"/>
+    <text x="284" y="389" font-size="12.5" font-weight="800" fill="#fca5a5" text-anchor="middle">처리량 상한 571 req/s — 스레드 개수가 곧 동시성 상한</text>
+
+    <rect x="566" y="12" width="540" height="400" rx="14" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="2"/>
+    <text x="586" y="40" font-size="14.5" font-weight="800" fill="#16a34a">가상 스레드 모델 — M : N</text>
+    <text x="586" y="60" font-size="11.5" fill="#14532d">그릇이 싸졌으므로 아낄 이유가 없다 — 작업마다 하나씩 만든다</text>
+
+    <rect x="586" y="74" width="500" height="46" rx="9" fill="#ffffff" stroke="#86efac"/>
+    <text x="836" y="94" font-size="12.5" font-weight="700" fill="#1f2937" text-anchor="middle">동시 요청 10,000건</text>
+    <text x="836" y="111" font-size="11.5" fill="#16a34a" text-anchor="middle">전부 입장 — 요청마다 가상 스레드 하나를 새로 만든다 (수락 큐 없음)</text>
+    <line x1="836" y1="120" x2="836" y2="140" stroke="#16a34a" stroke-width="1.8" marker-end="url(#a28g)"/>
+
+    <rect x="586" y="144" width="500" height="60" rx="9" fill="#ffffff" stroke="#86efac"/>
+    <text x="598" y="164" font-size="12" font-weight="700" fill="#1f2937">가상 스레드 10,000개 — <tspan font-weight="800" fill="#16a34a">전부 힙에 사는 자바 객체</tspan></text>
+    <g fill="#bbf7d0" stroke="#16a34a" stroke-width="1">
+      <rect x="598" y="172" width="13" height="13" rx="3"/><rect x="614" y="172" width="13" height="13" rx="3"/><rect x="630" y="172" width="13" height="13" rx="3"/><rect x="646" y="172" width="13" height="13" rx="3"/><rect x="662" y="172" width="13" height="13" rx="3"/><rect x="678" y="172" width="13" height="13" rx="3"/><rect x="694" y="172" width="13" height="13" rx="3"/><rect x="710" y="172" width="13" height="13" rx="3"/><rect x="726" y="172" width="13" height="13" rx="3"/><rect x="742" y="172" width="13" height="13" rx="3"/><rect x="758" y="172" width="13" height="13" rx="3"/><rect x="774" y="172" width="13" height="13" rx="3"/>
+      <rect x="598" y="188" width="13" height="13" rx="3"/><rect x="614" y="188" width="13" height="13" rx="3"/><rect x="630" y="188" width="13" height="13" rx="3"/><rect x="646" y="188" width="13" height="13" rx="3"/><rect x="662" y="188" width="13" height="13" rx="3"/><rect x="678" y="188" width="13" height="13" rx="3"/><rect x="694" y="188" width="13" height="13" rx="3"/><rect x="710" y="188" width="13" height="13" rx="3"/><rect x="726" y="188" width="13" height="13" rx="3"/><rect x="742" y="188" width="13" height="13" rx="3"/><rect x="758" y="188" width="13" height="13" rx="3"/><rect x="774" y="188" width="13" height="13" rx="3"/>
+    </g>
+    <text x="792" y="184" font-size="11.5" fill="#14532d">… ×10,000</text>
+    <text x="792" y="199" font-size="11.5" fill="#14532d" font-weight="700">대기 중인 것은 몇 KB짜리 객체일 뿐</text>
+    <line x1="836" y1="204" x2="836" y2="226" stroke="#16a34a" stroke-width="1.8" marker-end="url(#a28g)"/>
+    <rect x="716" y="206" width="240" height="20" rx="10" fill="#16a34a"/><text x="836" y="221" font-size="11.5" font-weight="800" fill="#ffffff" text-anchor="middle">M : N — 번갈아 태운다 (mount/unmount)</text>
+
+    <rect x="586" y="232" width="500" height="60" rx="9" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="598" y="252" font-size="12" font-weight="700" fill="#1f2937">캐리어 스레드 8개 (= 평범한 OS 스레드, ForkJoinPool 워커)</text>
+    <g fill="#dbeafe" stroke="#2563eb" stroke-width="1">
+      <rect x="598" y="262" width="22" height="22" rx="4"/><rect x="624" y="262" width="22" height="22" rx="4"/><rect x="650" y="262" width="22" height="22" rx="4"/><rect x="676" y="262" width="22" height="22" rx="4"/><rect x="702" y="262" width="22" height="22" rx="4"/><rect x="728" y="262" width="22" height="22" rx="4"/><rect x="754" y="262" width="22" height="22" rx="4"/><rect x="780" y="262" width="22" height="22" rx="4"/>
+    </g>
+    <text x="814" y="278" font-size="11.5" fill="#14532d" font-weight="700">8개 전부 한순간도 안 잔다</text>
+    <line x1="836" y1="292" x2="836" y2="312" stroke="#16a34a" stroke-width="1.8" marker-end="url(#a28g)"/>
+
+    <rect x="586" y="316" width="500" height="42" rx="9" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="836" y="342" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">CPU 코어 8개 — 이제 CPU가 감당하는 지점까지 올라간다</text>
+
+    <rect x="586" y="368" width="500" height="32" rx="8" fill="#1e293b"/>
+    <text x="836" y="389" font-size="12.5" font-weight="800" fill="#86efac" text-anchor="middle">동시성 상한이 스레드 수에서 풀렸다 — 다음 병목은 하류다(9절)</text>
+  </svg>
+  <figcaption><b>두 모델의 차이는 "그릇의 개수"가 아니라 "그릇의 값"이다.</b> 왼쪽에서 대기 하나의 값은 <b>OS 스레드 하나</b>이고, 오른쪽에서 대기 하나의 값은 <b>힙 객체 몇 KB</b>다. 그리고 왼쪽의 <span style="color:#dc2626;font-weight:700">"9,800건은 수락 큐에서 대기"</span>가 사실은 <b>공짜로 얻고 있던 부하 제한기</b>였다는 것이 9절의 반전이다.</figcaption>
+</figure>
+
+<h3>2-2. "JVM이 스케줄링한다"는 말의 정확한 뜻 — 스케줄링이 2층으로 겹쳤다</h3>
+
+<p>OS 스케줄러가 교체됐다는 뜻이 아니다. <b>층이 하나 더 생겼다</b>는 뜻이다.</p>
+
+<figure>
+  <svg viewBox="0 0 880 320" role="img" aria-label="위에서부터 힙에 사는 가상 스레드 수만 개, 그 아래 JVM 스케줄러인 ForkJoinPool이 어느 캐리어에서 실행할지를 정하는 1층, 그 아래 평범한 OS 스레드인 캐리어 8개, 다시 그 아래 OS 스케줄러가 어느 코어에서 실행할지를 정하는 2층, 마지막에 CPU 코어 8개가 놓인 4단 레이어 구조 도식.">
+    <defs>
+      <marker id="a28c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+    <rect x="60" y="12" width="760" height="46" rx="10" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="440" y="33" font-size="13.5" font-weight="800" fill="#2563eb" text-anchor="middle">가상 스레드 수만 개</text>
+    <text x="440" y="50" font-size="11.5" fill="#1e3a8a" text-anchor="middle">힙에 사는 평범한 자바 객체들 — OS는 이들의 존재를 전혀 모른다</text>
+
+    <line x1="440" y1="58" x2="440" y2="76" stroke="#2563eb" stroke-width="2" marker-end="url(#a28c)"/>
+    <rect x="150" y="78" width="580" height="42" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="176" y="96" font-size="12.5" font-weight="800" fill="#2563eb">1층: JVM 스케줄러</text>
+    <text x="176" y="112" font-size="11.5" fill="#334155">JDK 안의 <tspan class="mono">ForkJoinPool</tspan> — <tspan font-weight="700">그냥 자바 코드다.</tspan> "이 가상 스레드를 어느 캐리어에서 실행할까"</text>
+    <line x1="440" y1="120" x2="440" y2="138" stroke="#2563eb" stroke-width="2" marker-end="url(#a28c)"/>
+
+    <rect x="60" y="140" width="760" height="46" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+    <text x="440" y="161" font-size="13.5" font-weight="800" fill="#334155" text-anchor="middle">캐리어 스레드 8개</text>
+    <text x="440" y="178" font-size="11.5" fill="#475569" text-anchor="middle">평범한 OS 스레드 = 플랫폼 스레드. OS가 보는 것은 "이 프로세스에 스레드 8개"뿐</text>
+
+    <line x1="440" y1="186" x2="440" y2="204" stroke="#64748b" stroke-width="2" marker-end="url(#a28b)"/>
+    <rect x="150" y="206" width="580" height="42" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.6" stroke-dasharray="5 3"/>
+    <text x="176" y="224" font-size="12.5" font-weight="800" fill="#334155">2층: OS 스케줄러</text>
+    <text x="176" y="240" font-size="11.5" fill="#334155">여전히 자기 일을 한다 — "이 OS 스레드를 어느 CPU 코어에서 실행할까"</text>
+    <line x1="440" y1="248" x2="440" y2="266" stroke="#64748b" stroke-width="2" marker-end="url(#a28b)"/>
+
+    <rect x="60" y="268" width="760" height="42" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+    <text x="440" y="294" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">CPU 코어 8개</text>
+  </svg>
+  <figcaption><b>OS는 가상 스레드의 존재를 전혀 모른다.</b> 이 사실이 나중에 <b>모니터링 지표의 함정</b>으로 그대로 돌아온다(11절) — <code>ThreadMXBean</code> 기반 지표는 캐리어만 세기 때문에 <b>부하가 아무리 몰려도 평평하다.</b></figcaption>
+</figure>
+
+<div class="bigrule">여기서 얻는 결론이 이 기술의 전부다 —<br><u>"스레드가 기다린다 = OS 스레드가 논다"</u>는 등식이 깨진다</div>
+
+<h3>2-3. mount / unmount 한 바퀴</h3>
+
+<figure>
+  <svg viewBox="0 0 880 372" role="img" aria-label="가상 스레드가 JVM 스케줄러 대기열에서 캐리어에 마운트되어 실행되다가 블로킹을 만나면 스스로 스택을 힙에 얼리고 언마운트되어 힙에 보관되고, poller가 I/O 완료를 알리면 다시 대기열로 돌아가 아무 캐리어에나 다시 마운트되는 한 바퀴 순환을 보여주는 도식.">
+    <defs>
+      <marker id="a28d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="a28e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d97706"/></marker>
+    </defs>
+
+    <rect x="26" y="52" width="196" height="86" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="124" y="76" font-size="12.5" font-weight="800" fill="#2563eb" text-anchor="middle">① JVM 스케줄러 대기열</text>
+    <text x="124" y="96" font-size="11.5" fill="#1e3a8a" text-anchor="middle">실행할 준비가 된</text>
+    <text x="124" y="112" font-size="11.5" fill="#1e3a8a" text-anchor="middle">가상 스레드들이 줄 서 있다</text>
+    <text x="124" y="130" font-size="11" fill="#64748b" text-anchor="middle">(ForkJoinPool, work-stealing)</text>
+
+    <path d="M222 95 L 322 95" stroke="#2563eb" stroke-width="2.4" fill="none" marker-end="url(#a28d)"/>
+    <rect x="228" y="62" width="88" height="24" rx="12" fill="#2563eb"/><text x="272" y="79" font-size="11.5" font-weight="800" fill="#ffffff" text-anchor="middle">mount (thaw)</text>
+
+    <rect x="326" y="34" width="228" height="122" rx="12" fill="#ffffff" stroke="#334155" stroke-width="2"/>
+    <text x="440" y="58" font-size="12.5" font-weight="800" fill="#334155" text-anchor="middle">② 캐리어 #3 위에서 실행 중</text>
+    <rect x="346" y="70" width="188" height="30" rx="7" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="440" y="90" font-size="11.5" font-weight="700" fill="#1e3a8a" text-anchor="middle">V-42의 프레임이 캐리어 스택 위에</text>
+    <text x="440" y="120" font-size="11.5" fill="#334155" text-anchor="middle">이 순간 V-42는 평범한 스레드와</text>
+    <text x="440" y="136" font-size="11.5" font-weight="700" fill="#16a34a" text-anchor="middle">기계어 수준에서 완전히 같다 (오버헤드 0)</text>
+
+    <path d="M554 95 L 654 95" stroke="#d97706" stroke-width="2.4" fill="none" marker-end="url(#a28e)"/>
+    <rect x="546" y="62" width="116" height="24" rx="12" fill="#d97706"/><text x="604" y="79" font-size="11" font-weight="800" fill="#ffffff" text-anchor="middle">블로킹 만남 → yield</text>
+
+    <rect x="658" y="34" width="196" height="122" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="756" y="58" font-size="12.5" font-weight="800" fill="#d97706" text-anchor="middle">③ freeze + unmount</text>
+    <text x="756" y="78" font-size="11.5" fill="#78350f" text-anchor="middle">아직 <tspan font-weight="700">멀쩡히 실행 중인</tspan> 본인이</text>
+    <text x="756" y="94" font-size="11.5" fill="#78350f" text-anchor="middle">자기 스택을 힙으로 복사하고</text>
+    <text x="756" y="110" font-size="11.5" fill="#78350f" text-anchor="middle">스스로 캐리어에서 내려온다</text>
+    <text x="756" y="132" font-size="11" font-weight="700" fill="#dc2626" text-anchor="middle">외부의 누가 떼어 내는 게 아니다</text>
+    <text x="756" y="148" font-size="11" fill="#92400e" text-anchor="middle">(협조적 스케줄링)</text>
+
+    <path d="M756 156 L 756 196" stroke="#d97706" stroke-width="2.4" fill="none" marker-end="url(#a28e)"/>
+
+    <rect x="612" y="200" width="242" height="76" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+    <text x="733" y="224" font-size="12.5" font-weight="800" fill="#334155" text-anchor="middle">④ 힙에 보관 — 몇 KB짜리 객체</text>
+    <text x="733" y="244" font-size="11.5" fill="#475569" text-anchor="middle"><tspan class="mono">VirtualThread.stackChunk</tspan> 안에</text>
+    <text x="733" y="262" font-size="11.5" fill="#475569" text-anchor="middle">프레임들이 얼려져 있다. OS 스레드는 0개 점유.</text>
+
+    <path d="M612 238 L 470 238" stroke="#16a34a" stroke-width="2.4" fill="none" marker-end="url(#a28g)"/>
+    <rect x="470" y="212" width="140" height="24" rx="12" fill="#16a34a"/><text x="540" y="229" font-size="11" font-weight="800" fill="#ffffff" text-anchor="middle">poller: "데이터 도착!"</text>
+
+    <rect x="236" y="200" width="230" height="76" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="351" y="224" font-size="12.5" font-weight="800" fill="#16a34a" text-anchor="middle">⑤ 대기열에 재등록</text>
+    <text x="351" y="244" font-size="11.5" fill="#14532d" text-anchor="middle">epoll을 감시하던 JVM 내부</text>
+    <text x="351" y="262" font-size="11.5" fill="#14532d" text-anchor="middle">poller 스레드가 다시 줄 세운다</text>
+
+    <path d="M236 238 L 124 238 L 124 138" stroke="#2563eb" stroke-width="2.4" fill="none" marker-end="url(#a28d)"/>
+    <text x="60" y="192" font-size="11.5" font-weight="800" fill="#2563eb">한 바퀴</text>
+
+    <rect x="26" y="296" width="828" height="60" rx="11" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="44" y="320" font-size="12.5" fill="#1e3a8a"><tspan font-weight="800">다시 올라타는 캐리어가 #3이 아니라 #5여도 아무 상관 없다.</tspan> 옮긴 것이 "실행 중인 스레드"가 아니라 <tspan font-weight="800">데이터</tspan>이기 때문이다 —</text>
+    <text x="44" y="342" font-size="12.5" fill="#1e3a8a">어느 실행대에 올려도 똑같이 복원된다. <tspan font-weight="800" fill="#dc2626">이 순환이 막히는 유일한 경우가 pinning이다(8절).</tspan></text>
+  </svg>
+  <figcaption>③에서 <b>내리는 주체가 "본인"</b>이라는 점이 이 기술의 성격을 결정한다. 커널처럼 <b>바깥에서 강제로 끊는(선점)</b> 것이 아니라 <b>정해진 지점에서 스스로 물러나는</b> 협조적 방식이라, 레지스터를 따로 백업할 필요가 없다(4절).</figcaption>
+</figure>
+
+<h3>2-4. 코드에서는 이렇게 바뀐다</h3>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 스레드가 비싸니 개수를 정해 놓고 아껴 쓰는 모델</div>
+<pre><code><span class="cm">// 200개를 미리 만들어 두고 돌려 쓴다</span>
+ExecutorService pool =
+    Executors.<span class="fn">newFixedThreadPool</span>(<span class="nm">200</span>);
+
+pool.submit(() -&gt; {
+<span class="ln-bad">    memberClient.get(id);   <span class="cm">// 여기서 워커가 잠든다</span></span>
+    <span class="kw">return</span> orderRepository.find(id);
+});
+
+<span class="cm">// 동시성 상한 = 200. 넘치면 큐에서 대기.</span>
+<span class="cm">// 풀을 닫는다 = 스레드 자원을 반납한다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 작업마다 하나 — 아낄 이유가 없으니 풀링 자체가 없다</div>
+<pre><code><span class="kw">try</span> (ExecutorService executor =
+        Executors.<span class="fn">newVirtualThreadPerTaskExecutor</span>()) {
+    executor.submit(() -&gt; {
+<span class="ln-good">        memberClient.get(id);   <span class="cm">// 블로킹처럼 '보이지만' 캐리어는 안 묶인다</span></span>
+        <span class="kw">return</span> orderRepository.find(id);
+    });
+}
+<span class="cm">// try-with-resources인 이유: ExecutorService가 AutoCloseable이라</span>
+<span class="cm">// 블록을 나갈 때 제출된 작업이 끝날 때까지 기다려 준다.</span>
+<span class="cm">// 풀을 반납하는 게 아니라 "작업 완료를 기다린다"는 의미다.</span></code></pre>
+  </div>
+</div>
+
+<pre><code><span class="cm"># Spring Boot 3.2+ 라면 설정 한 줄로 톰캣이 요청마다 가상 스레드를 쓴다</span>
+<span class="ln-warn">spring.threads.virtual.enabled=true   <span class="cm">// 이 한 줄이 부하 제한기를 걷어낸다는 사실은 9절에서</span></span></code></pre>
+
+<div class="myth">
+  <div class="m1 o">
+    <div class="h5">가장 큰 가치 — 코드 스타일을 바꾸지 않아도 된다</div>
+    <p>리액티브처럼 코드를 뒤집지 않고, 지금까지처럼 <b>순차적 · 블로킹 스타일</b>로 쓰면 JVM이 알아서 논블로킹처럼 굴려 준다.</p>
+    <p><b>스택트레이스도, 디버거도, <code>try-catch-finally</code>도, ThreadLocal 기반 도구도 그대로 살아 있다.</b></p>
+  </div>
+  <div class="m1 x">
+    <div class="h5">여기서 못 박아 둘 오해 — "빨라진다"가 아니다</div>
+    <p><b>가상 스레드는 처리 속도를 높이는 게 아니라 "대기 중 동시성"을 높이는 기술이다.</b></p>
+    <p>요청 하나가 350ms 걸리던 것이 <b>300ms가 되지는 않는다.</b> CPU 연산 위주 작업에는 <b>이득이 아예 없다</b> — 어차피 코어 수만큼만 동시에 돌 수 있으니까.</p>
+  </div>
+</div>
+
+<h2 id="s3">3. 스레드의 정체 — "콜 스택 + 실행 위치"라는 데이터</h2>
+
+<p>여기서부터가 이 문서의 핵심 난관인 <b>Continuation</b>이다. 결론부터 말하면 <b>"스택을 힙에 저장했다가 되살린다"</b>인데,
+이 문장이 손에 잡히려면 먼저 <b>스택이 무엇으로 이루어져 있는지</b>를 다시 확인해야 한다.</p>
+
+<figure>
+  <svg viewBox="0 0 880 348" role="img" aria-label="왼쪽은 handleRequest에서 getUser로 들어간 상태의 콜 스택을 세 개의 프레임으로 아래에서 위로 쌓아 보여주고, 오른쪽은 스택 프레임 하나를 확대해 지역변수 테이블, 피연산자 스택, 리턴 주소 세 칸으로 구성돼 있음을 보여주며, 아래에는 실행 중인 스레드의 상태가 콜 스택과 실행 위치 두 가지로 요약된다는 결론이 적힌 도식.">
+    <defs>
+      <marker id="a28f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="20" y="26" font-size="13.5" font-weight="800" fill="#1f2937"><tspan class="mono">handleRequest()</tspan>를 처리하다 <tspan class="mono">getUser()</tspan> 안에 들어와 있는 상태의 스택</text>
+
+    <rect x="24" y="42" width="376" height="184" rx="11" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+    <text x="40" y="62" font-size="11.5" fill="#64748b">아래에서 위로 쌓인다 · 이 스레드 전용 메모리</text>
+
+    <rect x="42" y="72" width="340" height="44" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="56" y="92" font-size="12.5" font-weight="800" class="mono" fill="#1e3a8a">getUser() 프레임</text>
+    <text x="56" y="108" font-size="11.5" fill="#334155">지역변수: <tspan class="mono">userId=42</tspan>, <tspan class="mono">conn=0x7f30</tspan> ← 지금 여기 실행 중</text>
+
+    <rect x="42" y="122" width="340" height="44" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="56" y="142" font-size="12.5" font-weight="700" class="mono" fill="#334155">handleRequest() 프레임</text>
+    <text x="56" y="158" font-size="11.5" fill="#475569">지역변수: <tspan class="mono">request=0x7f10</tspan> · 리턴 주소: 137번째 줄</text>
+
+    <rect x="42" y="172" width="340" height="40" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="56" y="197" font-size="12.5" font-weight="700" class="mono" fill="#334155">run() 프레임</text>
+
+    <line x1="404" y1="94" x2="454" y2="94" stroke="#2563eb" stroke-width="2" marker-end="url(#a28f)"/>
+    <text x="429" y="86" font-size="10.5" fill="#2563eb" text-anchor="middle">확대</text>
+
+    <rect x="458" y="42" width="398" height="184" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="476" y="64" font-size="13" font-weight="800" fill="#2563eb">프레임 하나 안에 들어 있는 것 셋</text>
+    <rect x="476" y="74" width="362" height="40" rx="8" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="490" y="92" font-size="12" font-weight="700" fill="#1f2937">① 지역변수 테이블</text>
+    <text x="490" y="108" font-size="11.5" fill="#475569">기본형 값과 <tspan font-weight="700">객체 참조(주소값)</tspan></text>
+    <rect x="476" y="118" width="362" height="40" rx="8" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="490" y="136" font-size="12" font-weight="700" fill="#1f2937">② 피연산자 스택</text>
+    <text x="490" y="152" font-size="11.5" fill="#475569">계산 중간값을 올려두는 임시 공간</text>
+    <rect x="476" y="162" width="362" height="46" rx="8" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="490" y="180" font-size="12" font-weight="700" fill="#1f2937">③ 리턴 주소</text>
+    <text x="490" y="196" font-size="11.5" fill="#475569">이 메서드가 끝나면 호출한 쪽의 <tspan font-weight="700">어느 줄로 돌아갈지</tspan></text>
+
+    <rect x="24" y="240" width="832" height="42" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+    <text x="440" y="266" font-size="13.5" font-weight="800" fill="#2563eb" text-anchor="middle">실행 중인 스레드의 상태 = ① 콜 스택(어떤 메서드를 타고 들어왔고 각 단계 지역변수가 무엇인지) + ② 실행 위치(어느 명령어까지)</text>
+
+    <rect x="24" y="292" width="832" height="44" rx="10" fill="#1e293b"/>
+    <text x="440" y="320" font-size="14" font-weight="800" fill="#fcd34d" text-anchor="middle">콜 스택은 신비로운 무언가가 아니라 그냥 메모리 덩어리다 — 그리고 데이터는 저장했다가 복원할 수 있다</text>
+  </svg>
+  <figcaption>이 한 문장이 가상 스레드의 <b>이론적 근거 전부</b>다. "프로그램이 어디까지 진행됐는가"라는 정보 전체가 <b>스택 안에 데이터로 들어 있다.</b></figcaption>
+</figure>
+
+<h3>3-1. 그럼 이 데이터는 어디에 사는가 — 언제냐에 따라 두 곳을 오간다</h3>
+
+<div class="scroll">
+<table>
+  <caption>가상 스레드의 콜 스택이 사는 곳</caption>
+  <thead><tr><th style="width:220px">가상 스레드의 상태</th><th>콜 스택이 사는 곳</th><th style="width:300px">그때의 성격</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>실행 중</b> (캐리어에 mount됨)</td><td><b>캐리어의 진짜 스택</b> — 캐리어 스택을 빌려 쓴다</td><td class="good">그 순간엔 평범한 스레드와 완전히 동일하게 동작 (오버헤드 0)</td></tr>
+    <tr><td><b>대기 중</b> (unmount됨)</td><td><b>힙</b>의 객체 (JVM 내부에서 <code>StackChunk</code>라 부른다)</td><td>GC가 관리하는 몇 KB짜리 자바 객체 · OS 스레드 점유 0</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>비용 차이의 정체는 "쓴 만큼만"이라는 네 글자다</h4>
+  <div class="side">
+    <div class="lft">
+      <div class="h">플랫폼 스레드</div>
+      <div class="bd">태어날 때 <b>수백 KB~2MB를 예약</b>받는다. 실제로 3단 깊이만 쓰든 300단을 쓰든 <b>예약량은 같다.</b></div>
+    </div>
+    <div class="rgt" style="border-left:2px solid var(--line)">
+      <div class="h" style="background:var(--ok)">가상 스레드</div>
+      <div class="bd"><b>자기만의 스택을 상시 보유하지 않는다.</b> 실행할 때만 캐리어 스택을 빌리고, 물러날 때는 <b>쓴 만큼만</b> 힙으로 챙겨 간다.</div>
+    </div>
+  </div>
+  <p style="margin:10px 0 0">그래서 <b>생성 비용</b>도 갈린다 — 플랫폼 스레드 생성은 커널에 <code>clone</code> 시스템 콜을 하고 스택 몇 MB를 예약하는 일이지만,
+  가상 스레드 생성은 <b>커널 시스템 콜 없이 힙에 <code>VirtualThread</code> 객체 하나 할당 + 스케줄러 대기열 등록</b>이 전부다.
+  <b>객체 <code>new</code> 수준으로 싸다</b> — "요청마다 만들고 버리는" 모델이 성립하는 근거가 여기 있다.</p>
+</div>
+
+<h2 id="s4">4. freeze / thaw — 스택과 힙을 오간다</h2>
+
+<p>이제 실제로 옮겨지는 그림을 보자. 캐리어 #3 위에서 가상 스레드 <b>V-42</b>가 돌다가 블로킹을 만나는 상황이다.
+<b>왼쪽이 캐리어의 진짜 스택, 오른쪽이 힙</b>이고, 세 컷을 나란히 놓으면 무엇이 어디로 가는지가 그대로 보인다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 428" role="img" aria-label="세 컷으로 나눈 도식. 1단계 마운트 중에는 V-42의 세 프레임이 캐리어 3번의 진짜 스택 위에 쌓여 있고 힙의 VirtualThread 객체의 stackChunk는 비어 있다. 2단계 freeze에서는 그 프레임들이 힙의 StackChunk 객체로 복사되어 옮겨지고 캐리어 스택이 비워져 캐리어가 자유로워진다. 3단계 thaw에서는 힙의 StackChunk가 다른 캐리어인 5번의 스택 위로 다시 펼쳐져 멈췄던 자리부터 재개된다.">
+    <defs>
+      <marker id="a28h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d97706"/></marker>
+      <marker id="a28i" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <!-- Panel 1 -->
+    <rect x="14" y="12" width="352" height="252" rx="13" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+    <rect x="14" y="12" width="352" height="30" rx="13" fill="#334155"/><rect x="14" y="30" width="352" height="12" fill="#334155"/>
+    <text x="190" y="33" font-size="12.5" font-weight="800" fill="#ffffff" text-anchor="middle">[1] mount 중 — 캐리어 스택 위에서 실행</text>
+    <rect x="28" y="52" width="150" height="200" rx="9" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="103" y="70" font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle">캐리어 #3의 스택</text>
+    <text x="103" y="83" font-size="9.5" fill="#64748b" text-anchor="middle">(OS가 준 진짜 스택)</text>
+    <rect x="38" y="90" width="130" height="26" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="103" y="107" font-size="10.5" class="mono" fill="#1e3a8a" text-anchor="middle">read() 프레임</text>
+    <rect x="38" y="120" width="130" height="26" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="103" y="137" font-size="10.5" class="mono" fill="#1e3a8a" text-anchor="middle">getMember() 프레임</text>
+    <rect x="38" y="150" width="130" height="26" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="103" y="167" font-size="10" class="mono" fill="#1e3a8a" text-anchor="middle">handleRequest() 프레임</text>
+    <text x="103" y="192" font-size="9.5" font-weight="700" fill="#2563eb" text-anchor="middle">── 여기까지가 V-42 ──</text>
+    <rect x="38" y="200" width="130" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="103" y="217" font-size="10" fill="#334155" text-anchor="middle">캐리어의 실행 루프</text>
+    <rect x="192" y="52" width="160" height="200" rx="9" fill="#fffbeb" stroke="#d97706"/>
+    <text x="272" y="70" font-size="10.5" font-weight="700" fill="#92400e" text-anchor="middle">힙</text>
+    <rect x="202" y="80" width="140" height="52" rx="6" fill="#ffffff" stroke="#fbbf24"/>
+    <text x="272" y="98" font-size="10" font-weight="700" class="mono" fill="#92400e" text-anchor="middle">VirtualThread V-42</text>
+    <text x="272" y="114" font-size="10" class="mono" fill="#78350f" text-anchor="middle">stackChunk = null</text>
+    <text x="272" y="127" font-size="9.5" fill="#a16207" text-anchor="middle">(아직 얼려 둔 게 없다)</text>
+    <rect x="202" y="142" width="140" height="40" rx="6" fill="#ffffff" stroke="#fbbf24"/>
+    <text x="272" y="166" font-size="10" fill="#78350f" text-anchor="middle">Member, Request … 일반 객체</text>
+    <text x="272" y="212" font-size="10.5" font-weight="700" fill="#16a34a" text-anchor="middle">이 순간 V-42는 평범한 스레드와</text>
+    <text x="272" y="228" font-size="10.5" font-weight="700" fill="#16a34a" text-anchor="middle">기계어 수준에서 완전히 같다</text>
+
+    <!-- Panel 2 -->
+    <rect x="384" y="12" width="352" height="252" rx="13" fill="#ffffff" stroke="#d97706" stroke-width="2"/>
+    <rect x="384" y="12" width="352" height="30" rx="13" fill="#d97706"/><rect x="384" y="30" width="352" height="12" fill="#d97706"/>
+    <text x="560" y="33" font-size="12.5" font-weight="800" fill="#ffffff" text-anchor="middle">[2] freeze — 프레임을 힙으로 복사하고 물러난다</text>
+    <rect x="398" y="52" width="150" height="200" rx="9" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="473" y="70" font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle">캐리어 #3의 스택</text>
+    <rect x="408" y="88" width="130" height="90" rx="6" fill="#ffffff" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    <text x="473" y="126" font-size="10.5" fill="#94a3b8" text-anchor="middle">V-42의 프레임이</text>
+    <text x="473" y="142" font-size="10.5" fill="#94a3b8" text-anchor="middle">전부 걷혀 비었다</text>
+    <text x="473" y="158" font-size="9.5" fill="#94a3b8" text-anchor="middle">(스택 포인터를 되감는다)</text>
+    <rect x="408" y="200" width="130" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="473" y="217" font-size="10" fill="#334155" text-anchor="middle">캐리어의 실행 루프</text>
+    <text x="473" y="243" font-size="10.5" font-weight="800" fill="#16a34a" text-anchor="middle">캐리어 #3은 자유 — 즉시 V-43을</text>
+
+    <line x1="552" y1="120" x2="596" y2="120" stroke="#d97706" stroke-width="2.6" marker-end="url(#a28h)"/>
+    <text x="574" y="112" font-size="10" font-weight="800" fill="#d97706" text-anchor="middle">복사</text>
+
+    <rect x="600" y="52" width="122" height="200" rx="9" fill="#fffbeb" stroke="#d97706"/>
+    <text x="661" y="70" font-size="10.5" font-weight="700" fill="#92400e" text-anchor="middle">힙</text>
+    <rect x="608" y="78" width="106" height="34" rx="6" fill="#ffffff" stroke="#fbbf24"/>
+    <text x="661" y="92" font-size="9.5" font-weight="700" class="mono" fill="#92400e" text-anchor="middle">VirtualThread V-42</text>
+    <text x="661" y="106" font-size="9.5" class="mono" fill="#78350f" text-anchor="middle">stackChunk ──┐</text>
+    <rect x="608" y="120" width="106" height="112" rx="6" fill="#fef3c7" stroke="#d97706" stroke-width="1.6"/>
+    <text x="661" y="136" font-size="9.5" font-weight="800" fill="#92400e" text-anchor="middle">StackChunk</text>
+    <text x="661" y="149" font-size="9" fill="#a16207" text-anchor="middle">(평범한 자바 객체)</text>
+    <rect x="616" y="156" width="90" height="20" rx="4" fill="#ffffff" stroke="#fbbf24"/><text x="661" y="170" font-size="9" class="mono" fill="#78350f" text-anchor="middle">read()</text>
+    <rect x="616" y="180" width="90" height="20" rx="4" fill="#ffffff" stroke="#fbbf24"/><text x="661" y="194" font-size="9" class="mono" fill="#78350f" text-anchor="middle">getMember()</text>
+    <rect x="616" y="204" width="90" height="20" rx="4" fill="#ffffff" stroke="#fbbf24"/><text x="661" y="218" font-size="9" class="mono" fill="#78350f" text-anchor="middle">handleRequest()</text>
+
+    <!-- Panel 3 -->
+    <rect x="754" y="12" width="352" height="252" rx="13" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
+    <rect x="754" y="12" width="352" height="30" rx="13" fill="#16a34a"/><rect x="754" y="30" width="352" height="12" fill="#16a34a"/>
+    <text x="930" y="33" font-size="12.5" font-weight="800" fill="#ffffff" text-anchor="middle">[3] thaw — 아무 캐리어에나 올려 복원</text>
+    <rect x="768" y="52" width="150" height="200" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="843" y="70" font-size="10.5" font-weight="700" fill="#14532d" text-anchor="middle">캐리어 #5의 스택</text>
+    <text x="843" y="83" font-size="9.5" fill="#16a34a" text-anchor="middle">(#3이 아니어도 무방)</text>
+    <rect x="778" y="90" width="130" height="26" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="843" y="107" font-size="10.5" class="mono" fill="#14532d" text-anchor="middle">read() 프레임</text>
+    <rect x="778" y="120" width="130" height="26" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="843" y="137" font-size="10.5" class="mono" fill="#14532d" text-anchor="middle">getMember() 프레임</text>
+    <rect x="778" y="150" width="130" height="26" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="843" y="167" font-size="10" class="mono" fill="#14532d" text-anchor="middle">handleRequest() 프레임</text>
+    <rect x="778" y="200" width="130" height="26" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="843" y="217" font-size="10" fill="#334155" text-anchor="middle">캐리어의 실행 루프</text>
+    <text x="843" y="243" font-size="10.5" font-weight="800" fill="#16a34a" text-anchor="middle">yield() 다음 줄부터 재개</text>
+
+    <line x1="1000" y1="120" x2="924" y2="120" stroke="#16a34a" stroke-width="2.6" marker-end="url(#a28i)"/>
+    <text x="962" y="112" font-size="10" font-weight="800" fill="#16a34a" text-anchor="middle">복원</text>
+
+    <rect x="1004" y="52" width="88" height="200" rx="9" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="1048" y="70" font-size="10.5" font-weight="700" fill="#334155" text-anchor="middle">힙</text>
+    <rect x="1012" y="78" width="72" height="46" rx="6" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="1048" y="94" font-size="9" font-weight="700" class="mono" fill="#334155" text-anchor="middle">V-42</text>
+    <text x="1048" y="108" font-size="8.5" class="mono" fill="#64748b" text-anchor="middle">stackChunk</text>
+    <text x="1048" y="119" font-size="8.5" class="mono" fill="#64748b" text-anchor="middle">= null (비웠다)</text>
+    <rect x="1012" y="134" width="72" height="98" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    <text x="1048" y="182" font-size="9.5" fill="#94a3b8" text-anchor="middle">GC가</text>
+    <text x="1048" y="196" font-size="9.5" fill="#94a3b8" text-anchor="middle">회수</text>
+
+    <rect x="14" y="278" width="1092" height="60" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.6"/>
+    <text x="34" y="302" font-size="13" fill="#1e3a8a"><tspan font-weight="800">비유: 게임 세이브 파일.</tspan> 진행 상태 전부를 파일로 저장해 두면 나중에, 심지어 <tspan font-weight="800">다른 컴퓨터에서도</tspan> 이어서 할 수 있다.</text>
+    <text x="34" y="324" font-size="13" fill="#1e3a8a">세이브 파일이 <tspan font-weight="800">게임기 본체에 잠겨 있었다면</tspan> 게임 수만큼 본체가 필요했겠지만, <tspan font-weight="800">이동식 카드</tspan>가 되는 순간 <tspan font-weight="800">본체 8대로 게임 100만 개</tspan>를 이어 할 수 있게 된다.</text>
+
+    <rect x="14" y="350" width="1092" height="64" rx="12" fill="#1e293b"/>
+    <text x="34" y="376" font-size="13" fill="#e2e8f0"><tspan font-weight="800" fill="#fcd34d">Continuation(이어가기)</tspan> = "멈춘 지점부터 이어서 실행할 수 있게 통째로 챙겨 둔 실행 상태". <tspan fill="#86efac">freeze</tspan>는 그것을 힙에 얼리는 것, <tspan fill="#86efac">thaw</tspan>는 다시 녹여 펼치는 것.</text>
+    <text x="34" y="400" font-size="13" fill="#e2e8f0"><tspan font-weight="800" fill="#fca5a5">이 셋 중 어느 컷도 불가능해지는 지점이 pinning이다</tspan> — [2]에서 프레임을 옮길 수 없으면 캐리어는 붙잡힌 채로 남는다(8절).</text>
+  </svg>
+  <figcaption><b>freeze는 "복사 + 되감기"</b>이고 <b>thaw는 "펼치기"</b>다. 옮겨진 뒤의 V-42는 <b>힙에 사는 평범한 자바 객체 몇 KB</b>일 뿐이라, 이 상태로 100만 개가 있어도 OS 스레드는 하나도 쓰지 않는다.</figcaption>
+</figure>
+
+<h3>4-1. "실행 위치"는 왜 따로 백업하지 않는가 — 협조적 스케줄링</h3>
+
+<p>freeze는 아무 데서나 일어나지 않고 <b>항상 <code>Continuation.yield()</code>라는 정해진 메서드 호출 지점에서</b> 일어난다.
+메서드를 호출한 지점이라는 것은 곧 <b>"돌아올 위치가 이미 스택 프레임의 리턴 주소로 기록돼 있다"</b>는 뜻이다.
+그래서 <b>CPU 레지스터를 따로 챙길 필요가 없다.</b></p>
+
+<div class="side">
+  <div class="lft">
+    <div class="h">커널의 방식 — 선점(preemption)</div>
+    <div class="bd">언제든 스레드를 <b>강제로 끊을 수 있다.</b> 그래서 끊긴 순간의 <b>레지스터와 프로그램 카운터를 전부 저장</b>해야 하고, 그 저장소는 <b>커널 안</b>에 있다.
+    <p style="margin:8px 0 0"><b>기절한 사람의 기억을 나중에 꺼내는 방식</b></p></div>
+  </div>
+  <div class="rgt">
+    <div class="h" style="background:var(--ok)">가상 스레드 — 협조적(cooperative)</div>
+    <div class="bd"><b>본인이 정해진 지점에서 스스로 물러난다.</b> 물러나기 직전이므로 <b>스택에 이미 다 적혀 있다</b> — 따로 백업할 레지스터가 없다.
+    <p style="margin:8px 0 0"><b>잠들기 전에 본인이 일기를 써 두는 방식</b></p></div>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>왜 <u>JVM만</u> 이걸 할 수 있나 — GC가 쓰던 능력의 재활용</h4>
+  <p style="margin-top:0">스택 프레임을 힙으로 복사하려면 <b>스택 안에 뭐가 어디 있는지 완벽히 알아야</b> 한다.
+  어떤 4바이트가 <code>int</code> 값이고 어떤 4바이트가 <b>객체를 가리키는 참조</b>인지 구분하지 못하면, 옮긴 뒤에 GC가 그 참조를 추적하지 못해 <b>살아 있는 객체를 회수해 버린다.</b></p>
+  <div class="myth">
+    <div class="m1 o">
+      <div class="h5">자바 프레임 — JVM이 전부 안다</div>
+      <p><b>모든 프레임을 자기가 만들었고, 각 칸이 무엇인지 기록한 메타데이터를 들고 있다</b> — <b>GC가 스택을 훑으며 살아 있는 참조를 찾을 때 쓰던 바로 그 능력</b>이다.</p>
+      <p>그래서 힙의 <code>StackChunk</code>로 옮긴 뒤에도 GC가 그 안의 참조를 정상적으로 추적한다.</p>
+    </div>
+    <div class="m1 x">
+      <div class="h5">네이티브(JNI) 프레임 — 옮길 수가 없다</div>
+      <p>C로 컴파일된 프레임은 JVM이 <b>내부 구조를 모른다.</b> 어떤 칸이 참조인지 알 수 없어 <b>GC 추적이 불가능</b>하다.</p>
+      <p>게다가 C 코드는 <b>스택 주소 자체를 포인터로 들고 있을 수 있어서</b>, 프레임을 옮기는 순간 그 포인터가 엉뚱한 곳을 가리킨다.</p>
+      <p style="margin-bottom:0"><b>→ 이것이 구조적 pinning의 근본 원인이다(8절).</b></p>
+    </div>
+  </div>
+  <p style="margin-bottom:0">또 하나. 블로킹을 "epoll 등록 + yield"로 바꿔치기하려면 <b>그 경로가 전부 JDK 진영의 코드여야</b> 한다 — 뒤집어 말하면
+  <b>블로킹이 일어나는 JDK의 모든 지점을 재작성해야 했다</b>는 뜻이다. <b>이것이 Loom이 6년(2017~2023) 걸린 가장 큰 이유다.</b></p>
+</div>
+
+<h2 id="s5">5. 블로킹 한 번의 타임라인 — 플랫폼 vs 가상</h2>
+
+<p>애플리케이션 코드가 쓰는 문장은 <b>양쪽 모두 똑같다.</b> 이 한 줄 아래에서 벌어지는 일이 완전히 다르다.</p>
+
+<pre><code>socket.getInputStream().<span class="fn">read</span>(buf);   <span class="cm">// 응답 도착까지 300ms 걸린다고 하자</span></code></pre>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 452" role="img" aria-label="위쪽은 플랫폼 스레드의 타임라인으로 톰캣 워커 7번이 read 호출과 함께 블로킹 시스템 콜로 커널에 진입해 299밀리초 동안 아무것도 못 하다가 커널이 깨우는 흐름이고, 아래쪽은 가상 스레드의 타임라인으로 V-42가 epoll에 소켓을 등록하고 스스로 얼어붙어 캐리어에서 내려간 뒤 캐리어 3번은 V-43, V-44를 쉬지 않고 처리하며 300밀리초에 poller가 알림을 받아 V-42를 재등록하고 301밀리초에 다른 캐리어에서 재개되는 흐름을 보여주는 대비 도식.">
+    <defs>
+      <pattern id="hatch28" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="#fee2e2"/><line x1="0" y1="0" x2="0" y2="8" stroke="#fca5a5" stroke-width="3"/></pattern>
+    </defs>
+
+    <rect x="14" y="12" width="1092" height="188" rx="13" fill="#fef2f2" stroke="#fecaca" stroke-width="2"/>
+    <text x="34" y="38" font-size="14" font-weight="800" fill="#dc2626">[플랫폼 스레드] 톰캣 워커 #7 (= OS 스레드 #7)</text>
+
+    <line x1="150" y1="60" x2="1090" y2="60" stroke="#cbd5e1" stroke-width="1.3"/>
+    <text x="150" y="54" font-size="10.5" fill="#94a3b8">t=0ms</text>
+    <text x="176" y="54" font-size="10.5" fill="#94a3b8">1ms</text>
+    <text x="1032" y="54" font-size="10.5" fill="#94a3b8">300ms</text>
+
+    <text x="34" y="98" font-size="12" font-weight="700" fill="#334155">OS 스레드 #7</text>
+    <rect x="150" y="72" width="26" height="44" rx="5" fill="#2563eb"/>
+    <rect x="176" y="72" width="874" height="44" rx="5" fill="url(#hatch28)" stroke="#dc2626" stroke-width="1.4"/>
+    <rect x="1050" y="72" width="40" height="44" rx="5" fill="#2563eb"/>
+    <text x="613" y="92" font-size="12.5" font-weight="800" fill="#991b1b" text-anchor="middle">커널이 #7을 '대기' 상태로 재운다 — 299ms 동안 아무것도 못 한다</text>
+    <text x="613" y="109" font-size="11.5" fill="#7f1d1d" text-anchor="middle">이 동안 서버의 동시 처리 능력에서 워커 하나가 통째로 빠져 있다</text>
+
+    <line x1="176" y1="122" x2="176" y2="140" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="182" y="136" font-size="11" fill="#7f1d1d"><tspan class="mono">read()</tspan> 호출 → <tspan font-weight="700">블로킹 시스템 콜로 커널에 진입</tspan></text>
+    <line x1="1050" y1="122" x2="1050" y2="140" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="1044" y="136" font-size="11" fill="#7f1d1d" text-anchor="end">데이터 도착 → 커널이 #7을 깨움</text>
+
+    <rect x="34" y="152" width="1052" height="34" rx="8" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="50" y="174" font-size="12" fill="#7f1d1d">깨어날 때 <tspan font-weight="800">컨텍스트 스위칭 비용 + CPU 캐시 오염</tspan>을 한 번 치른다. 그리고 JVM이 끼어들 지점은 <tspan font-weight="800" fill="#dc2626">0곳이었다</tspan> — 잠드는 위치가 <tspan font-weight="800">커널 안</tspan>이기 때문이다.</text>
+
+    <rect x="14" y="212" width="1092" height="228" rx="13" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="2"/>
+    <text x="34" y="238" font-size="14" font-weight="800" fill="#16a34a">[가상 스레드] 캐리어 #3(OS 스레드 8개 중 하나) 위의 V-42</text>
+
+    <line x1="150" y1="258" x2="1090" y2="258" stroke="#cbd5e1" stroke-width="1.3"/>
+    <text x="150" y="252" font-size="10.5" fill="#94a3b8">t=0ms</text>
+    <text x="176" y="252" font-size="10.5" fill="#94a3b8">1ms</text>
+    <text x="1032" y="252" font-size="10.5" fill="#94a3b8">300ms</text>
+    <text x="1074" y="252" font-size="10.5" fill="#94a3b8">301ms</text>
+
+    <text x="34" y="292" font-size="12" font-weight="700" fill="#334155">V-42</text>
+    <text x="34" y="306" font-size="10.5" fill="#64748b">(가상 스레드)</text>
+    <rect x="150" y="270" width="26" height="42" rx="5" fill="#16a34a"/>
+    <rect x="176" y="270" width="874" height="42" rx="5" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 3"/>
+    <rect x="1050" y="270" width="40" height="42" rx="5" fill="#16a34a"/>
+    <text x="613" y="289" font-size="12.5" font-weight="800" fill="#334155" text-anchor="middle">freeze 되어 힙에 얼려져 있다 — 몇 KB짜리 객체</text>
+    <text x="613" y="305" font-size="11.5" fill="#64748b" text-anchor="middle">OS 스레드 점유 = 0</text>
+
+    <text x="34" y="352" font-size="12" font-weight="700" fill="#334155">캐리어 #3</text>
+    <text x="34" y="366" font-size="10.5" fill="#64748b">(OS 스레드)</text>
+    <rect x="150" y="330" width="26" height="42" rx="5" fill="#16a34a"/>
+    <rect x="176" y="330" width="874" height="42" rx="5" fill="#dcfce7" stroke="#16a34a" stroke-width="1.4"/>
+    <rect x="1050" y="330" width="40" height="42" rx="5" fill="#e2e8f0" stroke="#94a3b8"/>
+    <text x="613" y="349" font-size="12.5" font-weight="800" fill="#14532d" text-anchor="middle">V-43, V-44, V-45 … 를 쉬지 않고 처리한다</text>
+    <text x="613" y="365" font-size="11.5" fill="#166534" text-anchor="middle">299ms 동안 OS 스레드는 단 하나도 놀지 않았다 — 한순간도 안 잔다</text>
+    <text x="1070" y="356" font-size="10" fill="#64748b" text-anchor="middle">다른 일</text>
+
+    <line x1="176" y1="316" x2="176" y2="330" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="182" y="326" font-size="10.5" fill="#166534">① 가상 스레드인지 확인 → ② 소켓을 논블로킹으로 <tspan font-weight="700">epoll에 등록</tspan>(즉시 리턴) → ③ <tspan class="mono">Continuation.yield()</tspan> → freeze → unmount</text>
+
+    <line x1="1050" y1="316" x2="1050" y2="270" stroke="#16a34a" stroke-width="1.4" marker-end="url(#a28i)"/>
+
+    <rect x="640" y="384" width="446" height="44" rx="9" fill="#ffffff" stroke="#16a34a"/>
+    <text x="656" y="402" font-size="11.5" fill="#14532d"><tspan font-weight="800">t=300ms</tspan> epoll을 감시하던 JVM 내부 <tspan font-weight="800">poller 스레드</tspan>가 알림 수신 → V-42를 대기열에 재등록</text>
+    <text x="656" y="419" font-size="11.5" fill="#14532d"><tspan font-weight="800">t=301ms</tspan> 비어 있는 캐리어(<tspan font-weight="700">#5일 수도 있다</tspan>)가 V-42를 thaw → yield 다음 줄부터 재개</text>
+
+    <rect x="34" y="384" width="590" height="44" rx="9" fill="#1e293b"/>
+    <text x="50" y="402" font-size="12" fill="#e2e8f0"><tspan font-weight="800" fill="#fcd34d">결정적 아이디어</tspan> — 가상 스레드는 <tspan font-weight="800">블로킹 시스템 콜에 아예 들어가지 않는다.</tspan></text>
+    <text x="50" y="419" font-size="12" fill="#e2e8f0">잠든 뒤 꺼내오는 게 아니라, <tspan fill="#86efac" font-weight="800">아직 멀쩡히 실행 중인 스레드가 자기 손으로</tspan> 물러난다.</text>
+  </svg>
+  <figcaption>같은 <code>read()</code> 한 줄인데, 위쪽은 <b>OS 스레드가 299ms 동안 통째로 빠져 있고</b> 아래쪽은 <b>OS 스레드가 한순간도 놀지 않는다.</b> 묶여 있던 것은 <b>힙의 객체 몇 KB</b>뿐이다.</figcaption>
+</figure>
+
+<h3>5-1. epoll이란 무엇인가 — 스레드 하나가 소켓 1만 개를 감시하는 진동벨</h3>
+
+<figure>
+  <svg viewBox="0 0 880 262" role="img" aria-label="왼쪽은 블로킹 방식으로 주문마다 직원 한 명이 주방 앞에 서서 기다리는 그림에 대응해 소켓마다 스레드 하나가 붙는 구조이고, 오른쪽은 진동벨 방식으로 커널의 epoll에 소켓 1만 개를 등록해 두고 poller 스레드 하나가 도착 알림만 받아 처리하는 구조를 보여주는 대비 도식.">
+    <rect x="14" y="12" width="416" height="200" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="2"/>
+    <text x="34" y="38" font-size="13" font-weight="800" fill="#dc2626">블로킹 방식 — 주문마다 직원이 주방 앞에 선다</text>
+    <g>
+      <rect x="34" y="54" width="106" height="30" rx="7" fill="#ffffff" stroke="#fca5a5"/><text x="87" y="74" font-size="11" fill="#7f1d1d" text-anchor="middle">스레드 #1 대기</text>
+      <rect x="34" y="90" width="106" height="30" rx="7" fill="#ffffff" stroke="#fca5a5"/><text x="87" y="110" font-size="11" fill="#7f1d1d" text-anchor="middle">스레드 #2 대기</text>
+      <rect x="34" y="126" width="106" height="30" rx="7" fill="#ffffff" stroke="#fca5a5"/><text x="87" y="146" font-size="11" fill="#7f1d1d" text-anchor="middle">스레드 #3 대기</text>
+      <text x="87" y="178" font-size="11.5" fill="#7f1d1d" text-anchor="middle">… 소켓 1만 개면</text>
+      <text x="87" y="194" font-size="11.5" font-weight="800" fill="#dc2626" text-anchor="middle">스레드 1만 개</text>
+    </g>
+    <g stroke="#dc2626" stroke-width="1.4">
+      <line x1="140" y1="69" x2="256" y2="69"/><line x1="140" y1="105" x2="256" y2="105"/><line x1="140" y1="141" x2="256" y2="141"/>
+    </g>
+    <rect x="256" y="54" width="158" height="102" rx="9" fill="#ffffff" stroke="#dc2626"/>
+    <text x="335" y="100" font-size="12" font-weight="700" fill="#991b1b" text-anchor="middle">커널 (주방)</text>
+    <text x="335" y="118" font-size="11" fill="#7f1d1d" text-anchor="middle">각 스레드를 재워 둔다</text>
+
+    <rect x="450" y="12" width="416" height="200" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="2"/>
+    <text x="470" y="38" font-size="13" font-weight="800" fill="#16a34a">epoll — 진동벨을 나눠 주고 한 명만 지킨다</text>
+    <rect x="470" y="54" width="130" height="102" rx="9" fill="#ffffff" stroke="#16a34a"/>
+    <text x="535" y="82" font-size="12" font-weight="800" fill="#14532d" text-anchor="middle">poller 스레드</text>
+    <text x="535" y="100" font-size="11" fill="#166534" text-anchor="middle">단 하나</text>
+    <text x="535" y="122" font-size="11" fill="#166534" text-anchor="middle">"도착한 놈 있어?"</text>
+    <text x="535" y="140" font-size="11" fill="#166534" text-anchor="middle">알림만 받는다</text>
+    <g stroke="#16a34a" stroke-width="1.6">
+      <line x1="600" y1="105" x2="700" y2="105"/>
+    </g>
+    <rect x="700" y="54" width="150" height="102" rx="9" fill="#ffffff" stroke="#16a34a"/>
+    <text x="775" y="78" font-size="12" font-weight="700" fill="#14532d" text-anchor="middle">커널의 epoll</text>
+    <text x="775" y="98" font-size="11" fill="#166534" text-anchor="middle">소켓 10,000개 등록</text>
+    <text x="775" y="116" font-size="11" fill="#166534" text-anchor="middle">"데이터 오면 알려줄게"</text>
+    <text x="775" y="140" font-size="10.5" fill="#64748b" text-anchor="middle">macOS: kqueue · 윈도우: IOCP</text>
+    <text x="660" y="180" font-size="11.5" font-weight="800" fill="#16a34a" text-anchor="middle">스레드 하나가 소켓 1만 개를 감시한다</text>
+    <text x="660" y="196" font-size="11" fill="#166534" text-anchor="middle">= 리눅스 커널이 제공하는 "I/O 이벤트 알림 서비스"</text>
+
+    <rect x="14" y="222" width="852" height="30" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="440" y="242" font-size="12.5" fill="#1e3a8a" text-anchor="middle">가상 스레드가 하는 일은 <tspan font-weight="800">"내 소켓을 진동벨에 등록하고, 벨이 울릴 때까지 자리를 비켜 주는 것"</tspan>이다.</text>
+  </svg>
+  <figcaption>블로킹이 <b>주문마다 직원 한 명이 주방 앞에 서서 음식을 기다리는 것</b>이라면, epoll은 <b>진동벨</b>이다.</figcaption>
+</figure>
+
+<div class="callout warn">
+  <span class="t">캐리어에 대한 오해도 여기서 걷어낸다 — 캐리어는 마법이 아니다</span>
+  OS 입장에서 보면 <code>new Thread()</code>로 만든 것과 <b>아무 차이 없는 평범한 OS 스레드</b>이고, 특별한 커널 기능도 쓰지 않는다.
+  다만 그 스레드가 실행하는 <b>프로그램이</b> "대기열에서 얼려진 가상 스레드 꺼내기 → thaw → 실행 → yield하면 다음 것 꺼내기"라는 루프일 뿐이다.
+  <b>목수 8명이 의뢰 10만 건을 처리하는 것은 작업대가 마법이어서가 아니라 "재료를 기다리게 된 작업은 하다 만 상태 그대로 서랍에 넣고 다른 의뢰를 꺼낸다"는 규칙 덕분이다.</b>
+  <div class="rule ok" style="margin-top:10px">마법은 작업대(캐리어)가 아니라 서랍(Continuation의 freeze/thaw)에 있다</div>
+</div>
+
+<h2 id="s6">6. 왜 과거엔 못 했나 — 개입 타이밍과 그린 스레드</h2>
+
+<div class="myth">
+  <div class="m1 x">
+    <div class="h5">흔한 오해 — "스택이 OS 소유라서 JVM이 못 읽는다"</div>
+    <p><b>아니다.</b> OS 스레드의 스택은 <b>내 프로세스의 주소 공간 안에 있는 평범한 유저 메모리</b>이고, JVM은 언제든 읽고 쓸 수 있다.</p>
+  </div>
+  <div class="m1 o">
+    <div class="h5">OS가 진짜로 쥐고 있던 것 — 두 가지 통제권</div>
+    <p><b>① 스케줄링 권한</b> — 스레드를 언제 재우고 언제 깨울지는 <b>커널만</b> 결정한다.</p>
+    <p><b>② 끊긴 순간의 실행 위치</b> — 선점으로 끊으면 레지스터와 PC는 <b>커널의 컨텍스트 저장소</b>로 들어간다. JVM은 임의 시점의 이 정보에 접근할 수 없다.</p>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="애플리케이션 코드에서 read를 호출하면 JDK 내부 자바 코드를 거쳐 시스템 콜 경계를 넘어 커널로 들어가는 경로를 가로로 그리고, 과거에는 JDK 구간을 그냥 지나쳐 커널에서 잠들었기 때문에 JVM이 끼어들 지점이 0곳이었음을 위쪽에 표시하고, Loom은 커널로 들어가기 직전인 JDK 소유 구간에서 방향을 틀어 epoll 등록과 yield로 바꿔치기했음을 아래쪽에 표시한 도식.">
+    <defs>
+      <marker id="a28k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="a28l" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <rect x="20" y="96" width="200" height="76" rx="11" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="120" y="124" font-size="12.5" font-weight="800" fill="#2563eb" text-anchor="middle">애플리케이션 코드</text>
+    <text x="120" y="144" font-size="11.5" class="mono" fill="#1e3a8a" text-anchor="middle">socket.read(buf)</text>
+    <text x="120" y="161" font-size="10.5" fill="#64748b" text-anchor="middle">한 줄. 양쪽 모두 동일하다.</text>
+
+    <rect x="248" y="96" width="330" height="76" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.4"/>
+    <text x="413" y="120" font-size="12.5" font-weight="800" fill="#16a34a" text-anchor="middle">JDK가 소유한 자바 코드 구간</text>
+    <text x="413" y="140" font-size="11" fill="#14532d" text-anchor="middle"><tspan class="mono">Socket</tspan> · <tspan class="mono">InputStream</tspan> · <tspan class="mono">Thread.sleep</tspan></text>
+    <text x="413" y="157" font-size="11" fill="#14532d" text-anchor="middle"><tspan class="mono">BlockingQueue</tspan> · JDBC 아래의 소켓</text>
+
+    <rect x="606" y="70" width="26" height="128" rx="6" fill="#1e293b"/>
+    <text x="619" y="60" font-size="11" font-weight="800" fill="#334155" text-anchor="middle">시스템 콜 경계</text>
+    <text x="619" y="212" font-size="10.5" fill="#64748b" text-anchor="middle">여기를 넘으면 JVM의 손이 닿지 않는다</text>
+
+    <rect x="660" y="96" width="440" height="76" rx="11" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+    <text x="880" y="120" font-size="12.5" font-weight="800" fill="#334155" text-anchor="middle">커널</text>
+    <text x="880" y="140" font-size="11.5" fill="#475569" text-anchor="middle">여기서 잠들면 실행 상태가 <tspan font-weight="700">커널의 컨텍스트 저장소</tspan>로 들어간다</text>
+    <text x="880" y="158" font-size="11.5" fill="#475569" text-anchor="middle">깨우는 시점도 커널만 결정한다</text>
+
+    <path d="M220 118 L 250 118" stroke="#dc2626" stroke-width="2.4" fill="none"/>
+    <path d="M578 118 L 604 118" stroke="#dc2626" stroke-width="2.4" fill="none"/>
+    <path d="M634 118 L 656 118" stroke="#dc2626" stroke-width="2.4" fill="none" marker-end="url(#a28k)"/>
+    <rect x="248" y="30" width="852" height="28" rx="8" fill="#fef2f2" stroke="#fca5a5"/>
+    <text x="266" y="49" font-size="12" fill="#7f1d1d"><tspan font-weight="800" fill="#dc2626">과거(1:1)</tspan> — <tspan class="mono">read()</tspan>를 호출하면 <tspan font-weight="800">곧장 커널로 직행</tspan>했다. 잠드는 위치가 커널 안이라 <tspan font-weight="800">"잠깐, 재우지 말고 그 스택만 나한테 줘"라고 말할 타이밍이 0곳이었다.</tspan></text>
+
+    <path d="M413 172 L 413 214" stroke="#16a34a" stroke-width="2.6" fill="none" marker-end="url(#a28l)"/>
+    <rect x="120" y="218" width="586" height="70" rx="11" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
+    <text x="140" y="240" font-size="12.5" font-weight="800" fill="#16a34a">Loom — 장벽을 뚫은 게 아니라 <u>장벽 앞에서 방향을 튼 것</u></text>
+    <text x="140" y="260" font-size="11.5" fill="#14532d">커널에 들어간 뒤에 꺼내려 하지 말고, <tspan font-weight="800">애초에 들어가지 않는다.</tspan></text>
+    <text x="140" y="278" font-size="11.5" fill="#14532d">가능한 이유는 <tspan font-weight="800">시스템 콜 직전 경로가 전부 JDK가 소유한 자바 코드</tspan>이기 때문이다.</text>
+
+    <rect x="722" y="218" width="378" height="70" rx="11" fill="#1e293b"/>
+    <text x="740" y="242" font-size="12" fill="#e2e8f0"><tspan font-weight="800" fill="#fcd34d">뒤집어 말하면</tspan> — 블로킹이 일어나는</text>
+    <text x="740" y="262" font-size="12" fill="#e2e8f0"><tspan font-weight="800" fill="#86efac">JDK의 모든 지점을 재작성해야 했다.</tspan></text>
+    <text x="740" y="280" font-size="11.5" fill="#94a3b8">Loom이 6년(2017~2023) 걸린 가장 큰 이유다.</text>
+  </svg>
+  <figcaption>장벽은 <b>"메모리 소유"가 아니라 "개입 타이밍"</b>이었다. 그리고 그 타이밍은 <b>JDK가 소유한 자바 코드 구간</b>에만 있다 — <b>네이티브 호출은 이 구간이 없어서 어떤 버전에서도 pinning이 남는다.</b></figcaption>
+</figure>
+
+<h3>6-1. 1:1을 깬 본질 — "실행 상태의 소유권" 이동</h3>
+
+<p><b>소유권</b>이란 "멈춘 작업을 이어가는 데 필요한 데이터를 <b>누가 쥐고 있고</b>, 재개 시점을 <b>누가 결정하는가</b>"를 말한다.</p>
+
+<div class="owner">
+  <div class="l">
+    <div class="oh">플랫폼 스레드 — 소유자가 커널</div>
+    <div class="ob">블로킹하면 그 순간의 실행 상태는 <b>커널의 컨텍스트 저장소</b>에 들어가고, 깨우는 시점도 커널만 결정한다.
+    <p style="margin:8px 0 0">그 작업을 이어갈 수 있는 <b>유일한 존재가 바로 그 OS 스레드</b>가 된다.</p>
+    <p style="margin:8px 0 0"><b>→ 자바 스레드 100만 개를 원하면 OS 스레드도 100만 개(1:1 강제)</b></p></div>
+  </div>
+  <div class="r2">
+    <div class="oh">가상 스레드 — 소유자가 힙(=JVM)</div>
+    <div class="ob">멈춘 상태가 <b>힙의 평범한 자바 객체</b>라서 <b>아무 OS 스레드 위에서나 복원할 수 있는 이동식 데이터</b>가 된다.
+    <p style="margin:8px 0 0">재개 시점도 JVM 스케줄러가 정한다.</p>
+    <p style="margin:8px 0 0"><b>→ 실행 상태 100만 개를 OS 스레드 8개가 돌려가며 재생(M:N)</b></p></div>
+  </div>
+</div>
+
+<h3>6-2. 왜 한 번 버렸다가 돌아왔는가 — 그린 스레드의 실패와 부활</h3>
+
+<p>이 아이디어는 새것이 아니다. <b>자바 1.0~1.2 시절 "그린 스레드(green threads)"라는 이름으로 정확히 이 발상이 있었다.</b>
+OS 스레드 하나 위에서 JVM이 여러 자바 스레드를 스케줄링하는 방식, 즉 <b>M:1</b>이다. 1.3 즈음 이것을 걷어내고 OS 스레드 1:1로 갈아탔다.</p>
+
+<div class="scroll">
+<table class="wide">
+  <caption>그린 스레드가 실패한 이유와, 가상 스레드에서 그것이 해소된 방식</caption>
+  <thead><tr><th style="width:300px">그린 스레드가 실패한 이유</th><th style="width:330px">당시의 사정</th><th>가상 스레드에서 해소된 방식</th></tr></thead>
+  <tbody>
+    <tr class="bad"><td><b>M:1이라 멀티코어를 못 씀</b></td><td>OS 스레드 <b>하나</b> 위의 다중화라 코어가 몇 개든 하나만 썼다. 막 SMP 서버가 퍼지던 시기라 치명적이었다.</td><td class="good"><b>M:N</b> — 캐리어를 코어 수만큼 두고 <b>work-stealing 스케줄러(ForkJoinPool)</b>로 분배</td></tr>
+    <tr class="bad"><td><b>블로킹 콜 하나가 전체 마비</b></td><td>그린 스레드 하나가 파일 읽기로 블로킹되면 유일한 OS 스레드가 잠들어 나머지 전부가 정지했다. <b>당시 OS에는 epoll/kqueue가 없거나 미성숙</b>했다.</td><td class="good"><b>epoll/kqueue + 자바 NIO</b> 위에서 JDK 블로킹 API의 <b>겉모습은 그대로 두고 속만 재작성</b></td></tr>
+    <tr class="bad"><td><b>(기술 부족)</b></td><td>스택을 힙으로 옮기고 GC와 JIT가 그것을 감당하게 만드는 기술 자체가 없었다.</td><td class="good">힙에 얼린 스택의 <b>GC 추적</b>, <b>JIT 프레임 freeze/thaw</b> 등 <b>Continuation을 감당할 JVM 기술</b>이 성숙</td></tr>
+    <tr class="bad"><td><b>필요가 크지 않았음 + OS 스레드가 좋아짐</b></td><td>리눅스 NPTL 등으로 커널 스레드가 빨라지면서 "그냥 OS에 맡기는 게 단순하고 충분히 빠르다"가 합리적이었다.</td><td class="good">마이크로서비스 시대에 <b>I/O 대기형 워크로드가 폭증</b>했고, <b>Go의 고루틴</b>이 M:N이 실전에서 통함을 증명</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="bigrule2">개념이 없어서가 아니라 <span class="r">구현할 기반 기술이 없었고</span> 당시 워크로드에선 <span class="r">필요도 크지 않았다</span> —<br>가상 스레드는 <span class="g">실패 원인이 전부 해소된 형태로 돌아온 부활</span>이다</div>
+
+<h2 id="s7">7. 역할 분담과 오버헤드 — 마법은 캐리어가 아니다</h2>
+
+<p>mount/unmount를 지휘하는 <b>별도의 "관리자 스레드"는 없다.</b> 역할이 넷으로 나뉘어 있고, 이 넷을 구분해 말하면 "동작 원리를 안다"는 인상이 확실해진다.</p>
+
+<div class="memo">
+  <h4>암기 문장 — 만드는 건 아무나, 내리는 건 본인, 올리는 건 캐리어, 깨우는 건 poller</h4>
+  <div class="four">
+    <div class="f1"><div class="ttl">만드는 건 — 아무나</div><div class="who">Thread.ofVirtual().start()</div><div class="d">생성 API를 호출한 스레드가 만든다. Spring Boot에서 <code>spring.threads.virtual.enabled=true</code>면 <b>톰캣 내부 스레드가 요청마다</b> 호출한다.
+    <p style="margin:6px 0 0"><b>실체는 커널 시스템 콜 없이 힙에 객체 하나 할당 + 대기열 등록</b>이 전부다.</p></div></div>
+    <div class="f1 w"><div class="ttl">내리는 건 — 본인</div><div class="who">Continuation.yield()</div><div class="d">블로킹 직전, <b>아직 멀쩡히 실행 중인 가상 스레드</b>가 자기 스택을 힙에 복사하고 <b>스스로 물러난다.</b>
+    <p style="margin:6px 0 0"><b>외부의 누가 떼어 내는 게 아니다</b> — 협조적 스케줄링.</p></div></div>
+    <div class="f1 g"><div class="ttl">올리는 건 — 캐리어</div><div class="who">ForkJoinPool worker loop</div><div class="d">캐리어가 도는 코드가 곧 무한 루프다 — <b>"대기열에서 하나 꺼냄 → thaw → 실행 → yield/종료하면 → 다시 꺼냄".</b>
+    <p style="margin:6px 0 0">mount는 <b>캐리어가 자기 일감을 집어 드는 행위 그 자체</b>다.</p></div></div>
+    <div class="f1 r"><div class="ttl">깨우는 건 — poller</div><div class="who">JVM 내부 poller 스레드</div><div class="d">epoll을 감시하다가 <b>"데이터 도착" 알림</b>을 받으면, 얼려져 있던 해당 가상 스레드를 <b>스케줄러 대기열에 다시 넣는다.</b>
+    <p style="margin:6px 0 0">직접 실행하지 않는다 — <b>줄만 세워 준다.</b></p></div></div>
+  </div>
+  <p style="margin:10px 0 0"><b>이 넷을 나눠 말할 수 있으면 "관리자 스레드가 스케줄링한다" 같은 잘못된 그림이 자동으로 걷힌다.</b></p>
+</div>
+
+<h3>7-1. 오버헤드는 없나 — "코드가 늘었으니 느려진 것 아닌가"</h3>
+
+<p>가상 스레드용 분기와 freeze/thaw 코드가 추가된 것은 <b>사실이다.</b> JDK 블로킹 API 내부가 개념적으로 이렇게 바뀌었다.</p>
+
+<pre><code><span class="cm">// JDK 내부 read()의 개념적 모습</span>
+<span class="kw">if</span> (현재 스레드가 가상 스레드인가?) {
+<span class="ln-good">    소켓을 epoll에 등록;</span>
+<span class="ln-good">    Continuation.<span class="fn">yield</span>();     <span class="cm">// freeze하고 물러남</span></span>
+    <span class="cm">// ... 깨어나면 여기부터 재개 — 데이터가 와 있으니 논블로킹 read</span>
+} <span class="kw">else</span> {
+    기존 블로킹 시스템 콜;      <span class="cm">// 플랫폼 스레드는 예전 경로 그대로</span>
+}</code></pre>
+
+<p>프록시처럼 앞뒤로 로직을 덧댄 게 맞다. 단, <b>덧댄 위치가 애플리케이션 코드가 아니라 JDK 라이브러리 내부</b>다. 그래서 <b>비용이 붙는 위치</b>를 정확히 봐야 한다.</p>
+
+<div class="split">
+  <div class="pane g">
+    <h4>CPU로 계산하는 동안 — 오버헤드 0</h4>
+    <p style="margin:6px 0 0;font-size:.94rem">mount된 가상 스레드는 <b>캐리어 스택 위에서 평범한 스레드와 똑같은 기계어</b>로 돈다.</p>
+    <p style="margin:6px 0 0;font-size:.94rem"><b>명령어마다 붙는 세금 같은 건 없다.</b></p>
+  </div>
+  <div class="pane w">
+    <h4>블로킹 지점에만 — 분기 + freeze/thaw</h4>
+    <p style="margin:6px 0 0;font-size:.94rem">분기 체크 한 번과 프레임 복사다. 그런데 <b>비교 대상을 정확히 잡아야 한다</b> — <b>플랫폼 스레드도 블로킹이 공짜가 아니다.</b></p>
+    <p style="margin:6px 0 0;font-size:.94rem">OS 컨텍스트 스위칭(커널 진입 · 레지스터 저장 · <b>CPU 캐시 오염</b>)이라는 비용을 치르며, <b>freeze/thaw는 이와 비슷하거나 오히려 싸다.</b></p>
+  </div>
+</div>
+
+<div class="rule">대기가 전혀 없는 단일 작업이라면 이득은 없고 미세한 손해가 있을 수 있다 — 이 기술은 요청 하나를 빠르게 하는 게 아니라 <b>"동시에 기다릴 수 있는 개수"를 폭증시키는 것</b>이다</div>
+
+<h2 id="s8">8. pinning — 왜 캐리어에서 못 내려오는가</h2>
+
+<p>가상 스레드의 마법은 <b>"블로킹 시 캐리어에서 내린다"</b>인데, <b>내리지 못하는 경우</b>가 있다. 이걸 <b>pinning(고정, 못박힘)</b>이라고 한다.
+가상 스레드가 캐리어에 못박히면 그 블로킹이 끝날 때까지 <b>캐리어(OS 스레드)가 통째로 잠든다</b> — <b>플랫폼 스레드 시절로 퇴행하는 것</b>이다.</p>
+
+<div class="memo red">
+  <h4>원인은 둘뿐인데, 성격이 완전히 다르다 — 이 구분이 답변의 핵심</h4>
+  <div class="two">
+    <div class="layer" style="border-color:var(--warn);margin:0">
+      <div class="lt" style="color:var(--warn)">원인 1 — <code>synchronized</code> (JDK 21~23)</div>
+      <p style="margin:4px 0 0;font-size:.94rem"><b>모니터 소유자가 OS 스레드 단위로 기록</b>되기 때문. 프레임만 옮기면 <b>잠금 장부가 어긋난다.</b></p>
+      <p style="margin:6px 0 0;font-size:.94rem"><b>성격: 구현상의 제약</b> → <b>JDK 24의 JEP 491에서 해소됐다.</b></p>
+    </div>
+    <div class="layer" style="border-color:var(--danger);margin:0">
+      <div class="lt" style="color:var(--danger)">원인 2 — 네이티브(JNI)·VM 프레임</div>
+      <p style="margin:4px 0 0;font-size:.94rem">JVM이 <b>내부 구조를 모르는 C 스택</b>이라 애초에 <b>얼릴 수 없다.</b> 블로킹도 커널로 직행해 바꿔치기할 지점이 없다.</p>
+      <p style="margin:6px 0 0;font-size:.94rem"><b>성격: 구조적 제약</b> → <b>어떤 JDK 버전에서도 사라지지 않는다.</b></p>
+    </div>
+  </div>
+</div>
+
+<h3>8-1. 원인 1 — 모니터가 OS 스레드에 묶여 있다</h3>
+
+<p>먼저 <code>synchronized</code>가 실제로 무엇을 하는지 짚자. 자바의 모든 객체에는 <b>모니터(monitor)</b>라는 잠금 장치가 하나씩 딸려 있고,
+<code>synchronized</code>는 그 모니터를 획득했다가 반납하는 문법이다. 모니터에는 최소한 두 가지가 기록된다 —
+<b>지금 누가 들어와 있는지(소유자)</b>와 <b>몇 번 중첩해 들어왔는지(재진입 횟수)</b>.</p>
+
+<div class="callout trap">
+  <span class="t">문제의 한 줄 — JDK 21의 HotSpot은 이 소유자를 <u>OS 스레드 단위</u>로 기록한다</span>
+  잠금 기록(락 레코드)도 <b>그 OS 스레드의 스택 프레임 안에</b> 자리 잡는다. <b>그래서 프레임을 힙으로 옮기는 순간 장부가 실제와 어긋난다.</b>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 384" role="img" aria-label="왼쪽은 만약 synchronized 블록 안에서 freeze를 감행했을 때 모니터 장부의 소유자가 여전히 캐리어 3번으로 남아 있어 그 캐리어에 새로 올라탄 V-43이 자기가 소유자인 줄 알고 잠금을 그냥 통과해 상호 배제가 깨지는 시나리오를 보여주고, 오른쪽은 그래서 JVM이 옮기지 않는 쪽을 택해 V-42의 프레임을 캐리어 스택에 그대로 둔 채 캐리어가 통째로 잠드는 실제 동작을 보여주는 대비 도식.">
+    <rect x="14" y="12" width="540" height="358" rx="13" fill="#fef2f2" stroke="#fecaca" stroke-width="2"/>
+    <text x="34" y="38" font-size="13.5" font-weight="800" fill="#dc2626">[가정] 만약 freeze를 감행한다면 — 무엇이 깨지는가</text>
+
+    <rect x="34" y="52" width="310" height="46" rx="9" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="48" y="72" font-size="11.5" fill="#1f2937"><tspan font-weight="800">①</tspan> V-42가 캐리어 #3 위에서 <tspan class="mono">lock</tspan>의 모니터 획득</text>
+    <text x="48" y="90" font-size="11.5" fill="#1f2937"><tspan font-weight="800">②</tspan> <tspan class="mono">synchronized</tspan> 블록 안에서 HTTP 호출 (300ms)</text>
+    <rect x="356" y="52" width="182" height="46" rx="9" fill="#1e293b"/>
+    <text x="447" y="70" font-size="10.5" fill="#94a3b8" text-anchor="middle">모니터의 장부</text>
+    <text x="447" y="88" font-size="11.5" font-weight="800" class="mono" fill="#fcd34d" text-anchor="middle">소유자 = 캐리어 #3</text>
+
+    <rect x="34" y="110" width="310" height="62" rx="9" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="48" y="130" font-size="11.5" fill="#1f2937"><tspan font-weight="800">③</tspan> 여기서 V-42의 프레임만 힙으로 옮기고</text>
+    <text x="48" y="148" font-size="11.5" fill="#1f2937">&nbsp;&nbsp;&nbsp;캐리어 #3에 <tspan font-weight="800">V-43을 태운다면?</tspan></text>
+    <text x="48" y="165" font-size="11" fill="#64748b">&nbsp;&nbsp;&nbsp;(V-42는 힙에서 여전히 잠금 보유 중이라고 믿는다)</text>
+    <rect x="356" y="110" width="182" height="62" rx="9" fill="#1e293b"/>
+    <text x="447" y="132" font-size="11.5" font-weight="800" class="mono" fill="#fcd34d" text-anchor="middle">소유자 = 캐리어 #3</text>
+    <text x="447" y="150" font-size="10.5" fill="#fca5a5" text-anchor="middle">← 그대로 남는다</text>
+    <text x="447" y="165" font-size="10.5" fill="#94a3b8" text-anchor="middle">장부는 스레드를 가리킨다</text>
+
+    <rect x="34" y="184" width="504" height="66" rx="9" fill="#ffffff" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="48" y="206" font-size="11.5" fill="#1f2937">그런데 캐리어 #3은 이제 <tspan font-weight="800">V-43을 실행 중</tspan>이다.</text>
+    <text x="48" y="226" font-size="11.5" fill="#dc2626" font-weight="700">⇒ V-43이 같은 <tspan class="mono">lock</tspan>에 들어가려 하면 "어? 내가 이미 소유자네" 하고 <tspan font-weight="800">그냥 통과</tspan>해 버린다.</text>
+    <text x="48" y="244" font-size="11.5" fill="#dc2626" font-weight="700">⇒ 락 소유자가 어긋난다 = <tspan font-weight="800">상호 배제가 깨진다</tspan> = 데이터가 깨진다.</text>
+
+    <rect x="34" y="262" width="504" height="44" rx="9" fill="#1e293b"/>
+    <text x="286" y="290" font-size="13" font-weight="800" fill="#fca5a5" text-anchor="middle">재진입 횟수까지 캐리어 기준이라 중첩 진입도 함께 뒤틀린다</text>
+
+    <rect x="34" y="318" width="504" height="40" rx="9" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="286" y="343" font-size="12.5" font-weight="800" fill="#dc2626" text-anchor="middle">그래서 JVM은 이 어긋남을 만드는 대신 → 옮기지 않는 쪽을 택했다</text>
+
+    <rect x="566" y="12" width="540" height="358" rx="13" fill="#fffbeb" stroke="#fde68a" stroke-width="2"/>
+    <text x="586" y="38" font-size="13.5" font-weight="800" fill="#d97706">[실제] JDK 21~23의 동작 — 프레임을 그대로 두고 캐리어를 붙잡는다</text>
+
+    <rect x="586" y="52" width="200" height="216" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="686" y="72" font-size="11" font-weight="700" fill="#334155" text-anchor="middle">캐리어 #3의 스택</text>
+    <rect x="598" y="82" width="176" height="28" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="686" y="100" font-size="10.5" class="mono" fill="#991b1b" text-anchor="middle">httpClient.send() 프레임</text>
+    <rect x="598" y="114" width="176" height="28" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="686" y="132" font-size="10.5" class="mono" fill="#991b1b" text-anchor="middle">synchronized 블록 프레임</text>
+    <rect x="598" y="146" width="176" height="28" rx="5" fill="#fee2e2" stroke="#dc2626"/><text x="686" y="164" font-size="10.5" class="mono" fill="#991b1b" text-anchor="middle">call() 프레임</text>
+    <text x="686" y="192" font-size="11" font-weight="800" fill="#dc2626" text-anchor="middle">V-42의 프레임이 걷히지 않는다</text>
+    <rect x="598" y="202" width="176" height="28" rx="5" fill="#e2e8f0" stroke="#94a3b8"/><text x="686" y="220" font-size="10.5" fill="#334155" text-anchor="middle">캐리어의 실행 루프</text>
+    <text x="686" y="250" font-size="11" fill="#7f1d1d" text-anchor="middle">캐리어는 다음 일감을 꺼낼 수 없다</text>
+
+    <rect x="800" y="52" width="290" height="102" rx="10" fill="#ffffff" stroke="#d97706"/>
+    <text x="945" y="76" font-size="12.5" font-weight="800" fill="#d97706" text-anchor="middle">pinned = 못박힘</text>
+    <text x="945" y="98" font-size="11.5" fill="#78350f" text-anchor="middle">300ms 동안 <tspan font-weight="800">OS 스레드 하나가</tspan></text>
+    <text x="945" y="116" font-size="11.5" fill="#78350f" text-anchor="middle"><tspan font-weight="800">통째로 잠든다</tspan></text>
+    <text x="945" y="140" font-size="11.5" font-weight="800" fill="#dc2626" text-anchor="middle">= 플랫폼 스레드 시절로 퇴행</text>
+
+    <rect x="800" y="164" width="290" height="104" rx="10" fill="#1e293b"/>
+    <text x="945" y="188" font-size="11.5" fill="#e2e8f0" text-anchor="middle">JVM의 선택은 <tspan font-weight="800" fill="#86efac">"정확성 &gt; 확장성"</tspan></text>
+    <text x="945" y="210" font-size="11" fill="#94a3b8" text-anchor="middle">잠금이 깨지는 것보다</text>
+    <text x="945" y="228" font-size="11" fill="#94a3b8" text-anchor="middle">느려지는 편이 낫다는 판단</text>
+    <text x="945" y="252" font-size="11" fill="#fcd34d" text-anchor="middle">JEP 491은 이 선택 자체를 바꿨다</text>
+
+    <rect x="586" y="280" width="504" height="78" rx="10" fill="#ffffff" stroke="#fde68a"/>
+    <text x="602" y="302" font-size="11.5" fill="#78350f"><tspan font-weight="800">JEP 444(가상 스레드)도 이 점을 명시한다</tspan> — 핀이 잦고 오래 지속되면 캐리어를 붙잡아 <tspan font-weight="800">확장성을 해친다.</tspan></text>
+    <text x="602" y="322" font-size="11.5" fill="#78350f">여기에 <tspan font-weight="800">커넥션 풀 대기</tspan> 같은 것이 얽히면 <tspan font-weight="800" fill="#dc2626">데드락</tspan>으로도 이어질 수 있다.</text>
+    <text x="602" y="344" font-size="11.5" fill="#78350f">도입 초기에 <tspan font-weight="800">커넥션 풀이나 낡은 JDBC 드라이버 내부의 <tspan class="mono">synchronized</tspan></tspan>가 실제로 문제로 지적됐다.</text>
+  </svg>
+  <figcaption>왼쪽이 <b>"왜 못 내려오는가"의 근거</b>다. 면접에서 이 인과(<b>소유자가 OS 스레드 단위 → 프레임만 옮기면 장부가 어긋남 → 상호 배제 붕괴 → 그래서 안 옮김</b>)를 대면 암기가 아니라는 것이 드러난다.</figcaption>
+</figure>
+
+<h3>8-2. 왜 위험한가 — 캐리어는 코어 수만큼뿐이다</h3>
+
+<figure>
+  <svg viewBox="0 0 880 300" role="img" aria-label="캐리어 8개가 모두 synchronized 안의 긴 외부 호출에 못박혀 잠들어 있고, 그 결과 대기열에 있는 가상 스레드 수만 개가 태워 줄 실행대가 없어 전부 진행을 멈춘 상태를 보여주는 도식.">
+    <text x="20" y="26" font-size="13.5" font-weight="800" fill="#dc2626">캐리어 8개가 전부 핀 되면 — 대기열의 수만 개가 통째로 멈춘다</text>
+
+    <rect x="20" y="40" width="840" height="86" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="36" y="62" font-size="12" font-weight="700" fill="#991b1b">캐리어 스레드 (기본 = CPU 코어 수, 예: 8개)</text>
+    <g>
+      <rect x="36" y="72" width="96" height="42" rx="8" fill="#fee2e2" stroke="#dc2626"/><text x="84" y="90" font-size="10.5" font-weight="700" fill="#991b1b" text-anchor="middle">캐리어 #0</text><text x="84" y="105" font-size="10" fill="#7f1d1d" text-anchor="middle">PINNED 300ms</text>
+      <rect x="138" y="72" width="96" height="42" rx="8" fill="#fee2e2" stroke="#dc2626"/><text x="186" y="90" font-size="10.5" font-weight="700" fill="#991b1b" text-anchor="middle">캐리어 #1</text><text x="186" y="105" font-size="10" fill="#7f1d1d" text-anchor="middle">PINNED 300ms</text>
+      <rect x="240" y="72" width="96" height="42" rx="8" fill="#fee2e2" stroke="#dc2626"/><text x="288" y="90" font-size="10.5" font-weight="700" fill="#991b1b" text-anchor="middle">캐리어 #2</text><text x="288" y="105" font-size="10" fill="#7f1d1d" text-anchor="middle">PINNED 300ms</text>
+      <rect x="342" y="72" width="96" height="42" rx="8" fill="#fee2e2" stroke="#dc2626"/><text x="390" y="90" font-size="10.5" font-weight="700" fill="#991b1b" text-anchor="middle">캐리어 #3</text><text x="390" y="105" font-size="10" fill="#7f1d1d" text-anchor="middle">PINNED 300ms</text>
+      <rect x="444" y="72" width="96" height="42" rx="8" fill="#fee2e2" stroke="#dc2626"/><text x="492" y="90" font-size="10.5" font-weight="700" fill="#991b1b" text-anchor="middle">캐리어 #4</text><text x="492" y="105" font-size="10" fill="#7f1d1d" text-anchor="middle">PINNED 300ms</text>
+      <rect x="546" y="72" width="96" height="42" rx="8" fill="#fee2e2" stroke="#dc2626"/><text x="594" y="90" font-size="10.5" font-weight="700" fill="#991b1b" text-anchor="middle">캐리어 #5</text><text x="594" y="105" font-size="10" fill="#7f1d1d" text-anchor="middle">PINNED 300ms</text>
+      <rect x="648" y="72" width="96" height="42" rx="8" fill="#fee2e2" stroke="#dc2626"/><text x="696" y="90" font-size="10.5" font-weight="700" fill="#991b1b" text-anchor="middle">캐리어 #6</text><text x="696" y="105" font-size="10" fill="#7f1d1d" text-anchor="middle">PINNED 300ms</text>
+      <rect x="750" y="72" width="96" height="42" rx="8" fill="#fee2e2" stroke="#dc2626"/><text x="798" y="90" font-size="10.5" font-weight="700" fill="#991b1b" text-anchor="middle">캐리어 #7</text><text x="798" y="105" font-size="10" fill="#7f1d1d" text-anchor="middle">PINNED 300ms</text>
+    </g>
+
+    <text x="440" y="146" font-size="12" font-weight="800" fill="#dc2626" text-anchor="middle">태워 줄 실행대가 하나도 없다 ↓</text>
+
+    <rect x="20" y="158" width="840" height="76" rx="11" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+    <text x="36" y="180" font-size="12" font-weight="700" fill="#334155">JVM 스케줄러 대기열 — 실행 준비가 끝난 가상 스레드들</text>
+    <g fill="#e2e8f0" stroke="#94a3b8">
+      <rect x="36" y="192" width="15" height="15" rx="3"/><rect x="54" y="192" width="15" height="15" rx="3"/><rect x="72" y="192" width="15" height="15" rx="3"/><rect x="90" y="192" width="15" height="15" rx="3"/><rect x="108" y="192" width="15" height="15" rx="3"/><rect x="126" y="192" width="15" height="15" rx="3"/><rect x="144" y="192" width="15" height="15" rx="3"/><rect x="162" y="192" width="15" height="15" rx="3"/><rect x="180" y="192" width="15" height="15" rx="3"/><rect x="198" y="192" width="15" height="15" rx="3"/><rect x="216" y="192" width="15" height="15" rx="3"/><rect x="234" y="192" width="15" height="15" rx="3"/><rect x="252" y="192" width="15" height="15" rx="3"/><rect x="270" y="192" width="15" height="15" rx="3"/><rect x="288" y="192" width="15" height="15" rx="3"/><rect x="306" y="192" width="15" height="15" rx="3"/><rect x="324" y="192" width="15" height="15" rx="3"/><rect x="342" y="192" width="15" height="15" rx="3"/><rect x="360" y="192" width="15" height="15" rx="3"/><rect x="378" y="192" width="15" height="15" rx="3"/>
+      <rect x="36" y="210" width="15" height="15" rx="3"/><rect x="54" y="210" width="15" height="15" rx="3"/><rect x="72" y="210" width="15" height="15" rx="3"/><rect x="90" y="210" width="15" height="15" rx="3"/><rect x="108" y="210" width="15" height="15" rx="3"/><rect x="126" y="210" width="15" height="15" rx="3"/><rect x="144" y="210" width="15" height="15" rx="3"/><rect x="162" y="210" width="15" height="15" rx="3"/><rect x="180" y="210" width="15" height="15" rx="3"/><rect x="198" y="210" width="15" height="15" rx="3"/><rect x="216" y="210" width="15" height="15" rx="3"/><rect x="234" y="210" width="15" height="15" rx="3"/><rect x="252" y="210" width="15" height="15" rx="3"/><rect x="270" y="210" width="15" height="15" rx="3"/><rect x="288" y="210" width="15" height="15" rx="3"/><rect x="306" y="210" width="15" height="15" rx="3"/><rect x="324" y="210" width="15" height="15" rx="3"/><rect x="342" y="210" width="15" height="15" rx="3"/><rect x="360" y="210" width="15" height="15" rx="3"/><rect x="378" y="210" width="15" height="15" rx="3"/>
+    </g>
+    <text x="410" y="204" font-size="12" font-weight="800" fill="#dc2626">… 수만 개가 전부 진행 정지 — CPU는 놀고 있는데</text>
+    <text x="410" y="222" font-size="11.5" fill="#7f1d1d">사용자에게는 "서버 전체가 멈춘" 것으로 보인다</text>
+
+    <rect x="20" y="248" width="840" height="42" rx="10" fill="#1e293b"/>
+    <text x="440" y="274" font-size="13" font-weight="800" fill="#fca5a5" text-anchor="middle">핀의 위험은 "느려짐"이 아니라 "실행대 전원 소진" — 캐리어는 코어 수만큼뿐이다</text>
+  </svg>
+  <figcaption>플랫폼 스레드 풀이라면 200개 중 8개가 묶여도 192개가 돈다. 가상 스레드에서는 <b>실행대가 애초에 8개뿐</b>이라 <b>8개만 묶여도 전면 정지</b>다.</figcaption>
+</figure>
+
+<h3>8-3. 회피 방법 (JDK 21~23 기준) — before / after</h3>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> <code>synchronized</code> 안에서 I/O — 캐리어가 못박힌다</div>
+<pre><code><span class="kw">private final</span> Object lock = <span class="kw">new</span> Object();
+
+<span class="kw">public void</span> <span class="fn">call</span>() {
+<span class="ln-bad">    <span class="kw">synchronized</span> (lock) {</span>
+<span class="ln-bad">        callExternalApi();   <span class="cm">// 300ms 동안 캐리어 하나가 통째로 잠든다</span></span>
+    }
+}
+
+<span class="cm">// 소유자를 'OS 스레드'로 기록 → 프레임을 옮기면</span>
+<span class="cm">// 장부가 어긋나므로 JVM이 옮기지 않는다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> <code>ReentrantLock</code> — 보유 중에도 unmount 가능</div>
+<pre><code><span class="kw">private final</span> ReentrantLock lock = <span class="kw">new</span> ReentrantLock();
+
+<span class="kw">public void</span> <span class="fn">call</span>() {
+<span class="ln-good">    lock.<span class="fn">lock</span>();          <span class="cm">// 소유자를 '자바 객체 안의 필드'로 기록하므로</span></span>
+<span class="ln-good">                          <span class="cm">// 프레임을 힙으로 옮겨도 장부가 어긋나지 않는다</span></span>
+    <span class="kw">try</span> {
+        callExternalApi();
+    } <span class="kw">finally</span> {
+<span class="ln-warn">        lock.<span class="fn">unlock</span>();   <span class="cm">// synchronized와 달리 자동 반납이 없다 — finally가 필수</span></span>
+    }
+}</code></pre>
+  </div>
+</div>
+
+<div class="bigrule"><code>ReentrantLock</code>이 괜찮은 이유는 정확히 원인 1의 뒤집힘이다 —<br><u>소유자를 힙의 자바 객체 필드에 기록</u>하므로, 캐리어를 갈아타도 <u>소유권이 따라다닌다</u></div>
+
+<div class="memo green">
+  <h4>교체 체크리스트 — "전부 바꾼다"는 과잉이다</h4>
+  <ul class="chk">
+    <li><b>오래 블로킹하는 구간을 감싸는 <code>synchronized</code>만</b> <code>ReentrantLock</code>으로 교체한다.</li>
+    <li>짧은 인메모리 연산만 보호하는 <code>synchronized</code>는 <b>실질적으로 문제가 없다</b> — 오히려 바꾸면 <code>unlock()</code> 누락(영구 정지) 위험만 새로 들인다.</li>
+    <li>의존 라이브러리(<b>JDBC 드라이버 · 커넥션 풀 · HTTP 클라이언트</b>)가 내부에서 <code>synchronized + I/O</code>를 하는지 점검한다.</li>
+    <li>소스를 다 뒤질 수는 없으니, 실제로는 <b>탐지 도구(JFR)로 잡는 편이 확실하다.</b></li>
+  </ul>
+</div>
+
+<h3>8-4. 버전 범위 — JDK 24의 JEP 491이 바꾼 것 <span class="badge bonus">가산점</span></h3>
+
+<p><b><code>synchronized</code>로 인한 pinning은 JDK 24의 JEP 491("Synchronize Virtual Threads without Pinning")에서 해소됐다.</b>
+모니터 소유권을 OS 스레드가 아니라 <b>가상 스레드 단위로 추적</b>하도록 구현을 바꿔서,
+<code>synchronized</code> 블록 안에서 블로킹해도, <code>Object.wait()</code>로 대기해도 <b>캐리어에서 내려올 수 있게 됐다.</b></p>
+
+<div class="scroll">
+<table class="wide">
+  <caption>이 주제는 반드시 버전을 명시해서 말해야 한다</caption>
+  <thead><tr><th style="width:230px"></th><th style="width:390px">JDK 21~23</th><th>JDK 24 이후</th></tr></thead>
+  <tbody>
+    <tr><td><b><code>synchronized</code> 안 블로킹</b></td><td class="bad"><b>핀 된다</b> — <code>ReentrantLock</code>으로 교체가 필요</td><td class="good"><b>핀 되지 않는다</b> — 교체 부담이 사라짐 (JEP 491)</td></tr>
+    <tr class="bad"><td><b>네이티브(JNI)·VM 프레임</b></td><td>핀 된다</td><td><b>여전히 핀 된다</b> (구조적 제약)</td></tr>
+    <tr><td><b>탐지 도구</b></td><td><code>-Djdk.tracePinnedThreads=full</code><br>또는 JFR <code>jdk.VirtualThreadPinned</code></td><td><b><code>-Djdk.tracePinnedThreads</code>는 제거됐다.</b><br>JFR <code>jdk.VirtualThreadPinned</code> 이벤트로 본다</td></tr>
+    <tr><td><b>잠금의 직렬화</b></td><td colspan="2" class="bad" style="text-align:center"><b>양쪽 모두 그대로 남는다</b> — JEP 491이 푼 것은 "캐리어가 묶이는 문제"일 뿐이다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>-Djdk.tracePinnedThreads</code>가 없어진 이유는 JEP 491이 밝혀 두었다 — <b>진단 옵션으로서 문제가 많았고 <code>synchronized</code> 핀이 사라진 뒤로는 쓸모도 없어졌다</b>는 것이다.
+대신 JFR의 <code>jdk.VirtualThreadPinned</code> 이벤트가 확장되어,
+<b>네이티브/VM 프레임 때문에 핀 된 상태에서 park하거나 모니터를 기다리거나 <code>Object.wait()</code> 하는 경우</b>를 기록한다.
+즉 <b>JDK 24 이후 핀 조사는 JFR이 정식 경로</b>다.</p>
+
+<div class="memo red">
+  <h4>여기서 한 걸음 더 나가면 시니어 답변이 된다 — 핀이 사라져도 직렬화는 남는다</h4>
+  <p style="margin-top:0">JEP 491이 푼 것은 <b>"캐리어가 묶이는 문제"</b>일 뿐, <b>잠금 자체의 직렬화는 그대로 남는다.</b></p>
+  <div class="calc">300ms짜리 외부 호출을 <span class="k1">synchronized</span>로 감쌌다면
+   그 구간의 처리량 = 1 / 0.3s = <span class="r1">초당 3건</span>
+   <span class="mut">가상 스레드가 1만 개여도 변하지 않는다.</span>
+
+<span class="mut">장애의 모양만 바뀐다:</span>  "서버 전체 멈춤"  →  <span class="k1">"그 구간만 극심한 대기"</span></div>
+  <p style="margin-bottom:0"><b>긴 I/O를 잠금으로 감싸는 설계 자체가 잘못</b>이라는 점은 버전과 무관하게 그대로다.</p>
+</div>
+
+<h2 id="s9">9. <code>@Transactional</code> — 스레드는 풀렸는데 커넥션이 안 풀린다</h2>
+
+<div class="bigrule2">이 절이 이 문서에서 가장 실무적인 대목이다 —<br><span class="r">가상 스레드가 값싸게 만든 것은 "자바 스레드"이지 <u>"DB 커넥션"이 아니다</u></span></div>
+
+<h3>9-1. 원래 문제 — 가상 스레드와 무관하게 존재한다</h3>
+
+<pre><code><span class="nm">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">placeOrder</span>(OrderRequest req) {
+    orderRepository.save(order);          <span class="cm">// 이 시점에 이미 DB 커넥션을 하나 쥐고 있다</span>
+<span class="ln-bad">    paymentClient.approve(req);           <span class="cm">// 외부 API 300ms — 이 동안에도 커넥션은 반납되지 않는다</span></span>
+    orderRepository.update(order);
+}</code></pre>
+
+<p><code>@Transactional</code> 메서드는 시작할 때 커넥션 풀(HikariCP)에서 <b>DB 커넥션을 하나 꺼내 메서드가 끝날 때까지 쥐고 있다.</b>
+트랜잭션이라는 개념 자체가 <b>"하나의 커넥션 위에서 열리고 닫히는 것"</b>이기 때문에 중간에 반납할 방법이 없다.
+그래서 외부 API를 기다리는 300ms 동안 그 커넥션은 <b>아무 쿼리도 실행하지 않으면서 점유돼 있다.</b>
+<b>HikariCP 기본 풀 크기는 10개뿐</b>이다 — "트랜잭션 안에서 외부 API 콜 금지"가 정석인 이유가 이것이다.</p>
+
+<h3>9-2. 가상 스레드를 도입하면 — 병목이 이동하며 증폭된다</h3>
+
+<p>대기 중 점유하는 자원이 <b>두 개</b>라는 것을 구분하는 게 핵심이다.</p>
+
+<div class="scroll">
+<table>
+  <caption>대기 중 점유하는 자원 — 무엇이 풀리고 무엇이 안 풀리는가</caption>
+  <thead><tr><th style="width:200px">대기 중 점유하는 자원</th><th style="width:300px">플랫폼 스레드</th><th>가상 스레드</th></tr></thead>
+  <tbody>
+    <tr><td><b>스레드</b></td><td>톰캣 워커 1개가 묶인다</td><td class="good"><b>해결됨</b> — unmount되어 캐리어는 다른 일을 한다</td></tr>
+    <tr class="bad"><td><b>DB 커넥션</b></td><td>1개가 묶인다</td><td><b>그대로 묶인다</b> — 커넥션은 <b>스레드가 아니라 트랜잭션에 묶인 자원</b>이다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="위쪽 플랫폼 스레드에서는 워커와 DB 커넥션이 둘 다 350밀리초 내내 묶여 있고, 아래쪽 가상 스레드에서는 캐리어는 중간 구간에 다른 요청을 처리해 해방되지만 DB 커넥션은 여전히 350밀리초 내내 묶여 있어 아무것도 바뀌지 않았음을 보여주는 대비 타임라인.">
+    <rect x="14" y="12" width="1092" height="130" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="2"/>
+    <text x="34" y="38" font-size="13.5" font-weight="800" fill="#dc2626">[플랫폼 스레드] 요청 하나</text>
+    <text x="40" y="70" font-size="12" font-weight="700" fill="#334155">워커 #7</text>
+    <rect x="150" y="52" width="880" height="26" rx="5" fill="#fecaca" stroke="#dc2626"/>
+    <text x="590" y="70" font-size="11.5" font-weight="800" fill="#991b1b" text-anchor="middle">350ms 내내 묶임</text>
+    <text x="40" y="110" font-size="12" font-weight="700" fill="#334155">DB 커넥션</text>
+    <rect x="150" y="92" width="880" height="26" rx="5" fill="#fecaca" stroke="#dc2626"/>
+    <text x="590" y="110" font-size="11.5" font-weight="800" fill="#991b1b" text-anchor="middle">350ms 내내 묶임</text>
+    <text x="1042" y="70" font-size="10.5" fill="#7f1d1d">0 → 350ms</text>
+    <text x="1042" y="110" font-size="10.5" fill="#7f1d1d">0 → 350ms</text>
+
+    <rect x="14" y="154" width="1092" height="152" rx="12" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="2"/>
+    <text x="34" y="180" font-size="13.5" font-weight="800" fill="#16a34a">[가상 스레드] 요청 하나</text>
+    <text x="40" y="212" font-size="12" font-weight="700" fill="#334155">캐리어 #3</text>
+    <rect x="150" y="194" width="60" height="26" rx="5" fill="#16a34a"/>
+    <rect x="210" y="194" width="760" height="26" rx="5" fill="#dcfce7" stroke="#16a34a" stroke-dasharray="5 3"/>
+    <rect x="970" y="194" width="60" height="26" rx="5" fill="#16a34a"/>
+    <text x="590" y="212" font-size="11.5" font-weight="800" fill="#166534" text-anchor="middle">이 구간엔 다른 요청을 처리한다 (해방)</text>
+    <text x="40" y="252" font-size="12" font-weight="700" fill="#334155">DB 커넥션</text>
+    <rect x="150" y="234" width="880" height="26" rx="5" fill="#fecaca" stroke="#dc2626"/>
+    <text x="590" y="252" font-size="11.5" font-weight="800" fill="#991b1b" text-anchor="middle">350ms 내내 묶임 &nbsp;&nbsp;← 아무것도 안 바뀐다</text>
+    <rect x="150" y="272" width="880" height="24" rx="6" fill="#1e293b"/>
+    <text x="590" y="289" font-size="11.5" font-weight="800" fill="#fcd34d" text-anchor="middle">스레드는 풀렸는데 커넥션은 그대로 — 병목이 "스레드 부족"에서 "커넥션 부족"으로 이동한다</text>
+  </svg>
+  <figcaption>가상 스레드가 바꾼 것은 <b>위쪽 줄</b>뿐이다. <b>아래쪽 줄은 한 픽셀도 바뀌지 않았다.</b></figcaption>
+</figure>
+
+<p>이제 숫자로 확인해 보자. 커넥션 풀을 실무에서 흔한 <b>20개</b>로 올려 뒀다고 하고, 트랜잭션 하나가 커넥션을 <b>350ms</b>(외부 API 300ms + 쿼리 50ms) 점유한다고 하자.</p>
+
+<div class="calc"><span class="mut">① 커넥션 하나의 초당 처리량</span> = 1 / 0.35s = <span class="k1">2.86 건/s</span>
+<span class="mut">② 풀 전체의 처리량 상한</span>     = 20 × 2.86 = <span class="r1">57 req/s</span>
+
+<span class="g1">→ 스레드를 몇 개로 늘리든 이 값은 변하지 않는다.</span></div>
+
+<h3>9-3. 초당 1,000건이 들어오면 — 여기서 역설이 나온다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="왼쪽은 플랫폼 스레드 200개 환경에서 톰캣이 동시 200건만 들여보내 커넥션 대기줄이 180건으로 제한되고 대기 시간이 3.2초에 머물러 느리지만 죽지 않는 상황을, 오른쪽은 가상 스레드 환경에서 상한이 사라져 초당 1000건이 전부 들어오지만 57건만 빠져나가 매초 943건씩 대기열이 쌓이고 30초 뒤 2만8천 건에 이르러 커넥션 타임아웃으로 전면 실패하는 상황을 보여주는 대비 도식.">
+    <rect x="14" y="12" width="540" height="310" rx="13" fill="#fffbeb" stroke="#fde68a" stroke-width="2"/>
+    <text x="34" y="38" font-size="13.5" font-weight="800" fill="#d97706">[플랫폼 스레드 200개] — 느리지만 죽지 않는다</text>
+    <rect x="34" y="52" width="500" height="34" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="48" y="74" font-size="11.5" fill="#78350f">유입 <tspan font-weight="800">1,000 req/s</tspan> → 톰캣이 <tspan font-weight="800">동시 200건까지만</tspan> 입장시킨다</text>
+    <rect x="34" y="94" width="500" height="34" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="48" y="116" font-size="11.5" fill="#78350f">201번째부터는 <tspan font-weight="800">톰캣 수락 큐</tspan>에서 대기 — <tspan font-weight="800">아직 커넥션을 요구하지도 않는다</tspan></text>
+    <rect x="34" y="136" width="500" height="34" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="48" y="158" font-size="11.5" fill="#78350f">커넥션을 기다리는 줄 = 아무리 길어야 <tspan font-weight="800">180건</tspan> (200 − 커넥션 20)</text>
+    <rect x="34" y="178" width="500" height="34" rx="8" fill="#ffffff" stroke="#fde68a"/>
+    <text x="48" y="200" font-size="11.5" fill="#78350f">대기 시간 = 180 / 57 ≈ <tspan font-weight="800">3.2초</tspan></text>
+    <rect x="34" y="220" width="500" height="40" rx="8" fill="#f0fdf4" stroke="#86efac"/>
+    <text x="284" y="245" font-size="12.5" font-weight="800" fill="#16a34a" text-anchor="middle">HikariCP 기본 connectionTimeout 30초 안 — 살아남는다</text>
+    <rect x="34" y="270" width="500" height="40" rx="8" fill="#1e293b"/>
+    <text x="284" y="288" font-size="11.5" fill="#e2e8f0" text-anchor="middle">워커 200개라는 제약은 사실</text>
+    <text x="284" y="304" font-size="12.5" font-weight="800" fill="#fcd34d" text-anchor="middle">공짜로 얻고 있던 부하 제한기(admission control)였다</text>
+
+    <rect x="566" y="12" width="540" height="310" rx="13" fill="#fef2f2" stroke="#fecaca" stroke-width="2"/>
+    <text x="586" y="38" font-size="13.5" font-weight="800" fill="#dc2626">[가상 스레드] — 제한기가 걷히고 피해가 증폭된다</text>
+    <rect x="586" y="52" width="500" height="34" rx="8" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="600" y="74" font-size="11.5" fill="#7f1d1d">유입 <tspan font-weight="800">1,000 req/s</tspan> → <tspan font-weight="800">들어오는 대로 전부 입장</tspan> (상한이 사라졌다)</text>
+    <rect x="586" y="94" width="500" height="34" rx="8" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="600" y="116" font-size="11.5" fill="#7f1d1d">빠져나가는 건 여전히 <tspan font-weight="800">57 req/s</tspan> — 하류는 아무것도 안 바뀌었다</text>
+    <rect x="586" y="136" width="500" height="34" rx="8" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="600" y="158" font-size="11.5" fill="#7f1d1d">커넥션 대기열이 <tspan font-weight="800">매초 943건씩</tspan> 쌓인다</text>
+    <rect x="586" y="178" width="500" height="34" rx="8" fill="#ffffff" stroke="#fca5a5"/>
+    <text x="600" y="200" font-size="11.5" fill="#7f1d1d">30초 뒤 대기 중인 요청 ≈ <tspan font-weight="800">28,000건</tspan></text>
+    <rect x="586" y="220" width="500" height="40" rx="8" fill="#1e293b"/>
+    <text x="836" y="238" font-size="10.5" class="mono" fill="#fca5a5" text-anchor="middle">Connection is not available,</text>
+    <text x="836" y="252" font-size="10.5" class="mono" fill="#fca5a5" text-anchor="middle">request timed out after 30000ms</text>
+    <rect x="586" y="270" width="500" height="40" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="836" y="288" font-size="12" font-weight="800" fill="#dc2626" text-anchor="middle">대기 시간이 30초를 넘는 순간부터</text>
+    <text x="836" y="304" font-size="12.5" font-weight="800" fill="#dc2626" text-anchor="middle">전면 실패</text>
+  </svg>
+  <figcaption><b>역설이 여기 있다.</b> 병목이 "스레드 부족"에서 "커넥션 부족"으로 <b>이동</b>하는 데 그치지 않고, <b>대기 행렬이 무한정 길어지면서 피해가 증폭된다.</b></figcaption>
+</figure>
+
+<div class="bigrule">가상 스레드는 요청을 더 많이 <u>"받게"</u> 해 줄 뿐, 더 많이 <u>"처리하게"</u> 해 주지 않는다 —<br>하류(DB, 외부 API)의 처리량이 그대로면 늘어난 것은 <u>대기 행렬</u>뿐이다</div>
+
+<h3>9-4. pinning과도 얽힌다 (JDK 21~23 기준)</h3>
+
+<div class="callout trap">
+  <span class="t">트랜잭션 경로에 <code>synchronized</code>가 숨어 있을 수 있다</span>
+  <b>커넥션 하나를 여러 스레드가 동시에 쓰지 못하게 막는 가장 자연스러운 구현이 <code>synchronized</code></b>라, 드라이버들이 오랫동안 그렇게 만들어져 왔다.
+  이 경우 <b>DB I/O 대기 중에 unmount조차 못 하고 캐리어가 핀 된다.</b>
+  <p style="margin:8px 0 0">그래서 가상 스레드 + <code>@Transactional</code> 조합을 검토할 때는 <b>드라이버 · 커넥션 풀 버전 점검</b>과 <b>JFR <code>jdk.VirtualThreadPinned</code> 이벤트 감시</b>가 체크리스트에 들어간다.
+  <b>JDK 24 이후라면 이 걱정은 크게 줄어든다.</b></p>
+</div>
+
+<h3>9-5. 올바른 설계는 가상 스레드가 있든 없든 동일하다</h3>
+
+<div class="rule ok">답은 하나다 — 외부 API 콜을 트랜잭션 밖으로 뺀다</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 하나의 트랜잭션이 외부 호출을 품고 있다 — 커넥션 350ms 점유</div>
+<pre><code><span class="nm">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">placeOrder</span>(OrderRequest req) {
+    orderRepository.save(order);
+<span class="ln-bad">    paymentClient.approve(req);        <span class="cm">// 300ms 동안 커넥션이 '놀면서' 묶여 있다</span></span>
+    orderRepository.update(order);
+}
+
+<span class="cm">// 커넥션 점유 350ms  →  20 / 0.35 ≈ 57 req/s</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 트랜잭션 경계를 잘게 쪼갠다 — 점유는 쿼리 시간만큼만</div>
+<pre><code><span class="kw">public void</span> <span class="fn">placeOrder</span>(OrderRequest req) {
+<span class="ln-good">    orderService.saveOrder(order);     <span class="cm">// @Transactional — 커넥션 점유 25ms</span></span>
+    paymentClient.approve(req);        <span class="cm">// 트랜잭션 밖 — 커넥션을 안 쥔 채로 300ms 대기</span>
+<span class="ln-good">    orderService.confirmOrder(order);  <span class="cm">// @Transactional — 커넥션 점유 25ms</span></span>
+}
+
+<span class="cm">// 커넥션 점유 50ms  →  20 / 0.05 = 400 req/s  (같은 풀 20개로 7배)</span></code></pre>
+  </div>
+</div>
+
+<div class="two">
+  <div class="callout ok" style="margin:0">
+    <span class="t">효과 — 가상 스레드보다 이 변경의 효과가 훨씬 크다</span>
+    커넥션 점유 시간이 <b>350ms → 50ms</b>로 줄어, 같은 풀 20개로 <code>20 / 0.05 = 400 req/s</code>를 감당하게 된다.
+    <b>처리량 상한 식이 <code>풀 크기 ÷ 점유 시간</code>이므로 분모를 줄이는 쪽이 압도적으로 효율이 좋다.</b>
+  </div>
+  <div class="callout trap" style="margin:0">
+    <span class="t">대가 — 공짜는 아니다</span>
+    <b>트랜잭션을 쪼갠 만큼 원자성이 깨지므로</b>, 중간 실패 시 <b>보상 처리나 상태 기반 재시도</b> 같은 정합성 설계가 반드시 따라와야 한다.
+    <b>이 대가를 함께 말해야 답이 완성된다.</b>
+  </div>
+</div>
+
+<h2 id="s10">10. ThreadLocal — 고장 나는 건 도구가 아니라 사용 패턴</h2>
+
+<div class="bigrule2">이 절의 논지를 먼저 못 박는다 —<br>가상 스레드에서 <span class="g">ThreadLocal은 "고장 나지" 않는다.</span> 고장 나는 것은 <span class="r">우리가 ThreadLocal을 써 온 방식</span>이다</div>
+
+<h3>10-1. 값은 캐리어가 아니라 "가상 스레드 객체"에 붙는다</h3>
+
+<p>ThreadLocal은 값을 자기 안에 담고 있는 게 아니다. 실제 값은 <b>각 <code>Thread</code> 객체 안의 <code>ThreadLocalMap</code></b>에 저장되고,
+ThreadLocal 인스턴스는 그 맵을 여는 <b>키</b> 역할만 한다.</p>
+
+<pre><code><span class="cm">// ThreadLocal.get()이 내부적으로 하는 일 (개념적으로)</span>
+Thread t = Thread.<span class="fn">currentThread</span>();   <span class="cm">// ① 지금 실행 중인 스레드가 누구인가?</span>
+<span class="kw">return</span> t.threadLocals.get(<span class="kw">this</span>);     <span class="cm">// ② '그 스레드의' 맵에서 this를 키로 꺼낸다</span></code></pre>
+
+<p>그러니 질문은 ①로 좁혀진다. 가상 스레드가 캐리어 위에서 도는 동안 <code>currentThread()</code>는 누구를 돌려주는가 — <b>가상 스레드다.</b>
+mount하는 순간 JVM이 "현재 스레드" 정체성을 가상 스레드로 바꿔 끼우고, <b>캐리어 자신의 ThreadLocal은 그동안 가려져 아무도 보지 못한다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 880 288" role="img" aria-label="캐리어 3번이라는 OS 스레드가 자기 자신의 threadLocals 맵을 갖고 있지만 마운트 동안에는 가려져 있고, 그 위에 올라탄 가상 스레드 V-42가 힙에 사는 객체로서 자기 threadLocals 맵을 갖고 있어 ThreadLocal.get이 실제로는 그 맵을 뒤진다는 것을 보여주고, 언마운트되면 그 맵이 얼려진 스택과 함께 힙에 남아 가상 스레드를 따라다닌다는 것을 보여주는 도식.">
+    <rect x="20" y="14" width="470" height="196" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+    <text x="40" y="40" font-size="13" font-weight="800" fill="#334155">캐리어 #3 (OS 스레드)</text>
+
+    <rect x="40" y="52" width="430" height="42" rx="9" fill="#e2e8f0" stroke="#94a3b8" stroke-dasharray="5 3"/>
+    <text x="56" y="70" font-size="11.5" class="mono" fill="#64748b">캐리어 자신의 threadLocals</text>
+    <text x="56" y="87" font-size="11.5" font-weight="700" fill="#94a3b8">← mount 동안 가려져 있다 (아무도 이걸 보지 못한다)</text>
+
+    <rect x="40" y="104" width="430" height="92" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="56" y="126" font-size="12" font-weight="800" fill="#2563eb">지금 올라탄 가상 스레드 V-42 <tspan font-weight="400" font-size="11" fill="#64748b">(힙에 사는 객체)</tspan></text>
+    <rect x="56" y="136" width="398" height="46" rx="7" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="72" y="155" font-size="11.5" class="mono" fill="#1e3a8a">V-42의 threadLocals</text>
+    <text x="72" y="172" font-size="11.5" font-weight="800" fill="#2563eb">← <tspan class="mono">ThreadLocal.get()</tspan>이 실제로 뒤지는 곳</text>
+
+    <rect x="510" y="14" width="350" height="196" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="530" y="40" font-size="13" font-weight="800" fill="#16a34a">그래서 안전하다 — 근거 셋</text>
+    <text x="530" y="66" font-size="11.5" fill="#14532d"><tspan font-weight="800">①</tspan> 맵이 <tspan font-weight="700">힙의 가상 스레드 객체</tspan>에 붙어 있으므로</text>
+    <text x="530" y="83" font-size="11.5" fill="#14532d">&nbsp;&nbsp;&nbsp;<tspan font-weight="700">캐리어를 갈아타도 따라다닌다.</tspan></text>
+    <text x="530" y="108" font-size="11.5" fill="#14532d"><tspan font-weight="800">②</tspan> 같은 캐리어를 번갈아 쓰는 다른 가상 스레드에게</text>
+    <text x="530" y="125" font-size="11.5" fill="#14532d">&nbsp;&nbsp;&nbsp;<tspan font-weight="700">값이 새지 않는다</tspan> (남의 SecurityContext를 볼 일 없다).</text>
+    <text x="530" y="150" font-size="11.5" fill="#14532d"><tspan font-weight="800">③</tspan> 요청마다 새로 만들고 끝나면 버리므로</text>
+    <text x="530" y="167" font-size="11.5" fill="#14532d">&nbsp;&nbsp;&nbsp;<tspan font-weight="700">재사용 오염 자체가 없다.</tspan></text>
+    <text x="530" y="192" font-size="11" fill="#166534">Spring Security의 SecurityContext, 로깅 MDC도 그대로 동작</text>
+
+    <rect x="20" y="222" width="840" height="52" rx="11" fill="#1e293b"/>
+    <text x="40" y="245" font-size="12.5" fill="#e2e8f0">톰캣 스레드 풀 시절 가장 무서운 사고였던 <tspan font-weight="800" fill="#fca5a5">"remove()를 안 해서 이전 요청의 인증 정보가 다음 사용자에게 보이는" 오염도 사라진다.</tspan></text>
+    <text x="40" y="265" font-size="12.5" fill="#e2e8f0">그 사고는 스레드가 <tspan font-weight="800">풀에서 재사용</tspan>되기 때문에 생겼는데, <tspan font-weight="800" fill="#86efac">가상 스레드는 재사용 자체가 없다.</tspan></text>
+  </svg>
+  <figcaption>unmount 시 이 맵도 <b>얼려진 스택과 함께 힙에 남아</b> 가상 스레드를 따라다닌다. 값이 캐리어에 붙어 있었다면 <b>수만 개가 서로의 값을 봤을 것</b>이다 — 그런 일은 일어나지 않는다.</figcaption>
+</figure>
+
+<h3>10-2. 그런데 왜 "주의"인가 — 스레드당 캐싱 패턴의 전제가 무너진다</h3>
+
+<pre><code><span class="cm">// 플랫폼 스레드 풀 시절엔 합리적이었던 패턴</span>
+<span class="ln-warn"><span class="kw">private static final</span> ThreadLocal&lt;SimpleDateFormat&gt; FORMAT =</span>
+<span class="ln-warn">    ThreadLocal.<span class="fn">withInitial</span>(() -&gt; <span class="kw">new</span> SimpleDateFormat(<span class="st">"yyyy-MM-dd"</span>));</span></code></pre>
+
+<p>이 패턴은 <b>"<code>SimpleDateFormat</code>은 thread-safe하지 않으니 스레드마다 하나씩 만들어 두고 계속 재사용하자"</b>는 발상이다.
+<b>이게 이득이 되려면 전제가 두 개 필요하다.</b> 그리고 가상 스레드에서는 <b>둘 다 무너진다.</b></p>
+
+<div class="scroll">
+<table>
+  <caption>스레드당 캐싱 패턴의 두 전제가 어떻게 무너지는가</caption>
+  <thead><tr><th style="width:250px">전제</th><th style="width:300px">플랫폼 스레드 풀</th><th>가상 스레드</th></tr></thead>
+  <tbody>
+    <tr><td><b>스레드 개수가 적다</b></td><td>200개 → 객체도 최대 200개</td><td class="bad"><b>수만~수백만 개</b> → 객체도 그만큼 (메모리 폭탄)</td></tr>
+    <tr><td><b>스레드가 오래 살며 재사용된다</b></td><td>풀에서 계속 재사용 → 초기화 비용을 상환</td><td class="bad"><b>일회용</b> — 작업 하나 끝나면 죽음 → <b>캐시 적중이 아예 없음</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="rule red">이득은 0, 비용만 폭증 — 캐싱의 근거 자체가 사라진다</div>
+
+<div class="memo green">
+  <h4>대응 규칙 — 용도를 둘로 나눈다</h4>
+  <div class="two">
+    <div class="pane g" style="margin:0">
+      <h4>유지 — 문맥 전달용</h4>
+      <p style="margin:6px 0 0;font-size:.94rem"><b>traceId, 인증 정보, MDC</b>. 요청 하나 = 가상 스레드 하나 구도에서 그대로 잘 동작하고, 오히려 <b>재사용 오염이 사라져 더 안전해진다.</b></p>
+    </div>
+    <div class="pane r" style="margin:0">
+      <h4>제거 — 스레드당 캐싱용</h4>
+      <p style="margin:6px 0 0;font-size:.94rem"><b>비싼 객체를 스레드마다 하나씩</b> 두던 패턴. <code>SimpleDateFormat</code> 같은 경우는 애초에 <b>불변이라 공유해도 되는 <code>DateTimeFormatter</code></b>로 바꾸는 것이 정답이다.</p>
+    </div>
+  </div>
+</div>
+
+<h3>10-3. 후속 — <code>ScopedValue</code>: 수명을 스레드가 아니라 블록에 매단다</h3>
+
+<p>지금까지의 문제를 한 줄로 모으면 이렇다. <b>ThreadLocal의 손익은 스레드의 수명 모델에 종속된다</b> —
+풀(재사용)에서는 <b>오염과 누수</b>를, 가상 스레드(대량 생성)에서는 <b>개수 비용</b>을 걱정해야 한다.
+이 종속을 끊으려고 Loom 팀이 만든 후속 API가 <b><code>ScopedValue</code></b>다.
+<b>JDK 21에 프리뷰로 처음 나와 JDK 25에서 정식 기능이 됐다(JEP 506).</b></p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> ThreadLocal — 수명이 스레드와 같다</div>
+<pre><code>ThreadLocal&lt;User&gt; USER = <span class="kw">new</span> ThreadLocal&lt;&gt;();
+
+<span class="ln-bad">USER.<span class="fn">set</span>(user);   <span class="cm">// 아무 데서나 바꿀 수 있고,</span></span>
+<span class="ln-bad">                  <span class="cm">// remove() 안 하면 계속 남는다</span></span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> ScopedValue — 불변 + 블록 범위</div>
+<pre><code><span class="kw">static final</span> ScopedValue&lt;User&gt; USER = ScopedValue.newInstance();
+
+ScopedValue.<span class="fn">where</span>(USER, user).<span class="fn">run</span>(() -&gt; {
+<span class="ln-good">    handleRequest();  <span class="cm">// 이 안에서 호출되는 모든 코드가 USER.get() 가능</span></span>
+});                   <span class="cm">// 블록을 벗어나면 바인딩이 자동으로 풀린다</span>
+                      <span class="cm">// → remove() 누락 사고가 원천 차단된다</span></code></pre>
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">값이 <b>불변</b>이라는 점이 개수 비용까지 해결한다</span>
+  값을 바꿀 수 없으니 자식 작업에 넘길 때 <b>복사가 아니라 참조 공유</b>로 끝난다.
+  <code>StructuredTaskScope</code>로 만든 하위 작업이 부모의 <code>ScopedValue</code>를 공짜로 물려받는 것도 이 덕분이다. <b>수백만 스레드 규모를 전제로 설계된 대체재다.</b>
+</div>
+
+<h3>10-4. <code>InheritableThreadLocal</code> — 복사의 트리거는 요청이 아니라 "스레드 생성"</h3>
+
+<div class="scroll">
+<table>
+  <caption><code>InheritableThreadLocal</code>은 스레드가 생성되는 순간 부모의 값 테이블을 자식에게 복사한다 — 달라지는 건 <b>생성 빈도</b>다</caption>
+  <thead><tr><th style="width:190px"></th><th style="width:330px">플랫폼 스레드 풀</th><th>가상 스레드 (요청당 생성)</th></tr></thead>
+  <tbody>
+    <tr><td><b>스레드 생성 시점</b></td><td>서버 시작 때 200개 만들고 끝</td><td>톰캣이 <b>요청마다</b> 새로 생성</td></tr>
+    <tr class="bad"><td><b>복사 발생 횟수</b></td><td>시작 때 200번뿐</td><td><b>요청 수만큼</b> (부모에 값이 있는 한)</td></tr>
+    <tr><td><b>요청 문맥 상속</b></td><td class="bad"><b>무용지물</b> — 스레드가 요청보다 먼저 태어나 물려받을 게 없다</td><td class="good">생성 시점의 부모 값이 상속된다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="rule">판단 기준은 "내가 만들었나"가 아니라 <b>"요청마다 새 스레드가 태어나는 모델인가"</b>다</div>
+
+<h2 id="s11">11. 도입 체크포인트 다섯 · 관측 지표 재설계</h2>
+
+<div class="memo">
+  <h4>도입 판단 체크포인트 — 이 다섯 개를 순서대로 외운다</h4>
+  <div class="gate">
+    <div class="g"><span class="lbl">① 커넥션 풀</span><span class="tx">스레드 상한이 사라지면 <b>다음 병목은 반드시 커넥션 풀</b>이다. 다만 <b>"풀을 1,000개로 늘리자"는 오답</b> — 커넥션은 DB 쪽에도 자원을 요구한다. <b>먼저 할 일은 트랜잭션 점유 시간을 줄이는 것</b>이고, 풀 크기 조정은 그다음이다.</span></div>
+    <div class="g"><span class="lbl">② Semaphore</span><span class="tx">가상 스레드에는 개수 제한이 없으므로, 하류 자원(외부 API · 레거시)을 보호하려면 <b>별도의 문지기</b>가 필요하다. <b>스레드 풀이 하던 부하 제한 역할을 대신 맡길 도구가 <code>Semaphore</code></b>다.</span></div>
+    <div class="g"><span class="lbl">③ 풀링 금지</span><span class="tx">가상 스레드는 <b>일회용</b>이다. 풀에 넣어 재사용하면 (a) <b>재사용 오염</b>이 다시 생기고 (b) <b>개수 상한</b>이 다시 생겨 이점이 사라진다. <b>개수 제한이 목적이면 스레드 풀이 아니라 <code>Semaphore</code></b>다.</span></div>
+    <div class="g"><span class="lbl">④ 관측 재설계</span><span class="tx"><code>ThreadMXBean</code> 기반 지표는 <b>가상 스레드를 세지 않는다.</b> <b>"스레드 풀 포화" 알람이 영원히 울리지 않게 된다</b> — 대체 지표를 먼저 세워야 한다.</span></div>
+    <div class="g last"><span class="lbl">⑤ CPU 바운드 제외</span><span class="tx">이득은 오직 <b>I/O 대기가 많은 워크로드</b>에서 나온다. 이미지 변환 · 암호 연산처럼 CPU를 계속 쓰는 작업은 <b>어차피 코어 수만큼만</b> 동시에 돌 수 있으므로 <b>바꿔도 얻는 게 없다.</b></span></div>
+  </div>
+</div>
+
+<h3>11-1. 동시성 제한은 <code>Semaphore</code>로 건다</h3>
+
+<pre><code><span class="cm">// Semaphore = "동시 통행증 N장" — 표를 받은 만큼만 안으로 들어갈 수 있다</span>
+<span class="kw">private final</span> Semaphore outboundLimit = <span class="kw">new</span> Semaphore(<span class="nm">50</span>);
+
+<span class="kw">public</span> PaymentResult <span class="fn">approve</span>(OrderRequest req) <span class="kw">throws</span> InterruptedException {
+<span class="ln-good">    outboundLimit.<span class="fn">acquire</span>();     <span class="cm">// 표가 없으면 여기서 대기한다.</span></span>
+<span class="ln-good">                                 <span class="cm">// 이 대기는 park 기반이라 가상 스레드가 unmount된다 — 캐리어는 안 묶인다.</span></span>
+    <span class="kw">try</span> {
+        <span class="kw">return</span> paymentClient.approve(req);
+    } <span class="kw">finally</span> {
+<span class="ln-warn">        outboundLimit.<span class="fn">release</span>(); <span class="cm">// 반드시 반납. 누락되면 통행증이 영구히 줄어 서서히 마비된다.</span></span>
+    }
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">이름이 주는 오해 하나 — <code>newVirtualThreadPerTaskExecutor()</code>는 스레드 풀이 아니다</span>
+  반환 타입이 <code>ExecutorService</code>라 풀처럼 보이지만, 이 executor는 이름 그대로 <b>작업(task)마다 가상 스레드를 하나씩 새로 만들고 끝나면 버린다.</b>
+  <b>재사용도 없고 개수 상한도 없다.</b> 그래서 <code>close()</code>(또는 try-with-resources 블록 탈출)의 의미도 "풀을 접는다"가 아니라
+  <b>"제출된 작업이 전부 끝날 때까지 기다린다"</b>로 달라진다.
+</div>
+
+<h3>11-2. 모니터링 지표가 무의미해지는 것을 대비한다</h3>
+
+<div class="callout trap">
+  <span class="t">"OS는 가상 스레드를 모른다"(2절)의 결과가 여기서 나타난다</span>
+  <code>ThreadMXBean</code> 기반 지표(마이크로미터의 <code>jvm.threads.live</code> 등)는 <b>캐리어만 센다.</b>
+  그래서 부하가 아무리 몰려도 <b>항상 코어 수 근처에서 평평</b>하고, 그동안 그 지표를 포화 감지에 써 왔다면 <b>알람이 영원히 울리지 않는다.</b>
+</div>
+
+<div class="memo warn">
+  <h4>대체 지표 — 이 순서로 세운다</h4>
+  <div class="ladder">
+    <div class="rung"><span class="n">1</span><div><b>커넥션 풀 대기</b> — <code>hikaricp.connections.pending</code>, <code>hikaricp.connections.acquire</code> 지연</div><span class="tagr rev">새 병목이 여기로 옮겨 왔다</span></div>
+    <div class="rung"><span class="n">2</span><div><b>하류 응답 시간과 타임아웃/에러율</b> — 대기 행렬이 길어지는 것은 여기서 먼저 보인다</div><span class="tagr rev">증폭의 선행 신호</span></div>
+    <div class="rung"><span class="n">3</span><div><b>JFR 이벤트</b> — <code>jdk.VirtualThreadPinned</code>(핀 발생), <code>jdk.VirtualThreadStart</code>/<code>End</code>(생성·종료 추이)</div><span class="tagr rev">JDK 24+ 핀 조사의 정식 경로</span></div>
+    <div class="rung"><span class="n">4</span><div><b>스레드 덤프 방식 변경</b> — 전통적인 <code>jstack</code>은 가상 스레드를 보여주지 않는다. <b>JDK 21+의 <code>jcmd &lt;pid&gt; Thread.dump_to_file</code></b>을 써야 한다</div><span class="tagr irr">jstack 그대로 쓰면 헛다리</span></div>
+  </div>
+</div>
+
+<h2 id="s12">12. 리액티브와의 선택 · 30초 답변 스크립트 · 암기 총정리</h2>
+
+<h3>12-1. 가상 스레드 vs 리액티브(WebFlux)</h3>
+
+<p>푸는 문제는 같다 — <b>"기다림 때문에 OS 스레드가 낭비되는 것"</b>이다.
+리액티브는 <b>코드를 바꿔서</b> 스레드를 안 붙잡고, 가상 스레드는 <b>스레드를 바꿔서</b> 붙잡아도 싸게 만든다.</p>
+
+<div class="scroll">
+<table class="wide">
+  <caption>비용이 갈리는 지점 다섯</caption>
+  <thead><tr><th style="width:210px"></th><th style="width:420px">리액티브</th><th>가상 스레드</th></tr></thead>
+  <tbody>
+    <tr><td><b>코드 스타일</b></td><td class="bad">콜백/체이닝으로 전면 전환</td><td class="good">기존 블로킹 코드 그대로</td></tr>
+    <tr><td><b>디버깅 · 스택트레이스</b></td><td class="bad">끊어져서 어렵다</td><td class="good">그대로 살아 있다</td></tr>
+    <tr><td><b>ThreadLocal 기반 도구</b></td><td class="bad">그대로는 안 통한다 (Reactor Context 등 별도 장치)</td><td class="good">그대로 동작한다</td></tr>
+    <tr><td><b>전염성</b></td><td class="bad">경로 위 라이브러리 하나만 블로킹이어도 무너진다</td><td class="good">블로킹 라이브러리를 그대로 써도 된다</td></tr>
+    <tr class="hl"><td><b>스트림 / 배압 제어</b></td><td class="good">연산자로 정교하게 표현된다</td><td class="bad">언어 차원의 도구가 없어 직접 만들어야 한다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="two">
+  <div class="callout ok" style="margin:0">
+    <span class="t">가상 스레드가 낫다</span>
+    <b>대부분의 CRUD · 오케스트레이션 API.</b> 얻는 동시성은 비슷한데 <b>학습 · 유지보수 비용이 비교가 안 되게 싸다.</b>
+  </div>
+  <div class="callout info" style="margin:0">
+    <span class="t">리액티브가 여전히 유리하다</span>
+    <b>SSE · WebSocket 같은 스트리밍</b>, <b>백프레셔가 본질적인 파이프라인</b>, 그리고 <b>이미 Reactor로 잘 돌고 있는 시스템</b>.
+    특히 마지막이 중요하다 — <b>잘 돌아가는 리액티브 코드를 가상 스레드로 되돌릴 이유는 없다.</b>
+  </div>
+</div>
+
+<h3>12-2. 30초 답변 스크립트</h3>
+
+<div class="script30">
+  <ol>
+    <li><b>모델 차이를 소유권으로 요약한다.</b> "플랫폼 스레드는 OS 스레드와 1:1이라 <b>블로킹하면 실행 상태가 커널 컨텍스트로 들어가</b> 그 OS 스레드만이 그 작업을 이어갈 수 있었습니다. 가상 스레드는 멈춘 상태가 <b>힙의 자바 객체</b>라 <b>아무 캐리어에서나 복원 가능한 이동식 데이터</b>가 됩니다 — 그래서 M:N이 됩니다."</li>
+    <li><b>메커니즘을 한 문장으로.</b> "블로킹 시스템 콜에 들어가는 대신, <b>JDK가 소유한 시스템 콜 직전 경로</b>에서 <b>epoll에 등록하고 아직 깨어 있는 스레드가 스스로 자기 스택을 힙으로 복사(freeze)한 뒤 캐리어에서 내려옵니다.</b> 데이터가 오면 아무 캐리어에나 다시 올려(thaw) 이어 달립니다."</li>
+    <li><b>pinning을 원인별로 나눈다.</b> "<b><code>synchronized</code></b>는 모니터 소유자가 <b>OS 스레드 단위로 기록</b>돼 프레임만 옮기면 장부가 어긋나므로 JVM이 안 옮기는 쪽을 택한 것이고 — <b>JDK 24의 JEP 491에서 해소</b>됐습니다. <b>네이티브(JNI) 프레임</b>은 JVM이 구조를 몰라 옮길 수 없어 <b>어떤 버전에서도 남습니다.</b>"</li>
+    <li><b>실무 함정으로 마무리한다.</b> "다만 가상 스레드가 값싸게 만든 것은 <b>자바 스레드일 뿐 DB 커넥션이 아닙니다.</b> <code>@Transactional</code> 안 외부 콜은 커넥션을 계속 쥐고 있고, <b>톰캣 200 스레드가 해 주던 암묵적 부하 제한이 사라져</b> 오히려 더 크게 터집니다. 그래서 도입의 본질은 <b>암묵적 제한을 명시적 제한(Semaphore·타임아웃·서킷 브레이커)으로 바꾸는 일</b>이라고 봅니다."</li>
+  </ol>
+</div>
+
+<h3>12-3. 암기 총정리</h3>
+
+<div class="memo green">
+  <h4>규칙 카드 — 문장 그대로 외운다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">속도 ≠ 동시성</div><div class="d">가상 스레드는 <b>대기 중 동시성</b>을 높인다. 요청 하나가 빨라지지 않는다.</div></div>
+    <div class="tile"><div class="k">내리는 건 본인</div><div class="d">freeze/unmount는 가상 스레드 <b>스스로</b>. 올리는 건 캐리어, 깨우는 건 poller.</div></div>
+    <div class="tile ok"><div class="k">쓴 만큼만</div><div class="d">가상 스레드는 스택을 상시 보유하지 않는다 — <b>실행 중엔 캐리어 스택, 대기 중엔 힙</b>.</div></div>
+    <div class="tile red"><div class="k">핀 원인은 둘</div><div class="d"><code>synchronized</code>(구현 제약, <b>JDK 24 해소</b>) / <b>네이티브 프레임</b>(구조 제약, <b>영구</b>).</div></div>
+    <div class="tile red"><div class="k">스레드는 풀려도 커넥션은 안 풀린다</div><div class="d">커넥션은 <b>스레드가 아니라 트랜잭션에 묶인 자원</b>이다.</div></div>
+    <div class="tile red"><div class="k">더 받게 할 뿐 더 처리하지 않는다</div><div class="d">하류 처리량이 그대로면 늘어난 건 <b>대기 행렬</b>뿐이다.</div></div>
+    <div class="tile"><div class="k">개수 제한은 Semaphore</div><div class="d">스레드 풀로 제한하려 들면 가상 스레드의 이점이 사라진다.</div></div>
+    <div class="tile"><div class="k">ThreadLocal은 문맥만</div><div class="d">문맥 전달은 유지, <b>스레드당 캐싱은 제거</b>. 후속은 <code>ScopedValue</code>.</div></div>
+  </div>
+</div>
+
+<div class="memo warn">
+  <h4>버전 카드 — 숫자를 틀리면 감점이 크다</h4>
+  <div class="verbox"><div class="vh">JDK 21</div><div class="vb">가상 스레드 <b>정식 기능</b>(JEP 444) · 첫 LTS 기준선 · <code>ScopedValue</code> 프리뷰 첫 등장 · <code>jcmd Thread.dump_to_file</code></div></div>
+  <div class="verbox bad2"><div class="vh">JDK 21~23</div><div class="vb"><code>synchronized</code> 안 블로킹이 <b>핀 된다</b> → 긴 I/O 구간만 <code>ReentrantLock</code>으로 교체 · 탐지는 <code>-Djdk.tracePinnedThreads=full</code> 또는 JFR</div></div>
+  <div class="verbox ok2"><div class="vh">JDK 24</div><div class="vb"><b>JEP 491</b> — 모니터 소유권을 <b>가상 스레드 단위로 추적</b>해 <code>synchronized</code> 핀 해소 · <code>-Djdk.tracePinnedThreads</code> <b>제거</b> · 핀 조사는 <b>JFR <code>jdk.VirtualThreadPinned</code>가 정식 경로</b></div></div>
+  <div class="verbox ok2"><div class="vh">JDK 25</div><div class="vb"><code>ScopedValue</code> <b>정식 기능</b>(JEP 506) — 불변 · 블록 범위로 ThreadLocal의 수명 종속을 끊는다</div></div>
+  <p style="margin:10px 0 0"><b>버전을 흐리게 말하면 오답이 되는 주제다.</b> "핀 됩니다"만 말해도, "이제 안 됩니다"만 말해도 <b>둘 다 반쪽</b>이다 — <b>항상 21~23 / 24+를 나눠 말한다.</b></p>
+</div>
+
+
+<h2 id="s13">13. 꼬리질문 셀프 테스트 (16문항)</h2>
+
+<p class="sub">질문만 먼저 읽고 <b>소리 내어 답해 본 뒤</b> 펼쳐서 대조한다. 막히면 괄호 안 절로 돌아간다.</p>
+
+<details class="q"><summary>가상 스레드를 도입하면 처리량이 몇 배 늘어나나요?<span class="hint">힌트: 배수가 어디서 나오는 수인지부터 말한다 (→ 1절, 9절)</span></summary><div class="a">
+  <p><b>"워크로드에 따라 다르고, 늘어난다면 그 배수는 <u>대기 시간 / CPU 시간</u> 비율에서 나온다"</b>로 답하는 것이 정확하다. "몇 배"라는 숫자를 그냥 말하면 하이프를 옮긴 것이고, 배수의 <b>출처</b>를 말하면 이해한 것이다.</p>
+  <p>1절의 예를 그대로 쓰면 계산이 보인다. 요청 하나가 <b>350ms 중 5ms만 CPU를 쓴다면 대기 비중이 98%</b>이고, 스레드 상한 200이 걷히는 순간 처리량은 <b>CPU가 감당하는 지점까지</b> 올라갈 수 있다. 반대로 CPU를 100% 쓰는 작업이라면 이론상 이득이 0이고, 분기와 freeze/thaw 비용 때문에 <b>미세하게 손해</b>일 수도 있다.</p>
+  <p style="margin-bottom:0">여기에 한 문장을 붙이면 완성된다. <b>"단, 상류의 상한이 걷혔다고 하류도 늘어나는 것은 아니다."</b> DB·외부 API·커넥션 풀의 처리량이 그대로면 늘어나는 것은 처리량이 아니라 <b>대기 행렬</b>이다(9절).</p>
+</div></details>
+
+<details class="q"><summary>pinning은 JDK 24에서 해결됐다는데, 이제 <code>synchronized</code>를 그냥 써도 되나요?<span class="badge senior">시니어 변별</span><span class="hint">힌트: 핀과 직렬화는 다른 문제다 (→ 8절)</span></summary><div class="a">
+  <p><b>"핀은 사라졌지만 직렬화는 남는다"</b>가 핵심이다. 3단으로 나눠 답한다.</p>
+  <p><b>(1) 무엇이 해결됐는지 정확히.</b> <b>JEP 491(JDK 24)</b>이 모니터 소유권을 OS 스레드가 아니라 <b>가상 스레드 단위로 추적</b>하도록 바꿔서, <code>synchronized</code> 안에서 블로킹해도, <code>Object.wait()</code>로 대기해도 캐리어에서 내려올 수 있게 됐다. <b>"캐리어가 묶여 서버 전체가 멈추는"</b> 문제는 이것으로 해소된다.</p>
+  <p><b>(2) 무엇이 남았는지.</b> <b>잠금은 여전히 잠금이다.</b> 300ms짜리 외부 호출을 <code>synchronized</code>로 감쌌다면 그 구간의 처리량은 <b>초당 3건</b>이고, 가상 스레드가 1만 개여도 변하지 않는다. 장애의 모양이 <b>"전체 멈춤"에서 "그 구간만 극심한 대기"</b>로 바뀔 뿐이다. <b>긴 I/O를 잠금으로 감싸는 설계 자체가 잘못</b>이라는 점은 그대로다.</p>
+  <p><b>(3) 네이티브 pinning은 구조적으로 남는다.</b> JNI 프레임은 JVM이 구조를 몰라 힙으로 옮길 수 없으므로 <b>어떤 버전에서도</b> 얼릴 수 없다. 그래서 JFR <code>jdk.VirtualThreadPinned</code> 이벤트는 JDK 24 이후에도 계속 필요하다 — 다만 이제 그 이벤트가 잡아 주는 것은 대체로 네이티브/VM 프레임이다.</p>
+  <p style="margin-bottom:0">마지막으로 <b><code>-Djdk.tracePinnedThreads</code>가 JDK 24에서 제거됐다는 것</b>까지 말하면 버전 감각이 드러난다. 이 옵션을 그대로 붙여 둔 채 <b>"핀이 안 잡히네"</b> 하는 오해가 실제로 생긴다.</p>
+</div></details>
+
+<details class="q"><summary>가상 스레드를 켰더니 오히려 장애가 늘었습니다. 왜일까요?<span class="badge senior">시니어 변별</span><span class="hint">힌트: 톰캣 200 스레드가 사실 무엇이었는지 (→ 9절, 11절)</span></summary><div class="a">
+  <p><b>"부하 제한기가 사라졌기 때문"</b>이라고 답하는 것이 이 질문의 정답이다.</p>
+  <p>톰캣의 워커 200개는 성능 제약처럼 보였지만, 실제로는 <b>공짜로 얻고 있던 admission control(부하 제한)</b>이었다. 동시에 200건까지만 안으로 들여보내 주었기 때문에 그 뒤의 모든 자원 — 커넥션 풀, 외부 API, 레거시 시스템 — 도 <b>200 이상의 경쟁을 겪지 않았다.</b> <code>spring.threads.virtual.enabled=true</code> 한 줄은 <b>그 문을 활짝 여는 것</b>이다.</p>
+  <p>구체적 증상은 셋으로 나온다.</p>
+  <ol>
+    <li><b>커넥션 풀 고갈</b> — <code>Connection is not available, request timed out after 30000ms</code>. 9절의 계산 그대로다.</li>
+    <li><b>하류 서비스 과부하 전파</b> — 우리가 안 죽는 대신 <b>외부 API나 레거시 시스템이 죽는다.</b> 우리 서버가 던지던 백프레셔(더 못 받겠다는 신호)가 사라진 결과다.</li>
+    <li><b>메모리 증가</b> — 요청 하나가 붙잡고 있던 객체들이 이제 <b>수만 건 분량으로 힙에 동시에 존재</b>한다.</li>
+  </ol>
+  <p style="margin-bottom:0">대응은 <b>부하 제한을 명시적으로 다시 세우는 것</b>이다. <code>Semaphore</code>로 하류 호출의 동시성을 제한하고, 커넥션 풀 대기 지표를 감시하고, 타임아웃과 서킷 브레이커를 손본다. <b>"암묵적 제한이 명시적 제한으로 바뀌었다"</b>가 도입의 본질이다.</p>
+</div></details>
+
+<details class="q"><summary>가상 스레드와 리액티브(WebFlux) 중 무엇을 고르겠습니까?<span class="badge senior">시니어 변별</span><span class="hint">힌트: 푸는 문제는 같고 비용 구조가 다르다 (→ 12절)</span></summary><div class="a">
+  <p><b>"둘 다 같은 문제를 푸는 다른 방법이고, 비용 구조가 다르다"</b>에서 출발한다.</p>
+  <p>푸는 문제는 같다 — <b>"기다림 때문에 OS 스레드가 낭비되는 것"</b>이다. 리액티브는 <b>코드를 바꿔서</b> 스레드를 안 붙잡고, 가상 스레드는 <b>스레드를 바꿔서</b> 붙잡아도 싸게 만든다.</p>
+  <p>비용이 갈리는 지점은 <b>코드 스타일 전환 여부, 스택트레이스·디버깅, ThreadLocal 기반 도구의 동작, 전염성(경로 위 라이브러리 하나만 블로킹이어도 무너지는가), 스트림·배압 제어의 표현력</b> 다섯이다(12절 표).</p>
+  <p><b>대부분의 CRUD·오케스트레이션 API라면 가상 스레드가 낫다.</b> 얻는 동시성은 비슷한데 학습·유지보수 비용이 비교가 안 되게 싸기 때문이다.</p>
+  <p style="margin-bottom:0"><b>리액티브가 여전히 유리한 영역</b>을 말하면 답이 균형을 얻는다 — <b>SSE·WebSocket 같은 스트리밍, 백프레셔가 본질적인 파이프라인, 이미 Reactor로 잘 돌고 있는 시스템</b>이다. 특히 마지막이 중요하다. <b>잘 돌아가는 리액티브 코드를 가상 스레드로 되돌릴 이유는 없다.</b></p>
+</div></details>
+
+<details class="q"><summary>가상 스레드 환경에서 <code>ThreadLocal</code>을 써도 되나요?<span class="hint">힌트: 동작과 사용 패턴을 분리한다 (→ 10절)</span></summary><div class="a">
+  <p><b>"써도 된다. 다만 용도를 나눠야 한다"</b>로 답한다.</p>
+  <p><b>동작은 안전하다.</b> 값은 캐리어가 아니라 <b>힙에 사는 가상 스레드 객체</b>에 붙으므로 캐리어를 갈아타도 따라다니고, 다른 가상 스레드에게 새지 않는다(10절). 오히려 스레드 풀 시절의 최대 사고였던 <b>재사용 오염이 사라진다</b> — 스레드가 재사용되지 않으니까.</p>
+  <p><b>깨지는 것은 "캐싱" 용도다.</b> "스레드가 적고 오래 산다"를 전제로 스레드마다 비싼 객체를 하나씩 만들어 두던 패턴은, 스레드가 <b>수만 개 일회용</b>이 되는 순간 <b>캐시 적중 0, 메모리만 수만 배</b>가 된다.</p>
+  <p style="margin-bottom:0">정리는 이렇다. <b>문맥 전달(traceId, 인증 정보)은 유지, 스레드당 캐싱은 제거.</b> 그리고 이 종속 자체를 끊으려는 후속이 <b>불변 · 블록 범위</b>의 <code>ScopedValue</code>(JDK 21 프리뷰 → <b>JDK 25 정식</b>, JEP 506)라는 데까지 연결하면 좋다.</p>
+</div></details>
+
+<details class="q"><summary><code>Executors.newVirtualThreadPerTaskExecutor()</code>는 결국 스레드 풀 아닌가요?<span class="badge bonus">가산점</span><span class="hint">힌트: 반환 타입이 <code>ExecutorService</code>라는 것과 풀이라는 것은 다른 말 (→ 11절)</span></summary><div class="a">
+  <p><b>아니다.</b> 반환 타입이 <code>ExecutorService</code>라 풀처럼 보이지만, 이름 그대로 <b>작업마다(per-task) 가상 스레드를 하나 새로 만들고 끝나면 버린다.</b> <b>재사용도 없고 개수 상한도 없다.</b></p>
+  <p>이 차이가 실무에서 드러나는 지점이 셋이다.</p>
+  <ol>
+    <li><b>개수 제한 수단이 아니다.</b> 하류를 보호하려면 <code>Semaphore</code>를 따로 걸어야 한다(11절).</li>
+    <li><b><code>close()</code>의 의미가 다르다.</b> "풀을 접는다"가 아니라 <b>"제출된 작업이 전부 끝날 때까지 기다린다"</b>이다. <code>ExecutorService</code>가 <code>AutoCloseable</code>이 되면서 try-with-resources로 쓰는 것이 자연스러워졌다.</li>
+    <li><b>가상 스레드를 풀링하려 드는 것은 안티패턴이다.</b> 풀링하는 순간 <b>재사용 오염</b>과 <b>개수 상한</b>이 함께 돌아와 이점이 사라진다.</li>
+  </ol>
+  <p style="margin-bottom:0">한 문장으로 정리하면 <b>"개수 제한이 목적이면 스레드 풀이 아니라 <code>Semaphore</code>"</b>다.</p>
+</div></details>
+
+<details class="q"><summary>캐리어 스레드 개수를 늘리면 pinning 문제가 해결되나요?<span class="badge senior">시니어 변별</span><span class="hint">힌트: 늘려서 사는 시간이 무엇을 사는지 (→ 8절)</span></summary><div class="a">
+  <p><b>완화는 되지만 해결은 아니다.</b> 캐리어를 늘리는 것은 <b>"핀이 나도 죽지 않을 여유분을 사는 것"</b>이지 핀 자체를 없애는 게 아니다.</p>
+  <p>이유는 셋이다.</p>
+  <ul>
+    <li><b>캐리어는 진짜 OS 스레드다.</b> 늘리는 만큼 스택 예약·컨텍스트 스위칭 비용이 그대로 돌아온다. 무한정 늘리면 <b>결국 플랫폼 스레드 풀로 되돌아가는 것</b>과 같아진다.</li>
+    <li><b>핀 되는 비율이 그대로면 늘려도 같은 비율로 묶인다.</b> 트래픽이 2배가 되면 다시 전부 묶인다 — 시간을 벌 뿐이다.</li>
+    <li><b>원인 제거가 훨씬 싸다.</b> 긴 I/O를 감싼 <code>synchronized</code>를 <code>ReentrantLock</code>으로 바꾸거나(JDK 21~23), 애초에 잠금 밖으로 I/O를 빼는 편이 근본 해결이다.</li>
+  </ul>
+  <p style="margin-bottom:0">그래서 답의 형태는 <b>"임시 방편으로는 유효하고(장애 대응), 항구적 해법으로는 틀렸다(설계)"</b>가 된다. 덧붙여 <b>핀 상태에서 진행이 아예 불가능해지는 상황(모두가 핀 + 잠금 대기)</b>을 막기 위해 JDK가 캐리어를 일시적으로 보충할 수 있다는 점은 알아 두되, <b>그 보충을 성능 대책으로 기대하면 안 된다.</b></p>
+</div></details>
+
+<details class="q"><summary><code>Thread.sleep()</code>은 캐리어를 묶나요? <code>BlockingQueue.take()</code>는요?<span class="hint">힌트: 판단 기준은 "그 경로를 누가 소유하는가" (→ 6절)</span></summary><div class="a">
+  <p><b>둘 다 묶지 않는다 — 가상 스레드는 unmount된다.</b> 그리고 이 답을 <b>암기가 아니라 기준으로</b> 말해야 한다.</p>
+  <div class="bigrule">기준은 <u>"블로킹 지점이 JDK가 소유한 자바 코드인가"</u> 하나다</div>
+  <p><code>Thread.sleep</code>, <code>Socket</code>/<code>InputStream</code>의 I/O, <code>BlockingQueue</code>, <code>ReentrantLock</code>·<code>Semaphore</code>의 대기 — 이들은 전부 <b>JDK 내부가 <code>LockSupport.park</code> 또는 epoll 등록으로 구현</b>되어 있어 "시스템 콜 직전에 끼어들 지점"이 있다. 그래서 JDK가 <b>블로킹 대신 freeze + yield</b>로 바꿔칠 수 있다.</p>
+  <p>반대로 <b>JVM이 그 경로를 소유하지 못하는 곳</b>은 못 바꾼다 — <b>네이티브(JNI) 호출 안의 블로킹</b>이 대표다. 커널로 직행하므로 끼어들 지점이 없고, 프레임도 옮길 수 없다.</p>
+  <p style="margin-bottom:0">주의할 표현 하나. <b>"sleep은 이제 공짜"가 아니다.</b> unmount 덕분에 <b>OS 스레드를 안 묶을 뿐</b>, 그 가상 스레드는 여전히 그 시간 동안 진행하지 않고 힙 객체로 남아 있다.</p>
+</div></details>
+
+<details class="q"><summary>가상 스레드 수만 개가 도는 서버에서 스레드 덤프는 어떻게 뜨나요?<span class="badge bonus">가산점</span><span class="hint">힌트: <code>jstack</code>이 보여주는 것은 무엇인가 (→ 11절)</span></summary><div class="a">
+  <p><b>전통적인 <code>jstack</code>으로는 가상 스레드가 보이지 않는다.</b> <code>jstack</code>이 열거하는 것은 <b>OS 스레드에 대응하는 플랫폼 스레드</b>뿐이라, 캐리어 몇 개와 GC/JIT 스레드만 나오고 <b>정작 일하는 가상 스레드 수만 개는 목록에 없다.</b></p>
+  <p>대신 <b>JDK 21+의 <code>jcmd &lt;pid&gt; Thread.dump_to_file</code></b>을 쓴다. 이 덤프는 가상 스레드까지 포함하며, 파일로 떨어뜨리는 형태이고 JSON 형식도 지원한다.</p>
+  <p>이 사실이 그대로 <b>모니터링 함정</b>으로 이어진다. <code>ThreadMXBean</code> 기반 지표(마이크로미터의 <code>jvm.threads.live</code> 등)도 <b>가상 스레드를 세지 않는다.</b> 캐리어만 세기 때문에 부하가 아무리 몰려도 <b>항상 코어 수 근처에서 평평</b>하다 — 즉 <b>"스레드 풀 포화" 알람이 영원히 울리지 않는다.</b></p>
+  <p style="margin-bottom:0">그래서 대체 지표를 먼저 세운다. <b>커넥션 풀 대기</b>(<code>hikaricp.connections.pending</code>, acquire 지연) → <b>하류 응답 시간·타임아웃·에러율</b> → <b>JFR 이벤트</b>(<code>jdk.VirtualThreadPinned</code>, <code>jdk.VirtualThreadStart</code>/<code>End</code>) 순이다.</p>
+</div></details>
+
+<details class="q"><summary>가상 스레드도 <code>-Xss</code>만큼 스택을 예약하나요? 왜 수백만 개가 가능한가요?<span class="hint">힌트: 스택이 "어디에" 있는지가 답이다 (→ 3·4절)</span></summary><div class="a">
+  <p><b>예약하지 않는다.</b> 플랫폼 스레드는 태어날 때 네이티브 메모리에 <b>수백 KB~2MB 수준의 스택을 미리 예약</b>받는다(<code>-Xss</code>/<code>ThreadStackSize</code>, 값은 <b>플랫폼 의존</b>). 반면 가상 스레드는 <b>자기만의 스택을 상시 보유하지 않는다.</b></p>
+  <ul>
+    <li><b>실행 중(mount)</b>이면 <b>캐리어의 진짜 스택을 빌려 쓴다.</b> 이 순간엔 평범한 스레드와 기계어 수준에서 동일하다.</li>
+    <li><b>대기 중(unmount)</b>이면 <b>쓴 만큼만</b> 힙의 객체(JVM 내부에서 <code>StackChunk</code>)로 챙겨 간다.</li>
+  </ul>
+  <p><b>"쓴 만큼만"이 비용 차이의 정체다.</b> 얕은 스택으로 대기 중인 가상 스레드는 힙에서 <b>몇 KB짜리 객체</b>일 뿐이라, 생성도 <b>커널 시스템 콜 없이 객체 <code>new</code> 수준</b>으로 끝난다. "요청마다 만들고 버린다"는 모델이 성립하는 근거가 여기 있다.</p>
+  <p style="margin-bottom:0">덧붙일 정밀함 하나. 플랫폼 스레드의 예약도 <b>예약(reserve)이지 즉시 소모하는 물리 메모리는 아니다.</b> 그래도 <b>주소 공간과 커널 자료구조는 스레드 수에 정직하게 비례</b>하므로, 힙이 남아돌아도 <code>unable to create new native thread</code>로 실패한다.</p>
+</div></details>
+
+<details class="q"><summary>가상 스레드로 바꾸면서 <code>synchronized</code>를 전부 <code>ReentrantLock</code>으로 치환하면 되나요?<span class="hint">힌트: 무엇을 감싼 <code>synchronized</code>인가 (→ 8절)</span></summary><div class="a">
+  <p><b>전부 바꾸는 것은 과잉이다.</b> 판단 기준은 <b>"그 잠금이 감싸고 있는 것이 무엇인가"</b> 하나다.</p>
+  <ul>
+    <li><b>바꾼다</b> — <b>오래 블로킹하는 구간</b>(외부 API 호출, DB I/O, 큐 대기)을 감싼 <code>synchronized</code>. 여기가 캐리어를 못박는 지점이다(JDK 21~23).</li>
+    <li><b>그대로 둔다</b> — <b>짧은 인메모리 연산</b>만 보호하는 <code>synchronized</code>. 핀이 나도 지속 시간이 마이크로초 수준이라 실질적 영향이 없고, 오히려 <code>ReentrantLock</code>으로 바꾸면 <b><code>finally</code>의 <code>unlock()</code> 누락</b>이라는 새 위험(영구 정지)을 들여오게 된다.</li>
+  </ul>
+  <p><code>ReentrantLock</code>이 괜찮은 이유는 정확히 <code>synchronized</code> 문제의 뒤집힘이다. <b>소유자를 힙의 자바 객체 필드에 기록</b>하므로 가상 스레드가 캐리어를 갈아타도 <b>소유권이 따라다닌다.</b></p>
+  <p style="margin-bottom:0">현실적으로 더 중요한 것은 <b>내 코드가 아니라 의존 라이브러리</b>다. JDBC 드라이버·커넥션 풀·HTTP 클라이언트 내부의 <code>synchronized + I/O</code>는 소스를 다 뒤질 수 없으니 <b>JFR <code>jdk.VirtualThreadPinned</code></b>로 잡는 편이 확실하다. JDK 24 이후라면 이 걱정은 크게 줄어든다.</p>
+</div></details>
+
+<details class="q"><summary>이거 예전 "그린 스레드"랑 같은 것 아닌가요? 자바가 한 번 버렸던 방식인데요<span class="badge senior">시니어 변별</span><span class="hint">힌트: 발상은 같고 기반 기술이 다르다 (→ 6절)</span></summary><div class="a">
+  <p><b>발상은 같지만 실패 원인이 전부 해소된 형태다.</b> "같다"고만 하면 반쪽, "다르다"고만 하면 근거가 없다. <b>버린 이유 셋을 대고 각각이 어떻게 풀렸는지</b>를 말해야 한다.</p>
+  <ol>
+    <li><b>멀티코어를 못 썼다(M:1).</b> 그린 스레드는 OS 스레드 <b>하나</b> 위의 다중화라 코어가 몇 개든 하나만 썼다. → 가상 스레드는 <b>M:N</b>이다. 캐리어를 코어 수만큼 두고 <b>work-stealing 스케줄러(ForkJoinPool)</b>로 분배한다.</li>
+    <li><b>블로킹 콜 하나가 전체를 마비시켰다.</b> 유일한 OS 스레드가 잠들면 전부 정지했는데, 피하려면 논블로킹 I/O 인프라가 필요했지만 <b>당시엔 epoll/kqueue가 없거나 미성숙</b>했다. → 지금은 <b>epoll/kqueue + 자바 NIO</b> 위에서 <b>JDK 블로킹 API의 겉모습은 그대로 두고 속만 재작성</b>했다.</li>
+    <li><b>OS 스레드가 좋아졌다.</b> 리눅스 NPTL 등으로 커널 스레드가 빨라지면서 "그냥 OS에 맡기자"가 당시로선 합리적이었다. → 마이크로서비스 시대에 <b>I/O 대기형 워크로드가 폭증</b>했고, Go의 고루틴이 M:N이 실전에서 통함을 증명했다.</li>
+  </ol>
+  <p style="margin-bottom:0">여기에 <b>기술적 전제 하나</b>를 더하면 답이 두터워진다 — <b>힙에 얼린 스택의 GC 추적, JIT 프레임의 freeze/thaw</b> 같은 Continuation을 감당할 JVM 기술이 그동안 성숙했다. <b>개념이 없어서가 아니라 구현할 기반이 없었던 것</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>이미지 변환·암호 연산 같은 CPU 작업에 가상 스레드를 쓰면 어떻게 되나요?<span class="hint">힌트: 이득의 출처가 무엇이었는지 (→ 7절, 11절)</span></summary><div class="a">
+  <p><b>이득이 없고, 미세한 손해가 있을 수 있다.</b> 이유는 단순하다 — 이득의 출처가 <b>"대기하는 동안 OS 스레드를 놓아주는 것"</b>인데, CPU 바운드 작업에는 <b>놓아줄 대기가 없다.</b> 어차피 동시에 도는 개수는 <b>코어 수</b>가 상한이다.</p>
+  <p>비용이 붙는 위치를 정확히 보면 이렇다.</p>
+  <ul>
+    <li><b>CPU로 계산하는 동안엔 오버헤드가 0이다.</b> mount된 가상 스레드는 캐리어 스택 위에서 <b>평범한 스레드와 똑같은 기계어</b>로 돈다. 명령어마다 붙는 세금 같은 건 없다.</li>
+    <li><b>비용은 블로킹 지점에만 붙는다</b> — 분기 체크 한 번과 freeze/thaw 복사. 그런데 <b>플랫폼 스레드의 블로킹도 공짜가 아니다</b>(커널 진입, 레지스터 저장, 캐시 오염). freeze/thaw는 이와 비슷하거나 오히려 싸다.</li>
+  </ul>
+  <p style="margin-bottom:0">그래서 답은 <b>"대기 없는 단일 작업이면 이득 0, 미세 손해 가능"</b>이고, 실무 지침은 <b>CPU 집약 작업은 코어 수 기반의 고정 플랫폼 스레드 풀에 그대로 둔다</b>가 된다.</p>
+</div></details>
+
+<details class="q"><summary>가상 스레드가 unmount됐다가 <b>다른</b> 캐리어에서 재개돼도 정말 괜찮나요? 무엇이 그것을 보장하나요?<span class="badge senior">시니어 변별</span><span class="hint">힌트: 옮긴 것이 무엇인지 (→ 4절)</span></summary><div class="a">
+  <p><b>괜찮다. 옮긴 것이 "실행 중인 스레드"가 아니라 <u>데이터</u>이기 때문이다.</b></p>
+  <p>freeze는 <b>콜 스택 프레임들을 힙의 <code>StackChunk</code> 객체로 복사</b>하는 작업이고, thaw는 그것을 <b>아무 캐리어의 스택 위에나 다시 펼치는</b> 작업이다. 프레임 안에는 지역변수 테이블·피연산자 스택·<b>리턴 주소</b>가 들어 있으므로, 어느 실행대에 올려도 <b>멈췄던 자리에서 그대로 이어 달린다.</b></p>
+  <p>"실행 위치(레지스터·PC)"를 따로 백업하지 않아도 되는 이유가 결정적이다. freeze는 아무 데서나 일어나지 않고 <b>항상 <code>Continuation.yield()</code>라는 정해진 메서드 호출 지점에서</b> 일어난다. 메서드를 호출한 지점이라는 것은 곧 <b>"돌아올 위치가 이미 스택 프레임의 리턴 주소로 기록돼 있다"</b>는 뜻이다.</p>
+  <p>이 점이 커널과 결정적으로 다르다. 커널은 <b>선점(preemption)</b>으로 언제든 끊을 수 있어 끊긴 순간의 레지스터를 전부 저장해야 하지만, 가상 스레드는 <b>본인이 정해진 지점에서 스스로 물러난다</b> — <b>협조적(cooperative) 스케줄링</b>이다. <b>기절한 사람의 기억을 꺼내는 게 아니라 잠들기 전에 본인이 일기를 써 두는</b> 방식이다.</p>
+  <p style="margin-bottom:0">그리고 <b>참조의 정합성</b>은 JVM이 <b>프레임의 각 칸이 값인지 참조인지를 아는 메타데이터</b>(GC가 스택을 훑을 때 쓰던 그 능력)를 갖고 있어 보장된다. <b>바로 이 능력이 없는 네이티브 프레임은 옮길 수 없고, 그것이 구조적 pinning의 근거다.</b></p>
+</div></details>
+
+<details class="q"><summary>커넥션 풀을 200개로 늘리면 <code>@Transactional</code> 문제가 해결되나요?<span class="hint">힌트: 풀 크기와 점유 시간 중 무엇이 지배적인가 (→ 9절, 11절)</span></summary><div class="a">
+  <p><b>오답에 가깝다.</b> 커넥션은 <b>DB 쪽에도 프로세스·메모리를 요구하는 자원</b>이라, 무작정 늘리면 애플리케이션이 버티는 대신 <b>DB가 먼저 무너진다.</b></p>
+  <p>순서가 정해져 있다. <b>먼저 할 일은 트랜잭션의 커넥션 점유 시간을 줄이는 것</b>이고, 풀 크기 조정은 그다음이다. 처리량 상한 식이 <b><code>풀 크기 ÷ 점유 시간</code></b>이므로 <b>분모를 줄이는 쪽이 훨씬 효율이 좋다.</b></p>
+  <div class="eq">20 ÷ 0.35s ≈ 57 req/s &nbsp;→&nbsp; (외부 콜을 트랜잭션 밖으로) &nbsp;20 ÷ 0.05s = 400 req/s</div>
+  <p>같은 풀 20개로 <b>7배</b>가 된다. 풀을 200개로 늘려서 같은 효과를 보려면 DB에 그만큼의 부담을 지워야 한다.</p>
+  <p style="margin-bottom:0">다만 <b>공짜는 아니다.</b> 트랜잭션을 쪼갠 만큼 <b>원자성이 깨지므로</b>, 중간 실패 시 <b>보상 처리나 상태 기반 재시도</b> 같은 정합성 설계가 반드시 따라와야 한다. 이 대가를 함께 말해야 답이 완성된다.</p>
+</div></details>
+
+<details class="q"><summary><code>InheritableThreadLocal</code>은 왜 다시 점검해야 하나요?<span class="badge bonus">가산점</span><span class="hint">힌트: 복사의 트리거가 무엇인가 (→ 10절)</span></summary><div class="a">
+  <p><b>복사의 트리거가 "요청"이 아니라 <u>스레드 생성</u>이기 때문이다.</b> 이 한 줄이 답의 전부다.</p>
+  <p><code>InheritableThreadLocal</code>은 <b>스레드가 생성되는 순간</b> 부모(그 생성 코드를 실행한 스레드)의 값 테이블을 자식에게 복사한다. 그러니 <b>생성 빈도</b>가 그대로 복사 빈도가 된다.</p>
+  <ul>
+    <li><b>플랫폼 스레드 풀</b> — 서버 시작 때 200개 만들고 끝이므로 복사도 <b>200번뿐</b>이다. 게다가 그 200번이 물려받는 건 풀을 만든 스레드(main 등)의 값이라 <b>요청 문맥 전달용으로는 애초에 쓸모가 없었다.</b> 그래서 풀 시대 프레임워크는 상속 대신 요청마다 <code>set</code>/<code>remove</code>를 썼다.</li>
+    <li><b>가상 스레드(요청당 생성)</b> — <b>내 코드가 가상 스레드를 안 만들어도</b> 톰캣이 <b>요청마다</b> 만든다. 부모에 inheritable 값이 있는 한 <b>요청 수만큼</b> 복사가 일어난다.</li>
+  </ul>
+  <p style="margin-bottom:0">그래서 판단 기준은 <b>"내가 스레드를 만들었나"가 아니라 "요청마다 새 스레드가 태어나는 모델인가"</b>다. 근본적인 대안은 값의 수명을 스레드가 아니라 <b>코드 블록 범위</b>에 매다는 <code>ScopedValue</code>인데, <b>불변</b>이라 자식 작업에 넘길 때 <b>복사가 아니라 참조 공유</b>로 끝난다는 점이 개수 비용까지 해결한다.</p>
+</div></details>
+
+<details class="q"><summary>"캐리어 스레드"는 특별한 OS 기능인가요? 어떻게 8개가 100만 개를 감당하죠?<span class="hint">힌트: 마법이 어디에 있는지 (→ 7절)</span></summary><div class="a">
+  <p><b>특별하지 않다.</b> OS 입장에서 캐리어는 <code>new Thread()</code>로 만든 것과 <b>아무 차이 없는 평범한 OS 스레드</b>이고, 특별한 커널 기능도 쓰지 않는다. 사실 <b>OS는 가상 스레드의 존재를 전혀 모른다</b> — OS가 보는 것은 "이 자바 프로세스에 스레드가 8개 있네"뿐이다.</p>
+  <p>다른 것은 <b>그 스레드가 실행하는 프로그램</b>이다. 캐리어(ForkJoinPool 워커)가 도는 코드는 결국 무한 루프다 — <b>"대기열에서 가상 스레드 하나 꺼냄 → thaw → 실행 → 걔가 yield하거나 끝나면 → 다시 꺼냄".</b></p>
+  <div class="bigrule">마법은 <u>작업대(캐리어)</u>가 아니라 <u>서랍(Continuation의 freeze/thaw)</u>에 있다</div>
+  <p style="margin-bottom:0">목수 8명이 의뢰 10만 건을 처리할 수 있는 것은 작업대가 마법이어서가 아니라 <b>"재료를 기다리게 된 작업은 하다 만 상태 그대로 서랍에 넣고 다른 의뢰를 꺼낸다"</b>는 규칙 덕분이다. 그리고 그 규칙을 실행하는 주체도 나뉘어 있다 — <b>내리는 건 본인, 올리는 건 캐리어, 깨우는 건 poller</b>(7절). <b>별도의 관리자 스레드는 없다.</b></p>
+</div></details>
+
+
+<section id="summary" class="banner">
+  <div class="t">한 줄 요약</div>
+  가상 스레드는 <b>"스레드가 기다린다 = 비싼 OS 스레드가 논다"는 등식을 깬 기술</b>이다 — 스레드의 정체가 <b>"콜 스택 + 실행 위치"라는 데이터</b>임을 이용해, 블로킹 시스템 콜에 들어가는 대신 <b>JDK가 소유한 시스템 콜 직전 경로</b>에서 <b>"epoll 등록 + 아직 깨어 있는 스레드가 스스로 자기 스택 프레임을 힙으로 복사(freeze)하고 캐리어에서 물러나기"</b>로 바꿔치기했고, 데이터가 도착하면 <b>아무 캐리어에나 다시 올려(thaw)</b> 이어 달린다(<b>내리는 건 본인, 올리는 건 캐리어, 깨우는 건 poller — 마법은 캐리어가 아니라 Continuation에 있다</b>).
+  그 대가로 <b>JVM이 경로를 소유하지 못한 지점에서 pinning</b>이 생기는데, <code>synchronized</code>는 <b>모니터 소유자가 OS 스레드에 묶여 있어 프레임만 옮기면 잠금 장부가 어긋나기 때문</b>이고(<b>JDK 21~23에서는 <code>ReentrantLock</code>으로 교체, JDK 24의 JEP 491에서 해소 — 다만 잠금의 직렬화는 그대로 남는다</b>), <b>JNI 프레임은 JVM이 구조를 몰라 옮길 수 없어 어떤 버전에서도 남는다</b>(탐지는 JDK 24부터 <code>-Djdk.tracePinnedThreads</code>가 제거되고 JFR <code>jdk.VirtualThreadPinned</code>가 정식 경로다).
+  그리고 가장 실무적인 함정은 <b>가상 스레드가 값싸게 만든 것은 자바 스레드일 뿐 DB 커넥션이 아니라는 것</b> — 트랜잭션은 커넥션에 묶여 있고 풀은 여전히 20개라 <b>처리량 상한 57 req/s는 그대로</b>인데, <b>톰캣 200 스레드가 해 주던 암묵적 부하 제한만 사라져</b> 대기 행렬이 무한정 길어지고 커넥션 타임아웃으로 <b>더 크게</b> 터진다.
+  그러니 도입의 본질은 <b>암묵적 제한을 명시적 제한으로 바꾸는 일</b>이다 — 외부 콜을 트랜잭션 밖으로 빼고, <code>Semaphore</code>로 동시성을 직접 제한하고, 스레드 수 대신 <b>커넥션 풀 대기와 JFR 이벤트</b>를 보도록 관측 지표를 다시 세우고, ThreadLocal은 <b>문맥 전달만 남기고 스레드당 캐싱은 걷어낸다</b>(후속은 불변 · 블록 범위의 <code>ScopedValue</code>, JDK 25 정식).
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/01-java-kotlin/28-virtual-threads-pinning.md</code> · 관련 문서: <code>16-threadlocal-thread-pool-risks</code> · <code>22-static-simpledateformat-shared-mutable-state</code> · <code>23-jvm-heap-thread-dump</code> · <code>26-synchronization-tool-selection</code></p>
+
+</main>
+</body>
+</html>

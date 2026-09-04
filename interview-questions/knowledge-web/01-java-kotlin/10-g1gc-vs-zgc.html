@@ -1,0 +1,1967 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G1GC vs ZGC — 어느 단계를 멈추고 하느냐가 모든 차이를 만든다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo.warn{border-color:var(--warn)}.memo.warn::before{background:var(--warn);content:"진단"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+.formula{font-family:var(--mono);font-size:1.12rem;font-weight:700;text-align:center;padding:16px 12px;border-radius:12px;background:#1e293b;color:#e2e8f0;margin:12px 0;line-height:1.9}
+.formula .hi{color:#fcd34d}
+.formula .hi2{color:#86efac}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+tr.bad td{background:var(--danger-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.mono{font-family:var(--mono)}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.split.g3{grid-template-columns:1fr 1fr 1fr}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane.w{background:var(--warn-soft);border-color:var(--warn-line)}
+.pane.w h4{color:var(--warn)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+pre.wide{width:1120px;margin-left:calc(50% - 560px)}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.ln-warn{display:block;background:rgba(217,119,6,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--warn)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.nm{color:#fca5a5}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+<style>
+.cmp.g3{grid-template-columns:1fr 1fr 1fr}
+.formula.small{font-size:.95rem;line-height:1.85;text-align:left}
+.chk{list-style:none;padding:0;margin:8px 0}
+.chk li{padding-left:26px;position:relative;margin:6px 0;font-size:.95rem}
+.chk li::before{content:"\2713";position:absolute;left:4px;color:var(--ok);font-weight:800}
+.chk.x li::before{content:"\2715";color:var(--danger)}
+.layer{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card);margin:12px 0}
+.layer .lt{font-weight:800;font-size:1.02rem;margin-bottom:6px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:.94rem;margin:8px 0}
+.kv dt{font-family:var(--mono);font-weight:700;color:var(--accent);white-space:nowrap}
+.kv dd{margin:0}
+.kv dt.r{color:var(--danger)}
+mark{background:#fde68a;padding:0 3px;border-radius:3px}
+.eq{font-family:var(--mono);font-weight:800;font-size:1.02rem;text-align:center;padding:10px;border-radius:10px;background:#fff;border:1px dashed var(--line);margin:8px 0}
+.q0{background:#111827;color:#e5e7eb;border-radius:12px;padding:14px 18px;margin:14px 0;font-size:1rem;line-height:1.7}
+.q0 b{color:#fcd34d}
+.fact{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:baseline;margin:10px 0}
+.fact .lb{font-size:.74rem;font-weight:800;padding:2px 9px;border-radius:999px;background:var(--accent);color:#fff;white-space:nowrap}
+.fact .lb.r{background:var(--danger)}.fact .lb.g{background:var(--ok)}.fact .lb.w{background:var(--warn)}
+.fact .tx{font-size:.95rem}
+.bigrule{font-size:1.18rem;font-weight:800;text-align:center;padding:18px 14px;border-radius:14px;background:linear-gradient(135deg,#eff6ff,#f5f3ff);border:2px solid var(--accent-line);color:#1e3a8a;margin:16px 0;line-height:1.6}
+.bigrule u{text-decoration-color:var(--accent);text-underline-offset:4px}
+.ladder{display:grid;gap:8px;margin:14px 0}
+.ladder .rung{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--card)}
+.ladder .rung .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.ladder .rung .tagr{font-size:.76rem;font-weight:800;padding:2px 10px;border-radius:999px;white-space:nowrap}
+.ladder .rung .tagr.rev{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-line)}
+.ladder .rung .tagr.irr{background:var(--danger-soft);color:var(--danger);border:1px solid var(--danger-line)}
+.vs{display:grid;grid-template-columns:1fr 56px 1fr;gap:10px;align-items:stretch;margin:14px 0}
+.vs .col{border:2px solid var(--line);border-radius:12px;background:var(--card);padding:12px 14px}
+.vs .col.b{border-color:var(--accent)}
+.vs .col.b .hd{color:var(--accent)}
+.vs .col.w{border-color:var(--warn)}
+.vs .col.w .hd{color:var(--warn)}
+.vs .col.r{border-color:var(--danger)}
+.vs .col.r .hd{color:var(--danger)}
+.vs .col.g{border-color:var(--ok)}
+.vs .col.g .hd{color:var(--ok)}
+.vs .col .hd{font-weight:800;margin-bottom:6px;font-size:.98rem}
+.vs .col ul{margin:6px 0 0;padding-left:18px}
+.vs .col li{margin:4px 0;font-size:.93rem}
+.vs .mid{display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--muted);font-size:.86rem}
+.pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:.8rem;font-weight:700;border:1px solid var(--line);background:#fff;margin:2px 4px 2px 0}
+.pill.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.pill.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.pill.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+</style>
+<style>
+/* 08 Java 8 실무 활용 전용 보강 */
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+.three .t3{border:2px solid var(--accent);border-radius:12px;background:var(--card);padding:12px 14px;position:relative}
+.three .t3 .no{position:absolute;top:-11px;left:12px;background:var(--accent);color:#fff;font-size:.74rem;font-weight:800;padding:1px 9px;border-radius:999px}
+.three .t3 .hd{font-weight:800;margin:6px 0 4px;font-size:1rem;color:var(--accent)}
+.three .t3 .pain{font-size:.88rem;color:var(--danger);background:var(--danger-soft);border:1px solid var(--danger-line);border-radius:8px;padding:6px 9px;margin-top:8px}
+.three .t3 .fix{font-size:.88rem;color:var(--ok);background:var(--ok-soft);border:1px solid var(--ok-line);border-radius:8px;padding:6px 9px;margin-top:6px}
+.numrow{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}
+.numrow .nn{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px;text-align:center}
+.numrow .nn .k{font-family:var(--mono);font-size:1.35rem;font-weight:800;color:var(--danger)}
+.numrow .nn .s{font-size:.8rem;color:var(--muted)}
+.numrow .nn.g .k{color:var(--ok)}
+.scenes{display:grid;gap:9px;margin:14px 0}
+.scene{display:grid;grid-template-columns:38px 1fr;gap:12px;align-items:start;border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:10px;background:var(--card);padding:10px 14px}
+.scene .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.88rem}
+.scene.key{border-left-color:var(--ok)}
+.scene.key .n{background:var(--ok)}
+.mnem{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0}
+.mnem .m4{border:1px solid var(--line);border-top:5px solid var(--accent);border-radius:10px;background:var(--card);padding:11px 13px;text-align:center}
+.mnem .m4 .k{font-family:var(--mono);font-weight:800;color:var(--accent);font-size:1rem}
+.mnem .m4 .d{font-size:.86rem;margin-top:4px}
+.mnem .m4 .s{font-size:.78rem;color:var(--muted);margin-top:2px}
+</style>
+<style>
+/* 10 G1GC vs ZGC 전용 보강 */
+.legend{display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:.86rem;color:var(--muted);margin:8px 0 0}
+.legend .sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:5px}
+.sw.stw{background:#111827}
+.sw.conc{background:#bfdbfe;border:1px solid #60a5fa}
+.sw.app{background:#f1f5f9;border:1px solid #cbd5e1}
+.axis2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+.axis2 .ax{border:2px solid var(--line);border-radius:12px;background:var(--card);padding:12px 14px}
+.axis2 .ax.same{border-color:var(--ok)}
+.axis2 .ax.diff{border-color:var(--danger)}
+.axis2 .ax .hd{font-weight:800;font-size:.98rem;margin-bottom:6px}
+.axis2 .ax.same .hd{color:var(--ok)}
+.axis2 .ax.diff .hd{color:var(--danger)}
+.axis2 .ax .verdict{margin-top:8px;font-size:.86rem;font-weight:700;padding:6px 10px;border-radius:8px}
+.axis2 .ax.same .verdict{background:var(--ok-soft);color:var(--ok)}
+.axis2 .ax.diff .verdict{background:var(--danger-soft);color:var(--danger)}
+.gcpair{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0}
+.gcpair .gc{border:2px solid var(--line);border-radius:12px;background:var(--card);padding:12px 14px}
+.gcpair .gc.g1{border-color:var(--warn)}
+.gcpair .gc.zgc{border-color:var(--accent)}
+.gcpair .gc .hd{font-weight:800;font-size:1rem;margin-bottom:6px}
+.gcpair .gc.g1 .hd{color:var(--warn)}
+.gcpair .gc.zgc .hd{color:var(--accent)}
+.gcpair .gc ul{margin:6px 0 0;padding-left:18px}
+.gcpair .gc li{margin:4px 0;font-size:.93rem}
+.phase{display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:start;margin:7px 0}
+.phase .lb{font-size:.74rem;font-weight:800;padding:3px 0;border-radius:7px;text-align:center;color:#fff}
+.phase .lb.stw{background:#111827}
+.phase .lb.conc{background:#2563eb}
+.phase .bd{border:1px solid var(--line);border-radius:8px;background:var(--card);padding:7px 12px;font-size:.93rem}
+.phase.s .bd{border-left:4px solid #111827}
+.phase.c .bd{border-left:4px solid var(--accent)}
+.taxbox{display:grid;grid-template-columns:1fr 1fr;gap:0;border:2px solid var(--accent);border-radius:12px;overflow:hidden;margin:14px 0}
+.taxbox .half{padding:12px 14px;background:var(--card)}
+.taxbox .half:first-child{border-right:2px dashed var(--accent-line)}
+.taxbox .half .hd{font-weight:800;color:var(--accent);margin-bottom:4px;font-size:.95rem}
+.decide{display:grid;gap:8px;margin:14px 0;counter-reset:dstep}
+.decide .d1{display:grid;grid-template-columns:30px 1fr;gap:12px;border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:10px;background:var(--card);padding:10px 14px}
+.decide .d1 .n{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;font-weight:800;font-size:.82rem;display:flex;align-items:center;justify-content:center}
+.decide .d1.stop{border-left-color:var(--danger)}
+.decide .d1.stop .n{background:var(--danger)}
+.decide .d1.go{border-left-color:var(--ok)}
+.decide .d1.go .n{background:var(--ok)}
+.optrow{font-family:var(--mono);font-size:.88rem}
+.threecol{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:12px 0}
+.trio{border:1px solid var(--line);border-top:5px solid var(--danger);border-radius:10px;background:var(--card);padding:11px 13px}
+.trio .k{font-weight:800;color:var(--danger);font-size:.95rem}
+.trio .d{font-size:.9rem;margin-top:5px}
+.trio .lg{font-family:var(--mono);font-size:.8rem;background:#1e293b;color:#fcd34d;border-radius:6px;padding:3px 7px;display:inline-block;margin-top:6px}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">01 Java · Kotlin &nbsp;|&nbsp; G1GC vs ZGC &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>G1GC vs ZGC — <b style="color:#2563eb">어느 단계를 멈추고 하느냐가 모든 차이를 만든다</b><br><span class="sub">두 컬렉터는 <b>region + 복사</b>라는 뼈대를 공유한다. 갈리는 지점은 단 하나 — <b>그 복사를 세상을 멈추고 하느냐, 앱이 도는 채로 하느냐</b></span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"G1 GC와 ZGC의 차이를 설명해주세요. 지연시간(latency)에 민감한 서비스라면 무엇을 선택하겠습니까?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>모든 GC는 결국 같은 세 가지 일</b>(살아있는 객체 표시 = Mark, 죽은 객체 회수 = Sweep, 살아남은 객체를 한쪽으로 몰아 빈틈 제거 = Compact)<b>을 한다.</b> G1과 ZGC의 차이는 이 일들을 <b>"애플리케이션을 멈춰 세우고 하느냐(STW), 돌아가는 채로 하느냐(concurrent)"</b>의 배치 하나뿐이고, 그 배치 차이가 나머지 모든 특징을 파생시킨다. <b>G1</b>은 Mark만 동시로 빼고 <b>객체 복사와 포인터 수정은 여전히 STW</b>로 하되 그 STW를 region 단위로 잘게 쪼개 pause 목표를 맞추는 절충이다. <b>ZGC</b>는 <b>컬러 포인터</b>(64비트 주소에서 실제로 안 쓰는 상위 비트에 마킹 상태를 심는 기법)와 <b>로드 배리어</b>(참조를 읽을 때마다 끼어드는 검사 코드)를 대가로 지불하고 복사까지 동시로 빼낸 극단이다. 그래서 G1의 pause는 힙과 live set 크기를 따라 커지지만 <b>상시 오버헤드가 싸고</b>, ZGC의 pause는 힙이 테라바이트급이어도 밀리초 미만이지만 <b>모든 참조 읽기에 배리어 세금</b>을 낸다. "지연에 민감하면 ZGC"라고 단답하는 대신 <b>"tail latency를 위해 throughput을 얼마나 낼 것인가"</b>의 교환으로 답하는 것이 이 질문의 본체다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>둘은 뼈대를 공유합니다.</b> 세대 가설 + 힙을 region으로 쪼개기 + 살아있는 객체만 퍼내는 복사(evacuation) — 여기까지는 같고, 그래서 Sweep과 Compact가 복사 하나로 합쳐진 것도 같습니다. <b>갈리는 지점은 "그 복사를 언제 하느냐" 하나뿐입니다.</b></div></li>
+    <li><span class="n">2</span><div><b>G1은 복사와 포인터 수정을 STW 안에서 합니다.</b> 대신 그 STW 분량을 region 단위로 쪼개고 쓰레기 비율이 높은 region부터 골라(=Garbage-First) pause 목표에 맞춥니다. <b>ZGC는 컬러 포인터와 로드 배리어로 복사까지 동시에 뺐고</b>, STW는 root만 만지는 세 지점뿐이라 <b>pause가 힙 크기에 비례하지 않습니다.</b></div></li>
+    <li><span class="n">3</span><div><b>그래서 선택은 "무엇을 지불할 것인가"입니다.</b> ZGC는 STW라는 뭉친 비용을 없앤 대신 <b>모든 참조 읽기에 배리어 세금</b>을 실행 시간 전체에 얇게 펴 발랐습니다. 저라면 <b>GC가 실제 SLO 위반의 원인인지 먼저 확인하고</b>, 그다음 <b>양쪽으로 부하 테스트를 돌려 p99와 처리량을 나란히 재본 뒤</b> 결정하겠습니다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 이 문서가 겨냥하는 약점</a></li>
+    <li><a href="#s1">복사가 STW를 부르는 이유 — 이사 간 객체 문제</a></li>
+    <li><a href="#s2">공통 뼈대 — region + 복사로 Sweep·Compact가 합쳐진다</a></li>
+    <li><a href="#s3">두 개의 축 — 구조는 수렴했고 <u>타이밍</u>이 갈린다</a></li>
+    <li><a href="#s4">G1 ① region 구조와 Remembered Set</a></li>
+    <li><a href="#s5">G1 ② Young GC — 복사는 전부 STW</a></li>
+    <li><a href="#s6">G1 ③ 동시 마킹과 SATB</a></li>
+    <li><a href="#s7">G1 ④ Mixed GC — "Garbage-First"의 유래</a></li>
+    <li><a href="#s8">G1 ⑤ humongous와 Full GC 낭떠러지</a></li>
+    <li><a href="#s9">ZGC ① 컬러 포인터 — 남는 비트에 색을 심는다</a></li>
+    <li><a href="#s10">ZGC ② 로드 배리어와 self-healing</a></li>
+    <li><a href="#s11">ZGC ③ 동시 재배치 — 혁신의 핵심</a></li>
+    <li><a href="#s12">ZGC ④ 색이 두 개인 이유와 remap 무임승차</a></li>
+    <li><a href="#s13">타임라인 정면 대비 — 검은 칸이 어디 있나</a></li>
+    <li><a href="#s14">파생되는 모든 차이 — pause · 세금 · 실패 모드</a></li>
+    <li><a href="#s15">세대 설계 비교 — 세대형 ZGC와 Survivor의 행방</a></li>
+    <li><a href="#s16">실무 — JVM 옵션 before/after와 선택 절차</a></li>
+    <li><a href="#s17">인출 카드 — 면접 전날 이것만</a></li>
+    <li><a href="#s18">꼬리질문 셀프 테스트</a></li>
+    <li><a href="#summary">한 줄 요약</a></li>
+  </ol>
+</nav>
+
+<h2 id="s0">0. 질문 + 출제 의도 · 이 문서가 겨냥하는 약점</h2>
+
+<div class="q0">
+  <b>질문</b> — "G1 GC와 ZGC의 차이를 설명해주세요. 지연시간(latency)에 민감한 서비스라면 무엇을 선택하겠습니까?"
+</div>
+
+<div class="card">
+  <p style="margin-top:0"><b>출제 의도</b> — GC 선택은 <b>서비스 특성(처리량형 배치 vs p99 민감 API)에 따른 의사결정</b>이고, 잘못 고르면 <b>하드웨어를 늘려도 해결이 안 된다.</b> 그래서 면접관이 보는 것은 컬렉터 이름이 아니라 <b>"선택의 근거를 말할 수 있는가"</b>이고, 이것으로 <b>인프라 결정에 참여할 수 있는 연차인지</b>를 가늠한다.</p>
+  <div class="fact"><span class="lb r">약점 A</span><span class="tx"><b>기능 나열형 답변</b> — "G1은 region 기반이고 ZGC는 지연이 짧습니다"는 <b>카탈로그 낭독</b>이다. 두 컬렉터가 <b>무엇을 공유하고 어디서 갈라지는지</b>를 못 짚으면 여기서 끝난다.</span></div>
+  <div class="fact"><span class="lb r">약점 B</span><span class="tx"><b>단답 "지연 민감하면 ZGC"</b> — 무엇을 지불하는지 말하지 않은 선택은 <b>선택이 아니라 암기</b>다. 이 질문의 본체는 <b>tail latency ↔ throughput 교환</b>이다.</span></div>
+  <div class="fact"><span class="lb r">약점 C</span><span class="tx"><b>"ZGC는 STW가 없습니다"</b> — 틀린 문장이고, 면접관이 가장 즐겨 파고드는 지점이다. 정확한 표현은 <b>"pause가 힙 크기에 비례하지 않는다"</b>다.</span></div>
+  <div class="fact"><span class="lb g">합격선</span><span class="tx">"둘은 <b>region + 복사</b>라는 뼈대를 공유하고, <b>그 복사를 STW로 하느냐 동시로 하느냐</b>가 유일한 분기점이며, 나머지 특징은 전부 거기서 파생됩니다"까지 <b>한 호흡에</b> 나오는 것.</span></div>
+</div>
+
+<div class="callout info">
+  <span class="t">이 문서의 전제 — 선행 문서를 딛고 시작한다</span>
+  도달 가능성(reachability)·GC 루트·Mark/Sweep/Compact의 정의·세대 가설·STW가 왜 스파이크로 보이는지는 <b>02 GC 기초와 세대 구조</b>에서 다뤘다. 여기서는 그 위에서 <b>"두 최신 컬렉터가 같은 문제를 서로 다르게 푼 방식"</b>에만 집중한다. 1~3절은 두 컬렉터를 비교하는 데 <b>반드시 필요한 최소한의 복습</b>이다.
+</div>
+<h2 id="s1">1. 복사가 STW를 부르는 이유 — 이사 간 객체 문제</h2>
+
+<p>비교를 시작하기 전에 <b>이 문서 전체를 관통하는 단 하나의 어려움</b>을 확인해야 한다. 여기서 출발하지 않으면 G1과 ZGC의 차이가 그냥 "옵션 두 개"로 보인다.</p>
+
+<pre><code><span class="kw">User</span> user = <span class="kw">new</span> <span class="fn">User</span>(<span class="st">"철수"</span>);</code></pre>
+
+<p>이 한 줄에서 두 가지 일이 일어난다. <code>new User("철수")</code>가 힙 어딘가 — 예를 들어 <code>0x7f3a00</code> 번지 — 에 <b>실제 객체 데이터</b>를 만든다. 그리고 변수 <code>user</code>에는 <b>객체 자체가 아니라 그 객체가 놓인 주소값 <code>0x7f3a00</code>이 담긴다.</b> C/C++에서 <b>포인터</b>라 부르는 것과 Java의 <b>참조</b>는 이름만 다를 뿐 <b>JVM 내부에 저장되는 값은 결국 주소</b>다. 이 문서에서 두 단어는 같은 것을 가리킨다.</p>
+
+<p><b>여기서 GC의 근본 난제가 나온다.</b> GC는 단편화(빈 공간이 작은 조각으로 흩어져 실제 여유는 있는데 큰 객체를 넣을 <b>연속 공간</b>이 없는 상태)를 없애려고 살아남은 객체를 한쪽으로 몰아붙인다. 즉 <b>객체를 옮긴다.</b> 그런데 그 객체를 가리키던 변수·필드·배열 원소는 전부 <b>옛 주소를 값으로 들고 있다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="이사 전에는 필드 A, 필드 B, 배열 7번 원소가 모두 0x7f3a00의 User 객체를 가리킨다. 객체를 0x9c1200으로 옮긴 뒤 참조를 갱신하지 않으면 세 참조 모두 빈 자리를 가리키는 쓰레기 값이 된다는 것을 보여주는 대비 도식.">
+    <defs>
+      <marker id="a1b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="a1r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="a1g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+    <rect x="10" y="10" width="540" height="280" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <rect x="570" y="10" width="540" height="280" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="30" y="36" font-size="13.5" font-weight="800" fill="#16a34a">이사 전 — 세 참조가 모두 유효</text>
+    <text x="590" y="36" font-size="13.5" font-weight="800" fill="#dc2626">이사 후 — 참조를 안 고치면 전부 쓰레기 값</text>
+
+    <g font-size="12" fill="#1f2937">
+      <rect x="34" y="60" width="120" height="34" rx="7" fill="#fff" stroke="#94a3b8"/><text x="94" y="82" text-anchor="middle" font-weight="700">필드 A</text>
+      <rect x="34" y="110" width="120" height="34" rx="7" fill="#fff" stroke="#94a3b8"/><text x="94" y="132" text-anchor="middle" font-weight="700">필드 B</text>
+      <rect x="34" y="160" width="120" height="34" rx="7" fill="#fff" stroke="#94a3b8"/><text x="94" y="182" text-anchor="middle" font-weight="700">배열[7]</text>
+      <text x="94" y="218" text-anchor="middle" font-size="11.5" fill="#64748b" class="mono">값 = 0x7f3a00</text>
+    </g>
+    <path d="M158 77 L 330 118" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a1b)"/>
+    <path d="M158 127 L 330 128" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a1b)"/>
+    <path d="M158 177 L 330 140" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a1b)"/>
+    <rect x="336" y="96" width="190" height="70" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="431" y="121" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1e40af">User 객체</text>
+    <text x="431" y="141" text-anchor="middle" font-size="11.5" fill="#1e40af" class="mono">@ 0x7f3a00</text>
+    <text x="431" y="157" text-anchor="middle" font-size="11" fill="#3b82f6">name = "철수"</text>
+
+    <g font-size="12" fill="#1f2937">
+      <rect x="594" y="60" width="120" height="34" rx="7" fill="#fff" stroke="#94a3b8"/><text x="654" y="82" text-anchor="middle" font-weight="700">필드 A</text>
+      <rect x="594" y="110" width="120" height="34" rx="7" fill="#fff" stroke="#94a3b8"/><text x="654" y="132" text-anchor="middle" font-weight="700">필드 B</text>
+      <rect x="594" y="160" width="120" height="34" rx="7" fill="#fff" stroke="#94a3b8"/><text x="654" y="182" text-anchor="middle" font-weight="700">배열[7]</text>
+      <text x="654" y="218" text-anchor="middle" font-size="11.5" fill="#dc2626" class="mono">값 = 0x7f3a00 (그대로)</text>
+    </g>
+    <path d="M718 77 L 852 108" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" fill="none" marker-end="url(#a1r)"/>
+    <path d="M718 127 L 852 118" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" fill="none" marker-end="url(#a1r)"/>
+    <path d="M718 177 L 852 130" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4" fill="none" marker-end="url(#a1r)"/>
+    <rect x="858" y="92" width="180" height="52" rx="9" fill="#fff" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="948" y="114" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">빈 자리</text>
+    <text x="948" y="132" text-anchor="middle" font-size="11" fill="#dc2626" class="mono">0x7f3a00</text>
+
+    <rect x="858" y="180" width="180" height="62" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="948" y="202" text-anchor="middle" font-size="12" font-weight="800" fill="#15803d">User 객체 (이사함)</text>
+    <text x="948" y="221" text-anchor="middle" font-size="11.5" fill="#15803d" class="mono">@ 0x9c1200</text>
+    <path d="M948 152 L 948 176" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#a1g)"/>
+    <text x="700" y="262" font-size="12" font-weight="700" fill="#dc2626">→ 이 순간 앱이 이 참조를 읽으면 프로그램이 깨진다</text>
+  </svg>
+  <figcaption><b>객체를 옮기려면 그 객체를 가리키던 모든 참조를 찾아 새 주소로 고쳐 써야 한다.</b> 그리고 <b>고쳐 쓰는 도중에 애플리케이션이 옛 주소를 읽어버리면 프로그램이 깨진다.</b> 가장 단순한 해법이 "고치는 동안 전부 멈추는 것" — 이것이 <b>STW의 근본 이유</b>다.</figcaption>
+</figure>
+
+<div class="bigrule">
+  이 문서 전체를 관통하는 질문은 하나다 —<br>
+  <u>"객체를 옮기고 참조를 고치는 이 위험한 작업을, 세상을 멈추고 할 것인가 돌아가는 채로 할 것인가."</u>
+</div>
+
+<div class="memo">
+  <h4>기본형의 한계 — pause가 힙 크기에 정비례한다</h4>
+  <p style="margin-top:0">가장 단순한 형태(Serial/Parallel의 Full GC)는 Mark·Sweep·Compact 셋을 <b>전부 하나의 STW 안에서</b> 처리한다. 그러면 <b>pause 시간이 살아있는 객체 수에 정비례</b>한다 — Mark는 살아있는 객체 전부를 순회해야 하고, Compact는 전부를 옮기고 그것을 가리키는 참조 전부를 고쳐야 하기 때문이다.</p>
+  <p style="margin-bottom:0">힙 8GB면 Full GC 한 번에 수 초, 수십 GB면 수십 초가 나온다. HTTP 타임아웃이 3초인 서비스에서 5초 STW가 걸리면 <b>그 순간의 모든 요청이 실패</b>한다. <b>GC의 역사 전체가 이 하나의 문제를 푸는 과정이었다</b>고 봐도 된다.</p>
+</div>
+<h2 id="s2">2. 공통 뼈대 — region + 복사로 Sweep·Compact가 합쳐진다</h2>
+
+<p>1절의 문제를 푸는 두 번의 돌파구가 있었다. 첫 번째는 알고리즘이 아니라 관찰이었다 — <b>"대부분의 객체는 생성 직후 금방 죽는다"</b>는 <b>세대 가설</b>이다. 두 번째가 이 절의 주제인 <b>region</b>이다.</p>
+
+<h3>2-1. region — 부분 수거를 가능하게 하는 단위</h3>
+
+<p><b>region</b>은 힙을 일정 크기의 여러 조각으로 나눈 그 조각 하나다. 힙 전체를 한 덩어리로 보지 않고 <b>수천 개의 region</b>으로 나눠 관리한다. 그러면 <b>부분 수거</b>가 가능해진다 — "지금은 이 region 20개만 치우겠다"고 <b>고를 수 있다.</b> 힙 전체가 대상이면 작업량을 조절할 손잡이가 없지만, region 단위면 <b>이번에 몇 개를 처리할지 정해서 pause를 통제</b>할 수 있다.</p>
+
+<h3>2-2. 복사(evacuation) — Sweep이 사라지는 순간</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="수거 전 region A에는 살아있는 객체 3개와 죽은 객체 5개가 섞여 있다. 살아있는 3개만 region B로 퍼내면 region A에 남은 것은 전부 쓰레기이므로 내용을 들여다보지 않고 통째로 반납한다는 것을 보여주는 도식.">
+    <defs><marker id="a2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker></defs>
+    <text x="20" y="30" font-size="13.5" font-weight="800" fill="#1f2937">복사(evacuation) — 살아있는 것만 퍼내면, 남은 것은 확인 없이 통째로 버릴 수 있다</text>
+
+    <text x="20" y="66" font-size="12" font-weight="700" fill="#64748b">수거 전</text>
+    <rect x="90" y="48" width="480" height="46" rx="8" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+    <text x="60" y="78" font-size="12" font-weight="800" fill="#1f2937">A</text>
+    <g font-size="11.5" font-weight="700" text-anchor="middle">
+      <rect x="98" y="56" width="56" height="30" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="126" y="76" fill="#1e40af">살</text>
+      <rect x="158" y="56" width="56" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="186" y="76" fill="#94a3b8">죽</text>
+      <rect x="218" y="56" width="56" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="246" y="76" fill="#94a3b8">죽</text>
+      <rect x="278" y="56" width="56" height="30" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="306" y="76" fill="#1e40af">살</text>
+      <rect x="338" y="56" width="56" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="366" y="76" fill="#94a3b8">죽</text>
+      <rect x="398" y="56" width="56" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="426" y="76" fill="#94a3b8">죽</text>
+      <rect x="458" y="56" width="56" height="30" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="486" y="76" fill="#94a3b8">죽</text>
+      <rect x="518" y="56" width="46" height="30" rx="5" fill="#dbeafe" stroke="#2563eb"/><text x="541" y="76" fill="#1e40af">살</text>
+    </g>
+    <path d="M126 92 C 126 130, 700 120, 726 152" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a2b)"/>
+    <path d="M306 92 C 306 132, 740 122, 786 152" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a2b)"/>
+    <path d="M541 92 C 541 134, 800 124, 846 152" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a2b)"/>
+    <text x="330" y="126" font-size="12" font-weight="800" fill="#2563eb">살아있는 3개만 퍼낸다 (= Compact가 동시에 일어난다)</text>
+
+    <text x="620" y="178" font-size="12" font-weight="700" fill="#64748b">수거 후</text>
+    <rect x="700" y="160" width="380" height="46" rx="8" fill="#fff" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="686" y="190" font-size="12" font-weight="800" fill="#1f2937">B</text>
+    <g font-size="11.5" font-weight="700" text-anchor="middle">
+      <rect x="708" y="168" width="56" height="30" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="736" y="188" fill="#15803d">살</text>
+      <rect x="768" y="168" width="56" height="30" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="796" y="188" fill="#15803d">살</text>
+      <rect x="828" y="168" width="56" height="30" rx="5" fill="#dcfce7" stroke="#16a34a"/><text x="856" y="188" fill="#15803d">살</text>
+      <text x="980" y="188" fill="#64748b" font-weight="600" font-size="11.5">빈틈 없이 앞에서부터</text>
+    </g>
+
+    <rect x="90" y="230" width="480" height="46" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="7 5"/>
+    <text x="60" y="260" font-size="12" font-weight="800" fill="#1f2937">A</text>
+    <text x="330" y="259" text-anchor="middle" font-size="12.5" font-weight="800" fill="#64748b">통째로 반납 — 내용을 하나도 들여다보지 않는다 (= Sweep이 사라진다)</text>
+    <text x="620" y="248" font-size="12" font-weight="700" fill="#16a34a">작업량 ∝ 살아남은 객체 수</text>
+    <text x="620" y="268" font-size="12" font-weight="700" fill="#64748b">(죽은 객체 수와는 무관)</text>
+  </svg>
+  <figcaption>살아있는 객체만 다른 region으로 퍼내고 나면 원래 region에 남은 것은 <b>전부 쓰레기</b>다. 그러니 <b>내용 확인 없이 통째로 비운다.</b> 죽은 객체를 개별 회수하는 <b>Sweep이 사라지고</b>, 퍼내는 행위 자체가 곧 <b>Compact</b>(빈틈 없이 몰아붙이기)가 된다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>방식별로 3대 작업이 어떻게 대응되는가</caption>
+  <thead><tr><th>방식</th><th>Mark</th><th>Sweep</th><th>Compact</th></tr></thead>
+  <tbody>
+    <tr><td>Mark-Sweep (CMS)</td><td>함</td><td>함</td><td class="bad">안 함 — 단편화가 고질병</td></tr>
+    <tr><td>Mark-Sweep-Compact (Serial/Parallel의 Full GC)</td><td>함</td><td>함</td><td>함</td></tr>
+    <tr class="hl"><td><b>Mark-Evacuate (G1, ZGC)</b></td><td>함</td><td><b>복사에 흡수</b></td><td><b>복사에 흡수</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>여기까지가 G1과 ZGC의 공통분모다</h4>
+  <div class="chain">
+    <span class="chip g">세대 가설</span><span class="arrow">+</span>
+    <span class="chip g">region 분할</span><span class="arrow">+</span>
+    <span class="chip g">살아있는 것만 복사</span><span class="arrow">=</span>
+    <span class="chip b">Sweep·Compact가 하나로</span>
+  </div>
+  <p style="margin-bottom:0">두 컬렉터는 이 뼈대를 <b>공유한다.</b> 그러므로 "G1은 region 기반입니다"는 <b>차이를 설명하는 문장이 아니다.</b> 남은 질문은 하나뿐이다 — <b>그 복사를, 세상을 멈추고 할 것인가 돌아가는 채로 할 것인가.</b></p>
+</div>
+
+<div class="callout info">
+  <span class="t">root 개수는 힙 크기와 무관하다 — 나중에 결정적으로 쓰인다</span>
+  <b>root</b>는 참조 추적의 출발점이다. 각 스레드 스택의 지역 변수, CPU 레지스터, static 필드처럼 <b>"프로그램이 지금 확실히 손에 쥐고 있는 참조"</b>들의 집합이다. <b>root의 개수는 스레드 수와 클래스 수에 비례하고 힙 크기와는 무관하다.</b> 힙이 100GB든 1TB든 스레드가 200개면 root는 200개 스택 분량이다. <b>이 사실 하나가 "ZGC의 pause가 왜 힙 크기와 무관한가"의 전부</b>다. 지금 기억해 두자.
+</div>
+<h2 id="s3">3. 두 개의 축 — 구조는 수렴했고 <u>타이밍</u>이 갈린다</h2>
+
+<p>비교를 시작하기 전에 <b>가장 자주 생기는 혼동</b>을 먼저 정리한다. 사람들은 "ZGC도 세대를 도입했다니 이제 G1과 같아진 것 아닌가"라고 묻는데, 이는 <b>서로 다른 두 축을 하나로 뭉뚱그린</b> 질문이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="가로축은 힙을 어떻게 나누고 무엇부터 수거하는가, 세로축은 복사를 STW로 하는가 동시로 하는가. Parallel GC는 힙 전체 대상에 STW 복사, G1은 region 기반에 STW 복사, ZGC는 region 기반에 동시 복사로 배치되어, 구조 축에서는 G1과 ZGC가 수렴했고 타이밍 축에서만 갈라진다는 것을 보여주는 좌표 도식.">
+    <defs><marker id="a3g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker></defs>
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">두 개의 독립적인 축 — 축 1에서는 수렴했고, 축 2에서만 갈라진다</text>
+    <line x1="150" y1="290" x2="1060" y2="290" stroke="#64748b" stroke-width="2" marker-end="url(#a3g)"/>
+    <line x1="150" y1="290" x2="150" y2="60" stroke="#64748b" stroke-width="2" marker-end="url(#a3g)"/>
+    <text x="600" y="322" text-anchor="middle" font-size="12.5" font-weight="800" fill="#16a34a">축 1 · 힙을 어떻게 나누고 무엇부터 수거하나 (구조) — 두 GC가 같은 답으로 수렴</text>
+    <text x="-175" y="26" transform="rotate(-90)" text-anchor="middle" font-size="12.5" font-weight="800" fill="#dc2626">축 2 · 복사를 언제 하나 (타이밍)</text>
+    <text x="132" y="96" text-anchor="end" font-size="12" font-weight="700" fill="#2563eb">동시</text>
+    <text x="132" y="240" text-anchor="end" font-size="12" font-weight="700" fill="#111827">STW</text>
+    <text x="300" y="308" text-anchor="middle" font-size="11.5" fill="#64748b">힙 전체 한 덩어리</text>
+    <text x="820" y="308" text-anchor="middle" font-size="11.5" fill="#64748b">region + young/old + garbage-first</text>
+
+    <rect x="222" y="206" width="156" height="62" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+    <text x="300" y="230" text-anchor="middle" font-size="12.5" font-weight="800" fill="#475569">Parallel GC</text>
+    <text x="300" y="250" text-anchor="middle" font-size="11" fill="#64748b">전체 대상 · STW 복사</text>
+
+    <rect x="740" y="206" width="160" height="62" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2.4"/>
+    <text x="820" y="230" text-anchor="middle" font-size="13" font-weight="800" fill="#b45309">G1 GC</text>
+    <text x="820" y="250" text-anchor="middle" font-size="11" fill="#b45309">region · <tspan font-weight="800">STW 복사</tspan></text>
+
+    <rect x="740" y="72" width="160" height="62" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="820" y="96" text-anchor="middle" font-size="13" font-weight="800" fill="#1e40af">ZGC</text>
+    <text x="820" y="116" text-anchor="middle" font-size="11" fill="#1e40af">region · <tspan font-weight="800">동시 복사</tspan></text>
+
+    <path d="M382 237 L 732 237" stroke="#16a34a" stroke-width="2.5" stroke-dasharray="7 5" fill="none" marker-end="url(#a3g)"/>
+    <text x="556" y="228" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">구조 진화 — ZGC도 JDK 21에서 이 축으로 합류</text>
+
+    <path d="M820 200 L 820 142" stroke="#dc2626" stroke-width="3" fill="none" marker-end="url(#a3g)"/>
+    <text x="940" y="172" font-size="12.5" font-weight="800" fill="#dc2626">← 여기가 유일한 분기점</text>
+    <text x="940" y="192" font-size="11.5" fill="#dc2626">복사·포인터 수정을 STW 밖으로</text>
+  </svg>
+  <figcaption><b>세대를 도입해 축 1에서 구조가 같아져도, 축 2의 실행 방식은 그대로 다르다.</b> G1은 young 수거조차 STW 안에서 복사하고, ZGC는 young 수거조차 앱과 동시에 한다. <b>구조가 아니라 타이밍이 두 GC를 가른다.</b></figcaption>
+</figure>
+
+<div class="axis2">
+  <div class="ax same"><div class="hd">축 1 — 구조 (수렴함)</div>
+    <p style="margin:0;font-size:.94rem">힙을 <b>region</b>으로 쪼갠다 → <b>young / old</b>로 나눈다 → <b>쓰레기 많은 곳부터</b> 치운다. 원래 세대 구분이 없던 ZGC가 <b>JDK 21에서 세대를 도입</b>한 것 자체가 <b>세대 가설이 옳다는 인정</b>이다.</p>
+    <div class="verdict">여기서는 두 GC를 구분할 수 없다</div>
+  </div>
+  <div class="ax diff"><div class="hd">축 2 — 타이밍 (갈림)</div>
+    <p style="margin:0;font-size:.94rem">수거 작업, 특히 <b>객체 복사와 포인터 수정</b>을 <b>STW 안에서</b> 하는가 <b>앱이 도는 채로</b> 하는가. G1은 전자, ZGC는 후자다. <b>pause 특성 · 상시 비용 · 실패 모드가 전부 이 한 줄에서 파생</b>된다.</p>
+    <div class="verdict">이 축 하나가 모든 차이를 만든다</div>
+  </div>
+</div>
+
+<div class="bigrule">
+  두 컬렉터를 비교하라는 질문은 사실상<br><u>"복사를 STW 안에 두는 절충의 값과, 밖으로 빼는 대가의 값을 비교하라"</u>는 질문이다.
+</div>
+<h2 id="s4">4. G1 ① region 구조와 Remembered Set</h2>
+
+<div class="rule">G1의 전략 — <b>복사를 동시에 하는 건 너무 어렵다. STW로 하되, 한 번에 조금씩만 하자.</b></div>
+
+<h3>4-1. 힙을 <u>크기가 같은</u> region으로 쪼갠다</h3>
+
+<p>G1은 힙을 <b>크기가 전부 같은</b> region으로 나눈다. region 크기는 <b>1MB~32MB 사이의 2의 거듭제곱</b>이고, JVM이 <b>"region 개수가 대략 2048개가 되도록"</b> 힙 크기를 보고 자동으로 정한다. 8GB 힙이면 <b>4MB짜리 region 약 2048개</b>가 된다. <code>-XX:G1HeapRegionSize</code>로 직접 지정할 수도 있다.</p>
+
+<p>각 region은 <b>고정된 역할을 갖지 않고 그때그때 역할을 부여받는다.</b> Eden(새 객체 할당) · Survivor(Young GC를 한 번 이상 버틴 객체) · Old · Humongous 중 하나가 된다. <b>어제 Eden이던 region이 오늘 Old일 수 있다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 260" role="img" aria-label="G1의 힙은 크기가 같은 region 격자이고 Eden, Survivor, Old, Humongous, 빈 region이 연속되지 않고 흩어져 배치되어 있다. Humongous 객체 하나는 연속된 세 개의 region을 이어 붙여 담는다.">
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">G1의 힙 — 역할이 연속 구획이 아니라 <tspan fill="#2563eb">region에 붙은 라벨</tspan>로 흩어져 있다</text>
+    <g font-size="12.5" font-weight="800" text-anchor="middle">
+      <rect x="30" y="46" width="126" height="52" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/><text x="93" y="78" fill="#1e40af">E</text>
+      <rect x="162" y="46" width="126" height="52" rx="7" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.6"/><text x="225" y="78" fill="#475569">O</text>
+      <rect x="294" y="46" width="126" height="52" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/><text x="357" y="78" fill="#1e40af">E</text>
+      <rect x="426" y="46" width="126" height="52" rx="7" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="489" y="78" fill="#15803d">S</text>
+      <rect x="558" y="46" width="126" height="52" rx="7" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.6"/><text x="621" y="78" fill="#475569">O</text>
+      <rect x="690" y="46" width="126" height="52" rx="7" fill="#fff" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="6 4"/><text x="753" y="78" fill="#94a3b8">빈</text>
+      <rect x="822" y="46" width="258" height="52" rx="7" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+      <text x="951" y="70" fill="#dc2626">H  H</text><text x="951" y="88" font-size="10.5" font-weight="600" fill="#dc2626">연속 2칸을 이어 붙임</text>
+
+      <rect x="30" y="106" width="126" height="52" rx="7" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.6"/><text x="93" y="138" fill="#475569">O</text>
+      <rect x="162" y="106" width="126" height="52" rx="7" fill="#fff" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="6 4"/><text x="225" y="138" fill="#94a3b8">빈</text>
+      <rect x="294" y="106" width="126" height="52" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/><text x="357" y="138" fill="#1e40af">E</text>
+      <rect x="426" y="106" width="126" height="52" rx="7" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.6"/><text x="489" y="138" fill="#475569">O</text>
+      <rect x="558" y="106" width="126" height="52" rx="7" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/><text x="621" y="138" fill="#1e40af">E</text>
+      <rect x="690" y="106" width="126" height="52" rx="7" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/><text x="753" y="138" fill="#15803d">S</text>
+      <rect x="822" y="106" width="126" height="52" rx="7" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.6"/><text x="885" y="138" fill="#475569">O</text>
+      <rect x="954" y="106" width="126" height="52" rx="7" fill="#fff" stroke="#cbd5e1" stroke-width="1.6" stroke-dasharray="6 4"/><text x="1017" y="138" fill="#94a3b8">빈</text>
+    </g>
+    <g font-size="12" fill="#475569">
+      <text x="30" y="188" font-weight="700">E = Eden(새 객체 할당)</text>
+      <text x="250" y="188" font-weight="700" fill="#15803d">S = Survivor(한 번 이상 생존)</text>
+      <text x="520" y="188" font-weight="700">O = Old(승격된 객체)</text>
+      <text x="720" y="188" font-weight="700" fill="#dc2626">H = Humongous(거대 객체 전용)</text>
+    </g>
+    <rect x="30" y="204" width="1050" height="40" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="46" y="229" font-size="12.3" fill="#1e40af">region 크기 = 1~32MB의 2의 거듭제곱 · JVM이 <tspan font-weight="800">region 개수 ≈ 2048</tspan>이 되도록 자동 결정 (8GB 힙 → 4MB × 약 2048개) · <tspan font-weight="800">-XX:G1HeapRegionSize</tspan>로 수동 지정 가능</text>
+  </svg>
+  <figcaption>Young과 Old가 힙에서 <b>연속된 한 덩어리가 아니라 역할 라벨이 붙은 region의 집합</b>이라는 점이 기존 GC와의 차이다. 덕분에 <b>"Young을 몇 MB로 할지"를 미리 못 박지 않고 GC 때마다 유연하게 조절</b>할 수 있다.</figcaption>
+</figure>
+
+<h3>4-2. Remembered Set — 부분 수거를 가능하게 하는 장치</h3>
+
+<p>여기서 먼저 풀어야 할 문제가 있다. <b>"Young region만 수거하겠다"고 정했을 때, Young 객체를 가리키는 참조를 어떻게 다 찾아낼 것인가?</b></p>
+
+<p>root에서 출발해 그래프를 순회하면 찾을 수 있다. 그런데 <b>Old region의 어떤 객체가 Young 객체를 가리키고 있을 수도 있다.</b> 그것을 놓치면 <b>살아있는 객체를 죽은 것으로 오판해 회수해 버린다.</b> 그렇다고 그 참조를 찾겠다고 Old 전체를 스캔하면 <b>Young만 치우려고 힙 전체를 읽는 꼴</b>이라 부분 수거의 의미가 없어진다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="Old region의 객체 P가 Young region의 객체 Q를 가리킨다. Young region에 딸린 Remembered Set이 그 참조가 어디에 있는지 기록해 두므로, Young을 수거할 때 Old 전체를 스캔하지 않고 RSet에 적힌 자리만 확인하면 된다. 그리고 참조 대입 때마다 write barrier가 끼어들어 이 기록을 유지한다.">
+    <defs>
+      <marker id="a4b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="a4r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d97706"/></marker>
+      <marker id="a4s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">RSet — "누가 나를 가리키는지" 기억해 두는 표. 그 표를 유지하는 비용이 <tspan fill="#d97706">write barrier</tspan>다</text>
+
+    <rect x="30" y="52" width="300" height="120" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.8"/>
+    <text x="180" y="76" text-anchor="middle" font-size="12.5" font-weight="800" fill="#475569">Old region X</text>
+    <rect x="70" y="92" width="220" height="52" rx="8" fill="#fff" stroke="#64748b"/>
+    <text x="126" y="123" font-size="12" font-weight="700" fill="#1f2937">객체 P</text>
+    <text x="214" y="118" font-size="11" fill="#64748b" class="mono">.field →</text>
+
+    <rect x="470" y="52" width="330" height="200" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="635" y="76" text-anchor="middle" font-size="12.5" font-weight="800" fill="#1e40af">Young region Y (이번 수거 대상)</text>
+    <rect x="504" y="92" width="262" height="46" rx="8" fill="#fff" stroke="#2563eb"/>
+    <text x="635" y="120" text-anchor="middle" font-size="12" font-weight="700" fill="#1e40af">객체 Q</text>
+    <rect x="504" y="150" width="262" height="84" rx="8" fill="#fff" stroke="#2563eb" stroke-dasharray="5 4"/>
+    <text x="635" y="172" text-anchor="middle" font-size="12" font-weight="800" fill="#2563eb">RSet (Y의 기억 집합)</text>
+    <text x="635" y="194" text-anchor="middle" font-size="11.5" fill="#1e40af">"Old X 안에 나를 가리키는 자리 있음"</text>
+    <text x="635" y="216" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">→ Old 전체를 뒤지지 않고 이 자리만 확인</text>
+
+    <path d="M292 116 L 496 114" stroke="#2563eb" stroke-width="2.2" fill="none" marker-end="url(#a4b)"/>
+    <text x="394" y="104" text-anchor="middle" font-size="11.5" font-weight="700" fill="#2563eb">region 경계를 넘는 참조</text>
+
+    <rect x="836" y="52" width="254" height="200" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="963" y="76" text-anchor="middle" font-size="12.5" font-weight="800" fill="#b45309">write barrier (문 앞 검문소)</text>
+    <text x="963" y="100" text-anchor="middle" font-size="11.5" fill="#b45309" class="mono">a.field = b;</text>
+    <text x="963" y="124" text-anchor="middle" font-size="11.5" fill="#b45309">↓ 모든 참조 쓰기가 통과</text>
+    <text x="963" y="150" text-anchor="middle" font-size="11.5" font-weight="700" fill="#b45309">"region 경계를 넘는가?"</text>
+    <text x="963" y="174" text-anchor="middle" font-size="11.5" fill="#b45309">넘으면 → RSet에 기록</text>
+    <rect x="856" y="188" width="214" height="48" rx="8" fill="#fff" stroke="#d97706" stroke-dasharray="5 4"/>
+    <text x="963" y="208" text-anchor="middle" font-size="11.5" font-weight="800" fill="#b45309">이 상시 비용이</text>
+    <text x="963" y="226" text-anchor="middle" font-size="11.5" font-weight="800" fill="#b45309">G1의 throughput 세금</text>
+    <path d="M832 152 L 806 152" stroke="#d97706" stroke-width="2" fill="none" marker-end="url(#a4r)"/>
+
+    <rect x="30" y="268" width="1060" height="40" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="46" y="293" font-size="12.3" fill="#dc2626"><tspan font-weight="800">비용이 힙을 따라 커진다</tspan> — 힙이 커지면 region이 많아지고 region 간 참조가 늘어 RSet이 비대해진다. CSet 개수를 줄여도 <tspan font-weight="800">region 하나를 처리하는 단가 자체가 올라간다.</tspan></text>
+  </svg>
+  <figcaption><b>Remembered Set(RSet)</b>은 각 region마다 하나씩 딸린 자료구조로 <b>"이 region 안의 객체를 바깥에서 가리키는 참조들이 어디에 있는가"</b>를 기록한다. 이것을 유지하려면 <b>참조를 쓸 때마다 끼어드는 코드</b>가 필요하고, 그것이 <b>write barrier</b>다.</figcaption>
+</figure>
+
+<div class="memo warn">
+  <h4>지금 기억해 둘 것 — G1 pause가 힙 영향을 받는 이유 ①</h4>
+  <p style="margin:0">RSet은 공짜가 아니다. <b>힙이 커지고 region이 많아질수록 region 간 참조가 늘어 RSet이 비대해지고 스캔 비용도 올라간다.</b> 14절에서 "G1의 pause는 왜 힙 크기의 영향을 받는가"를 정리할 때 <b>세 이유 중 하나</b>로 다시 등장한다.</p>
+</div>
+<h2 id="s5">5. G1 ② Young GC — 복사는 전부 STW</h2>
+
+<p>Eden region들이 가득 차면 Young GC가 돈다. <b>세 가지 일이 전부 하나의 STW 안에서</b> 일어난다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="Eden이 가득 차면 STW가 시작되고 그 안에서 루트 스캔과 RSet 스캔, 살아있는 객체 복사, 포인터 수정이 순서대로 일어난 뒤 STW가 끝난다. 복사와 포인터 수정이 STW 안에 있으므로 pause 시간은 살아남은 young 객체의 양에 비례한다.">
+    <defs><marker id="a5b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker></defs>
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">G1 Young GC — <tspan fill="#dc2626">복사와 포인터 수정이 STW 안에 들어 있다</tspan></text>
+
+    <rect x="20" y="48" width="150" height="60" rx="9" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="95" y="74" text-anchor="middle" font-size="12" font-weight="700" fill="#475569">앱 실행 중</text>
+    <text x="95" y="94" text-anchor="middle" font-size="11" fill="#64748b">Eden에 할당</text>
+    <path d="M174 78 L 202 78" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#a5b)"/>
+    <text x="230" y="74" font-size="11.5" font-weight="700" fill="#dc2626">Eden</text>
+    <text x="230" y="90" font-size="11.5" font-weight="700" fill="#dc2626">가득 참</text>
+
+    <rect x="290" y="40" width="640" height="180" rx="12" fill="#111827"/>
+    <text x="610" y="66" text-anchor="middle" font-size="13" font-weight="800" fill="#fbbf24">S T W  —  애플리케이션 스레드 전부 정지</text>
+    <g>
+      <rect x="312" y="82" width="192" height="120" rx="9" fill="#1f2937" stroke="#475569"/>
+      <circle cx="336" cy="106" r="12" fill="#2563eb"/><text x="336" y="111" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">1</text>
+      <text x="356" y="111" font-size="11.6" font-weight="700" fill="#e2e8f0">root + RSet 스캔</text>
+      <text x="330" y="136" font-size="11" fill="#94a3b8">살아있는 young 객체를</text>
+      <text x="330" y="154" font-size="11" fill="#94a3b8">찾을 출발점 확보</text>
+      <text x="330" y="180" font-size="10.8" fill="#60a5fa">RSet 덕분에 Old 전체를</text>
+      <text x="330" y="195" font-size="10.8" fill="#60a5fa">스캔하지 않는다</text>
+
+      <rect x="514" y="82" width="192" height="120" rx="9" fill="#3f1d1d" stroke="#dc2626" stroke-width="1.6"/>
+      <circle cx="538" cy="106" r="12" fill="#dc2626"/><text x="538" y="111" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">2</text>
+      <text x="558" y="111" font-size="11.6" font-weight="700" fill="#fecaca">객체 복사(evacuation)</text>
+      <text x="532" y="136" font-size="11" fill="#fca5a5">살아있는 객체를 Survivor</text>
+      <text x="532" y="154" font-size="11" fill="#fca5a5">또는 Old region으로</text>
+      <text x="532" y="180" font-size="10.8" font-weight="800" fill="#fbbf24">작업량 ∝ live set</text>
+
+      <rect x="716" y="82" width="192" height="120" rx="9" fill="#3f1d1d" stroke="#dc2626" stroke-width="1.6"/>
+      <circle cx="740" cy="106" r="12" fill="#dc2626"/><text x="740" y="111" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">3</text>
+      <text x="760" y="111" font-size="11.6" font-weight="700" fill="#fecaca">포인터 수정</text>
+      <text x="734" y="136" font-size="11" fill="#fca5a5">옮긴 객체를 가리키던</text>
+      <text x="734" y="154" font-size="11" fill="#fca5a5">참조를 전부 새 주소로</text>
+      <text x="734" y="180" font-size="10.8" font-weight="800" fill="#fbbf24">1절의 문제를 힘으로 해결</text>
+    </g>
+    <path d="M934 130 L 968 130" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#a5b)"/>
+    <rect x="974" y="100" width="126" height="60" rx="9" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="1037" y="126" text-anchor="middle" font-size="12" font-weight="700" fill="#475569">앱 재개</text>
+    <text x="1037" y="146" text-anchor="middle" font-size="11" fill="#64748b">Eden은 비어 있음</text>
+
+    <rect x="290" y="240" width="810" height="44" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="308" y="259" font-size="12.3" fill="#dc2626"><tspan font-weight="800">pause ∝ 살아남은 young 객체의 양(live set)</tspan> — 죽은 객체 수와는 무관하다. 그래서 "Eden이 커서 느린 것"이 아니라 <tspan font-weight="800">"살아남는 게 많아서 느린 것"</tspan>이다.</text>
+    <text x="308" y="277" font-size="12.3" fill="#dc2626">G1은 이 pause를 목표 안에 넣으려고 <tspan font-weight="800">다음 GC에 쓸 young region 개수를 조절</tspan>한다. 목표는 <tspan font-weight="800" class="mono">-XX:MaxGCPauseMillis</tspan>(기본 200ms).</text>
+  </svg>
+  <figcaption>1절에서 본 그대로다 — <b>옮기는 동안 애플리케이션이 옛 주소를 읽지 못하게 하는 가장 단순한 방법이 멈추는 것</b>이기 때문에 복사와 포인터 수정이 STW 안에 남는다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>Young GC는 대상을 쪼갤 수 없다 — G1 pause가 힙 영향을 받는 이유 ②</h4>
+  <p style="margin-top:0"><b>수거하기로 한 young region은 전부 한 번의 STW에서 처리해야 한다.</b> Mixed GC는 CSet 크기를 조절해 pause를 나눌 수 있지만, Young GC에는 그 손잡이가 없다.</p>
+  <div class="split" style="margin-bottom:0">
+    <div class="pane r"><h4>young을 작게 잡으면</h4><ul><li>pause는 줄어든다</li><li>대신 <b>GC 빈도가 급증</b>한다</li><li>→ 처리량(throughput)이 떨어진다</li></ul></div>
+    <div class="pane w"><h4>young을 크게 잡으면</h4><ul><li>GC 빈도가 줄어 처리량이 오른다</li><li>대신 <b>한 번의 pause가 길어진다</b></li><li>→ p99가 나빠진다</li></ul></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">pause와 throughput은 여기서 <b>정면으로 맞바꾸는 관계</b>다</div>
+</div>
+<h2 id="s6">6. G1 ③ 동시 마킹과 SATB</h2>
+
+<p>Old 영역 점유율이 임계치를 넘으면 G1은 Old를 치울 준비에 들어간다. 임계치는 <code>-XX:InitiatingHeapOccupancyPercent</code>(IHOP)이고 <b>초기값은 힙의 45%</b>다. 요즘 JDK의 G1은 실행 통계를 보고 이 시점을 자동 조정한다.</p>
+
+<p>여기서 하는 일은 <b>"각 Old region에 살아있는 객체가 얼마나 있는지" 통계를 내는 것</b>이다. 이 통계가 있어야 다음 단계에서 <b>가성비 좋은 region</b>을 고를 수 있다. 그리고 이 마킹은 <b>대부분 애플리케이션과 동시에</b> 진행된다.</p>
+
+<div class="phase s"><span class="lb stw">STW</span><div class="bd"><b>Initial Mark</b> — root가 직접 가리키는 old 객체만 마킹. <b>Young GC에 얹혀 실행</b>돼 추가 비용이 거의 없다</div></div>
+<div class="phase c"><span class="lb conc">동시</span><div class="bd"><b>Concurrent Mark</b> — 참조 그래프를 순회하며 살아있는 old 객체를 마킹. <b>앱이 도는 채로</b> 진행</div></div>
+<div class="phase s"><span class="lb stw">STW</span><div class="bd"><b>Remark</b> — 마킹 도중 앱이 바꾼 참조를 마무리 반영</div></div>
+<div class="phase s"><span class="lb stw">STW</span><div class="bd"><b>Cleanup</b> — region별 live 비율 집계. <b>살아있는 객체가 하나도 없는 region은 이 자리에서 즉시 회수</b></div></div>
+
+<h3>6-1. 동시 마킹이 만드는 문제와 SATB라는 해법</h3>
+
+<p><b>마킹을 앱과 동시에 하면 문제가 생긴다.</b> 마킹하는 도중에 애플리케이션이 참조를 바꿔버리면, <b>이미 지나간 자리에 새로 연결된 객체를 놓칠 수 있다.</b> 살아있는데 표시가 안 된 객체가 생기고, 그 객체는 회수되어 <b>프로그램이 깨진다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="동시 마킹 도중 앱이 참조를 옮기면 마커가 이미 지나간 영역으로 객체가 이동해 마킹을 놓칠 수 있다. G1은 참조를 덮어쓰기 직전에 옛 값을 SATB 버퍼에 기록해 두었다가 마커가 나중에 그 경로를 마저 방문하게 한다.">
+    <defs>
+      <marker id="a6r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="a6g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+      <marker id="a6s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+    </defs>
+    <rect x="10" y="10" width="540" height="310" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <rect x="570" y="10" width="540" height="310" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="30" y="36" font-size="13.2" font-weight="800" fill="#dc2626">보호 장치가 없다면 — 살아있는 객체를 놓친다</text>
+    <text x="590" y="36" font-size="13.2" font-weight="800" fill="#16a34a">SATB — 덮어쓰기 직전에 옛 값을 챙겨 둔다</text>
+
+    <g font-size="11.6" font-weight="700" text-anchor="middle">
+      <circle cx="90" cy="90" r="24" fill="#111827"/><text x="90" y="95" fill="#fff">root</text>
+      <circle cx="200" cy="90" r="24" fill="#111827"/><text x="200" y="95" fill="#fff">A</text>
+      <circle cx="310" cy="90" r="24" fill="#111827"/><text x="310" y="95" fill="#fff">B</text>
+      <circle cx="430" cy="180" r="26" fill="#fff" stroke="#dc2626" stroke-width="2.4"/><text x="430" y="178" fill="#dc2626">C</text><text x="430" y="192" font-size="9.5" fill="#dc2626">미표시</text>
+      <circle cx="190" cy="210" r="24" fill="#fff" stroke="#64748b" stroke-width="1.6"/><text x="190" y="215" fill="#475569">D</text>
+    </g>
+    <path d="M114 90 L 174 90" stroke="#111827" stroke-width="2" fill="none" marker-end="url(#a6s)"/>
+    <path d="M224 90 L 284 90" stroke="#111827" stroke-width="2" fill="none" marker-end="url(#a6s)"/>
+    <text x="200" y="66" text-anchor="middle" font-size="10.8" fill="#111827">마커가 이미 지나간 구간</text>
+    <path d="M330 108 L 408 162" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6 4" fill="none"/>
+    <text x="392" y="128" font-size="10.8" fill="#94a3b8">B.next = C 였다가…</text>
+    <path d="M214 194 L 404 186" stroke="#dc2626" stroke-width="2.4" fill="none" marker-end="url(#a6r)"/>
+    <text x="300" y="238" text-anchor="middle" font-size="11.4" font-weight="700" fill="#dc2626">앱이 참조를 D 아래로 옮김 (B.next = null)</text>
+    <text x="300" y="262" text-anchor="middle" font-size="11.4" fill="#dc2626">마커는 B를 이미 지나갔고, D는 아직 방문 전</text>
+    <text x="280" y="292" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">→ C로 가는 길이 사라져 <tspan fill="#b91c1c">살아있는 C를 회수</tspan></text>
+
+    <g font-size="11.6" font-weight="700" text-anchor="middle">
+      <circle cx="650" cy="90" r="24" fill="#111827"/><text x="650" y="95" fill="#fff">root</text>
+      <circle cx="760" cy="90" r="24" fill="#111827"/><text x="760" y="95" fill="#fff">A</text>
+      <circle cx="870" cy="90" r="24" fill="#111827"/><text x="870" y="95" fill="#fff">B</text>
+      <circle cx="990" cy="180" r="26" fill="#dcfce7" stroke="#16a34a" stroke-width="2.4"/><text x="990" y="178" fill="#15803d">C</text><text x="990" y="192" font-size="9.5" fill="#15803d">표시됨</text>
+    </g>
+    <path d="M674 90 L 734 90" stroke="#111827" stroke-width="2" fill="none" marker-end="url(#a6s)"/>
+    <path d="M784 90 L 844 90" stroke="#111827" stroke-width="2" fill="none" marker-end="url(#a6s)"/>
+    <rect x="600" y="140" width="290" height="86" rx="9" fill="#fff" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="745" y="163" text-anchor="middle" font-size="12" font-weight="800" fill="#15803d">SATB 버퍼 (write barrier가 채움)</text>
+    <text x="745" y="185" text-anchor="middle" font-size="11.4" fill="#15803d" class="mono">record(B.next) // 덮어쓰기 직전 값</text>
+    <text x="745" y="209" text-anchor="middle" font-size="11.4" fill="#15803d">마커가 나중에 이 목록을 마저 방문</text>
+    <path d="M894 172 L 962 178" stroke="#16a34a" stroke-width="2.4" fill="none" marker-end="url(#a6g)"/>
+    <text x="745" y="258" text-anchor="middle" font-size="12.4" font-weight="800" fill="#15803d">원칙: 마킹 시작 순간의 "사진"에 있던 객체는</text>
+    <text x="745" y="280" text-anchor="middle" font-size="12.4" font-weight="800" fill="#15803d">도중에 끊겨도 이번 사이클엔 살아있는 것으로 취급</text>
+    <text x="745" y="306" text-anchor="middle" font-size="11.4" fill="#15803d">= Snapshot-At-The-Beginning</text>
+  </svg>
+  <figcaption><b>SATB</b>는 "마킹을 시작한 순간의 객체 그래프 <b>사진</b>을 기준으로 판정한다"는 원칙이다. 구현은 <b>write barrier</b>로 한다 — 참조 필드를 <b>덮어쓰기 직전에</b> 원래 값을 로그 버퍼에 기록해 두고, 마커가 나중에 그 로그를 읽어 <b>"끊겼지만 스냅샷 시점엔 살아있던"</b> 객체까지 마저 방문한다.</figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead plain"><span class="tag">앱이 쓴 코드</span> 참조 한 줄 대입</div>
+<pre><code>node.next = newNode;</code></pre>
+    <p class="sub" style="margin:6px 0 0">개발자 눈에는 <b>대입 한 번</b>이다.</p>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">JVM이 실제로 실행</span> write barrier가 끼어든다 (개념상)</div>
+<pre><code><span class="ln-good">satbBuffer.<span class="fn">record</span>(node.next);  <span class="cm">// 덮어쓰기 전의 값을 먼저 챙긴다</span></span>
+node.next = newNode;
+<span class="cm">// 이 참조가 사라지면 마커가 old 객체로 가는</span>
+<span class="cm">// 유일한 길을 잃을 수 있기 때문이다.</span></code></pre>
+  </div>
+</div>
+
+<div class="callout warn">
+  <span class="t">SATB의 대가 — floating garbage</span>
+  마킹 도중에 죽은 객체는 <b>스냅샷 기준으로는 살아있으므로</b> 이번 사이클에서 회수되지 않고 다음 사이클로 넘어간다. <b>정확도를 조금 포기하고 동시성을 얻은 것</b>이다. 다음 사이클에는 스냅샷에도 안 잡히므로 정상 회수되고, 따라서 <b>누수가 아니다.</b> 보수적 판정의 방향이 <b>"죽은 것을 살았다고 오판"</b>이라는 점이 중요하다 — 반대 방향이면 프로그램이 깨진다.
+</div>
+<h2 id="s7">7. G1 ④ Mixed GC — "Garbage-First"라는 이름의 유래</h2>
+
+<p>마킹이 끝나면 <b>"어느 region에 쓰레기가 많은지" 통계</b>가 손에 들어온다. 이제 실제 수거다. young과 old를 <b>섞어서</b> 수거하기 때문에 <b>Mixed GC</b>라고 부른다.</p>
+
+<div class="step"><span class="n">1</span><div class="body"><b>쓰레기 비율이 가장 높은 old region부터 고른다</b> — 살아있는 객체가 가장 적다 = 복사할 양이 가장 적다 = <b>가성비 최고</b></div></div>
+<div class="step"><span class="n">2</span><div class="body"><b>pause 목표 안에 처리할 수 있는 만큼만</b> <b>CSet</b>(Collection Set, 수거 대상 집합)에 담는다</div></div>
+<div class="step red"><span class="n">3</span><div class="body"><b>young region 전부 + CSet에 담긴 old region</b>의 살아있는 객체를 복사 <span class="badge trap">STW</span></div></div>
+<div class="step red"><span class="n">4</span><div class="body"><b>포인터 수정</b> <span class="badge trap">STW</span> — 이 과정을 여러 번 반복해 Old를 조금씩 비워 나간다</div></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="Old region 여덟 개의 살아있는 객체 비율을 막대로 표시하고, 쓰레기 비율이 높은 순으로 정렬해 pause 예산 안에 들어가는 만큼만 CSet에 담는 과정을 보여주는 도식. 쓰레기 90퍼센트 region은 같은 복사 비용으로 region 크기의 90퍼센트를 회수하지만 쓰레기 10퍼센트 region은 10퍼센트만 회수한다.">
+    <defs><marker id="a7b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker></defs>
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">Garbage-First — 한정된 pause 예산을 <tspan fill="#2563eb">수익률이 가장 높은 region</tspan>에 쓴다</text>
+    <text x="20" y="52" font-size="11.8" fill="#64748b">막대 = region 하나 · <tspan fill="#dc2626" font-weight="700">붉은 부분 = 살아있는 객체(복사해야 할 양)</tspan> · <tspan fill="#94a3b8" font-weight="700">회색 = 쓰레기(공짜로 회수되는 양)</tspan></text>
+
+    <g>
+      <rect x="30" y="70" width="104" height="112" rx="7" fill="#f1f5f9" stroke="#cbd5e1"/><rect x="30" y="171" width="104" height="11" rx="3" fill="#dc2626"/>
+      <text x="82" y="200" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">live 10%</text><text x="82" y="216" text-anchor="middle" font-size="11" fill="#64748b">region A</text>
+      <rect x="150" y="70" width="104" height="112" rx="7" fill="#f1f5f9" stroke="#cbd5e1"/><rect x="150" y="160" width="104" height="22" rx="3" fill="#dc2626"/>
+      <text x="202" y="200" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">live 20%</text><text x="202" y="216" text-anchor="middle" font-size="11" fill="#64748b">region B</text>
+      <rect x="270" y="70" width="104" height="112" rx="7" fill="#f1f5f9" stroke="#cbd5e1"/><rect x="270" y="148" width="104" height="34" rx="3" fill="#dc2626"/>
+      <text x="322" y="200" text-anchor="middle" font-size="11.5" font-weight="800" fill="#16a34a">live 30%</text><text x="322" y="216" text-anchor="middle" font-size="11" fill="#64748b">region C</text>
+      <rect x="390" y="70" width="104" height="112" rx="7" fill="#f1f5f9" stroke="#cbd5e1"/><rect x="390" y="126" width="104" height="56" rx="3" fill="#dc2626"/>
+      <text x="442" y="200" text-anchor="middle" font-size="11.5" font-weight="800" fill="#64748b">live 50%</text><text x="442" y="216" text-anchor="middle" font-size="11" fill="#64748b">region D</text>
+      <rect x="510" y="70" width="104" height="112" rx="7" fill="#f1f5f9" stroke="#cbd5e1"/><rect x="510" y="104" width="104" height="78" rx="3" fill="#dc2626"/>
+      <text x="562" y="200" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">live 70%</text><text x="562" y="216" text-anchor="middle" font-size="11" fill="#64748b">region E</text>
+      <rect x="630" y="70" width="104" height="112" rx="7" fill="#f1f5f9" stroke="#cbd5e1"/><rect x="630" y="81" width="104" height="101" rx="3" fill="#dc2626"/>
+      <text x="682" y="200" text-anchor="middle" font-size="11.5" font-weight="800" fill="#dc2626">live 90%</text><text x="682" y="216" text-anchor="middle" font-size="11" fill="#64748b">region F</text>
+    </g>
+
+    <rect x="24" y="62" width="356" height="128" rx="10" fill="none" stroke="#2563eb" stroke-width="2.6" stroke-dasharray="8 5"/>
+    <text x="202" y="248" text-anchor="middle" font-size="12.6" font-weight="800" fill="#2563eb">CSet에 담긴다 — 복사량은 적고 회수량은 크다</text>
+    <text x="600" y="248" text-anchor="middle" font-size="12.4" font-weight="700" fill="#94a3b8">이번엔 건너뛴다 — 같은 pause를 써도 버는 게 적다</text>
+
+    <rect x="770" y="70" width="320" height="150" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="930" y="94" text-anchor="middle" font-size="12.6" font-weight="800" fill="#1e40af">같은 노력, 다른 수익</text>
+    <text x="790" y="122" font-size="11.8" fill="#1e40af">쓰레기 90% region 하나를 치우면</text>
+    <text x="790" y="142" font-size="12.4" font-weight="800" fill="#16a34a">→ region 크기의 90%를 번다</text>
+    <text x="790" y="172" font-size="11.8" fill="#1e40af">쓰레기 10% region은 같은 노력에</text>
+    <text x="790" y="192" font-size="12.4" font-weight="800" fill="#dc2626">→ 10%밖에 못 번다</text>
+
+    <rect x="30" y="272" width="1060" height="46" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="48" y="292" font-size="12.4" fill="#15803d"><tspan font-weight="800">이 아이디어 자체가 컬렉터의 이름이 되었다</tspan> — 힙 전체를 순서대로 치우는 대신 <tspan font-weight="800">쓰레기(garbage)가 가장 많은 region을 먼저(first)</tspan> 치운다.</text>
+    <text x="48" y="310" font-size="12.4" fill="#15803d">ZGC의 relocation set 선정도 <tspan font-weight="800">똑같은 아이디어</tspan>다. 다른 것은 <tspan font-weight="800">그 선정과 복사를 STW 안에서 하느냐 밖에서 하느냐</tspan>뿐이다.</text>
+  </svg>
+  <figcaption>CSet 크기를 조절할 수 있으므로 <b>Mixed GC는 설계 의도대로 pause를 목표 안에 맞춘다.</b> 문제는 <b>Young GC에는 이 손잡이가 없다</b>는 것(5절)과, <b>region 하나당 단가가 힙을 따라 오른다</b>는 것(4절)이다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>G1의 정상 경로는 딱 두 개</h4>
+  <div class="chain">
+    <span class="chip b">Young GC</span><span class="arrow">+</span><span class="chip b">Mixed GC</span>
+    <span class="arrow">≠</span><span class="chip r">Full GC (실패 시 fallback)</span>
+  </div>
+  <p style="margin-bottom:0">면접에서 <b>"G1은 Full GC를 언제 하나요"</b>라는 질문이 오면, 먼저 <b>"Full GC는 정상 경로가 아니라 실패했을 때의 대비책"</b>이라고 규정하고 원인 세 가지로 들어가는 것이 정확한 순서다.</p>
+</div>
+<h2 id="s8">8. G1 ⑤ humongous와 Full GC 낭떠러지</h2>
+
+<h3>8-1. humongous 객체 — G1의 아픈 곳</h3>
+
+<p><b>humongous(거대) 객체</b>는 <b>크기가 region 하나의 절반 이상</b>인 객체다. region이 4MB면 <b>2MB 이상</b>인 객체가 여기 해당한다. 큰 배열, 파일을 통째로 읽은 바이트 배열, 수십만 건 조회 결과 리스트가 대표적이다. 이런 객체는 일반 region에 넣을 수 없어 <b>Humongous region이라는 별도 취급</b>을 받는다 — 객체 하나를 위해 <b>연속된 region 여러 개를 통째로 이어 붙여</b> 쓴다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="4MB region 환경에서 10MB 객체를 담으려면 연속된 세 개의 region 12MB를 이어 붙여야 하고 남는 2MB는 버려진다. 빈 region이 흩어져 있으면 총 여유가 충분해도 할당에 실패한다.">
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">humongous — 총 여유가 아니라 <tspan fill="#dc2626">연속성</tspan>이 문제다 (객체 10MB, region 4MB인 경우)</text>
+
+    <text x="20" y="66" font-size="12.2" font-weight="800" fill="#16a34a">성공 — 연속된 빈 region 3칸이 있다</text>
+    <g font-size="12" font-weight="800" text-anchor="middle">
+      <rect x="30" y="76" width="120" height="48" rx="7" fill="#f1f5f9" stroke="#94a3b8"/><text x="90" y="105" fill="#475569">O</text>
+      <rect x="156" y="76" width="372" height="48" rx="7" fill="#fef2f2" stroke="#dc2626" stroke-width="2.2"/>
+      <text x="342" y="98" fill="#dc2626">H   H   H   ← 세 칸(12MB)을 이어 붙여 10MB 객체 하나를 담는다</text>
+      <text x="342" y="116" font-size="10.8" font-weight="600" fill="#dc2626">남는 2MB는 그냥 버려진다</text>
+      <line x1="280" y1="78" x2="280" y2="122" stroke="#fca5a5" stroke-dasharray="4 3"/>
+      <line x1="404" y1="78" x2="404" y2="122" stroke="#fca5a5" stroke-dasharray="4 3"/>
+      <rect x="534" y="76" width="120" height="48" rx="7" fill="#f1f5f9" stroke="#94a3b8"/><text x="594" y="105" fill="#475569">O</text>
+    </g>
+
+    <text x="20" y="164" font-size="12.2" font-weight="800" fill="#dc2626">실패 — 빈 region이 흩어져 있다 (총 여유는 20MB인데도 못 넣는다)</text>
+    <g font-size="12" font-weight="800" text-anchor="middle">
+      <rect x="30" y="174" width="120" height="48" rx="7" fill="#fff" stroke="#cbd5e1" stroke-dasharray="6 4"/><text x="90" y="203" fill="#94a3b8">빈</text>
+      <rect x="156" y="174" width="120" height="48" rx="7" fill="#f1f5f9" stroke="#94a3b8"/><text x="216" y="203" fill="#475569">O</text>
+      <rect x="282" y="174" width="120" height="48" rx="7" fill="#fff" stroke="#cbd5e1" stroke-dasharray="6 4"/><text x="342" y="203" fill="#94a3b8">빈</text>
+      <rect x="408" y="174" width="120" height="48" rx="7" fill="#f1f5f9" stroke="#94a3b8"/><text x="468" y="203" fill="#475569">O</text>
+      <rect x="534" y="174" width="120" height="48" rx="7" fill="#fff" stroke="#cbd5e1" stroke-dasharray="6 4"/><text x="594" y="203" fill="#94a3b8">빈</text>
+      <rect x="660" y="174" width="120" height="48" rx="7" fill="#f1f5f9" stroke="#94a3b8"/><text x="720" y="203" fill="#475569">O</text>
+    </g>
+    <text x="800" y="196" font-size="12.6" font-weight="800" fill="#dc2626">→ 연속 3칸이 없다</text>
+    <text x="800" y="216" font-size="12.2" font-weight="700" fill="#dc2626">→ 할당 실패 → Full GC</text>
+
+    <rect x="30" y="244" width="1060" height="44" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="48" y="264" font-size="12.3" fill="#dc2626"><tspan font-weight="800">문제는 두 가지다.</tspan> ① 연속된 빈 region을 찾아야 한다 — 빈 공간이 흩어져 있으면 총량이 충분해도 못 넣는다.</text>
+    <text x="48" y="282" font-size="12.3" fill="#dc2626">② humongous 객체는 <tspan font-weight="800">복사 대상에서 제외되고 제자리에서 다뤄지므로</tspan> 단편화를 정리하는 손길이 닿지 않는다.</text>
+  </svg>
+  <figcaption>그래서 humongous 할당은 <b>G1이 Full GC로 추락하는 대표적인 원인</b>이 된다. <b>힙에 여유가 있어 보이는데도 "연속 공간이 없어서" GC가 터지는</b> 상황이다.</figcaption>
+</figure>
+
+<h3>8-2. 코드로 보는 humongous — 가장 싼 GC 튜닝은 쓰레기를 덜 만드는 것</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 한 번에 통째로 들어 올린다</div>
+<pre><code><span class="cm">// region 4MB 환경에서 2MB만 넘겨도 humongous</span>
+<span class="ln-bad"><span class="kw">byte</span>[] body = Files.<span class="fn">readAllBytes</span>(path);   <span class="cm">// 80MB 파일 → H region 20칸</span></span>
+
+<span class="ln-bad">List&lt;OrderRow&gt; all = orderRepo.<span class="fn">findAll</span>();      <span class="cm">// 50만 건 → 거대 배열 백업</span></span>
+<span class="kw">for</span> (OrderRow r : all) <span class="fn">export</span>(r);
+
+<span class="ln-bad">String csv = all.<span class="fn">stream</span>().<span class="fn">map</span>(OrderRow::toCsv)
+                .<span class="fn">collect</span>(joining(<span class="st">"\n"</span>));        <span class="cm">// 결과 문자열도 거대</span></span>
+<span class="cm">// 증상: 힙 사용률은 여유 있는데 Full GC가 튄다</span>
+<span class="cm">//       GC 로그에 humongous 할당 직후 Full GC</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 흘려보내면 거대 객체가 안 생긴다</div>
+<pre><code><span class="ln-good"><span class="kw">try</span> (InputStream in = Files.<span class="fn">newInputStream</span>(path)) {</span>
+<span class="ln-good">    in.<span class="fn">transferTo</span>(out);   <span class="cm">// 버퍼 크기만큼만 힙에 존재</span></span>
+}
+
+<span class="ln-good">orderRepo.<span class="fn">streamAll</span>(chunk -&gt; chunk.<span class="fn">forEach</span>(<span class="kw">this</span>::export));</span>
+<span class="cm">// 또는 페이징으로 1000건씩 — 짧게 살고 죽는 young 객체만 남는다</span>
+
+<span class="ln-good">writer.<span class="fn">write</span>(row.<span class="fn">toCsv</span>()); writer.<span class="fn">newLine</span>();  <span class="cm">// 즉시 흘려보냄</span></span>
+<span class="cm">// 효과: humongous 소멸 + live set 감소</span>
+<span class="cm">//       → G1/ZGC 어느 쪽이든 pause가 줄어든다</span></code></pre>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">순서를 기억하라 — GC 교체는 마지막 카드다</span>
+  <b>pause를 줄이는 가장 싼 방법은 컬렉터를 바꾸는 것이 아니라 쓰레기를 덜 만드는 것</b>이다. 특히 <b>거대 객체를 없애는 것</b>은 G1에서는 humongous 실패 경로를 지우고, 어느 GC에서든 <b>복사할 live set을 줄여</b> pause를 직접 깎는다. 컬렉터 교체는 <b>이걸 다 하고도 SLO가 안 나올 때</b> 꺼내는 카드다.
+</div>
+
+<h3>8-3. 실패 모드 — Full GC 낭떠러지</h3>
+
+<div class="threecol">
+  <div class="trio"><div class="k">① evacuation failure</div><div class="d">살아있는 객체를 <b>복사해 넣을 빈 region이 없다.</b></div><div class="lg">to-space exhausted</div></div>
+  <div class="trio"><div class="k">② 마킹이 할당을 못 따라감</div><div class="d">동시 마킹이 끝나기 전에 <b>힙이 다 차버린다.</b></div><div class="lg">IHOP이 너무 늦음 / 할당률 과다</div></div>
+  <div class="trio"><div class="k">③ humongous 할당 실패</div><div class="d"><b>연속된 빈 region</b>을 확보하지 못한다.</div><div class="lg">총량 아닌 연속성 문제</div></div>
+</div>
+
+<p>Full GC로 떨어지면 <b>힙 전체를 대상으로 하는 단일 STW</b>가 걸린다. 1절에서 본 기본형 그대로다. <b>region 단위로 쪼개서 pause를 통제하던 모든 장치가 무력화</b>되고, pause가 힙 크기에 정비례하는 최악의 시나리오로 돌아간다. 수 GB 힙에서 초 단위, 수십 GB에서 십 초 단위가 나온다.</p>
+
+<div class="rule red">G1의 pause 특성을 논할 때 <b>이 낭떠러지의 존재를 빼면 안 된다</b> — 평소 200ms를 잘 지키다가 어느 순간 <b>8초짜리 pause 하나</b>가 터지는 것이 G1의 실제 프로필이다</div>
+
+<h3>8-4. G1의 한 사이클 — 타임라인</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 380" role="img" aria-label="G1의 한 사이클 타임라인. 앱 실행 사이사이에 검은 STW 블록으로 Young GC가 반복되다가 Old 점유율이 IHOP을 넘으면 Initial Mark STW, Concurrent Mark 동시 구간, Remark STW, Cleanup STW가 이어지고, 그 뒤 Mixed GC가 STW로 여러 번 반복된다. 복사할 공간이 없으면 힙 전체를 멈추는 Full GC 낭떠러지로 떨어진다.">
+    <defs><marker id="a8b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+    <marker id="a8r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker></defs>
+    <text x="20" y="26" font-size="13.5" font-weight="800" fill="#1f2937">G1의 한 사이클 — <tspan fill="#dc2626">검은 칸(STW) 안에서 복사가 일어난다</tspan></text>
+    <line x1="20" y1="44" x2="1100" y2="44" stroke="#cbd5e1"/>
+
+    <g>
+      <rect x="20" y="60" width="120" height="34" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="80" y="82" text-anchor="middle" font-size="11.5" fill="#475569">앱</text>
+      <rect x="142" y="56" width="30" height="42" rx="4" fill="#111827"/>
+      <rect x="174" y="60" width="120" height="34" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="234" y="82" text-anchor="middle" font-size="11.5" fill="#475569">앱</text>
+      <rect x="296" y="56" width="30" height="42" rx="4" fill="#111827"/>
+      <rect x="328" y="60" width="120" height="34" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="388" y="82" text-anchor="middle" font-size="11.5" fill="#475569">앱</text>
+      <rect x="450" y="56" width="30" height="42" rx="4" fill="#111827"/>
+      <rect x="482" y="60" width="120" height="34" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="542" y="82" text-anchor="middle" font-size="11.5" fill="#475569">앱</text>
+      <text x="157" y="116" text-anchor="middle" font-size="10.5" font-weight="700" fill="#111827">Young</text>
+      <text x="311" y="116" text-anchor="middle" font-size="10.5" font-weight="700" fill="#111827">Young</text>
+      <text x="465" y="116" text-anchor="middle" font-size="10.5" font-weight="700" fill="#111827">Young</text>
+      <text x="620" y="82" font-size="11.5" font-weight="700" fill="#dc2626">Old 점유율이 IHOP(초기 45%) 초과 →</text>
+    </g>
+
+    <g>
+      <rect x="20" y="150" width="34" height="42" rx="4" fill="#111827"/>
+      <text x="66" y="168" font-size="11.6" font-weight="800" fill="#111827">Initial Mark</text><text x="66" y="184" font-size="10.6" fill="#64748b">STW · Young GC에 편승 (추가 비용 거의 없음)</text>
+      <rect x="20" y="200" width="360" height="42" rx="4" fill="#bfdbfe" stroke="#60a5fa"/>
+      <text x="200" y="220" text-anchor="middle" font-size="11.6" font-weight="800" fill="#1e40af">Concurrent Mark</text>
+      <text x="200" y="236" text-anchor="middle" font-size="10.6" fill="#1e40af">앱과 동시 · 살아있는 old 객체 마킹 (SATB로 보호)</text>
+      <rect x="392" y="200" width="34" height="42" rx="4" fill="#111827"/>
+      <text x="438" y="218" font-size="11.6" font-weight="800" fill="#111827">Remark</text><text x="438" y="234" font-size="10.6" fill="#64748b">STW · 마킹 중 바뀐 참조 마무리</text>
+      <rect x="620" y="200" width="34" height="42" rx="4" fill="#111827"/>
+      <text x="666" y="218" font-size="11.6" font-weight="800" fill="#111827">Cleanup</text><text x="666" y="234" font-size="10.6" fill="#64748b">STW · region별 live 집계 + 완전히 빈 region 즉시 회수</text>
+    </g>
+
+    <g>
+      <rect x="20" y="262" width="110" height="34" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="75" y="284" text-anchor="middle" font-size="11.5" fill="#475569">앱</text>
+      <rect x="132" y="256" width="44" height="46" rx="4" fill="#111827"/>
+      <rect x="178" y="262" width="110" height="34" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="233" y="284" text-anchor="middle" font-size="11.5" fill="#475569">앱</text>
+      <rect x="290" y="256" width="44" height="46" rx="4" fill="#111827"/>
+      <rect x="336" y="262" width="110" height="34" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="391" y="284" text-anchor="middle" font-size="11.5" fill="#475569">앱</text>
+      <rect x="448" y="256" width="44" height="46" rx="4" fill="#111827"/>
+      <text x="154" y="320" text-anchor="middle" font-size="10.5" font-weight="700" fill="#111827">Mixed</text>
+      <text x="312" y="320" text-anchor="middle" font-size="10.5" font-weight="700" fill="#111827">Mixed</text>
+      <text x="470" y="320" text-anchor="middle" font-size="10.5" font-weight="700" fill="#111827">Mixed</text>
+      <text x="520" y="284" font-size="11.4" fill="#475569">young 전부 + 가성비 좋은 old region 몇 개씩 · 몇 차례 반복 후 종료</text>
+    </g>
+
+    <path d="M300 330 L 300 346" stroke="#dc2626" stroke-width="2" fill="none" marker-end="url(#a8r)"/>
+    <text x="316" y="344" font-size="11.4" font-weight="700" fill="#dc2626">복사할 빈 공간이 없거나, 마킹이 할당을 못 따라가면 ↓</text>
+    <rect x="20" y="350" width="640" height="24" rx="4" fill="#7f1d1d"/>
+    <text x="340" y="367" text-anchor="middle" font-size="11.6" font-weight="800" fill="#fecaca">Full GC — 힙 전체 STW (낭떠러지 · pause ∝ 힙 크기)</text>
+    <g font-size="11.4" fill="#64748b">
+      <rect x="700" y="336" width="16" height="16" rx="3" fill="#111827"/><text x="724" y="349">= STW</text>
+      <rect x="790" y="336" width="16" height="16" rx="3" fill="#bfdbfe" stroke="#60a5fa"/><text x="814" y="349">= 앱과 동시(concurrent)</text>
+      <rect x="960" y="336" width="16" height="16" rx="3" fill="#f1f5f9" stroke="#cbd5e1"/><text x="984" y="349">= 앱 실행</text>
+    </g>
+  </svg>
+  <figcaption><b>한 줄 요약</b> — Mark는 (대부분) 동시로 뺐지만 <b>복사와 포인터 수정은 언제나 STW</b>다. 대신 그 STW의 분량을 <b>region 단위로 쪼개고 가성비 좋은 region부터 골라</b> pause 목표를 맞춘다.</figcaption>
+</figure>
+<h2 id="s9">9. ZGC ① 컬러 포인터 — 남는 비트에 색을 심는다</h2>
+
+<div class="rule">ZGC의 전략 — <b>쪼개서 나눠 하는 것도 결국 한계가 있다. 복사 자체를 앱과 동시에 해버리자.</b></div>
+
+<h3>9-1. 문제 정의 — 동시 복사를 하려면 무엇이 필요한가</h3>
+
+<p>1절로 돌아가자. 복사를 STW로 하는 이유는 <b>"객체가 이사하는 도중에 애플리케이션이 옛 주소를 읽으면 프로그램이 깨지기 때문"</b>이었다. 그러면 동시 복사에 필요한 조건은 하나로 정리된다.</p>
+
+<div class="bigrule">
+  <u>애플리케이션이 참조를 읽는 그 순간에,<br>그 참조가 최신 주소인지 확인하고 아니면 고쳐서 건네줄 수 있어야 한다.</u>
+</div>
+
+<p>이 조건만 만족하면 애플리케이션은 <b>절대 옛 주소를 만지지 못하고</b>, GC는 마음 놓고 객체를 옮길 수 있다. ZGC의 두 장치는 정확히 이 조건을 만족시키기 위한 것이다.</p>
+
+<div class="split">
+  <div class="pane b"><h4>컬러 포인터 — 확인을 <u>싸게</u> 만드는 장치</h4><p style="margin:0;font-size:.94rem">참조 자체에 <b>"이 참조가 어느 단계까지 처리됐는가"</b>를 새겨 넣는다. 그래서 확인이 <b>비교 명령 몇 개</b>로 끝난다.</p></div>
+  <div class="pane g"><h4>로드 배리어 — 실제로 <u>고쳐 주는</u> 장치</h4><p style="margin:0;font-size:.94rem">참조를 읽을 때마다 그 표식을 확인하고, 필요하면 <b>마킹하거나 새 주소로 고친다.</b></p></div>
+</div>
+
+<h3>9-2. 왜 "남는 비트"가 있는가 — 64비트에서만 가능한 이유</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="64비트 포인터에서 하위 비트는 실제 객체 주소로 쓰이고 상위 비트는 사실상 놀고 있어 ZGC가 그 자리에 marked0, marked1, remapped 같은 색 비트를 심는다. 32비트에서는 4GB 주소 공간을 다 쓰기 때문에 남는 비트가 없어 불가능하다.">
+    <defs><marker id="a9b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker></defs>
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">컬러 포인터 — 주소 표현에 비트를 다 안 쓰기 때문에 <tspan fill="#2563eb">상위에 빌릴 자리</tspan>가 생긴다</text>
+
+    <text x="20" y="62" font-size="12" font-weight="700" fill="#64748b">64비트 포인터 한 개</text>
+    <text x="30" y="86" font-size="11" fill="#64748b" class="mono">63</text>
+    <text x="300" y="86" font-size="11" fill="#64748b" class="mono">48</text>
+    <text x="330" y="86" font-size="11" fill="#64748b" class="mono">47</text>
+    <text x="1078" y="86" font-size="11" fill="#64748b" class="mono">0</text>
+    <rect x="30" y="92" width="290" height="62" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="175" y="118" text-anchor="middle" font-size="12.4" font-weight="800" fill="#1e40af">안 쓰는 비트</text>
+    <text x="175" y="140" text-anchor="middle" font-size="11.6" font-weight="800" fill="#2563eb">← ZGC가 여기에 색을 심는다</text>
+    <rect x="326" y="92" width="764" height="62" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.8"/>
+    <text x="708" y="118" text-anchor="middle" font-size="12.4" font-weight="800" fill="#475569">실제 객체 주소</text>
+    <text x="708" y="140" text-anchor="middle" font-size="11.4" fill="#64748b">x86-64 CPU는 주소 비트를 48개만 의미 있게 쓴다</text>
+
+    <text x="20" y="188" font-size="12" font-weight="700" fill="#64748b">심는 색 (개념)</text>
+    <g font-size="11.6" font-weight="700">
+      <rect x="30" y="198" width="250" height="52" rx="8" fill="#fff" stroke="#2563eb"/>
+      <text x="155" y="220" text-anchor="middle" font-size="12" font-weight="800" fill="#1e40af">marked0 / marked1</text>
+      <text x="155" y="240" text-anchor="middle" font-size="11" fill="#1e40af">"이번 마킹 주기에 처리했다"</text>
+      <rect x="292" y="198" width="250" height="52" rx="8" fill="#fff" stroke="#16a34a"/>
+      <text x="417" y="220" text-anchor="middle" font-size="12" font-weight="800" fill="#15803d">remapped</text>
+      <text x="417" y="240" text-anchor="middle" font-size="11" fill="#15803d">"재배치 검사를 통과한 최신 주소"</text>
+      <rect x="554" y="198" width="250" height="52" rx="8" fill="#fff" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+      <text x="679" y="220" text-anchor="middle" font-size="12" font-weight="800" fill="#64748b">+ finalizable 등 보조 색</text>
+      <text x="679" y="240" text-anchor="middle" font-size="11" fill="#94a3b8">실제 비트 배치는 JDK 버전마다 다르다</text>
+    </g>
+
+    <rect x="826" y="180" width="264" height="88" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="958" y="204" text-anchor="middle" font-size="12.4" font-weight="800" fill="#dc2626">32비트에서는 불가능</text>
+    <text x="958" y="226" text-anchor="middle" font-size="11.4" fill="#dc2626">4GB 주소 공간을 32비트가</text>
+    <text x="958" y="244" text-anchor="middle" font-size="11.4" fill="#dc2626">빠듯하게 다 쓴다</text>
+    <text x="958" y="262" text-anchor="middle" font-size="11.6" font-weight="800" fill="#dc2626">→ 비어 있는 비트가 없다</text>
+
+    <rect x="30" y="282" width="1060" height="38" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="48" y="306" font-size="12.3" fill="#b45309"><tspan font-weight="800">대가</tspan> — 주소에 쓸 수 있는 비트가 줄어 <tspan font-weight="800">힙 상한</tspan>이 생긴다(현재 JDK의 ZGC는 최대 16TB 지원 · 실무에서 걸릴 일은 없는 상한).</text>
+  </svg>
+  <figcaption>64비트 포인터로는 이론상 16엑사바이트를 주소로 지정할 수 있지만 <b>그만한 메모리를 가진 기계는 존재하지 않는다.</b> 그래서 상위 비트가 사실상 놀고 있고, ZGC는 <b>그 자리를 빌려</b> GC 처리 상태를 심는다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>가장 많이 틀리는 지점 — 색은 "객체의 생사"가 아니다</h4>
+  <p style="margin-top:0">색은 <b>객체가 살았는지 죽었는지가 아니라, "이 <u>참조</u>가 현재 GC 단계의 처리를 통과했는가"라는 참조의 처리 상태</b>를 나타낸다.</p>
+  <p style="margin-bottom:0"><b>같은 객체를 가리키는 두 참조가 서로 다른 색일 수 있다.</b> 하나는 이미 읽혀서 검사를 통과했고, 다른 하나는 <b>아직 아무도 안 읽어서</b> 옛 색인 채로 남아 있는 경우다. 이 문장을 정확히 말할 수 있으면 원리를 이해했다는 신호가 된다.</p>
+</div>
+
+<div class="callout warn">
+  <span class="t">CPU는 색 비트가 붙은 주소를 그대로 따라갈 수 없다 — 실제로는 없는 번지이기 때문</span>
+  해법은 버전에 따라 다르다. <b>초기 ZGC</b>는 같은 물리 메모리를 <b>색마다 다른 가상 주소에 겹쳐 매핑(multi-mapping)</b>해 어느 색으로 접근해도 같은 객체에 닿게 만들었고, <b>세대형 ZGC부터는 로드 배리어가 색 비트를 지운 주소를 넘겨주는</b> 방식으로 바뀌었다. 어느 쪽이든 <b>색은 GC와 배리어만 보는 정보이고 애플리케이션 코드에는 보이지 않는다.</b>
+</div>
+<h2 id="s10">10. ZGC ② 로드 배리어와 self-healing</h2>
+
+<p><b>로드 배리어(load barrier, 읽기 배리어)</b>는 애플리케이션 스레드가 <b>힙에서 참조를 읽을 때마다</b> 실행되는 작은 검사 코드다. G1의 write barrier가 참조를 <b>쓸 때</b> 끼어드는 것과 정확히 대칭이다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead plain"><span class="tag">앱이 쓴 코드</span> 필드 읽기 한 줄</div>
+<pre><code>Node next = node.next;   <span class="cm">// 힙에서 참조를 읽는다</span></code></pre>
+    <p class="sub" style="margin:6px 0 0">개발자 눈에는 <b>읽기 한 번</b>이다.</p>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">JVM이 실제로 실행</span> load barrier가 끼어든다 (개념상)</div>
+<pre><code>Node next = node.next;
+<span class="ln-good"><span class="kw">if</span> (<span class="fn">colorOf</span>(next) != currentGoodColor) {    <span class="cm">// 빠른 경로 판정</span></span>
+<span class="ln-warn">    next = <span class="fn">slowPath</span>(next);   <span class="cm">// 마킹 또는 주소 교정 + 자리에 다시 써 넣기</span></span>
+}</code></pre>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="로드 배리어의 판단 흐름. 읽은 포인터의 색이 현재 좋은 색이면 그냥 통과하는 빠른 경로로 가고, 아니면 느린 경로로 들어가 마킹이나 주소 교정을 한 뒤 고친 참조를 원래 자리에 다시 써 넣는다. 그래서 같은 참조를 다시 읽으면 빠른 경로로 통과한다.">
+    <defs><marker id="a10b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    <marker id="a10g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    <marker id="a10w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d97706"/></marker></defs>
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">로드 배리어의 판단 기준은 단 하나 — <tspan fill="#2563eb">"이 포인터의 색이 지금의 좋은 색(good color)인가?"</tspan></text>
+
+    <rect x="30" y="52" width="180" height="56" rx="9" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="120" y="76" text-anchor="middle" font-size="12" font-weight="700" fill="#475569">앱 스레드가</text>
+    <text x="120" y="95" text-anchor="middle" font-size="12" font-weight="700" fill="#475569">힙에서 참조 읽기</text>
+    <path d="M214 80 L 254 80" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a10b)"/>
+    <polygon points="392,52 500,80 392,108 284,80" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="392" y="77" text-anchor="middle" font-size="11.6" font-weight="800" fill="#1e40af">색이 good color?</text>
+    <text x="392" y="94" text-anchor="middle" font-size="10.6" fill="#3b82f6">비교 명령 몇 개</text>
+
+    <path d="M504 66 L 596 66" stroke="#16a34a" stroke-width="2.4" fill="none" marker-end="url(#a10g)"/>
+    <text x="550" y="56" text-anchor="middle" font-size="11.4" font-weight="800" fill="#16a34a">YES</text>
+    <rect x="600" y="42" width="300" height="52" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="750" y="64" text-anchor="middle" font-size="12" font-weight="800" fill="#15803d">빠른 경로 — 그냥 통과</text>
+    <text x="750" y="83" text-anchor="middle" font-size="11" fill="#15803d">비용 거의 없음 · <tspan font-weight="800">절대 다수의 읽기가 여기로</tspan></text>
+
+    <path d="M420 106 L 468 150" stroke="#d97706" stroke-width="2.4" fill="none" marker-end="url(#a10w)"/>
+    <text x="418" y="140" font-size="11.4" font-weight="800" fill="#d97706">NO</text>
+    <rect x="470" y="150" width="430" height="96" rx="9" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="685" y="174" text-anchor="middle" font-size="12" font-weight="800" fill="#b45309">느린 경로</text>
+    <text x="490" y="198" font-size="11.4" fill="#b45309">① 필요한 처리를 한다 — <tspan font-weight="800">마킹</tspan> 또는 <tspan font-weight="800">주소 교정</tspan></text>
+    <text x="490" y="220" font-size="11.4" fill="#b45309">② 그 참조를 <tspan font-weight="800">좋은 색으로 고쳐서</tspan></text>
+    <text x="490" y="238" font-size="11.4" font-weight="800" fill="#dc2626">③ 원래 자리(힙의 필드/슬롯)에 다시 써 넣는다 ← self-healing</text>
+
+    <path d="M900 198 C 980 198, 990 120, 920 96" stroke="#16a34a" stroke-width="2.4" stroke-dasharray="6 4" fill="none" marker-end="url(#a10g)"/>
+    <text x="1010" y="150" text-anchor="middle" font-size="11.6" font-weight="800" fill="#16a34a">다음에 같은 참조를</text>
+    <text x="1010" y="168" text-anchor="middle" font-size="11.6" font-weight="800" fill="#16a34a">읽으면 빠른 경로</text>
+    <text x="1010" y="188" text-anchor="middle" font-size="11.2" fill="#15803d">느린 경로 비용은</text>
+    <text x="1010" y="204" text-anchor="middle" font-size="11.2" fill="#15803d">참조마다 딱 한 번</text>
+
+    <rect x="30" y="266" width="1060" height="58" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="48" y="290" font-size="12.4" fill="#1e40af"><tspan font-weight="800">여기서 ZGC의 pause가 짧은 이유 하나가 더 나온다.</tspan> GC 단계가 바뀔 때 <tspan font-weight="800">"좋은 색"의 정의만 바꾸면</tspan> 힙에 있는 모든 포인터가 자동으로 "검사 필요" 상태가 된다.</text>
+    <text x="48" y="312" font-size="12.4" fill="#1e40af"><tspan font-weight="800">힙을 순회하며 플래그를 리셋하는 작업이 필요 없다</tspan> — 기준 하나를 바꾸는 것으로 <tspan font-weight="800">수억 개 포인터의 상태를 한꺼번에 무효화</tspan>하는 셈이다.</text>
+  </svg>
+  <figcaption><b>self-healing(자가 치유)</b> — 한 번 만져진 참조는 스스로 최신 상태로 고쳐지므로 <b>다음번 읽기는 빠른 경로로 통과</b>한다. 뜨거운 루프에서 같은 필드를 백만 번 읽어도 <b>느린 경로는 첫 한 번뿐</b>이다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>출입증 색깔 바꾸기 — "좋은 색 전환"의 직관</h4>
+  <p style="margin-top:0">어제까지 <b>파란 출입증</b>이 유효했는데 오늘부터 <b>초록만 유효</b>하다고 선언한다고 하자. 파란 출입증 소지자를 <b>일일이 찾아다닐 필요가 없다.</b> <b>검문소에 오는 사람만 그 자리에서 교체해 주면 된다.</b> 안 오는 사람은 애초에 문제가 안 된다.</p>
+  <p style="margin-bottom:0">GC로 옮기면 — <b>읽히는 참조는 읽히는 순간 고쳐지고, 안 읽히는 참조는 고칠 필요도 없다.</b> 그리고 그마저도 <b>다음 사이클의 마킹 순회가 지나가면서</b> 정리한다(12절 remap 무임승차).</p>
+</div>
+
+<div class="taxbox">
+  <div class="half"><div class="hd">G1 — write barrier (참조를 쓸 때)</div>
+    <p style="margin:0;font-size:.93rem">지키는 것: <b>RSet의 정확성</b> + <b>SATB 스냅샷</b>. 둘 다 <b>참조가 바뀌는 순간</b>에만 필요하므로 쓰기에 붙는다.</p></div>
+  <div class="half"><div class="hd">ZGC — load barrier (참조를 읽을 때)</div>
+    <p style="margin:0;font-size:.93rem">지키는 것: <b>"앱이 옛 주소를 만지지 않는다"</b>는 불변식. 이 위험은 <b>참조를 읽어 따라가는 순간</b> 발생하므로 읽기에 붙는다.</p></div>
+</div>
+
+<div class="rule red">읽기는 쓰기보다 <b>압도적으로 빈번하다</b> — 필드 접근, 배열 순회, 컬렉션 탐색. 그래서 <b>같은 무게의 배리어라도 읽기에 붙으면 상시 비용이 훨씬 크다</b></div>
+<h2 id="s11">11. ZGC ③ 동시 재배치 — 혁신의 핵심</h2>
+
+<h3>11-1. Mark 단계</h3>
+
+<div class="phase s"><span class="lb stw">STW</span><div class="bd"><b>Pause Mark Start</b> (1ms 미만) — <b>root 스캔만</b>. 그리고 <b>"좋은 색"을 markedX로 전환</b></div></div>
+<div class="phase c"><span class="lb conc">동시</span><div class="bd"><b>Concurrent Mark</b> — 참조 그래프를 순회하며 살아있는 객체를 <b>mark bitmap</b>에 기록 · 방문한 포인터는 "이번 주기 처리 완료" 색으로 색칠 · <b>앱 스레드도 로드 배리어의 느린 경로를 통해 마킹에 참여</b>한다</div></div>
+<div class="phase s"><span class="lb stw">STW</span><div class="bd"><b>Pause Mark End</b> (1ms 미만) — 마킹 종료 동기화</div></div>
+
+<div class="callout info">
+  <span class="t">자주 헷갈리는 것 — 마킹과 색칠은 같은 것이 아니다</span>
+  <b>마킹(marking)</b>은 살아있는 객체를 찾아 <b>mark bitmap</b>(어느 주소에 살아있는 객체가 있는지 비트로 표시하는 <b>별도의 표</b>)에 기록하는 것으로, <b>모든 GC에 공통</b>이고 대상은 <b>객체</b>다. <b>포인터 색칠(coloring)</b>은 "이 참조는 이번 단계 처리를 마쳤다"를 <b>포인터 비트에 새기는</b> 것으로, <b>ZGC 특유</b>이고 대상은 <b>참조</b>다. 색칠은 마킹의 <b>부수 효과이자 중복 작업 방지 장치</b>이지 마킹의 정의가 아니다.
+</div>
+
+<h3>11-2. Relocate 단계 — 복사가 STW 밖으로 나간다</h3>
+
+<p>마킹이 끝나면 mark bitmap 통계로 <b>"쓰레기가 많은 region"</b>을 골라 <b>relocation set</b>(재배치 대상 집합)으로 정한다. <b>G1의 garbage-first와 같은 아이디어</b>이고, <b>이 선정 작업 자체도 앱과 동시에</b> 진행된다.</p>
+
+<div class="phase s"><span class="lb stw">STW</span><div class="bd"><b>Pause Relocate Start</b> (1ms 미만) — <b>root가 가리키는 객체만</b> 이동·수정. <b>"좋은 색"을 remapped로 전환</b></div></div>
+<div class="phase c"><span class="lb conc">동시</span><div class="bd"><b>Concurrent Relocate</b> — GC 스레드가 relocation set의 살아있는 객체를 <b>새 region으로 복사</b> · 옛 주소 → 새 주소 대응을 <b>forwarding table</b>에 기록 · 복사가 끝난 옛 region은 <b>즉시 회수해 재사용</b></div></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="Concurrent Relocate 동안 GC 스레드가 객체를 새 region으로 복사하고 forwarding table에 옛 주소와 새 주소 대응을 기록한다. 동시에 앱 스레드가 참조를 읽으면 로드 배리어가 네 가지 경우로 나누어 처리하며, 아직 안 옮겨진 객체를 읽으려 하면 앱 스레드가 직접 복사한다.">
+    <defs><marker id="a11b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    <marker id="a11g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    <marker id="a11r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker></defs>
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">Concurrent Relocate — <tspan fill="#16a34a">앱이 도는 채로</tspan> 객체를 옮긴다. 안전장치는 <tspan fill="#2563eb">forwarding table + 로드 배리어</tspan></text>
+
+    <rect x="20" y="48" width="300" height="150" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="170" y="72" text-anchor="middle" font-size="12.4" font-weight="800" fill="#dc2626">relocation set의 옛 region</text>
+    <g font-size="11.4" font-weight="700" text-anchor="middle">
+      <rect x="42" y="86" width="80" height="38" rx="6" fill="#fff" stroke="#dc2626"/><text x="82" y="110" fill="#dc2626">obj1</text>
+      <rect x="130" y="86" width="80" height="38" rx="6" fill="#fff" stroke="#dc2626"/><text x="170" y="110" fill="#dc2626">obj2</text>
+      <rect x="218" y="86" width="80" height="38" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="4 3"/><text x="258" y="110" fill="#94a3b8">쓰레기</text>
+    </g>
+    <text x="170" y="150" text-anchor="middle" font-size="11.4" fill="#dc2626">복사가 끝나면 이 region은</text>
+    <text x="170" y="170" text-anchor="middle" font-size="11.6" font-weight="800" fill="#dc2626">즉시 회수해 재사용</text>
+
+    <path d="M324 120 L 396 120" stroke="#16a34a" stroke-width="2.4" fill="none" marker-end="url(#a11g)"/>
+    <text x="360" y="110" text-anchor="middle" font-size="11" font-weight="800" fill="#16a34a">복사</text>
+    <rect x="400" y="48" width="300" height="150" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="550" y="72" text-anchor="middle" font-size="12.4" font-weight="800" fill="#15803d">새 region</text>
+    <g font-size="11.4" font-weight="700" text-anchor="middle">
+      <rect x="422" y="86" width="80" height="38" rx="6" fill="#fff" stroke="#16a34a"/><text x="462" y="110" fill="#15803d">obj1'</text>
+      <rect x="510" y="86" width="80" height="38" rx="6" fill="#fff" stroke="#16a34a"/><text x="550" y="110" fill="#15803d">obj2'</text>
+    </g>
+    <text x="550" y="150" text-anchor="middle" font-size="11.4" fill="#15803d">GC 스레드가 옮기는 중</text>
+    <text x="550" y="170" text-anchor="middle" font-size="11.6" font-weight="800" fill="#15803d">앱은 계속 실행 중이다</text>
+
+    <rect x="740" y="48" width="350" height="150" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="915" y="72" text-anchor="middle" font-size="12.4" font-weight="800" fill="#1e40af">forwarding table (전입신고서)</text>
+    <g class="mono" font-size="11.4" fill="#1e40af">
+      <rect x="762" y="84" width="306" height="30" rx="6" fill="#fff" stroke="#bfdbfe"/><text x="778" y="104">0x7f3a00  →  0x9c1200</text>
+      <rect x="762" y="120" width="306" height="30" rx="6" fill="#fff" stroke="#bfdbfe"/><text x="778" y="140">0x7f3a40  →  0x9c1260</text>
+    </g>
+    <text x="915" y="176" text-anchor="middle" font-size="11.3" fill="#1e40af">region마다 하나씩 · 모든 참조가 갱신되면 버려진다</text>
+
+    <text x="20" y="234" font-size="12.6" font-weight="800" fill="#1f2937">이 동안 앱이 참조를 읽으면 — 로드 배리어가 네 가지 중 하나로 처리한다</text>
+    <g font-size="11.3">
+      <rect x="20" y="246" width="262" height="88" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+      <text x="36" y="268" font-weight="800" fill="#15803d">① 색이 이미 remapped</text>
+      <text x="36" y="290" fill="#15803d">검사 완료된 참조</text>
+      <text x="36" y="312" font-weight="800" fill="#15803d">→ 그냥 통과 (빠른 경로)</text>
+
+      <rect x="292" y="246" width="262" height="88" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+      <text x="308" y="268" font-weight="800" fill="#1e40af">② 옛 색 + relocation set 밖</text>
+      <text x="308" y="290" fill="#1e40af">주소는 여전히 유효</text>
+      <text x="308" y="312" font-weight="800" fill="#1e40af">→ 색만 remapped로 바꿔 씀</text>
+
+      <rect x="564" y="246" width="262" height="88" rx="9" fill="#fffbeb" stroke="#d97706"/>
+      <text x="580" y="268" font-weight="800" fill="#b45309">③ 옛 색 + set 안 + 이미 복사됨</text>
+      <text x="580" y="290" fill="#b45309">forwarding table 조회</text>
+      <text x="580" y="312" font-weight="800" fill="#b45309">→ "새 주소 + remapped"로 교정</text>
+
+      <rect x="836" y="246" width="254" height="88" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+      <text x="852" y="268" font-weight="800" fill="#dc2626">④ 옛 색 + set 안 + 아직 안 옮김</text>
+      <text x="852" y="290" fill="#dc2626">읽으려던 앱 스레드가</text>
+      <text x="852" y="312" font-weight="800" fill="#dc2626">→ 그 자리에서 직접 복사한다</text>
+    </g>
+    <rect x="20" y="350" width="1070" height="40" rx="9" fill="#111827"/>
+    <text x="40" y="375" font-size="12.6" font-weight="800" fill="#fbbf24">④가 결정적이다 — "언젠가는 옮겨지겠지"가 아니라 "읽는 순간 이미 옮겨져 있다"가 보장된다. 그래서 앱이 옛 주소의 객체를 만질 가능성이 원천 차단된다.</text>
+  </svg>
+  <figcaption><b>forwarding table</b>은 <b>"이 객체는 여기로 이사 갔습니다"를 적어 둔 전입신고서 모음</b>이다. 우편물 주소 이전 서비스와 같다 — 옛 주소로 온 접근을 새 주소로 안내한다. relocation set의 각 region마다 하나씩 만들어지고, 그 region의 모든 참조가 갱신되면 테이블도 버려진다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>로드 배리어의 네 가지 처리 — 표로 다시 (면접에서 이 네 줄을 순서대로 말할 수 있으면 충분하다)</caption>
+  <thead><tr><th>읽은 포인터의 상태</th><th>배리어의 동작</th><th>비용</th></tr></thead>
+  <tbody>
+    <tr><td>색이 이미 <b>remapped</b></td><td>검사 완료된 참조 — 그냥 통과</td><td class="good">빠른 경로</td></tr>
+    <tr><td>옛 색 + 가리키는 객체가 relocation set <b>밖</b></td><td>주소는 여전히 유효 — <b>색만 remapped로</b> 바꿔 씀</td><td>느린 경로(가벼움)</td></tr>
+    <tr><td>옛 색 + set <b>안</b> + <b>이미 복사됨</b></td><td>forwarding table에서 새 주소를 찾아 <b>"새 주소 + remapped"로</b> 고쳐 씀</td><td>느린 경로</td></tr>
+    <tr class="bad"><td>옛 색 + set <b>안</b> + <b>아직 안 옮겨짐</b></td><td><b>읽으려던 앱 스레드가 그 자리에서 직접 객체를 복사</b>하고 테이블에 기록한 뒤 새 주소를 쓴다</td><td class="bad">느린 경로(가장 무거움)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout ok">
+  <span class="t">경쟁이 나면 어떻게 되나</span>
+  GC 스레드와 앱 스레드가 <b>같은 객체를 동시에 복사하려 할 수는 있다.</b> 하지만 forwarding table 등록이 <b>원자적</b>이라 <b>한쪽만 이기고</b>, 진 쪽은 이긴 쪽이 등록한 새 주소를 쓴다. <b>객체가 두 벌 살아남는 일은 없다.</b>
+</div>
+<h2 id="s12">12. ZGC ④ 색이 두 개인 이유와 remap 무임승차</h2>
+
+<h3>12-1. Remap — 다음 사이클에 무임승차</h3>
+
+<p>Relocate가 끝난 뒤에도 힙에는 <b>아무도 안 읽어서 옛 색인 채로 남은 포인터</b>가 있다. 이것들도 결국 새 주소로 갱신돼야 한다. 그런데 ZGC는 <b>이 갱신을 위한 별도 순회 단계를 만들지 않는다.</b></p>
+
+<div class="bigrule">
+  <u>다음 사이클의 Concurrent Mark가 어차피 참조 그래프를 전부 순회하므로,<br>그때 겸사겸사 새 주소로 고치면서 새 마킹 색을 칠한다.</u><br>
+  <span style="font-size:.9rem;font-weight:600">— 순회 비용 한 번을 통째로 아끼는 설계</span>
+</div>
+
+<h3>12-2. 색이 두 개인 이유 — marked0와 marked1</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="사이클 N의 마킹에서 좋은 색은 marked0이고, 재배치 단계에서 remapped로 바뀌며, 사이클 N+1의 마킹에서는 marked1로 바뀐다. 색을 두 개 두고 주기마다 뒤집으면 지난 주기 색이 자동으로 낡은 색이 되므로 힙을 순회하며 리셋할 필요가 없다.">
+    <defs><marker id="a12b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker></defs>
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">"좋은 색"은 단계마다 바뀐다 — 그리고 <tspan fill="#2563eb">기준 하나를 바꾸는 것으로 수억 개 포인터가 한꺼번에 무효화</tspan>된다</text>
+
+    <g text-anchor="middle">
+      <rect x="40" y="58" width="270" height="96" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2.4"/>
+      <text x="175" y="82" font-size="11.6" font-weight="700" fill="#64748b">사이클 N · Mark</text>
+      <text x="175" y="110" font-size="16" font-weight="800" fill="#1e40af" class="mono">marked0</text>
+      <text x="175" y="134" font-size="11.6" fill="#1e40af">"이번 주기 생존 확인"</text>
+
+      <rect x="420" y="58" width="270" height="96" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.4"/>
+      <text x="555" y="82" font-size="11.6" font-weight="700" fill="#64748b">사이클 N · Relocate</text>
+      <text x="555" y="110" font-size="16" font-weight="800" fill="#15803d" class="mono">remapped</text>
+      <text x="555" y="134" font-size="11.6" fill="#15803d">"주소 최신 보증"</text>
+
+      <rect x="800" y="58" width="270" height="96" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2.4"/>
+      <text x="935" y="82" font-size="11.6" font-weight="700" fill="#64748b">사이클 N+1 · Mark</text>
+      <text x="935" y="110" font-size="16" font-weight="800" fill="#1e40af" class="mono">marked1</text>
+      <text x="935" y="134" font-size="11.6" fill="#1e40af">"새 주기 생존 재확인"</text>
+    </g>
+    <path d="M316 106 L 412 106" stroke="#2563eb" stroke-width="2.6" fill="none" marker-end="url(#a12b)"/>
+    <path d="M696 106 L 792 106" stroke="#2563eb" stroke-width="2.6" fill="none" marker-end="url(#a12b)"/>
+    <path d="M935 158 C 935 210, 175 200, 175 158" stroke="#94a3b8" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#a12b)"/>
+    <text x="555" y="205" text-anchor="middle" font-size="11.6" font-weight="700" fill="#64748b">다음 주기에는 다시 marked0으로 뒤집힌다 (marked0 → marked1 → marked0 → …)</text>
+
+    <rect x="40" y="224" width="500" height="92" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="60" y="248" font-size="12.4" font-weight="800" fill="#b45309">marked 색이 보증하는 것</text>
+    <text x="60" y="270" font-size="11.6" fill="#b45309">"이번 주기에 살아있음을 확인했다"까지.</text>
+    <text x="60" y="292" font-size="11.6" fill="#b45309">마킹 시점에는 relocation set이 아직 안 정해졌으므로</text>
+    <text x="60" y="310" font-size="11.9" font-weight="800" fill="#dc2626">주소가 최신인지는 보증하지 못한다.</text>
+
+    <rect x="570" y="224" width="500" height="92" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="590" y="248" font-size="12.4" font-weight="800" fill="#15803d">remapped 색이 보증하는 것</text>
+    <text x="590" y="270" font-size="11.6" fill="#15803d">"재배치 검사를 통과한 최신 주소".</text>
+    <text x="590" y="292" font-size="11.9" font-weight="800" fill="#15803d">생사가 아니라 주소의 최신성에 대한 보증서다.</text>
+    <text x="590" y="310" font-size="11.6" fill="#15803d">→ 보증 내용이 다르므로 색이 따로 필요하다.</text>
+  </svg>
+  <figcaption>두 개가 필요한 이유는 <b>remap을 다음 마킹에 얹어 지연 처리</b>하기 때문이다. 그래서 <b>힙에 지난 주기의 마킹 색과 이번 주기의 마킹 색이 잠시 공존</b>한다. 색이 하나뿐이면 "이게 이번 것인지 지난 것인지"를 구분할 수 없다. <b>색을 두 개 두고 주기마다 뒤집으면 지난 주기 색은 자동으로 "낡은 색"이 된다</b> — 힙을 순회하며 리셋할 필요도, 그 리셋을 위한 STW도 없다.</figcaption>
+</figure>
+
+<h3>12-3. ZGC의 한 사이클 — 타임라인</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="ZGC의 한 사이클 타임라인. Pause Mark Start, Pause Mark End, Pause Relocate Start 세 개의 아주 얇은 검은 STW 막대 사이에 Concurrent Mark, Concurrent Prepare, Concurrent Relocate라는 긴 동시 구간이 놓인다. 남은 옛 포인터의 갱신은 다음 사이클의 Concurrent Mark가 흡수한다.">
+    <defs><marker id="a13b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker></defs>
+    <text x="20" y="26" font-size="13.5" font-weight="800" fill="#1f2937">ZGC의 한 사이클 — <tspan fill="#2563eb">복사가 흰 칸(동시) 안에 있다</tspan>. 검은 칸은 전부 root 처리 수준이라 <tspan fill="#2563eb">두께가 변하지 않는다</tspan></text>
+    <line x1="20" y1="44" x2="1100" y2="44" stroke="#cbd5e1"/>
+
+    <rect x="30" y="60" width="10" height="40" rx="2" fill="#111827"/>
+    <text x="52" y="78" font-size="11.8" font-weight="800" fill="#111827">Pause Mark Start</text>
+    <text x="52" y="94" font-size="10.8" fill="#64748b">STW · 1ms 미만 — root 스캔만 · "좋은 색"을 markedX로 전환</text>
+
+    <rect x="30" y="108" width="520" height="40" rx="6" fill="#bfdbfe" stroke="#60a5fa"/>
+    <text x="290" y="126" text-anchor="middle" font-size="11.8" font-weight="800" fill="#1e40af">Concurrent Mark</text>
+    <text x="290" y="142" text-anchor="middle" font-size="10.8" fill="#1e40af">앱과 동시 · mark bitmap 기록 + 포인터 색칠 · 앱 스레드도 배리어 느린 경로로 참여</text>
+
+    <rect x="30" y="156" width="10" height="40" rx="2" fill="#111827"/>
+    <text x="52" y="174" font-size="11.8" font-weight="800" fill="#111827">Pause Mark End</text>
+    <text x="52" y="190" font-size="10.8" fill="#64748b">STW · 1ms 미만 — 마킹 종료 동기화</text>
+
+    <rect x="30" y="204" width="240" height="36" rx="6" fill="#dbeafe" stroke="#93c5fd"/>
+    <text x="150" y="221" text-anchor="middle" font-size="11.6" font-weight="800" fill="#1e40af">Concurrent Prepare</text>
+    <text x="150" y="235" text-anchor="middle" font-size="10.6" fill="#1e40af">relocation set 선정 (가성비순)</text>
+
+    <rect x="30" y="248" width="10" height="40" rx="2" fill="#111827"/>
+    <text x="52" y="266" font-size="11.8" font-weight="800" fill="#111827">Pause Relocate Start</text>
+    <text x="52" y="282" font-size="10.8" fill="#64748b">STW · 1ms 미만 — root가 가리키는 객체만 · "좋은 색"을 remapped로 전환</text>
+
+    <rect x="600" y="204" width="380" height="84" rx="8" fill="#bfdbfe" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="790" y="230" text-anchor="middle" font-size="12.6" font-weight="800" fill="#1e40af">Concurrent Relocate</text>
+    <text x="790" y="250" text-anchor="middle" font-size="11.4" fill="#1e40af">앱과 동시 — <tspan font-weight="800">여기가 핵심</tspan></text>
+    <text x="790" y="270" text-anchor="middle" font-size="11.2" fill="#1e40af">객체 복사 + forwarding table + 옛 region 즉시 회수</text>
+
+    <path d="M984 246 L 1040 246" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a13b)"/>
+    <text x="1062" y="238" text-anchor="middle" font-size="10.8" font-weight="700" fill="#2563eb">다음</text>
+    <text x="1062" y="254" text-anchor="middle" font-size="10.8" font-weight="700" fill="#2563eb">사이클</text>
+
+    <rect x="600" y="60" width="490" height="128" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="620" y="84" font-size="12.4" font-weight="800" fill="#15803d">남은 옛 포인터는 어떻게 되나</text>
+    <text x="620" y="108" font-size="11.6" fill="#15803d">아무도 안 읽어서 옛 색인 채로 남은 포인터는</text>
+    <text x="620" y="128" font-size="11.9" font-weight="800" fill="#15803d">다음 사이클의 Concurrent Mark가 순회하면서</text>
+    <text x="620" y="148" font-size="11.9" font-weight="800" fill="#15803d">remap까지 겸사겸사 처리한다.</text>
+    <text x="620" y="172" font-size="11.4" fill="#15803d">→ 전용 remap 순회 단계가 없다 = 순회 비용 한 번 절약</text>
+
+    <g font-size="11.4" fill="#64748b">
+      <rect x="30" y="300" width="14" height="14" rx="3" fill="#111827"/><text x="52" y="312">= STW (root 처리 수준 · 힙 크기와 무관)</text>
+      <rect x="330" y="300" width="14" height="14" rx="3" fill="#bfdbfe" stroke="#60a5fa"/><text x="352" y="312">= 앱과 동시(concurrent) — 무거운 일은 전부 여기로</text>
+    </g>
+  </svg>
+  <figcaption><b>한 줄 요약</b> — Mark도 동시, <b>복사와 포인터 수정까지 동시</b>다. STW는 <b>root를 다루는 세 지점</b>뿐이고, root 개수는 <b>스레드 수에 비례하며 힙 크기와 무관</b>하다(2절).</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>ZGC의 STW 세 지점 — 이 세 개는 이름까지 외운다</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">Pause Mark Start</div><div class="d">root 스캔 · 좋은 색을 <b>markedX</b>로</div></div>
+    <div class="tile"><div class="k">Pause Mark End</div><div class="d">마킹 종료 동기화</div></div>
+    <div class="tile"><div class="k">Pause Relocate Start</div><div class="d">root가 가리키는 객체만 이동 · 좋은 색을 <b>remapped</b>로</div></div>
+  </div>
+  <p style="margin-bottom:0">세 곳 모두 <b>하는 일이 root 처리 수준</b>이라 <b>1ms 미만</b>에 머문다. "ZGC는 STW가 없다"가 아니라 <b>"pause가 힙 크기에 비례하지 않는다"</b>가 정확한 문장이다.</p>
+</div>
+<h2 id="s13">13. 타임라인 정면 대비 — 검은 칸이 어디 있나</h2>
+
+<p>8-4와 12-3의 두 타임라인을 <b>같은 시간축에 나란히</b> 올리면 이 문서의 결론이 그림 한 장으로 정리된다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 460" role="img" aria-label="같은 시간축 위에 G1과 ZGC의 한 사이클을 나란히 놓은 대비 도식. G1은 두꺼운 검은 STW 블록 안에서 객체 복사와 포인터 수정을 하고 그 블록의 두께가 살아있는 객체 양에 따라 커지며 최악에는 Full GC라는 아주 긴 검은 블록이 나타난다. ZGC는 아주 얇은 검은 막대 세 개만 있고 복사는 파란 동시 구간 안에서 일어나며 검은 막대의 두께는 힙이 커져도 변하지 않는다.">
+    <defs><marker id="a14r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    <marker id="a14b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker></defs>
+    <text x="20" y="26" font-size="14" font-weight="800" fill="#1f2937">같은 시간축, 같은 일 — <tspan fill="#dc2626">G1은 검은 칸 안에서 복사하고</tspan>, <tspan fill="#2563eb">ZGC는 파란 칸 안에서 복사한다</tspan></text>
+
+    <text x="20" y="70" font-size="13" font-weight="800" fill="#b45309">G1 GC</text>
+    <line x1="20" y1="80" x2="1100" y2="80" stroke="#e5e7eb"/>
+    <g>
+      <rect x="20" y="92" width="150" height="48" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="95" y="121" text-anchor="middle" font-size="11.4" fill="#475569">앱 실행</text>
+      <rect x="172" y="86" width="58" height="60" rx="4" fill="#111827"/>
+      <text x="201" y="112" text-anchor="middle" font-size="9.8" font-weight="800" fill="#fbbf24">Young</text>
+      <text x="201" y="126" text-anchor="middle" font-size="9.2" fill="#fca5a5">복사+수정</text>
+      <rect x="232" y="92" width="120" height="48" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="292" y="121" text-anchor="middle" font-size="11.4" fill="#475569">앱 실행</text>
+      <rect x="354" y="86" width="20" height="60" rx="3" fill="#111827"/>
+      <text x="364" y="164" text-anchor="middle" font-size="9.4" font-weight="700" fill="#111827">IM</text>
+      <rect x="376" y="98" width="230" height="36" rx="5" fill="#bfdbfe" stroke="#60a5fa"/>
+      <text x="491" y="121" text-anchor="middle" font-size="11.2" font-weight="700" fill="#1e40af">Concurrent Mark (동시)</text>
+      <rect x="608" y="86" width="22" height="60" rx="3" fill="#111827"/><text x="619" y="164" text-anchor="middle" font-size="9.4" font-weight="700" fill="#111827">RM</text>
+      <rect x="632" y="86" width="22" height="60" rx="3" fill="#111827"/><text x="643" y="178" text-anchor="middle" font-size="9.4" font-weight="700" fill="#111827">CL</text>
+      <rect x="656" y="92" width="80" height="48" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="696" y="121" text-anchor="middle" font-size="11.4" fill="#475569">앱</text>
+      <rect x="738" y="82" width="66" height="68" rx="4" fill="#111827"/>
+      <text x="771" y="110" text-anchor="middle" font-size="9.8" font-weight="800" fill="#fbbf24">Mixed</text>
+      <text x="771" y="124" text-anchor="middle" font-size="9.2" fill="#fca5a5">복사+수정</text>
+      <rect x="806" y="92" width="70" height="48" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="841" y="121" text-anchor="middle" font-size="11.4" fill="#475569">앱</text>
+      <rect x="878" y="82" width="66" height="68" rx="4" fill="#111827"/>
+      <text x="911" y="110" text-anchor="middle" font-size="9.8" font-weight="800" fill="#fbbf24">Mixed</text>
+      <text x="911" y="124" text-anchor="middle" font-size="9.2" fill="#fca5a5">복사+수정</text>
+      <rect x="946" y="92" width="154" height="48" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="1023" y="121" text-anchor="middle" font-size="11.4" fill="#475569">앱 실행</text>
+    </g>
+    <path d="M172 196 L 172 154" stroke="#dc2626" stroke-width="2" fill="none" marker-end="url(#a14r)"/>
+    <text x="190" y="200" font-size="11.6" font-weight="800" fill="#dc2626">이 검은 칸의 두께 = pause. live set이 크면 두꺼워진다 (5절) · young은 쪼갤 수도 없다</text>
+    <rect x="20" y="212" width="700" height="26" rx="4" fill="#7f1d1d"/>
+    <text x="370" y="230" text-anchor="middle" font-size="11.6" font-weight="800" fill="#fecaca">최악의 경우 — Full GC (힙 전체 STW, pause ∝ 힙 크기)</text>
+    <text x="736" y="230" font-size="11.6" font-weight="700" fill="#dc2626">← 평소 200ms를 지키다가 어느 순간 이것 하나가 터진다</text>
+
+    <line x1="20" y1="262" x2="1100" y2="262" stroke="#cbd5e1" stroke-dasharray="6 5"/>
+
+    <text x="20" y="296" font-size="13" font-weight="800" fill="#1e40af">ZGC</text>
+    <line x1="20" y1="306" x2="1100" y2="306" stroke="#e5e7eb"/>
+    <g>
+      <rect x="20" y="318" width="150" height="48" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="95" y="347" text-anchor="middle" font-size="11.4" fill="#475569">앱 실행</text>
+      <rect x="174" y="312" width="7" height="60" rx="2" fill="#111827"/>
+      <rect x="185" y="318" width="290" height="48" rx="5" fill="#bfdbfe" stroke="#60a5fa"/>
+      <text x="330" y="341" text-anchor="middle" font-size="11.4" font-weight="700" fill="#1e40af">Concurrent Mark</text>
+      <text x="330" y="357" text-anchor="middle" font-size="10.4" fill="#1e40af">앱 계속 실행 중</text>
+      <rect x="479" y="312" width="7" height="60" rx="2" fill="#111827"/>
+      <rect x="490" y="318" width="140" height="48" rx="5" fill="#dbeafe" stroke="#93c5fd"/>
+      <text x="560" y="347" text-anchor="middle" font-size="11" font-weight="700" fill="#1e40af">Concurrent Prepare</text>
+      <rect x="634" y="312" width="7" height="60" rx="2" fill="#111827"/>
+      <rect x="645" y="318" width="300" height="48" rx="5" fill="#bfdbfe" stroke="#2563eb" stroke-width="2.2"/>
+      <text x="795" y="341" text-anchor="middle" font-size="11.6" font-weight="800" fill="#1e40af">Concurrent Relocate — 복사 + 포인터 수정</text>
+      <text x="795" y="357" text-anchor="middle" font-size="10.4" font-weight="700" fill="#1e40af">앱 계속 실행 중 (로드 배리어가 안전을 보장)</text>
+      <rect x="949" y="318" width="151" height="48" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/><text x="1024" y="347" text-anchor="middle" font-size="11.4" fill="#475569">앱 실행</text>
+    </g>
+    <path d="M177 400 L 177 378" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a14b)"/>
+    <path d="M482 400 L 482 378" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a14b)"/>
+    <path d="M637 400 L 637 378" stroke="#2563eb" stroke-width="2" fill="none" marker-end="url(#a14b)"/>
+    <text x="200" y="418" font-size="11.6" font-weight="800" fill="#2563eb">Mark Start</text>
+    <text x="505" y="418" font-size="11.6" font-weight="800" fill="#2563eb">Mark End</text>
+    <text x="660" y="418" font-size="11.6" font-weight="800" fill="#2563eb">Relocate Start</text>
+    <text x="200" y="436" font-size="11" fill="#1e40af">— 세 곳 모두 root 처리 수준 · 1ms 미만 · <tspan font-weight="800">힙이 100GB든 1TB든 두께가 그대로다</tspan></text>
+    <text x="790" y="436" font-size="11.6" font-weight="800" fill="#dc2626">대신 앱이 도는 내내 로드 배리어 세금을 낸다</text>
+  </svg>
+  <figcaption><b>G1의 검은 칸 안에는 "복사 + 포인터 수정"이 들어 있고, ZGC의 검은 칸 안에는 root 처리밖에 없다.</b> 그래서 G1의 검은 칸은 <b>live set과 힙을 따라 두꺼워지고</b>, ZGC의 검은 칸은 <b>두께가 변하지 않는다.</b> 대신 ZGC의 파란 칸은 <b>공짜가 아니다</b> — 그 시간 내내 앱은 배리어를 통과하며 실행된다.</figcaption>
+</figure>
+
+<div class="gcpair">
+  <div class="gc g1"><div class="hd">G1 — 뭉친 비용</div>
+    <ul>
+      <li>비용이 <b>STW 순간에 집중</b>된다</li>
+      <li>평상시 실행은 <b>거의 무료</b>(write barrier만)</li>
+      <li>그래서 <b>평균 처리량이 좋다</b></li>
+      <li>대신 <b>꼬리(p99, p999)가 튄다</b></li>
+    </ul>
+  </div>
+  <div class="gc zgc"><div class="hd">ZGC — 펴 바른 비용</div>
+    <ul>
+      <li>비용이 <b>실행 시간 전체에 얇게 분포</b>한다</li>
+      <li>모든 참조 읽기가 배리어를 통과</li>
+      <li>그래서 <b>꼬리가 눌린다</b></li>
+      <li>대신 <b>같은 하드웨어에서 처리량이 낮다</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="bigrule">
+  ZGC는 비용을 <u>없앤</u> 것이 아니라 <u>분포를 바꾼</u> 것이다.<br>
+  <span style="font-size:.92rem;font-weight:600">STW라는 뭉친 비용을 없앤 대신, 그 비용을 실행 시간 전체에 얇게 펴 발랐다.</span>
+</div>
+<h2 id="s14">14. 파생되는 모든 차이 — pause · 세금 · 실패 모드</h2>
+
+<p>두 컬렉터가 <b>같은 일을 어디서 하는지</b>를 한 표에 놓으면, 나머지 특징이 전부 여기서 도출된다.</p>
+
+<div class="scroll">
+<table class="wide">
+  <caption>단계별 STW 배치 — <b>이 표 한 장이 이 문서의 압축본이다</b></caption>
+  <thead><tr><th>단계</th><th>기본형 (Parallel)</th><th>G1</th><th>ZGC</th></tr></thead>
+  <tbody>
+    <tr><td>Mark</td><td>STW</td><td>대부분 동시</td><td>동시</td></tr>
+    <tr><td>수거 대상 선정</td><td class="dash">(전체 대상)</td><td>STW 중, 가성비순</td><td>동시, 가성비순</td></tr>
+    <tr class="hl"><td><b>객체 복사</b></td><td>STW</td><td class="bad"><b>STW</b></td><td class="good"><b>동시</b> ← 결정적 차이</td></tr>
+    <tr class="hl"><td><b>포인터 수정</b></td><td>STW</td><td class="bad"><b>STW</b></td><td class="good"><b>동시</b> (self-healing)</td></tr>
+    <tr><td>상시 오버헤드</td><td class="good">없음</td><td>write barrier (쓸 때)</td><td class="bad"><b>load barrier (읽을 때)</b> + 색 비트</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>14-1. G1의 pause는 힙과 live set 규모의 영향을 받는다</h3>
+
+<div class="eq">pause(G1) ≈ 복사할 살아있는 객체의 양 &nbsp;+&nbsp; RSet 스캔 비용</div>
+
+<p>G1의 <b>설계 의도 자체는 "pause 크기는 고정하고 횟수를 늘린다"가 맞다.</b> Mixed GC는 실제로 그렇게 동작한다 — CSet 크기를 조절해 pause를 목표 안에 맞춘다. 그런데 <b>현실에서는 힙이 커지면 pause도 커지는 경향</b>이 나타나고, 이유가 셋이다.</p>
+
+<div class="threecol">
+  <div class="trio"><div class="k">① Young GC는 쪼갤 수 없다</div><div class="d">수거 대상 young region은 <b>한 번의 STW에서 전부</b> 처리된다(5절). 힙이 크면 young도 크게 잡히는 경향이라 복사량이 늘고, 줄이자니 <b>GC 빈도가 급증</b>해 처리량이 나빠진다.</div></div>
+  <div class="trio"><div class="k">② RSet 스캔 단가 ∝ 힙</div><div class="d">힙이 크면 region이 많아지고 region 간 참조가 늘어 RSet이 비대해진다(4절). CSet 크기를 조절해도 <b>region 하나를 처리하는 단가 자체가</b> 올라간다.</div></div>
+  <div class="trio"><div class="k">③ Full GC 낭떠러지</div><div class="d">최악의 경우 <b>힙 전체가 하나의 STW</b>로 처리된다(8절). pause 통제 장치가 전부 무력화된다.</div></div>
+</div>
+
+<h3>14-2. ZGC는 힙이 테라바이트급이어도 pause가 밀리초 미만이다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="가로축이 힙 크기이고 세로축이 최대 pause일 때, Parallel GC는 가파르게 상승하고 G1은 완만하지만 여전히 상승하며 가끔 Full GC로 급등하고, ZGC는 힙 크기와 무관하게 바닥에 붙은 평평한 선을 유지한다는 것을 보여주는 그래프.">
+    <defs><marker id="a15g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker></defs>
+    <text x="20" y="26" font-size="13.5" font-weight="800" fill="#1f2937">힙 크기에 따른 최대 pause — <tspan fill="#2563eb">ZGC의 선만 평평하다</tspan> (개념 곡선 · 실제 수치는 워크로드마다 다르다)</text>
+    <line x1="90" y1="290" x2="1060" y2="290" stroke="#64748b" stroke-width="2" marker-end="url(#a15g)"/>
+    <line x1="90" y1="290" x2="90" y2="56" stroke="#64748b" stroke-width="2" marker-end="url(#a15g)"/>
+    <text x="575" y="322" text-anchor="middle" font-size="12.4" font-weight="800" fill="#475569">힙 크기 →</text>
+    <text x="-175" y="26" transform="rotate(-90)" text-anchor="middle" font-size="12.4" font-weight="800" fill="#475569">최대 pause →</text>
+    <g font-size="11" fill="#94a3b8" text-anchor="middle">
+      <text x="240" y="308">4GB</text><text x="480" y="308">32GB</text><text x="720" y="308">128GB</text><text x="960" y="308">1TB+</text>
+    </g>
+
+    <path d="M120 276 C 300 250, 450 170, 600 96 S 860 66, 1000 62" stroke="#94a3b8" stroke-width="2.6" fill="none" stroke-dasharray="7 5"/>
+    <text x="700" y="86" font-size="11.6" font-weight="800" fill="#94a3b8">Parallel — pause ∝ 힙 (수 초 ~ 수십 초)</text>
+
+    <path d="M120 278 C 320 268, 520 244, 720 214 S 940 186, 1010 178" stroke="#d97706" stroke-width="3" fill="none"/>
+    <text x="810" y="206" font-size="12" font-weight="800" fill="#b45309">G1 — 목표는 고정이지만 완만히 상승</text>
+    <g>
+      <line x1="430" y1="252" x2="430" y2="132" stroke="#dc2626" stroke-width="2.6" stroke-dasharray="4 3"/>
+      <circle cx="430" cy="130" r="5" fill="#dc2626"/>
+      <line x1="700" y1="218" x2="700" y2="104" stroke="#dc2626" stroke-width="2.6" stroke-dasharray="4 3"/>
+      <circle cx="700" cy="102" r="5" fill="#dc2626"/>
+      <text x="470" y="126" font-size="11.6" font-weight="800" fill="#dc2626">↑ Full GC 낭떠러지 — 평균이 아니라 꼬리가 서비스를 죽인다</text>
+    </g>
+
+    <path d="M120 282 L 1010 280" stroke="#2563eb" stroke-width="3.4" fill="none"/>
+    <text x="560" y="272" font-size="12.4" font-weight="800" fill="#1e40af">ZGC — 1ms 미만에서 평평 (STW에서 하는 일이 root 처리뿐이므로)</text>
+
+    <rect x="120" y="60" width="330" height="60" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="138" y="82" font-size="11.8" font-weight="800" fill="#1e40af">왜 평평한가</text>
+    <text x="138" y="102" font-size="11.4" fill="#1e40af">root 개수 ∝ 스레드 수 · <tspan font-weight="800">힙 크기와 무관</tspan> (2절)</text>
+  </svg>
+  <figcaption>STW에서 하는 일이 <b>root 처리뿐</b>이기 때문이다. 무거운 일(마킹, 복사, 포인터 수정)은 <b>전부 동시 단계로 밀어냈다.</b> 다만 <b>"STW가 없다"는 표현은 틀렸다</b> — Mark Start, Mark End, Relocate Start 세 곳에 짧은 STW가 있다.</figcaption>
+</figure>
+
+<h3>14-3. ZGC의 대가는 throughput 세금이다</h3>
+
+<p>복사를 동시에 하려면 <b>"앱이 옛 주소를 읽는 사고"</b>를 막아야 하고, 그 대가가 <b>모든 참조 읽기에 붙는 로드 배리어</b>다. 여기가 핵심이다 — <b>읽기는 쓰기보다 압도적으로 빈번하다.</b> 필드 접근, 배열 순회, 컬렉션 탐색, 프로그램이 하는 일의 대부분이 읽기다. 그래서 <b>G1의 write barrier보다 상시 비용이 크다.</b> 여기에 컬러 포인터 관련 메모리 오버헤드도 더해진다.</p>
+
+<h3>14-4. G1은 균형형이고 여전히 기본값이다</h3>
+
+<p><b>Java 9부터 G1이 기본 GC</b>다. 상시 배리어 비용이 상대적으로 싸고(write barrier만), STW 안에서 하는 복사는 <b>구현이 단순하고 효율적</b>이다. <b>수십 GB 이하 힙에 200ms급 pause가 허용되는 서비스라면 G1이 가장 좋은 절충</b>이다. 대부분의 서비스는 기본값으로 충분하다.</p>
+
+<h3>14-5. 실패 모드가 다르다</h3>
+
+<div class="split">
+  <div class="pane r"><h4>G1 — Full GC 낭떠러지</h4><ul><li>수거가 할당을 못 따라가면 <b>전체 힙 STW</b></li><li><b>모든 스레드</b>가 멈춘다</li><li>pause ∝ 힙 크기</li></ul></div>
+  <div class="pane w"><h4>ZGC — allocation stall</h4><ul><li><b>Full GC가 없다</b></li><li>회수가 할당을 못 따라가면 <b>할당하려는 스레드만 개별 대기</b></li><li>전체가 멈추지는 않지만 <b>그 스레드의 지연은 발생</b></li></ul></div>
+</div>
+
+<div class="callout info">
+  <span class="t">allocation stall이 세대형 ZGC를 낳았다</span>
+  할당률이 매우 높은 워크로드에서 allocation stall이 ZGC의 <b>실제 약점</b>이었다. <b>죽을 확률이 높은 young을 자주 싸게 회수하면 회수 속도가 할당 속도를 따라잡기 쉬워진다</b> — 이 개선을 위해 나온 것이 <b>세대형 ZGC</b>다(15절).
+</div>
+<h2 id="s15">15. 세대 설계 비교 — 세대형 ZGC와 Survivor의 행방</h2>
+
+<h3>15-1. region 설계 비교</h3>
+
+<p><b>둘 다 region 기반이다.</b> 이것은 취향이 아니라 <b>복사 방식의 필연적 귀결</b>이다(2절). 다른 것은 <b>region의 크기 정책</b>이다.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th></th><th>G1</th><th>ZGC</th></tr></thead>
+  <tbody>
+    <tr><td>크기</td><td><b>전부 동일</b> (1~32MB, 보통 힙/2048)</td><td><b>세 가지 크기 클래스</b> — Small / Medium / Large</td></tr>
+    <tr class="hl"><td>큰 객체</td><td class="bad">region 절반 이상이면 <b>humongous</b> — <b>연속 region 여러 개</b>를 이어 붙임</td><td class="good"><b>Large region에 객체 하나만</b> 담고 <b>복사하지 않음</b></td></tr>
+    <tr><td>역할</td><td>Eden / Survivor / Old / Humongous를 <b>동적으로 부여</b></td><td>세대형 ZGC에서 <b>Young / Old 소속</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>이 차이가 만드는 실무적 결과가 <b>humongous 문제</b>다. G1은 큰 객체를 담으려면 <b>연속된 빈 region</b>을 확보해야 하고, 이것이 안 되면 evacuation failure에서 Full GC로 이어진다(8절). ZGC는 큰 객체 하나에 Large region 하나를 통째로 배정하고 복사하지 않으므로 <b>"연속 공간을 못 구해서 터지는" 실패 양상이 구조적으로 완화</b>된다.</p>
+
+<h3>15-2. 세대 설계 — 두 개의 독립적인 축 (3절의 회수)</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="ZGC의 세대 도입 타임라인. 초기 ZGC는 세대 구분이 없었고 JDK 15에서 production-ready가 되었으며 할당률이 높은 워크로드에서 allocation stall 약점이 드러나 JDK 21에서 세대형 ZGC가 도입되고 JDK 23부터 세대형이 기본이 되었다.">
+    <defs><marker id="a16b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker></defs>
+    <text x="20" y="28" font-size="13.5" font-weight="800" fill="#1f2937">ZGC의 세대 도입 — <tspan fill="#16a34a">"세대 가설이 옳다"를 ZGC도 인정한 과정</tspan></text>
+    <line x1="60" y1="120" x2="1070" y2="120" stroke="#2563eb" stroke-width="3" marker-end="url(#a16b)"/>
+
+    <circle cx="150" cy="120" r="9" fill="#2563eb"/>
+    <text x="150" y="100" text-anchor="middle" font-size="12" font-weight="800" fill="#1e40af">초기 ZGC</text>
+    <rect x="46" y="140" width="208" height="72" rx="9" fill="#fff" stroke="#bfdbfe"/>
+    <text x="150" y="162" text-anchor="middle" font-size="11.4" fill="#1e40af">세대 구분이 <tspan font-weight="800">없었다</tspan></text>
+    <text x="150" y="182" text-anchor="middle" font-size="11.2" fill="#1e40af">힙 전체를 하나로 보고</text>
+    <text x="150" y="200" text-anchor="middle" font-size="11.2" fill="#1e40af">동시에 마킹·복사</text>
+
+    <circle cx="420" cy="120" r="9" fill="#2563eb"/>
+    <text x="420" y="100" text-anchor="middle" font-size="12" font-weight="800" fill="#1e40af">JDK 15</text>
+    <rect x="316" y="140" width="208" height="52" rx="9" fill="#fff" stroke="#bfdbfe"/>
+    <text x="420" y="170" text-anchor="middle" font-size="11.6" font-weight="700" fill="#1e40af">production-ready</text>
+
+    <circle cx="690" cy="120" r="9" fill="#dc2626"/>
+    <text x="690" y="100" text-anchor="middle" font-size="12" font-weight="800" fill="#dc2626">JDK 21</text>
+    <rect x="586" y="140" width="208" height="92" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="690" y="162" text-anchor="middle" font-size="11.6" font-weight="800" fill="#dc2626">세대형 ZGC 도입</text>
+    <text x="690" y="182" text-anchor="middle" font-size="11.2" fill="#dc2626">allocation stall 약점 대응</text>
+    <text x="690" y="202" text-anchor="middle" font-size="11.2" fill="#dc2626" class="mono">-XX:+ZGenerational</text>
+    <text x="690" y="220" text-anchor="middle" font-size="11.2" fill="#dc2626">로 켜는 방식</text>
+
+    <circle cx="960" cy="120" r="9" fill="#16a34a"/>
+    <text x="960" y="100" text-anchor="middle" font-size="12" font-weight="800" fill="#15803d">JDK 23</text>
+    <rect x="856" y="140" width="208" height="52" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="960" y="170" text-anchor="middle" font-size="11.6" font-weight="800" fill="#15803d">세대형이 기본</text>
+
+    <rect x="46" y="248" width="1018" height="40" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="66" y="272" font-size="12.3" fill="#b45309"><tspan font-weight="800">대가도 있다</tspan> — 세대형 ZGC는 Old에서 Young을 가리키는 참조를 추적하려고 <tspan font-weight="800">remembered set이 필요해졌고, 참조를 쓸 때 동작하는 store barrier가 추가</tspan>되었다. G1이 write barrier로 하던 일과 같은 목적이다.</text>
+  </svg>
+  <figcaption><b>세대를 도입하면 축 2도 같아지는가? 아니다.</b> 구조가 같아져도 <b>실행 방식은 그대로 다르다.</b></figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>Young 수거를 어떻게 하는가 — 세대를 도입해도 여기서 갈린다</caption>
+  <thead><tr><th>Young 수거</th><th>G1</th><th>세대형 ZGC</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td>방식</td><td class="bad">STW 중에 복사</td><td class="good"><b>young 수거조차 동시에</b></td></tr>
+    <tr><td>pause</td><td>young live set에 비례 (수 ms ~ 수십 ms)</td><td>root 처리만 STW — <b>여전히 1ms 미만</b></td></tr>
+    <tr><td>구조</td><td>하나의 컬렉터가 young/mixed를 <b>번갈아</b></td><td><b>독립적인 동시 수집기 둘</b>(young/old)이 각자의 주기로 돈다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>15-3. Survivor는 어디로 갔나</h3>
+
+<p>G1의 Eden과 Survivor는 <b>둘 다 young</b>이고, Survivor가 따로 있는 이유는 <b>나이(age) 추적</b>이다. Young GC를 한 번 버텼다고 바로 Old로 승격시키면 <b>곧 죽을 객체가 Old를 오염시킨다.</b> 그래서 Survivor에 몇 번 머물게 하며 나이를 세고, <b>임계 나이를 넘긴 객체만 승격</b>시킨다.</p>
+
+<p>ZGC의 region 라벨은 <b>young과 old 둘뿐</b>이지만 <b>나이를 세는 파이프라인은 그대로 존재한다.</b> 생존자를 복사해 넣는 <b>대상 young region 자체를 나이 그룹으로 묶는</b> 방식이다 — <b>region이 곧 나이표 역할</b>을 한다.</p>
+
+<div class="taxbox">
+  <div class="half"><div class="hd">G1 — 역할 라벨로 정적 관리</div>
+    <p style="margin:0;font-size:.93rem">"다음에 어디를 비울지"를 <b>Eden / Survivor / Old라는 역할 라벨</b>로 관리한다. 그래서 <b>고정된 이름이 필요</b>하다.</p></div>
+  <div class="half"><div class="hd">ZGC — 매 사이클 통계로 동적 선정</div>
+    <p style="margin:0;font-size:.93rem"><b>mark bitmap 통계로 relocation set을 매번 새로 고른다.</b> 어차피 통계를 보고 고를 것이므로 <b>나이 정보만 있으면 충분</b>하고 고정 역할 이름은 필요 없다.</p></div>
+</div>
+<h2 id="s16">16. 실무 — JVM 옵션 before/after와 선택 절차</h2>
+
+<h3>16-1. 최종 비교표</h3>
+
+<div class="scroll">
+<table class="wide">
+  <caption>면접 답변으로 그대로 쓸 수 있는 최종 비교</caption>
+  <thead><tr><th>항목</th><th>G1 GC</th><th>ZGC</th></tr></thead>
+  <tbody>
+    <tr><td>목표</td><td>예측 가능한 pause (기본 목표 200ms)</td><td>pause 1ms 미만, <b>힙 크기와 무관</b></td></tr>
+    <tr class="hl"><td><b>복사 실행</b></td><td class="bad"><b>STW</b></td><td class="good"><b>동시(concurrent)</b></td></tr>
+    <tr><td>상시 비용</td><td class="good">write barrier</td><td class="bad">load barrier + 색 비트 (throughput 세금)</td></tr>
+    <tr><td>적정 힙</td><td>수 GB ~ 수십 GB</td><td>수백 GB ~ 테라바이트급</td></tr>
+    <tr><td>실패 모드</td><td class="bad">Full GC (전체 STW)</td><td>allocation stall (해당 스레드만 대기)</td></tr>
+    <tr><td>큰 객체</td><td class="bad">humongous — 연속 region 필요</td><td>Large region 하나에 객체 하나, 복사 안 함</td></tr>
+    <tr><td>채택 시점</td><td>Java 9부터 <b>기본 GC</b></td><td>JDK 15 production-ready · JDK 21 세대형 도입 · JDK 23부터 세대형이 기본</td></tr>
+    <tr><td>활성화</td><td><code>-XX:+UseG1GC</code></td><td><code>-XX:+UseZGC</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>16-2. JVM 옵션 before/after</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> G1으로 버티는 중 — 여기까지가 한계라면</div>
+<pre><code><span class="cm"># 힙 32GB · p99 스파이크 400~800ms · 가끔 4초 Full GC</span>
+-Xms32g -Xmx32g
+<span class="kw">-XX:+UseG1GC</span>                        <span class="cm"># Java 9+ 기본값 (명시해도 됨)</span>
+<span class="ln-warn">-XX:MaxGCPauseMillis=200              <span class="cm"># 목표일 뿐, 명령이 아니다</span></span>
+<span class="ln-warn">-XX:InitiatingHeapOccupancyPercent=45 <span class="cm"># IHOP 초기값. 마킹 시작이 늦으면</span></span>
+                                      <span class="cm"># 마킹이 할당을 못 따라가 Full GC</span>
+<span class="ln-warn">-XX:G1HeapRegionSize=8m               <span class="cm"># 큰 객체가 잦으면 키워서</span></span>
+                                      <span class="cm"># humongous 판정을 피하는 카드</span>
+-Xlog:gc*,gc+heap=info:file=gc.log    <span class="cm"># 먼저 이걸 켜고 근거를 모은다</span>
+
+<span class="cm"># 여기서 확인할 것</span>
+<span class="cm">#  · to-space exhausted 가 찍히는가        → 복사 공간 부족</span>
+<span class="cm">#  · humongous 할당 직후 Full GC 인가       → 연속 region 부족</span>
+<span class="cm">#  · pause 스파이크와 p99 스파이크가 겹치는가 → GC가 진짜 범인인가</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> tail latency를 위해 throughput을 지불하기로 했다면</div>
+<pre><code><span class="cm"># 전환 조건: GC가 SLO 위반의 직접 원인임을 로그로 확인했고</span>
+<span class="cm">#           처리량 손실을 증설로 감당할 수 있을 때</span>
+-Xms32g -Xmx32g
+<span class="ln-good"><span class="kw">-XX:+UseZGC</span>                          <span class="cm"># 복사까지 동시로</span></span>
+<span class="ln-good"><span class="kw">-XX:+ZGenerational</span>                   <span class="cm"># JDK 21에서 세대형을 켜는 스위치</span></span>
+                                      <span class="cm"># JDK 23+ 는 세대형이 기본이라 불필요</span>
+-Xlog:gc*:file=gc.log                 <span class="cm"># 전환 후에도 근거는 계속 모은다</span>
+
+<span class="cm"># 사라지는 옵션과 그 이유</span>
+<span class="cm">#  · MaxGCPauseMillis            → pause를 예산으로 조절하는 모델이 아니다</span>
+<span class="cm">#  · G1HeapRegionSize            → region 크기 클래스가 따로 있다</span>
+<span class="cm">#  · IHOP                        → 동시 사이클 기동 방식이 다르다</span>
+
+<span class="cm"># 전환 후 반드시 볼 지표 (pause만 보면 오판한다)</span>
+<span class="cm">#  · p99 / p999                  · 처리량(RPS)과 CPU</span>
+<span class="cm">#  · allocation stall 발생 여부   · 인스턴스당 처리 능력 변화</span></code></pre>
+  </div>
+</div>
+
+<div class="callout trap">
+  <span class="t">옵션을 바꾸기 전에 반드시 — 같은 부하로 "before"를 측정해 두어라</span>
+  전환 전 <b>p99와 처리량을 같은 부하로 재두지 않으면</b>, 전환 후 좋아졌는지 나빠졌는지를 <b>증명할 수 없다.</b> "GC를 바꿨더니 좋아진 것 같다"는 <b>근거가 아니라 인상</b>이다. 면접에서도 이 문장이 있는 답과 없는 답의 무게가 다르다.
+</div>
+
+<h3>16-3. 선택 절차 — "무엇을 지불할 것인가"로 답한다</h3>
+
+<div class="decide">
+  <div class="d1"><span class="n">1</span><div><b>GC가 진짜 범인인지 먼저 증명한다.</b> GC 로그의 pause와 응답시간 그래프의 스파이크가 <b>시간축에서 겹치는지</b> 확인한다. <b>GC가 원인이 아닌데 GC를 바꾸는 일이 흔하다.</b></div></div>
+  <div class="d1"><span class="n">2</span><div><b>쓰레기를 덜 만드는 쪽을 먼저 시도한다.</b> 요청당 대량 객체 생성, 불필요한 중간 컬렉션, 거대 응답 객체(8-2)를 줄인다. <b>어느 GC에서든 효과가 있는 유일한 개선</b>이다.</div></div>
+  <div class="d1 stop"><span class="n">3</span><div><b>힙이 수십 GB 이하이고 p99 스파이크가 수십 ms 수준이면 여기서 멈춘다.</b> <b>G1의 pause 목표와 힙 크기를 조정</b>하는 것이 먼저다. 상시 오버헤드가 작아 <b>같은 하드웨어에서 처리량이 더 나온다.</b></div></div>
+  <div class="d1 go"><span class="n">4</span><div><b>pause가 수백 ms 이상 튀고, 그것이 SLO 위반의 직접 원인이며, 처리량 손실을 인스턴스 증설로 감당할 수 있다면</b> ZGC로 간다.</div></div>
+  <div class="d1 go"><span class="n">5</span><div><b>양쪽으로 부하 테스트를 돌려 p99와 처리량을 나란히 재본 뒤 결정한다.</b> <b>워크로드마다 배리어 비용의 체감이 다르기 때문</b>이다.</div></div>
+</div>
+
+<div class="split">
+  <div class="pane b"><h4>G1을 고르는 경우</h4><ul><li>일반적인 웹 애플리케이션</li><li>힙 <b>수십 GB 이하</b></li><li><b>200ms급 pause가 SLO 안에</b> 들어오는 서비스</li><li>상시 오버헤드가 작아 <b>같은 하드웨어에서 처리량이 더 나온다</b></li><li>→ <b>대부분의 서비스는 기본값 G1로 충분하다</b></li></ul></div>
+  <div class="pane g"><h4>ZGC를 고르는 경우</h4><ul><li><b>초대형 힙</b>을 쓰는 경우</li><li>GC pause 때문에 발생하는 <b>tail latency(p99, p999)</b>를 반드시 억제해야 하는 서비스</li><li>실시간 거래 시스템, 대규모 인메모리 캐시</li><li><b>응답시간 SLA에 위약 조항</b>이 걸린 서비스</li></ul></div>
+</div>
+
+<div class="memo green">
+  <h4>이 질문에 대한 모범 답의 마지막 문장</h4>
+  <p style="margin:0">"지연에 민감한 서비스면 무엇을 고르겠는가"라면 답은 ZGC 쪽으로 기울지만, <b>"지연 SLO를 지키기 위해 throughput을 몇 % 지불할 의사가 있는가"를 먼저 확인하겠다</b>고 덧붙이는 것이 정확한 답이다. <b>지연에 민감하다는 말이 곧 "처리량은 아무래도 좋다"는 뜻은 아니기 때문</b>이다. 실제 판단은 <b>두 GC로 각각 부하 테스트를 돌려 p99와 처리량을 나란히 재보고</b> 결정한다.</p>
+</div>
+<h2 id="s17">17. 인출 카드 — 면접 전날 이것만</h2>
+
+<div class="memo green">
+  <h4>단 하나만 기억한다면</h4>
+  <div class="rule ok" style="font-size:1.1rem">둘의 차이는 <b>"복사를 STW 안에서 하느냐 밖에서 하느냐"</b> 하나뿐이고,<br>나머지 특징은 전부 여기서 <b>파생</b>된다</div>
+  <div class="chain" style="justify-content:center">
+    <span class="chip b">복사가 STW 안 (G1)</span><span class="arrow">→</span><span class="chip r">pause ∝ live set</span><span class="arrow">·</span><span class="chip r">Full GC 낭떠러지</span><span class="arrow">·</span><span class="chip g">상시 비용 쌈</span>
+  </div>
+  <div class="chain" style="justify-content:center">
+    <span class="chip b">복사가 STW 밖 (ZGC)</span><span class="arrow">→</span><span class="chip g">pause ⊥ 힙 크기</span><span class="arrow">·</span><span class="chip g">Full GC 없음</span><span class="arrow">·</span><span class="chip r">모든 읽기에 배리어 세금</span>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>암기 장치 — 배리어의 방향</h4>
+  <div class="mnem">
+    <div class="m4"><div class="k">G1 = Write</div><div class="d">참조를 <b>쓸 때</b> 검문</div><div class="s">RSet 기록 + SATB 옛 값 보존</div></div>
+    <div class="m4"><div class="k">ZGC = Load</div><div class="d">참조를 <b>읽을 때</b> 검문</div><div class="s">색 확인 + 주소 교정 + self-healing</div></div>
+    <div class="m4"><div class="k">쓰기 &lt; 읽기</div><div class="d">읽기가 <b>훨씬 빈번</b></div><div class="s">→ ZGC의 상시 비용이 더 크다</div></div>
+    <div class="m4"><div class="k">세대형 ZGC</div><div class="d"><b>store barrier 추가</b></div><div class="s">세대를 얻은 대가로 배리어 +1</div></div>
+  </div>
+  <div class="rule">한 문장으로 — <b>"G1은 쓰기 검문소, ZGC는 읽기 검문소. 그래서 ZGC 쪽 줄이 훨씬 길다."</b></div>
+</div>
+
+<div class="memo red">
+  <h4>G1이 Full GC로 떨어지는 3원인 — <u>복 · 마 · 거</u></h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">복 — 복사 실패</div><div class="s">evacuation failure</div><div class="d">옮겨 넣을 빈 region이 없다 · 로그: <code>to-space exhausted</code></div></div>
+    <div class="tile red"><div class="k">마 — 마킹 지각</div><div class="s">concurrent mark 실패</div><div class="d">마킹이 끝나기 전에 힙이 다 찬다 (할당률 &gt; 회수율)</div></div>
+    <div class="tile red"><div class="k">거 — 거대 객체</div><div class="s">humongous 할당 실패</div><div class="d"><b>총량이 아니라 연속성</b>이 문제 — 연속 빈 region이 없다</div></div>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>ZGC의 STW 세 지점 — <u>시작 · 끝 · 이사</u></h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">Pause Mark Start</div><div class="d">root 스캔 · 좋은 색 → <b>markedX</b></div></div>
+    <div class="tile"><div class="k">Pause Mark End</div><div class="d">마킹 종료 동기화</div></div>
+    <div class="tile"><div class="k">Pause Relocate Start</div><div class="d">root가 가리키는 객체만 이동 · 좋은 색 → <b>remapped</b></div></div>
+  </div>
+  <div class="rule red">"STW가 없다" ✕ &nbsp;→&nbsp; <b>"pause가 힙 크기에 비례하지 않는다"</b> ○</div>
+</div>
+
+<div class="memo">
+  <h4>숫자 인출표</h4>
+  <div class="numrow">
+    <div class="nn g"><div class="k">1~32MB</div><div class="s">G1 region 크기 (2의 거듭제곱)</div></div>
+    <div class="nn g"><div class="k">≈2048</div><div class="s">JVM이 맞추려는 region 개수</div></div>
+    <div class="nn"><div class="k">1/2</div><div class="s">region 절반 이상 = humongous</div></div>
+  </div>
+  <div class="numrow">
+    <div class="nn"><div class="k">200ms</div><div class="s">MaxGCPauseMillis 기본 목표</div></div>
+    <div class="nn"><div class="k">45%</div><div class="s">IHOP 초기값 (동시 마킹 시작)</div></div>
+    <div class="nn g"><div class="k">&lt; 1ms</div><div class="s">ZGC의 STW 세 지점</div></div>
+  </div>
+  <div class="numrow">
+    <div class="nn g"><div class="k">16TB</div><div class="s">현재 JDK ZGC 힙 상한</div></div>
+    <div class="nn g"><div class="k">Java 9</div><div class="s">G1이 기본 GC가 된 시점</div></div>
+    <div class="nn g"><div class="k">15 / 21 / 23</div><div class="s">ZGC production · 세대형 도입 · 세대형 기본</div></div>
+  </div>
+</div>
+
+<div class="memo warn">
+  <h4>용어 한 줄 정의 — 하나라도 막히면 그 절로 돌아간다</h4>
+  <dl class="kv">
+    <dt>region</dt><dd>힙을 나눈 조각. <b>부분 수거·가성비 계산·통째 반납</b>의 단위</dd>
+    <dt>evacuation</dt><dd>살아있는 객체만 다른 region으로 퍼내기. <b>Sweep과 Compact를 한 번에</b> 해결</dd>
+    <dt>RSet</dt><dd>"바깥에서 나를 가리키는 참조가 어디 있는지" 적어 둔 표. <b>부분 수거를 가능하게</b> 한다</dd>
+    <dt>SATB</dt><dd>마킹 시작 순간의 <b>스냅샷</b>을 기준으로 생사 판정. 대가는 <b>floating garbage</b>(누수 아님)</dd>
+    <dt>CSet</dt><dd>이번 STW에서 수거할 region 집합. <b>pause 예산에 맞춰 크기를 조절</b>한다</dd>
+    <dt>humongous</dt><dd>region 절반 이상 크기의 객체. <b>연속된 빈 region</b>이 필요해 Full GC의 씨앗</dd>
+    <dt class="r">컬러 포인터</dt><dd>포인터의 <b>남는 상위 비트</b>에 처리 상태를 심는 기법. <b>객체 생사가 아니라 참조의 처리 상태</b></dd>
+    <dt class="r">로드 배리어</dt><dd>참조를 읽을 때마다 색을 확인하고 <b>필요하면 고쳐서 다시 써 넣는</b> 코드 (self-healing)</dd>
+    <dt class="r">forwarding table</dt><dd>옛 주소 → 새 주소 <b>전입신고서</b>. relocation set의 region마다 하나</dd>
+    <dt class="r">allocation stall</dt><dd>ZGC에서 회수가 할당을 못 따라갈 때 <b>할당 스레드만 개별 대기</b>. Full GC의 대체물</dd>
+  </dl>
+</div>
+
+<div class="memo green">
+  <h4>30초 답변 스크립트 — 이 순서로만 말한다</h4>
+  <div class="ladder">
+    <div class="rung"><span class="n">1</span><div><b>공통점부터.</b> "둘 다 힙을 region으로 쪼개고 살아있는 객체만 퍼내는 복사 방식이라, Sweep과 Compact가 하나로 합쳐진 구조를 공유합니다."</div><span class="tagr rev">뼈대</span></div>
+    <div class="rung"><span class="n">2</span><div><b>분기점 한 줄.</b> "차이는 <b>그 복사를 STW 안에서 하느냐 앱이 도는 채로 하느냐</b> 하나입니다. G1은 STW 안, ZGC는 밖입니다."</div><span class="tagr rev">본질</span></div>
+    <div class="rung"><span class="n">3</span><div><b>ZGC의 장치 두 개.</b> "복사를 동시에 하려면 앱이 옛 주소를 못 만지게 해야 하고, 그래서 <b>컬러 포인터와 로드 배리어</b>를 씁니다."</div><span class="tagr rev">메커니즘</span></div>
+    <div class="rung"><span class="n">4</span><div><b>파생 결과.</b> "그래서 G1은 pause가 live set을 따라 커지고 최악엔 Full GC가 있지만 상시 비용이 싸고, ZGC는 <b>pause가 힙 크기에 비례하지 않는 대신</b> 모든 참조 읽기에 세금을 냅니다."</div><span class="tagr rev">결과</span></div>
+    <div class="rung"><span class="n">5</span><div><b>선택은 교환으로.</b> "지연에 민감하면 ZGC 쪽이지만, <b>throughput을 몇 % 지불할지</b>를 먼저 확인하고 <b>양쪽 부하 테스트로 p99와 처리량을 나란히 재본 뒤</b> 정하겠습니다."</div><span class="tagr rev">판단</span></div>
+  </div>
+</div>
+<h2 id="s18">18. 꼬리질문 셀프 테스트</h2>
+<p class="sub">질문만 먼저 읽고 <b>소리 내어 답해 본 뒤</b> 펼쳐서 대조한다. 답이 3문장 안에 안 나오면 해당 절로 돌아간다.</p>
+
+<details class="q"><summary>지연에 민감하면 무조건 ZGC 아닌가요?<span class="hint">힌트: 없앤 것이 아니라 옮겨 놓은 것이다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>아니다. 바꿔치기하는 것이 무엇인지</b>를 말할 수 있어야 한다. ZGC는 STW를 없앤 대신 <b>모든 참조 읽기에 로드 배리어라는 상시 비용</b>을 얹는다. 읽기는 프로그램에서 가장 빈번한 연산이므로 이 세금은 실행 시간 전체에 걸린다. 같은 하드웨어에서 처리량이 떨어지고, 그만큼 인스턴스를 더 띄워야 할 수 있다.</p>
+  <div class="ladder">
+    <div class="rung"><span class="n">1</span><div><b>pause가 실제로 SLO를 깨고 있는지 먼저 확인한다.</b> GC 로그의 pause와 응답시간 그래프의 스파이크가 <b>시각적으로 겹치는지</b> 본다. <b>GC가 원인이 아닌데 GC를 바꾸는 일이 흔하다.</b></div><span class="tagr">확인</span></div>
+    <div class="rung"><span class="n">2</span><div>힙이 수십 GB 이하이고 p99 스파이크가 수십 ms 수준이면 <b>G1의 pause 목표와 힙 크기 조정이 먼저</b>다.</div><span class="tagr rev">G1 유지</span></div>
+    <div class="rung"><span class="n">3</span><div>pause가 수백 ms 이상 튀고 그것이 SLO 위반의 직접 원인이며, <b>처리량 손실을 증설로 감당할 수 있다면</b> ZGC로 간다.</div><span class="tagr irr">전환</span></div>
+    <div class="rung"><span class="n">4</span><div><b>양쪽으로 부하 테스트를 돌려 p99와 처리량을 나란히 재본 뒤 결정한다.</b> 워크로드마다 배리어 비용의 체감이 다르기 때문이다.</div><span class="tagr">측정</span></div>
+  </div>
+  <p style="margin-bottom:0">한 가지 더 얹을 수 있다. <b>pause를 줄이는 가장 싼 방법은 GC를 바꾸는 것이 아니라 쓰레기를 덜 만드는 것</b>이다. 요청당 대량 객체 생성, 불필요한 중간 컬렉션, 거대 응답 객체를 줄이면 <b>어느 GC에서든</b> 효과가 있다.</p>
+</div></details>
+
+<details class="q"><summary>G1은 region 크기가 일정하니 pause도 일정하고 횟수만 늘어나는 것 아닌가요?<span class="hint">힌트: 설계 의도는 맞다. 그런데 세 군데가 샌다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>설계 의도는 그것이 맞고 Mixed GC는 실제로 그렇게 동작한다</b> — CSet 크기를 조절해 pause 목표를 맞춘다. 하지만 현실에서는 큰 힙에서 pause가 커지는 경향이 나타나며, 이유가 셋이다.</p>
+  <div class="threecol">
+    <div class="trio"><div class="k">① Young GC는 쪼갤 수 없다</div><div class="d">수거 대상 young region은 <b>한 번의 STW에서 전부</b> 처리된다. 힙이 크면 young도 크게 잡히는 경향이라 복사량이 늘고, 줄이면 <b>GC 빈도가 급증</b>해 처리량이 나빠진다.</div></div>
+    <div class="trio"><div class="k">② RSet 스캔 단가가 힙에 비례</div><div class="d">region이 많아지면 region 간 참조가 늘어 RSet이 비대해진다. CSet 개수를 줄여도 <b>region 하나당 처리 단가 자체가</b> 올라간다.</div></div>
+    <div class="trio"><div class="k">③ Full GC fallback</div><div class="d">복사할 빈 공간이 없거나 humongous 할당에 실패하면 <b>힙 전체가 하나의 STW</b>로 처리된다.</div></div>
+  </div>
+  <p style="margin-bottom:0">즉 <b>"pause 목표는 명령이 아니라 목표"</b>이고, G1의 실제 pause 프로필은 <b>"대체로 목표 근처 + 가끔 튀는 꼬리"</b>라는 점까지 말할 수 있으면 좋다.</p>
+</div></details>
+
+<details class="q"><summary>ZGC는 STW가 아예 없나요?<span class="hint">힌트: 세 군데 있다. 그런데 두께가 안 변한다</span> <span class="badge trap">표현 함정</span></summary><div class="a">
+  <p><b>없지 않다.</b> <b>Pause Mark Start · Pause Mark End · Pause Relocate Start</b> 세 곳에 짧은 STW가 있다.</p>
+  <p>다만 이 세 곳에서 하는 일이 전부 <b>root 처리 수준</b>이다. root는 스레드 스택과 static 필드 같은 것이라 <b>개수가 스레드 수에 비례하고 힙 크기와 무관하다.</b> 그래서 힙이 100GB든 1TB든 pause 길이가 거의 변하지 않고 1ms 미만에 머문다.</p>
+  <div class="rule">정확한 표현은 <b>"STW가 없다"가 아니라 "pause가 힙 크기에 비례하지 않는다"</b></div>
+  <p style="margin-bottom:0">참고로 <b>상용 JVM GC 중 STW가 완전히 0인 것은 없다.</b> 면접에서 "ZGC는 STW가 없습니다"라고 말하면 바로 이 지점을 파고든다.</p>
+</div></details>
+
+<details class="q"><summary>ZGC의 마킹과 포인터 색칠은 같은 말인가요?<span class="hint">힌트: 하나는 객체가 대상, 하나는 참조가 대상</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p><b>다르다.</b> 이 구분을 정확히 말하면 원리를 이해하고 있다는 신호가 된다.</p>
+  <div class="split">
+    <div class="pane b"><h4>마킹 (marking)</h4><ul><li>살아있는 객체를 찾아 <b>mark bitmap에 기록</b></li><li>대상은 <b>객체</b></li><li><b>모든 GC에 공통</b>된 개념</li></ul></div>
+    <div class="pane g"><h4>색칠 (coloring)</h4><ul><li>"이 참조는 현 단계 처리를 마쳤다"를 <b>포인터 비트에 새김</b></li><li>대상은 <b>참조</b></li><li><b>ZGC 특유</b>의 기법 · 중복 작업 방지 장치</li></ul></div>
+  </div>
+  <p>그래서 <b>색은 객체의 생사가 아니라 참조의 처리 상태</b>를 나타낸다. <b>같은 객체를 가리키는 두 참조의 색이 서로 다를 수 있다</b> — 하나는 이미 읽혀서 검사를 통과했고, 다른 하나는 아직 아무도 안 읽어 옛 색인 채로 남아 있는 경우다.</p>
+  <p style="margin-bottom:0">이어서 remapped까지 설명하면 완성된다. <b>marked 색은 "이번 주기에 살아있음"만 보증하고 주소가 최신인지는 보증하지 못한다</b>(마킹 시점에는 어느 region을 재배치할지가 아직 안 정해졌다). <b>remapped 색이 "재배치 검사를 통과한 최신 주소"를 보증</b>한다. 보증하는 내용이 다르므로 색이 따로 필요하다.</p>
+</div></details>
+
+<details class="q"><summary>세대형 ZGC의 young/old는 G1과 같은 것 아닌가요? 그럼 차이가 뭔가요?<span class="hint">힌트: 축이 두 개다. 하나는 수렴했고 하나는 안 했다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>힙을 나누는 구조(축 1)는 같아졌다.</b> region으로 쪼개고, young/old로 나누고, 쓰레기 많은 곳부터 치운다 — 검증된 설계로 수렴한 것이다. <b>원래 세대가 없던 ZGC가 JDK 21에서 세대를 도입한 것 자체가 세대 가설이 옳다는 인정</b>이다.</p>
+  <p><b>다른 것은 실행 방식(축 2)이다.</b> G1은 young 수거를 STW 중에 하고, ZGC는 <b>young 수거조차 앱과 동시에</b> 한다. 그래서 G1의 young pause는 살아남은 young 객체 양에 비례해 수 ms에서 수십 ms까지 나오지만, ZGC는 root 처리만 STW라 여전히 1ms 미만이다. <b>구조가 아니라 타이밍이 두 GC를 가른다.</b></p>
+  <p style="margin-bottom:0">Survivor 이야기가 나오면 이렇게 답한다. ZGC에 Survivor라는 <b>이름</b>의 라벨은 없지만 <b>나이를 세는 기능은 그대로 있다</b> — 생존자를 복사해 넣는 <b>young region 자체를 나이 그룹으로 묶는</b> 방식이다. G1은 다음에 비울 곳을 <b>역할 라벨로 정적으로</b> 관리하지만 ZGC는 <b>매 사이클 mark bitmap 통계로 동적 선정</b>하므로, 고정된 역할 이름 없이 나이 정보만 있으면 충분하다.</p>
+</div></details>
+
+<details class="q"><summary>G1이 Full GC로 떨어지는 원인 세 가지와, 로그에서 무엇을 보고 알아채나요?<span class="hint">힌트: 하나는 이름이 아주 직관적으로 찍힌다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>Full GC는 G1의 정상 경로가 아니라 실패 시의 fallback</b>이다. 정상 경로는 Young GC와 Mixed GC 둘뿐이다.</p>
+  <div class="threecol">
+    <div class="trio"><div class="k">① evacuation failure</div><div class="d">살아있는 객체를 <b>복사해 넣을 빈 region이 없다.</b></div><div class="lg">to-space exhausted</div></div>
+    <div class="trio"><div class="k">② 마킹이 할당을 못 따라감</div><div class="d">동시 마킹이 끝나기 전에 <b>힙이 다 차버린다.</b> IHOP이 너무 늦게 잡혔거나 할당률이 과도한 경우다.</div><div class="lg">Concurrent Mark 도중 Full GC</div></div>
+    <div class="trio"><div class="k">③ humongous 할당 실패</div><div class="d"><b>연속된 빈 region</b>을 확보하지 못한다. 총 여유는 있는데 흩어져 있어 못 넣는 경우.</div><div class="lg">Humongous Allocation 직후 Full GC</div></div>
+  </div>
+  <p style="margin-bottom:0">Full GC로 떨어지면 <b>힙 전체를 대상으로 하는 단일 STW</b>가 걸린다. region 단위로 pause를 통제하던 장치가 전부 무력화되고, <b>pause가 힙 크기에 정비례하는 최악의 시나리오</b>로 돌아간다. <b>G1의 pause 특성을 논할 때 이 낭떠러지의 존재를 빼면 안 된다</b> — 평소 200ms를 잘 지키다가 어느 순간 초 단위 pause 하나가 터지는 것이 G1의 실제 프로필이다.</p>
+</div></details>
+
+<details class="q"><summary>SATB가 만드는 floating garbage는 메모리 누수 아닌가요?<span class="hint">힌트: 회수 시점이 미뤄진 것과 회수가 안 되는 것은 다르다</span></summary><div class="a">
+  <p><b>누수가 아니다.</b> SATB(Snapshot-At-The-Beginning)는 <b>마킹을 시작한 순간의 객체 그래프 사진을 기준으로 생사를 판정</b>한다. 그래서 마킹 시작 시점에 살아있던 객체는 도중에 참조가 끊겨도 <b>이번 사이클에서는 살아있는 것으로 취급</b>된다. 이렇게 이번에 못 치운 쓰레기가 floating garbage다.</p>
+  <p><b>핵심은 "다음 사이클에서는 스냅샷에도 안 잡힌다"</b>는 것이다. 다음 마킹의 시작 시점에는 이미 죽어 있으므로 정상적으로 회수된다. <b>회수 시점이 한 사이클 미뤄질 뿐, 영원히 남지 않는다.</b></p>
+  <p style="margin-bottom:0">교환 관계로 정리하면 <b>"정확도를 조금 포기하고 동시성을 얻은 것"</b>이다. 마킹 중에 참조가 계속 바뀌는데도 앱을 멈추지 않으려면, 어딘가에서 보수적으로 판정할 수밖에 없다. 보수적 판정의 방향이 <b>"살아있는 것을 죽었다고 오판"이 아니라 "죽은 것을 살았다고 오판"</b>이라는 점이 중요하다 — 반대 방향이면 프로그램이 깨진다.</p>
+</div></details>
+
+<details class="q"><summary>ZGC는 왜 64비트에서만 되나요? 색 비트를 쓰는 대가는 무엇인가요?<span class="hint">힌트: 32비트에는 빌릴 자리가 없다</span></summary><div class="a">
+  <p>컬러 포인터는 <b>포인터 값의 남는 상위 비트에 GC 처리 상태를 저장</b>하는 기법이다. 64비트 포인터로는 이론상 16엑사바이트를 주소로 지정할 수 있지만 <b>그만한 메모리를 가진 기계는 없고</b>, 실제 x86-64 CPU는 주소 비트를 48개만 의미 있게 쓴다. <b>주소 표현에 비트를 다 안 쓰기 때문에 상위에 남는 자리가 생긴다.</b></p>
+  <p><b>32비트에서는 불가능하다.</b> 4GB 주소 공간을 32비트가 <b>빠듯하게 다 쓰고 있어 비어 있는 비트가 없기 때문</b>이다.</p>
+  <p>대가는 둘이다. 첫째, 주소에 쓸 수 있는 비트가 줄어들어 <b>ZGC가 다룰 수 있는 힙 상한</b>이 생긴다(현재 JDK의 ZGC는 최대 16TB 지원 — 실무에서 걸릴 일은 없는 상한이다). 둘째, <b>CPU는 색 비트가 붙은 주소를 그대로 따라갈 수 없다.</b> 실제로는 없는 번지이기 때문이다.</p>
+  <p style="margin-bottom:0">둘째 문제의 해법은 버전에 따라 다르다. 초기 ZGC는 <b>같은 물리 메모리를 색마다 다른 가상 주소에 겹쳐 매핑(multi-mapping)</b>해 어느 색으로 접근해도 같은 객체에 닿게 만들었고, 세대형 ZGC부터는 <b>로드 배리어가 색 비트를 지운 주소를 넘겨주는</b> 방식으로 바뀌었다. 어느 쪽이든 <b>색은 GC와 배리어만 보는 정보이고 애플리케이션 코드에는 보이지 않는다.</b></p>
+</div></details>
+
+<details class="q"><summary>로드 배리어의 self-healing이 없다면 무엇이 문제인가요?<span class="hint">힌트: 느린 경로 비용을 몇 번 내게 되는가</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p><b>self-healing</b>은 느린 경로에서 참조를 고친 뒤 <b>그 값을 원래 자리(힙의 필드/배열 슬롯)에 다시 써 넣는</b> 동작이다. 이것이 없으면 다음에 같은 참조를 읽을 때 <b>또 옛 색이므로 또 느린 경로</b>로 들어간다. 즉 <b>느린 경로 비용을 참조를 읽을 때마다 반복해서</b> 내게 된다.</p>
+  <p>self-healing이 있으면 <b>느린 경로 비용은 참조마다 딱 한 번</b>이다. 뜨거운 루프에서 같은 필드를 백만 번 읽어도 느린 경로는 첫 번째 한 번뿐이고 나머지는 <b>색 비교 몇 개짜리 빠른 경로</b>로 지나간다. 로드 배리어가 상시 세금인 채로도 견딜 만한 수준으로 유지되는 이유가 이것이다.</p>
+  <p style="margin-bottom:0">한 걸음 더 나가면, self-healing 덕분에 <b>"힙을 순회하며 옛 포인터를 갱신하는 단계"를 만들지 않아도 된다.</b> 읽히는 참조는 읽히는 순간 스스로 고쳐지고, 안 읽히는 참조는 <b>다음 사이클의 마킹 순회가 지나가면서</b> 고친다(remap 무임승차).</p>
+</div></details>
+
+<details class="q"><summary>Concurrent Relocate 도중에 앱이 "아직 안 옮겨진" 객체를 읽으면 어떻게 되나요?<span class="hint">힌트: 기다리지 않는다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>읽으려던 애플리케이션 스레드가 그 자리에서 직접 객체를 복사한다.</b> GC 스레드가 옮겨 주기를 기다리지 않는다. 복사한 뒤 forwarding table에 옛 주소 → 새 주소를 기록하고, 자기가 읽던 참조를 <b>"새 주소 + remapped"</b>로 고쳐 쓴 다음 그 값을 쓴다.</p>
+  <p>이 설계가 결정적인 이유는 <b>"애플리케이션이 옛 주소의 객체를 만질 가능성이 원천 차단"</b>되기 때문이다. "언젠가는 옮겨지겠지"가 아니라 <b>"읽는 순간 이미 옮겨져 있다"</b>가 보장된다. 이 보장이 있어야 <b>복사를 앱과 동시에</b> 해도 안전하다.</p>
+  <p style="margin-bottom:0">GC 스레드와 앱 스레드가 같은 객체를 동시에 복사하려 할 수는 있지만, forwarding table 등록이 <b>원자적</b>이라 한쪽만 이기고 진 쪽은 이긴 쪽이 등록한 새 주소를 쓴다. <b>객체가 두 벌 살아남는 일은 없다.</b></p>
+</div></details>
+
+<details class="q"><summary>allocation stall과 Full GC는 어떻게 다른가요? 어느 쪽이 더 나쁜가요?<span class="hint">힌트: 멈추는 범위가 다르다</span></summary><div class="a">
+  <p>둘 다 <b>"회수가 할당을 못 따라간다"</b>는 같은 상황에서 나오지만 <b>대응 방식이 다르다.</b></p>
+  <div class="split">
+    <div class="pane r"><h4>G1 — Full GC</h4><ul><li><b>모든 애플리케이션 스레드</b>가 멈춘다</li><li>힙 전체가 하나의 STW로 처리된다</li><li>pause가 <b>힙 크기에 정비례</b></li><li>진행 중이던 요청 전부가 함께 지연된다</li></ul></div>
+    <div class="pane w"><h4>ZGC — allocation stall</h4><ul><li><b>할당하려는 그 스레드만</b> 대기한다</li><li>ZGC에는 <b>Full GC가 없다</b></li><li>다른 스레드는 계속 진행</li><li>대신 그 스레드의 지연은 실제로 발생</li></ul></div>
+  </div>
+  <p style="margin-bottom:0"><b>영향 범위로는 allocation stall이 낫다</b> — 전체가 멈추지 않으니 tail latency의 폭이 좁다. 다만 <b>"안 멈춘다"는 뜻은 아니다.</b> 할당률이 매우 높은 워크로드에서 allocation stall은 ZGC의 실제 약점이었고, <b>이를 개선하려고 나온 것이 세대형 ZGC</b>다 — 죽을 확률이 높은 young을 자주 싸게 회수하면 회수 속도가 할당 속도를 따라잡기 쉬워지기 때문이다.</p>
+</div></details>
+
+<details class="q"><summary>왜 두 GC 모두 region 기반인가요? region이 없으면 무엇이 안 되나요?<span class="hint">힌트: 취향이 아니라 복사 방식의 필연이다</span></summary><div class="a">
+  <p><b>region은 취향이 아니라 복사 방식의 필연적 귀결</b>이다. 세 가지가 region 없이는 성립하지 않는다.</p>
+  <ol style="margin:8px 0 8px 18px;padding:0">
+    <li><b>부분 수거의 단위</b> — "이번엔 이 20개만 치우겠다"고 <b>고를 수 있는 단위</b>가 있어야 작업량을 조절해 pause를 통제할 수 있다. 힙 전체가 한 덩어리면 조절할 손잡이가 없다.</li>
+    <li><b>가성비 계산의 단위</b> — region별 live 비율을 집계해야 <b>"쓰레기 많은 곳부터"</b> 고를 수 있다. G1의 Garbage-First도, ZGC의 relocation set 선정도 이 통계 위에 서 있다.</li>
+    <li><b>통째 반납의 단위</b> — 살아있는 것만 퍼낸 뒤 <b>내용을 안 들여다보고 통째로 비울</b> 대상이 필요하다. 여기서 Sweep이 사라지고 복사가 곧 Compact가 된다.</li>
+  </ol>
+  <p style="margin-bottom:0">즉 <b>"region + 복사"는 G1이 확립한 뼈대를 ZGC가 그대로 계승한 것</b>이고, 이 사실이 "둘의 차이는 복사 타이밍 하나뿐"이라는 이 문서의 결론을 떠받친다.</p>
+</div></details>
+
+<details class="q"><summary>ZGC로 바꿨는데 p99가 오히려 나빠졌습니다. 무엇을 의심하겠습니까?<span class="hint">힌트: pause를 줄였는데 지연이 늘었다면 원인은 pause가 아니었거나, 다른 비용이 커진 것이다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p>가설을 <b>세 갈래</b>로 세우고 순서대로 확인한다.</p>
+  <div class="ladder">
+    <div class="rung"><span class="n">1</span><div><b>애초에 GC가 원인이 아니었다.</b> 기존 p99 스파이크가 GC pause와 시간축에서 겹치지 않았다면 범인은 다른 데(DB 락, 외부 호출, 스레드 풀 고갈) 있다. <b>GC를 바꿔도 안 좋아지는 게 당연하다.</b></div><span class="tagr irr">오진</span></div>
+    <div class="rung"><span class="n">2</span><div><b>throughput 세금이 큐잉으로 되돌아왔다.</b> 로드 배리어로 단위 요청 처리 시간이 늘면 <b>동시 처리량이 떨어지고 대기 큐가 길어져</b> p99가 오른다. pause는 줄었는데 <b>대기 시간이 늘어난</b> 형태다. 처리량 지표와 큐 길이를 함께 본다.</div><span class="tagr irr">세금</span></div>
+    <div class="rung"><span class="n">3</span><div><b>allocation stall이다.</b> 힙이 작거나 할당률이 높아 <b>회수가 할당을 못 따라가면</b> 할당 스레드가 개별 대기한다. 힙 여유를 늘리거나 세대형 ZGC를 확인한다.</div><span class="tagr irr">stall</span></div>
+  </div>
+  <p style="margin-bottom:0"><b>여기서 말해야 하는 태도</b> — "GC를 바꾸는 것은 가설 검증이지 해결이 아니다"이다. 바꾸기 전에 <b>동일 부하로 p99와 처리량을 나란히 측정</b>해 두지 않았다면 지금의 악화가 GC 때문인지도 증명할 수 없다.</p>
+</div></details>
+
+<details class="q"><summary>ZGC는 remap을 왜 별도 단계로 두지 않나요?<span class="hint">힌트: 어차피 누군가 힙 전체를 한 번 돌아야 한다면</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p>Relocate가 끝난 뒤에도 힙에는 <b>아무도 안 읽어서 옛 색인 채로 남은 포인터</b>가 있다. 이것들도 결국 새 주소로 갱신돼야 한다. 그런데 이를 위해 <b>힙 전체를 도는 전용 단계</b>를 만들면 순회 비용을 한 번 더 내는 셈이다.</p>
+  <p>ZGC의 답은 <b>무임승차</b>다. <b>다음 사이클의 Concurrent Mark가 어차피 참조 그래프를 전부 순회하므로, 그때 겸사겸사 새 주소로 고치면서 새 마킹 색을 칠한다.</b> 순회 비용 한 번을 통째로 아끼는 설계다.</p>
+  <p style="margin-bottom:0">그리고 이 결정이 <b>"마킹 색이 왜 두 개인가"</b>의 이유가 된다. remap을 다음 마킹에 얹어 지연 처리하므로 <b>힙에 지난 주기의 마킹 색과 이번 주기의 마킹 색이 잠시 공존</b>한다. 색이 하나뿐이면 둘을 구분할 수 없어서, <b>marked0 / marked1을 주기마다 뒤집는다.</b></p>
+</div></details>
+
+<details class="q"><summary>humongous 객체를 ZGC는 어떻게 다루나요? G1과 무엇이 달라지나요?<span class="hint">힌트: "연속된 빈 region"을 구할 필요가 있느냐</span></summary><div class="a">
+  <p><b>G1</b>은 region 크기가 <b>전부 동일</b>하다. 그래서 region 절반 이상 크기의 객체(humongous)를 담으려면 <b>연속된 빈 region 여러 개를 이어 붙여야</b> 한다. 힙에 빈 공간이 총 20MB 있어도 <b>흩어져 있으면 10MB 객체를 못 넣는다.</b> 게다가 humongous 객체는 복사 대상에서 제외돼 <b>단편화를 정리하는 손길이 닿지 않는다.</b> 이것이 evacuation failure를 거쳐 Full GC로 이어지는 대표 경로다.</p>
+  <p><b>ZGC</b>는 region에 <b>세 가지 크기 클래스(Small / Medium / Large)</b>를 둔다. 큰 객체는 <b>Large region 하나에 객체 하나만</b> 담고 <b>복사하지 않는다.</b> 그래서 <b>"연속 공간을 못 구해서 터지는" 실패 양상이 구조적으로 완화</b>된다.</p>
+  <p style="margin-bottom:0">면접에서 이 대비를 쓸 자리는 <b>"G1에서 힙에 여유가 있어 보이는데 Full GC가 났다"</b>는 상황을 설명할 때다. <b>총량이 아니라 연속성이 문제</b>였다는 진단이 나오면 원인 분석의 깊이가 드러난다.</p>
+</div></details>
+
+<details class="q"><summary>G1의 write barrier와 ZGC의 load barrier, 왜 방향이 반대이고 왜 비용 차이가 나나요?<span class="hint">힌트: 각자 무엇을 지키려는 배리어인가</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>지키려는 것이 다르기 때문에 걸리는 자리가 다르다.</b></p>
+  <div class="split">
+    <div class="pane w"><h4>G1 — write barrier (쓸 때)</h4><ul><li>지키는 것: <b>RSet의 정확성</b>(region 경계를 넘는 참조 기록)과 <b>SATB의 스냅샷</b>(덮어쓰기 전 옛 값 보존)</li><li>둘 다 <b>참조가 바뀌는 순간</b>에만 필요하다</li><li>그래서 <b>쓰기</b>에만 붙는다</li></ul></div>
+    <div class="pane b"><h4>ZGC — load barrier (읽을 때)</h4><ul><li>지키는 것: <b>"앱이 옛 주소를 만지지 않는다"</b>는 불변식</li><li>이 위험은 <b>참조를 읽어 따라가는 순간</b>에 발생한다</li><li>그래서 <b>읽기</b>에 붙는다</li></ul></div>
+  </div>
+  <p><b>비용 차이의 근거는 빈도다.</b> 필드 접근, 배열 순회, 컬렉션 탐색 — <b>프로그램이 하는 일의 대부분이 읽기</b>다. 참조 쓰기는 그에 비해 훨씬 드물다. 같은 무게의 배리어라도 <b>읽기에 붙으면 훨씬 자주 실행</b>되므로 상시 오버헤드가 커진다.</p>
+  <p style="margin-bottom:0">한 문장으로 정리하면 <b>"ZGC는 STW라는 뭉친 비용을 없앤 대신 그 비용을 실행 시간 전체에 얇게 펴 바른 것"</b>이다. 총량이 사라진 게 아니라 <b>분포가 바뀌었다.</b> 참고로 <b>세대형 ZGC는 young/old 사이 참조 추적을 위해 store barrier가 추가</b>돼, 세대를 얻은 대가로 배리어가 하나 늘었다.</p>
+</div></details>
+
+<section id="summary" class="banner">
+  <div class="t">한 줄 요약</div>
+  고전 GC의 3대 작업은 <b>Mark</b>(살아있는 것 표시) - <b>Sweep</b>(죽은 것 회수) - <b>Compact</b>(빈틈 제거)이고 기본형은 셋을 전부 STW로 하는데,
+  G1과 ZGC는 <b>region 단위 복사로 Sweep과 Compact를 하나로 합친 뒤 "그 복사를 언제 하느냐"에서 갈린다</b> —
+  G1은 Mark만 동시로 빼고 <b>복사는 STW</b>로 하되 가성비 좋은 region부터 골라 잘게 쪼개는 절충(그래서 pause가 힙·live set을 따라 커지고 최악에는 <b>Full GC 낭떠러지</b>가 있지만 상시 비용이 싸다),
+  ZGC는 <b>컬러 포인터와 로드 배리어라는 상시 세금</b>을 내고 <b>복사까지 동시</b>로 빼낸 극단(그래서 힙이 테라바이트급이어도 pause가 1ms 미만이지만 모든 참조 읽기에 비용을 낸다) —
+  따라서 답은 "지연에 민감하면 ZGC"가 아니라 <b>"tail latency를 위해 throughput을 얼마나 지불할 것인가"</b>다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/01-java-kotlin/10-g1gc-vs-zgc.md</code> · 선행 문서: <code>02-gc-basics-generational</code>(도달 가능성 · 세대 가설 · STW 기초)</p>
+
+</main>
+</body>
+</html>

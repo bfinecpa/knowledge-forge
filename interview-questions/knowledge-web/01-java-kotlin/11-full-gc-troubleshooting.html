@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Full GC 빈발 원인 추적 — 찍지 말고, 순서대로 배제하라</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo.warn{border-color:var(--warn)}.memo.warn::before{background:var(--warn);content:"진단"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+.formula{font-family:var(--mono);font-size:1.12rem;font-weight:700;text-align:center;padding:16px 12px;border-radius:12px;background:#1e293b;color:#e2e8f0;margin:12px 0;line-height:1.9}
+.formula .hi{color:#fcd34d}
+.formula .hi2{color:#86efac}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+tr.bad td{background:var(--danger-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.mono{font-family:var(--mono)}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.split.g3{grid-template-columns:1fr 1fr 1fr}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane.w{background:var(--warn-soft);border-color:var(--warn-line)}
+.pane.w h4{color:var(--warn)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+pre.wide{width:1120px;margin-left:calc(50% - 560px)}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.ln-warn{display:block;background:rgba(217,119,6,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--warn)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.nm{color:#fca5a5}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+<style>
+.cmp.g3{grid-template-columns:1fr 1fr 1fr}
+.formula.small{font-size:.95rem;line-height:1.85;text-align:left}
+.chk{list-style:none;padding:0;margin:8px 0}
+.chk li{padding-left:26px;position:relative;margin:6px 0;font-size:.95rem}
+.chk li::before{content:"\2713";position:absolute;left:4px;color:var(--ok);font-weight:800}
+.chk.x li::before{content:"\2715";color:var(--danger)}
+.layer{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card);margin:12px 0}
+.layer .lt{font-weight:800;font-size:1.02rem;margin-bottom:6px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:.94rem;margin:8px 0}
+.kv dt{font-family:var(--mono);font-weight:700;color:var(--accent);white-space:nowrap}
+.kv dd{margin:0}
+.kv dt.r{color:var(--danger)}
+mark{background:#fde68a;padding:0 3px;border-radius:3px}
+.eq{font-family:var(--mono);font-weight:800;font-size:1.02rem;text-align:center;padding:10px;border-radius:10px;background:#fff;border:1px dashed var(--line);margin:8px 0}
+</style>
+<style>
+/* 11 Full GC 추적 문서 전용 보강 */
+.q0{background:#111827;color:#e5e7eb;border-radius:12px;padding:14px 18px;margin:14px 0;font-size:1rem;line-height:1.7}
+.q0 b{color:#fcd34d}
+.termbox{background:#0f172a;color:#e2e8f0;font-family:var(--mono);font-size:.8rem;padding:12px 16px;border-radius:10px;overflow-x:auto;line-height:1.75;margin:10px 0}
+.termbox .hi{color:#fcd34d;font-weight:700}
+.termbox .dim{color:#94a3b8}
+.termbox .gg{color:#86efac}
+.termbox .rr{color:#fca5a5}
+.termbox .bb{color:#93c5fd}
+.termbox b{color:#fff}
+.runline{display:grid;grid-template-columns:96px 1fr;gap:14px;align-items:start;border-left:3px solid var(--accent-line);padding:0 0 16px 18px;margin-left:10px;position:relative}
+.runline:last-child{border-left-color:transparent;padding-bottom:0}
+.runline::before{content:"";position:absolute;left:-9px;top:5px;width:15px;height:15px;border-radius:50%;background:var(--accent);border:3px solid var(--bg)}
+.runline.r::before{background:var(--danger)}
+.runline.g::before{background:var(--ok)}
+.runline .st{font-weight:800;font-size:.82rem;color:var(--accent);padding-top:2px;font-family:var(--mono)}
+.runline.r .st{color:var(--danger)}
+.runline.g .st{color:var(--ok)}
+.runline .c{font-size:.95rem}
+.runline .c b.h{display:block;font-size:1rem;margin-bottom:2px}
+.knob{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#fafbfc;margin:10px 0}
+.knob .kn{font-family:var(--mono);font-weight:800;color:var(--accent);font-size:.95rem}
+.knob .what{font-size:.84rem;color:var(--muted);margin:2px 0 6px}
+.knob p{margin:6px 0 0;font-size:.94rem}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:.85rem;color:var(--muted);margin-top:8px}
+.legend i{width:14px;height:14px;border-radius:3px;display:inline-block;vertical-align:-2px;margin-right:5px}
+.cause{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:14px 16px;margin:12px 0;border-left:5px solid var(--warn)}
+.cause .ch{font-family:var(--mono);font-weight:800;color:var(--warn);font-size:.98rem}
+.cause .cs{font-size:.86rem;color:var(--muted);margin:2px 0 8px}
+.cause p{font-size:.95rem}
+.decide{display:grid;gap:10px;margin:14px 0}
+.decide .dq{border:1px solid var(--accent-line);background:var(--accent-soft);border-radius:10px;padding:10px 14px;font-weight:700;color:#1e40af;font-size:.97rem}
+.decide .da{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--card);margin-left:24px}
+.decide .da .yn{font-weight:900;font-size:.82rem;padding:3px 10px;border-radius:999px;white-space:nowrap}
+.decide .da .yn.y{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-line)}
+.decide .da .yn.n{background:var(--danger-soft);color:var(--danger);border:1px solid var(--danger-line)}
+.decide .da .yn.m{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-line)}
+.decide .da .txt{font-size:.94rem}
+.review{display:grid;gap:8px;margin:12px 0}
+.review .item{display:grid;grid-template-columns:28px 1fr;gap:10px;align-items:start;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.review .item .b{width:24px;height:24px;border-radius:6px;background:var(--danger);color:#fff;font-weight:800;font-size:.8rem;display:flex;align-items:center;justify-content:center}
+.review .item.ok .b{background:var(--ok)}
+.review .item.b3 .b{background:var(--accent)}
+.mnemo{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0}
+.mnemo .m{text-align:center;border:2px solid var(--accent);border-radius:12px;background:var(--accent-soft);padding:10px 6px}
+.mnemo .m .big{font-size:1.5rem;font-weight:900;color:var(--accent);line-height:1.2}
+.mnemo .m .lb{font-size:.82rem;color:#1e40af;font-weight:700;margin-top:2px}
+.mnemo .m .ds{font-size:.76rem;color:var(--muted);margin-top:2px}
+</style>
+</head>
+<body>
+<main>
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">01 Java · Kotlin &nbsp;|&nbsp; Full GC 빈발 원인 추적 &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>Full GC 빈발 원인 추적 — <b style="color:#2563eb">찍지 말고, 순서대로 배제하라</b><br><span class="sub">결정적 분기는 하나다 — <b>청소를 다 하고도 Old가 비었는가</b>. 안 비면 <b>살아있는 게 너무 많은 것</b>, 잘 비면 <b>죽을 게 올라오고 있는 것</b></span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"GC 튜닝 경험이 있나요? Full GC가 자주 발생할 때 어떤 순서로 원인을 추적하나요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>Full GC 추적은 감이 아니라 배제의 순서다.</b> "최근 변경 확인 → GC 로그 확보 → <b>Full GC가 끝난 직후에도 Old 영역이 비었는지</b>로 유형 분기 → 유형별 가설 검증(누수 / 승격 폭주 / 명시적 호출 / Metaspace / 거대 객체) → 힙 덤프로 확정"의 <b>다섯 단계</b>로 좁혀 들어간다. 결정적 분기점은 하나다 — <b>청소를 다 하고도 Old가 안 비면 살아있는 객체가 너무 많다는 뜻(메모리 누수 또는 진짜 용량 부족)이고, 잘 비면 죽을 객체가 Old까지 밀려 올라오고 있다는 뜻(승격 폭주 또는 특이 원인)</b>이다. 그리고 <b>튜닝은 원인 규명 뒤의 일</b>이다 — <b>GC는 죽은 객체만 치울 수 있고 살아있는 객체는 어떤 옵션으로도 치우지 못하므로, "죽어야 할 객체가 안 죽는" 문제는 정의상 코드로만 풀린다.</b> 튜닝으로 덮으면 <b>장애 시각만 뒤로 미뤄진다.</b>
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>순서부터 말합니다.</b> "<b>최근 변경 확인 → GC 로그 확보 → Full GC 직후 Old 잔량으로 유형 분기 → 유형별 가설 검증 → 힙 덤프로 확정</b>"의 다섯 단계로 배제해 들어갑니다. <mark>옵션부터 만지지 않는 이유는, 원인 유형에 따라 조치 방향이 정반대이기 때문</mark>입니다.</div></li>
+    <li><span class="n">2</span><div><b>결정적 분기는 한 줄입니다.</b> Full GC 로그의 <b>before → after</b>를 봅니다. <b>안 비면</b>(7800M→7400M) 남은 것이 전부 살아있는 객체라는 뜻이라 <b>누수 아니면 용량 부족</b>이고, <b>잘 비면</b>(7800M→1200M) 죽을 객체가 Old까지 올라온 것이라 <b>승격 폭주 아니면 특이 원인</b>(<code>System.gc()</code>·Metaspace·거대 객체)입니다. <b>덤프를 뜨기 전에 GC cause를 먼저 읽는</b> 이유는 그 특이 원인 셋이 <b>힙 덤프에는 안 보이기 때문</b>입니다.</div></li>
+    <li><span class="n">3</span><div><b>튜닝은 2순위라는 근거까지 붙입니다.</b> <b>GC는 죽은 객체만 회수할 수 있고, 옵션은 GC가 일하는 방식만 바꿀 뿐 객체의 생사를 바꾸지 못합니다.</b> 그래서 <b>죽어야 할 객체가 안 죽는 문제는 정의상 코드로만</b> 풀립니다. 실무에서는 <b>즉시 완화는 튜닝으로, 근본 조치는 코드로</b> 병행하되, <b>목표 지표를 정하고 한 번에 하나씩 바꿔 같은 부하로 재측정</b>합니다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 이 문서가 겨냥하는 약점</a></li>
+    <li><a href="#s1">전제 — Full GC는 정상 동작이 아니라 조난 신호</a></li>
+    <li><a href="#s2">런북 한 장 — 배제의 5단계 결정 트리</a></li>
+    <li><a href="#s3">Step 0 — 어제까지 멀쩡했나 (최근 변경)</a></li>
+    <li><a href="#s4">Step 1 — 증거 확보: GC 로그와 <code>jstat</code></a></li>
+    <li><a href="#s5">Step 2 — 결정적 분기: Full GC 직후 Old 잔량</a></li>
+    <li><a href="#s6">Step 3-A — 안 비는 경우: 누수인가 용량인가</a></li>
+    <li><a href="#s7">Step 3-B — 잘 비는 경우: cause로 특이 원인 배제</a></li>
+    <li><a href="#s8">Step 4 — 조치, 그리고 코드가 1순위인 이유</a></li>
+    <li><a href="#s9">튜닝 절차 — 철칙 셋과 손잡이 다섯</a></li>
+    <li><a href="#s10">"GC 튜닝 경험" 답변의 구조</a></li>
+    <li><a href="#s11">꼬리질문 셀프 테스트 (14문)</a></li>
+    <li><a href="#summary">한 줄 요약</a></li>
+  </ol>
+</nav>
+
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도 · 이 문서가 겨냥하는 약점</h2>
+
+<div class="card">
+  <p style="margin-top:0"><b>질문</b> — "GC 튜닝 경험이 있나요? <b>Full GC가 자주 발생할 때 어떤 순서로 원인을 추적하나요?</b>"</p>
+  <p><b>출제 의도</b> — 전형적인 <b>"AI에 물어볼 수 없는" 상황</b>이다. 원인이 <b>이 시스템의 코드 어딘가</b>에 있고, <b>로그·덤프·최근 배포 이력</b>을 조합해 좁혀야만 나온다. 추적의 '<b>순서</b>'를 묻는 이유는 하나다 — <mark>방법론 없이 찍는 사람과 체계적으로 배제해 가는 사람을 구분하기 위해서다.</mark></p>
+  <p style="margin-bottom:0">그래서 이 질문은 <b>지식 확인이 아니라 절차 확인</b>이다. G1의 동작 원리를 아무리 잘 설명해도 <b>"그래서 어제 새벽 그 장애를 어떻게 좁혔는가"</b>에 답이 없으면 점수가 안 난다.</p>
+</div>
+
+<div class="q0">
+  이 질문의 정체 — <b>"GC를 아느냐"가 아니라 "증거를 어떤 순서로 모아 가설을 지워 가느냐"</b>다.<br>
+  옵션 이름은 <b>검색하면 3초</b>다. 변별은 <b>어느 증거를 먼저 보는가</b>(cause가 덤프보다 먼저인 이유), <b>어느 분기가 결정적인가</b>(Full GC 직후 Old 잔량), 그리고 <b>왜 코드가 튜닝보다 먼저인가</b>(GC의 능력 범위)에서 난다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 316" role="img" aria-label="찍는 사람과 배제하는 사람의 대비 도식. 왼쪽은 증상에서 옵션을 하나 바꿔 보고 안 나아지면 다른 옵션을 바꾸는 순환 고리로, 무엇이 효과였는지 남지 않는다. 오른쪽은 증상에서 시작해 최근 변경, GC 로그와 분기, cause와 힙 덤프, 조치와 검증으로 갈수록 원인 후보 범위가 좁아지는 깔때기 구조다.">
+    <defs>
+      <marker id="a0r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a0g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="14" font-weight="700" fill="#1f2937">면접관이 이 질문으로 가르는 두 사람 — <tspan fill="#dc2626">찍는 사람</tspan> vs <tspan fill="#16a34a">배제하는 사람</tspan></text>
+
+    <rect x="24" y="38" width="524" height="266" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="286" y="62" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">찍는 사람 — 증상에 옵션을 던진다</text>
+    <rect x="58" y="80" width="182" height="42" rx="9" fill="#ffffff" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="149" y="100" font-size="11" fill="#7f1d1d" text-anchor="middle">증상: p99 스파이크</text>
+    <text x="149" y="114" font-size="10.4" fill="#7f1d1d" text-anchor="middle">"Full GC가 잦네"</text>
+    <rect x="322" y="80" width="182" height="42" rx="9" fill="#ffffff" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="413" y="100" font-size="11" fill="#7f1d1d" text-anchor="middle">힙을 2배로 늘려 본다</text>
+    <text x="413" y="114" font-size="10.4" fill="#7f1d1d" text-anchor="middle">(근거 없음)</text>
+    <rect x="322" y="160" width="182" height="42" rx="9" fill="#ffffff" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="413" y="186" font-size="11" fill="#7f1d1d" text-anchor="middle">며칠 뒤 또 터진다</text>
+    <rect x="58" y="160" width="182" height="42" rx="9" fill="#ffffff" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="149" y="180" font-size="11" fill="#7f1d1d" text-anchor="middle">IHOP도 낮추고</text>
+    <text x="149" y="194" font-size="10.4" fill="#7f1d1d" text-anchor="middle">pause 목표도 같이 바꾼다</text>
+    <path d="M244,101 L316,101" stroke="#dc2626" stroke-width="2" marker-end="url(#a0r)"/>
+    <path d="M413,126 L413,154" stroke="#dc2626" stroke-width="2" marker-end="url(#a0r)"/>
+    <path d="M316,181 L246,181" stroke="#dc2626" stroke-width="2" marker-end="url(#a0r)"/>
+    <path d="M149,156 L149,128" stroke="#dc2626" stroke-width="2" marker-end="url(#a0r)"/>
+    <text x="286" y="240" font-size="11.4" font-weight="800" fill="#b91c1c" text-anchor="middle">두 개를 같이 바꿔서 무엇이 효과였는지 영영 모른다</text>
+    <text x="286" y="260" font-size="11" fill="#b91c1c" text-anchor="middle">원인이 코드에 있으면 어떤 옵션 조합으로도 낫지 않는다</text>
+    <text x="286" y="284" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">다음에 비슷한 장애가 나도 재사용할 지식이 0</text>
+
+    <rect x="572" y="38" width="524" height="266" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="834" y="62" font-size="12.5" font-weight="800" fill="#166534" text-anchor="middle">배제하는 사람 — 단계마다 후보를 지운다</text>
+    <rect x="614" y="76" width="440" height="30" rx="7" fill="#ffffff" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="834" y="96" font-size="10.8" fill="#14532d" text-anchor="middle">증상 확인 — 원인 후보: <tspan font-weight="800">코드베이스 전체 + 인프라 전체</tspan></text>
+    <path d="M834,108 L834,118" stroke="#16a34a" stroke-width="2" marker-end="url(#a0g)"/>
+    <rect x="648" y="120" width="372" height="30" rx="7" fill="#ffffff" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="834" y="140" font-size="10.8" fill="#14532d" text-anchor="middle">Step 0 최근 변경 — 후보: <tspan font-weight="800">최근 diff / 설정 / 트래픽 / 데이터</tspan></text>
+    <path d="M834,152 L834,162" stroke="#16a34a" stroke-width="2" marker-end="url(#a0g)"/>
+    <rect x="682" y="164" width="304" height="30" rx="7" fill="#ffffff" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="834" y="184" font-size="10.8" fill="#14532d" text-anchor="middle">Step 1·2 로그와 분기 — 후보: <tspan font-weight="800">두 유형 중 하나</tspan></text>
+    <path d="M834,196 L834,206" stroke="#16a34a" stroke-width="2" marker-end="url(#a0g)"/>
+    <rect x="716" y="208" width="236" height="30" rx="7" fill="#ffffff" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="834" y="228" font-size="10.8" fill="#14532d" text-anchor="middle">Step 3 cause · 힙 덤프 — 후보: <tspan font-weight="800">원인 한 개</tspan></text>
+    <path d="M834,240 L834,250" stroke="#16a34a" stroke-width="2" marker-end="url(#a0g)"/>
+    <rect x="750" y="252" width="168" height="30" rx="7" fill="#dcfce7" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="834" y="272" font-size="10.8" font-weight="800" fill="#14532d" text-anchor="middle">Step 4 조치 + 검증</text>
+    <text x="834" y="298" font-size="11" font-weight="700" fill="#166534" text-anchor="middle">"안 나았다"는 결과조차 후보를 지우는 증거가 된다</text>
+  </svg>
+  <figcaption>오른쪽 구조의 핵심은 <b>깔때기가 좁아진다</b>는 것이다. 왼쪽은 시도해도 후보가 안 줄지만, 오른쪽은 <b>실패한 시도조차 "그 원인이 아니다"라는 정보</b>가 되어 다음 단계가 좁아진다. <mark>면접에서 "순서"를 묻는 것은 이 깔때기를 그릴 줄 아는지를 묻는 것이다.</mark></figcaption>
+</figure>
+
+<div class="split">
+  <div class="pane r"><h4>이렇게 답하면 반쪽이다</h4>
+    <ul>
+      <li>"<b><code>-Xmx</code>를 늘리고 G1으로 바꿨습니다</b>" — <b>조치만 있고 진단이 없다.</b> 왜 그 조치였는지가 없으면 찍은 것과 구별되지 않는다.</li>
+      <li>"<b>메모리 누수를 찾아서 고쳤습니다</b>"에서 끝 — <b>어떻게 누수라고 확정했는지</b>가 빠졌다. 면접관이 듣고 싶은 건 <b>확정 근거</b>다.</li>
+      <li>"<b>힙 덤프를 떠서 봤습니다</b>"가 첫 단계 — <b>가장 비싼 도구를 가장 먼저 꺼냈다.</b> <code>System.gc()</code>·Metaspace·humongous는 <b>덤프에 안 보인다.</b></li>
+      <li>Full GC와 Young GC를 <b>같은 급으로</b> 이야기 — Full GC는 G1에서 <b>정상 경로가 아니라 fallback</b>이라는 감각이 없다는 신호.</li>
+      <li>"<b>Old가 안 비면 누수입니다</b>" — <b>절반만 맞다.</b> <b>정당하게 큰 live set</b>(용량 문제)과 구분하는 기준(<b>시간축</b>)이 빠졌다.</li>
+      <li><b>검증 이야기가 없음</b> — "좋아졌어요"는 측정이 아니다. <b>같은 지표가 어떻게 변했는가</b>가 경험의 증거다.</li>
+    </ul>
+  </div>
+  <div class="pane g"><h4>이 문서가 채워 주는 것</h4>
+    <ul>
+      <li><b>5단계 런북 결정 트리 한 장</b> — 어느 갈래로 가든 <b>다음에 볼 증거</b>가 정해진다.</li>
+      <li><b>힙 그래프 두 패턴</b> — <b>톱니</b>와 <b>우상향 계단</b>을 눈으로 구분하는 법.</li>
+      <li><b>GC 로그 라인 해부</b> — <code>before-&gt;after(total)</code>에서 <b>live set</b>을 읽어 내는 법.</li>
+      <li><b><code>jstat -gcutil</code>의 세 컬럼</b> — <code>O</code>·<code>M</code>·<code>FGC</code>만 보면 되는 이유.</li>
+      <li><b>cause 4종 즉시 판별표</b> — 덤프 없이 원인 계열이 확정되는 지름길.</li>
+      <li><b>humongous·Metaspace 도식</b> — <b>"힙에 여유가 있는데 왜 Full GC냐"</b>의 답.</li>
+      <li><b>승격 폭주 메커니즘</b> — 곧 죽을 객체가 Old로 밀려 올라가는 과정 한 장.</li>
+      <li><b>코드/튜닝 경계 도식</b> — <b>GC의 능력 범위</b>에서 유도되는 시니어 답변.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>이 문서를 관통하는 한 문장</h4>
+  <div class="rule">Full GC를 <u>끝낸 직후</u>에 남아 있는 것은 <u>정의상 전부 살아있는 객체</u>다</div>
+  <p style="margin:8px 0 0;font-size:.95rem">이 한 문장에서 문서 전체가 유도된다. <b>남은 양(live set)이 크면</b> "살아있는 게 너무 많다" → <b>누수 또는 용량</b>. <b>남은 양이 작으면</b> "죽을 것들이 Old까지 올라왔다" → <b>승격 폭주 또는 특이 원인</b>. 그리고 <mark>GC는 살아있는 객체를 치울 수 없으므로, live set을 줄이는 유일한 방법은 참조를 끊는 코드다</mark> — 여기서 "코드가 1순위, 튜닝이 2순위"까지 따라 나온다.</p>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 전제 — Full GC는 정상 동작이 아니라 조난 신호</h2>
+
+<p>추적 절차로 들어가기 전에 <b>왜 "Full GC가 잦다"가 그 자체로 사건인지</b>를 세워 둔다. 여기가 흔들리면 뒤의 분기가 전부 "그렇게 하라더라"가 된다. <span class="sub">(세대 구분과 GC 알고리즘 자체는 02·10번 문서에서 다룬다. 여기서는 <b>추적에 필요한 만큼만</b> 짚는다.)</span></p>
+
+<h3>1-1. Young GC와 Full GC는 급이 다르다</h3>
+
+<p>JVM은 힙을 두 구역으로 나눠 관리한다. <b>Young</b>은 새로 만든 객체가 들어가는 곳이고, <b>Old</b>는 Young에서 여러 번 살아남은 객체가 옮겨 가는 곳이다. Young에서 살아남은 객체를 Old로 옮기는 것을 <b>승격(promotion)</b>이라고 부른다. 이 용어 하나가 이 문서 후반부의 핵심이 된다.</p>
+
+<p>이렇게 나누는 근거는 <b>"대부분의 객체는 만들어지고 금방 죽는다"</b>는 관찰이다. 요청 하나를 처리하며 만든 DTO·문자열·임시 리스트는 <b>응답을 내보내는 순간 전부 쓰레기</b>가 된다. 그래서 Young 수거는 <b>살아남는 소수만 골라 옮기고 나머지 영역은 통째로 비우면</b> 끝난다. 작업량이 <b>"죽은 객체 수"가 아니라 "살아남은 객체 수"에 비례</b>하므로 빠르다.</p>
+
+<div class="callout info"><span class="t">비유 — 쓰레기통 비우기 vs 집 전체 대청소</span><b>Young GC는 주방 쓰레기통을 비우는 일</b>이다. 통 안에서 <b>버리면 안 될 물건 두어 개만 집어내고</b> 통을 뒤집어 통째로 비운다. 통이 아무리 가득 차 있어도 <b>꺼낼 물건 수가 적으면 금방</b> 끝난다. <b>Full GC는 온 집의 짐을 다 꺼내 정리하고 남은 짐을 한쪽으로 밀어 붙이는 대청소</b>다. 그동안 <b>집 안의 모든 활동이 멈춘다</b>. 그리고 <mark>대청소를 하고도 짐이 그대로라면, 그건 청소를 못한 게 아니라 집에 짐이 진짜 많은 것</mark>이다 — 이 마지막 문장이 §5의 결정적 분기다.</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="Young GC와 Full GC의 작업 범위와 정지 시간 비교 도식. Young GC는 Young 영역만 대상으로 살아남은 소수를 옮기고 나머지를 통째로 비우며 정지 시간이 밀리초 단위인 반면, Full GC는 Young과 Old 전체, 경우에 따라 Metaspace까지 훑고 살아있는 객체를 모아 붙이므로 힙 크기에 비례해 초 단위 정지가 발생한다.">
+    <defs>
+      <marker id="a1b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="a1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="14" font-weight="700" fill="#1f2937">같은 "GC"라는 이름을 쓰지만 <tspan fill="#dc2626">작업 범위와 멈춤의 자릿수가 다르다</tspan></text>
+
+    <!-- Young GC panel -->
+    <rect x="24" y="38" width="524" height="216" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="286" y="62" font-size="12.5" font-weight="800" fill="#1e40af" text-anchor="middle">Young GC — 자주 일어나는 정상 동작</text>
+    <rect x="48" y="76" width="230" height="88" rx="8" fill="#ffffff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="163" y="93" font-size="11" font-weight="700" fill="#1e40af" text-anchor="middle">Young (수거 대상)</text>
+    <circle cx="70" cy="112" r="5" fill="#cbd5e1"/><circle cx="88" cy="122" r="5" fill="#cbd5e1"/><circle cx="106" cy="108" r="5" fill="#cbd5e1"/>
+    <circle cx="124" cy="126" r="5" fill="#cbd5e1"/><circle cx="142" cy="110" r="5" fill="#cbd5e1"/><circle cx="160" cy="128" r="5" fill="#cbd5e1"/>
+    <circle cx="178" cy="112" r="5" fill="#cbd5e1"/><circle cx="196" cy="124" r="5" fill="#cbd5e1"/><circle cx="214" cy="108" r="5" fill="#cbd5e1"/>
+    <circle cx="232" cy="126" r="5" fill="#cbd5e1"/><circle cx="250" cy="112" r="5" fill="#cbd5e1"/><circle cx="262" cy="128" r="5" fill="#cbd5e1"/>
+    <circle cx="96" cy="142" r="6" fill="#2563eb"/><circle cx="188" cy="142" r="6" fill="#2563eb"/>
+    <text x="163" y="158" font-size="9.6" fill="#64748b" text-anchor="middle">회색 = 이미 죽은 객체 · 파랑 = 살아남은 객체</text>
+    <path d="M282,120 L318,120" stroke="#2563eb" stroke-width="2.2" marker-end="url(#a1b)"/>
+    <rect x="324" y="76" width="200" height="88" rx="8" fill="#ffffff" stroke="#93c5fd" stroke-width="1.4"/>
+    <text x="424" y="99" font-size="11" font-weight="700" fill="#1e40af" text-anchor="middle">살아남은 소수만 복사</text>
+    <circle cx="404" cy="122" r="6" fill="#2563eb"/><circle cx="444" cy="122" r="6" fill="#2563eb"/>
+    <text x="424" y="150" font-size="10.4" fill="#1e40af" text-anchor="middle">나머지 영역은 <tspan font-weight="800">통째로 비움</tspan></text>
+    <text x="286" y="188" font-size="11.4" font-weight="800" fill="#1e40af" text-anchor="middle">작업량 ∝ 살아남은 객체 수 (죽은 객체 수가 아니다)</text>
+    <text x="286" y="208" font-size="11" fill="#1e40af" text-anchor="middle">그래서 초당 몇 번씩 돌아도 이상하지 않다</text>
+    <rect x="140" y="220" width="292" height="24" rx="6" fill="#dbeafe" stroke="#2563eb" stroke-width="1.2"/>
+    <text x="286" y="237" font-size="11" font-weight="800" fill="#1e40af" text-anchor="middle">STW: 보통 밀리초 단위</text>
+
+    <!-- Full GC panel -->
+    <rect x="572" y="38" width="524" height="216" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="834" y="62" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">Full GC — 최후 수단 (G1에서는 fallback)</text>
+    <rect x="596" y="76" width="140" height="88" rx="8" fill="#ffffff" stroke="#fca5a5" stroke-width="1.4"/>
+    <text x="666" y="94" font-size="10.6" font-weight="700" fill="#b91c1c" text-anchor="middle">Young</text>
+    <rect x="744" y="76" width="196" height="88" rx="8" fill="#ffffff" stroke="#fca5a5" stroke-width="1.4"/>
+    <text x="842" y="94" font-size="10.6" font-weight="700" fill="#b91c1c" text-anchor="middle">Old</text>
+    <rect x="948" y="76" width="124" height="88" rx="8" fill="#fff7ed" stroke="#fca5a5" stroke-width="1.4" stroke-dasharray="5 3"/>
+    <text x="1010" y="94" font-size="10.6" font-weight="700" fill="#b91c1c" text-anchor="middle">Metaspace</text>
+    <text x="1010" y="110" font-size="9.4" fill="#b91c1c" text-anchor="middle">(경우에 따라)</text>
+    <circle cx="616" cy="118" r="5" fill="#cbd5e1"/><circle cx="638" cy="130" r="5" fill="#cbd5e1"/><circle cx="660" cy="116" r="5" fill="#cbd5e1"/>
+    <circle cx="682" cy="132" r="5" fill="#cbd5e1"/><circle cx="704" cy="118" r="5" fill="#dc2626"/><circle cx="722" cy="132" r="5" fill="#cbd5e1"/>
+    <circle cx="764" cy="118" r="5" fill="#dc2626"/><circle cx="786" cy="130" r="5" fill="#dc2626"/><circle cx="808" cy="116" r="5" fill="#cbd5e1"/>
+    <circle cx="830" cy="132" r="5" fill="#dc2626"/><circle cx="852" cy="118" r="5" fill="#dc2626"/><circle cx="874" cy="130" r="5" fill="#cbd5e1"/>
+    <circle cx="896" cy="118" r="5" fill="#dc2626"/><circle cx="918" cy="130" r="5" fill="#dc2626"/>
+    <text x="768" y="154" font-size="9.6" fill="#7f1d1d" text-anchor="middle">힙 전체를 훑고, 살아있는 것을 한쪽으로 모아 붙인다(compaction)</text>
+    <text x="834" y="188" font-size="11.4" font-weight="800" fill="#b91c1c" text-anchor="middle">작업량 ∝ 힙 전체 크기 + 살아있는 객체 양</text>
+    <text x="834" y="208" font-size="11" fill="#b91c1c" text-anchor="middle">자주 일어난다면 그 자체가 <tspan font-weight="800">JVM의 조난 신호</tspan></text>
+    <rect x="596" y="220" width="476" height="24" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.2"/>
+    <text x="834" y="237" font-size="11" font-weight="800" fill="#b91c1c" text-anchor="middle">STW: 수 GB 힙이면 초 단위 — Young GC와 자릿수가 다르다</text>
+
+    <rect x="24" y="266" width="1072" height="58" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="560" y="288" font-size="12" font-weight="800" fill="#92400e" text-anchor="middle">STW(Stop-The-World) = GC가 애플리케이션 스레드를 전부 멈춰 세우고 자기 일을 하는 구간</text>
+    <text x="560" y="308" font-size="11" fill="#92400e" text-anchor="middle">그동안 요청 처리도 응답 전송도 전부 정지 → <tspan font-weight="800">요청 타임아웃 → 헬스체크 실패 → 인스턴스 재시작</tspan> 연쇄로 번진다</text>
+  </svg>
+  <figcaption>Young GC가 싼 이유는 <b>"살아남는 것만 옮기고 나머지는 통째로 버린다"</b>는 전제 위에 서 있기 때문이다. <mark>그 전제가 깨지는 것(= 살아남는 객체가 많아지는 것)이 이 문서의 모든 문제의 시작점</mark>이다.</figcaption>
+</figure>
+
+<div class="memo warn">
+  <h4>G1에서 Full GC는 "정상 경로"가 아니다</h4>
+  <p style="margin:0 0 8px;font-size:.95rem">G1의 설계는 <b>동시 마킹(애플리케이션과 함께 돌면서 살아있는 객체를 표시)으로 미리 파악해 두고, 짧은 pause로 조금씩 회수</b>하는 것이다. Full GC는 그 설계가 <b>실패했을 때의 대비책(fallback)</b>이다. 두 가지 경우에 떨어진다.</p>
+  <div class="grid g2">
+    <div class="tile red"><div class="k">동시 마킹이 할당을 못 따라감</div><div class="d">표시가 끝나기 전에 힙이 먼저 찬다. <b>회수할 후보를 정하지 못한 채 공간이 없어지는</b> 상황.</div></div>
+    <div class="tile red"><div class="k">to-space exhausted</div><div class="d">"옮겨 갈 공간 고갈". <b>살아남은 객체를 복사해 넣을 빈 region이 없다.</b> GC 로그에 이 문구가 찍히면 <b>Full GC 직행 경로</b>다.</div></div>
+  </div>
+  <p style="margin:8px 0 0;font-size:.95rem"><mark>그래서 "G1을 쓰는데 Full GC가 보인다"는 것부터가 이미 비정상 신호다.</mark> Young GC 횟수는 세지 말고, <b>Full GC 횟수와 그 증가 속도</b>를 본다.</p>
+</div>
+
+<h3>1-2. 증상은 GC 그래프가 아니라 응답시간으로 먼저 온다</h3>
+
+<p>실무에서 "Full GC 빈발"이 처음 눈에 띄는 형태는 <b>GC 대시보드가 아닌 경우가 많다.</b> 대개 이 셋 중 하나로 온다.</p>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k">p99 스파이크</div><div class="d">평소 50ms인데 <b>가끔 4초</b>. 평균은 멀쩡해서 더 늦게 발견된다.</div></div>
+  <div class="tile red"><div class="k">간헐적 타임아웃</div><div class="d">재현이 안 되고 <b>특정 시간대에만</b> 발생한다.</div></div>
+  <div class="tile red"><div class="k">이유 없는 재시작</div><div class="d">헬스체크가 <b>STW 중에 응답을 못 받아</b> 죽었다고 판정한 것.</div></div>
+</div>
+
+<p>그래서 <b>추적의 첫 관문은 "이 증상이 정말 GC 때문인가"의 확인</b>이다. <b>GC 로그의 pause 발생 시각</b>과 <b>응답시간 스파이크 시각</b>이 겹치는지 본다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="GC pause 시각과 응답시간 스파이크 시각을 겹쳐 보는 도식. 왼쪽은 두 시각이 일치해 GC가 원인일 가능성이 높은 경우이고, 오른쪽은 스파이크가 GC pause와 무관한 시각에 발생해 DB 락이나 외부 API 지연 등 다른 원인을 봐야 하는 경우다.">
+    <defs>
+      <marker id="a2r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="14" font-weight="700" fill="#1f2937">첫 관문 — <tspan fill="#2563eb">GC pause 시각</tspan>과 <tspan fill="#dc2626">응답시간 스파이크 시각</tspan>을 겹쳐 본다</text>
+
+    <rect x="24" y="38" width="524" height="230" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="286" y="62" font-size="12.5" font-weight="800" fill="#166534" text-anchor="middle">겹친다 → GC가 원인일 가능성이 높다</text>
+    <text x="46" y="92" font-size="10.6" font-weight="700" fill="#1d4ed8">GC pause</text>
+    <line x1="46" y1="120" x2="528" y2="120" stroke="#cbd5e1" stroke-width="1.4"/>
+    <rect x="118" y="104" width="7" height="32" rx="2" fill="#2563eb"/>
+    <rect x="238" y="104" width="7" height="32" rx="2" fill="#2563eb"/>
+    <rect x="366" y="104" width="7" height="32" rx="2" fill="#2563eb"/>
+    <rect x="470" y="104" width="7" height="32" rx="2" fill="#2563eb"/>
+    <text x="46" y="164" font-size="10.6" font-weight="700" fill="#b91c1c">p99 응답시간</text>
+    <line x1="46" y1="228" x2="528" y2="228" stroke="#cbd5e1" stroke-width="1.4"/>
+    <path d="M46,222 L110,222 L121,178 L132,222 L230,222 L241,176 L252,222 L358,222 L369,180 L380,222 L462,222 L473,174 L484,222 L528,222" fill="none" stroke="#dc2626" stroke-width="2"/>
+    <line x1="121" y1="136" x2="121" y2="176" stroke="#16a34a" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <line x1="241" y1="136" x2="241" y2="174" stroke="#16a34a" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <line x1="369" y1="136" x2="369" y2="178" stroke="#16a34a" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <line x1="473" y1="136" x2="473" y2="172" stroke="#16a34a" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <text x="286" y="254" font-size="11.2" font-weight="800" fill="#166534" text-anchor="middle">스파이크가 pause 시각에 정확히 올라탄다 → Step 0으로 진행</text>
+
+    <rect x="572" y="38" width="524" height="230" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="834" y="62" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">안 겹친다 → GC가 아니다</text>
+    <text x="594" y="92" font-size="10.6" font-weight="700" fill="#1d4ed8">GC pause</text>
+    <line x1="594" y1="120" x2="1076" y2="120" stroke="#cbd5e1" stroke-width="1.4"/>
+    <rect x="650" y="104" width="7" height="32" rx="2" fill="#2563eb"/>
+    <rect x="770" y="104" width="7" height="32" rx="2" fill="#2563eb"/>
+    <rect x="900" y="104" width="7" height="32" rx="2" fill="#2563eb"/>
+    <rect x="1010" y="104" width="7" height="32" rx="2" fill="#2563eb"/>
+    <text x="594" y="164" font-size="10.6" font-weight="700" fill="#b91c1c">p99 응답시간</text>
+    <line x1="594" y1="228" x2="1076" y2="228" stroke="#cbd5e1" stroke-width="1.4"/>
+    <path d="M594,222 L700,222 L712,176 L724,222 L830,222 L842,178 L854,222 L950,222 L962,174 L974,222 L1076,222" fill="none" stroke="#dc2626" stroke-width="2"/>
+    <text x="712" y="166" font-size="10" fill="#b91c1c" text-anchor="middle">?</text>
+    <text x="842" y="168" font-size="10" fill="#b91c1c" text-anchor="middle">?</text>
+    <text x="962" y="164" font-size="10" fill="#b91c1c" text-anchor="middle">?</text>
+    <text x="834" y="250" font-size="11.2" font-weight="800" fill="#b91c1c" text-anchor="middle">DB 락 · 외부 API 지연 · 스레드 풀 고갈 · 커넥션 풀 대기를 본다</text>
+    <text x="834" y="266" font-size="10.6" fill="#b91c1c" text-anchor="middle">GC가 원인이 아닌데 GC 옵션을 만지느라 시간을 버리는 일이 흔하다</text>
+  </svg>
+  <figcaption>이 대조를 하려면 <b>GC 로그에 절대 시각이 남아 있어야 한다.</b> 뒤에 나오는 로깅 옵션에서 <code>time</code>을 반드시 넣는 이유가 이것이다 — <b>uptime만 있으면 APM 그래프와 겹쳐 볼 수 없다.</b></figcaption>
+</figure>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 런북 한 장 — 배제의 5단계 결정 트리</h2>
+
+<p>먼저 <b>전체 지도</b>를 본다. 이 문서의 나머지(§3~§8)는 이 그림의 각 갈래를 하나씩 펼친 것이다. <mark>면접에서 이 그림의 뼈대만 말로 옮겨도 "순서를 아는 사람"이 된다.</mark></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 720" role="img" aria-label="Full GC 원인 추적 5단계 결정 트리. 증상에서 시작해 Step 0에서 최근 변경 여부를 확인하고 변경이 있으면 롤백으로 진단한다. Step 1에서 GC 로그를 확보하고, Step 2에서 Full GC 직후 Old가 남아 있는지로 두 유형으로 갈린다. 안 비면 Step 3-A 힙 덤프로 누수인지 용량 부족인지 가르고, 잘 비면 Step 3-B에서 GC cause를 확인해 명시적 호출, Metaspace, 거대 객체 할당, 승격 폭주 중 하나로 특정한다. 마지막 Step 4에서 코드를 1순위, 튜닝을 2순위로 조치한다.">
+    <defs>
+      <marker id="t1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#475569"/></marker>
+      <marker id="t2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="t3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="t4" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+
+    <!-- 증상 -->
+    <rect x="330" y="14" width="460" height="42" rx="10" fill="#111827"/>
+    <text x="560" y="40" font-size="12.4" font-weight="800" fill="#f9fafb" text-anchor="middle">증상: p99 스파이크 / 간헐 타임아웃 / 이유 없는 재시작</text>
+    <path d="M560,58 L560,76" stroke="#475569" stroke-width="2.2" marker-end="url(#t1)"/>
+
+    <!-- Step 0 -->
+    <rect x="300" y="80" width="520" height="54" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="102" font-size="12.4" font-weight="800" fill="#1e40af" text-anchor="middle">Step 0. 어제까지 멀쩡했나?</text>
+    <text x="560" y="121" font-size="10.8" fill="#1e40af" text-anchor="middle">배포 · 설정 · 트래픽 · <tspan font-weight="800">데이터 규모</tspan> 변화를 먼저 확인</text>
+    <path d="M296,107 L246,107" stroke="#d97706" stroke-width="2.2" marker-end="url(#t4)"/>
+    <rect x="24" y="76" width="218" height="62" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.8"/>
+    <text x="133" y="96" font-size="11.2" font-weight="800" fill="#92400e" text-anchor="middle">변경이 있다 → 롤백해 본다</text>
+    <text x="133" y="113" font-size="10.2" fill="#92400e" text-anchor="middle">사라지면 원인은 그 diff 안에 있다</text>
+    <text x="133" y="129" font-size="10.2" font-weight="700" fill="#92400e" text-anchor="middle">= 가장 빠른 진단이자 조치</text>
+    <text x="272" y="102" font-size="9.6" fill="#92400e" text-anchor="middle">있다</text>
+    <text x="574" y="150" font-size="9.6" fill="#475569">없다 / 롤백해도 그대로</text>
+    <path d="M560,136 L560,158" stroke="#475569" stroke-width="2.2" marker-end="url(#t1)"/>
+
+    <!-- Step 1 -->
+    <rect x="300" y="162" width="520" height="52" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="183" font-size="12.4" font-weight="800" fill="#1e40af" text-anchor="middle">Step 1. 증거 확보 — GC 로그</text>
+    <text x="560" y="202" font-size="10.8" fill="#1e40af" text-anchor="middle">로그가 없으면 <tspan class="mono" font-weight="800">jstat -gcutil &lt;pid&gt; 1000</tspan> 으로 지금 관찰</text>
+    <path d="M560,216 L560,236" stroke="#475569" stroke-width="2.2" marker-end="url(#t1)"/>
+
+    <!-- Step 2 -->
+    <rect x="252" y="240" width="616" height="60" rx="10" fill="#111827" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="560" y="264" font-size="13" font-weight="800" fill="#fcd34d" text-anchor="middle">Step 2. [결정적 분기] Full GC 직후에도 Old가 남아 있나?</text>
+    <text x="560" y="285" font-size="10.8" fill="#e2e8f0" text-anchor="middle">Full GC 로그의 <tspan class="mono" font-weight="800" fill="#fcd34d">before-&gt;after(total)</tspan> 에서 after 값을 본다 — 남은 것은 정의상 전부 살아있는 객체</text>
+
+    <path d="M400,302 L300,330" stroke="#dc2626" stroke-width="2.4" marker-end="url(#t2)"/>
+    <path d="M720,302 L820,330" stroke="#16a34a" stroke-width="2.4" marker-end="url(#t3)"/>
+
+    <!-- 유형 A -->
+    <rect x="24" y="336" width="506" height="80" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="277" y="358" font-size="12.4" font-weight="800" fill="#b91c1c" text-anchor="middle">유형 A — 안 빈다 (7800M → 7400M)</text>
+    <text x="277" y="377" font-size="10.8" fill="#b91c1c" text-anchor="middle">그래프 모양: <tspan font-weight="800">우상향 계단</tspan> — Full GC를 해도 바닥이 높아진다</text>
+    <text x="277" y="399" font-size="11.6" font-weight="800" fill="#7f1d1d" text-anchor="middle">"살아있는 객체(live set)가 너무 많다"</text>
+    <path d="M277,418 L277,438" stroke="#dc2626" stroke-width="2.2" marker-end="url(#t2)"/>
+
+    <!-- 유형 B -->
+    <rect x="590" y="336" width="506" height="80" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="843" y="358" font-size="12.4" font-weight="800" fill="#166534" text-anchor="middle">유형 B — 잘 빈다 (7800M → 1200M)</text>
+    <text x="843" y="377" font-size="10.8" fill="#166534" text-anchor="middle">그래프 모양: <tspan font-weight="800">톱니</tspan> — Full GC마다 바닥까지 떨어진다</text>
+    <text x="843" y="399" font-size="11.6" font-weight="800" fill="#14532d" text-anchor="middle">"죽을 객체가 Old까지 밀려 올라온다"</text>
+    <path d="M843,418 L843,438" stroke="#16a34a" stroke-width="2.2" marker-end="url(#t3)"/>
+
+    <!-- Step 3-A -->
+    <rect x="24" y="442" width="506" height="48" rx="10" fill="#ffffff" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="277" y="462" font-size="11.8" font-weight="800" fill="#b91c1c" text-anchor="middle">Step 3-A. 힙 덤프 — live set의 정체는?</text>
+    <text x="277" y="480" font-size="10.4" fill="#b91c1c" text-anchor="middle">dominator tree · retained size로 본다 (개수가 아니라 차지한 양)</text>
+    <path d="M150,492 L150,512" stroke="#dc2626" stroke-width="2" marker-end="url(#t2)"/>
+    <path d="M404,492 L404,512" stroke="#dc2626" stroke-width="2" marker-end="url(#t2)"/>
+
+    <rect x="24" y="516" width="252" height="104" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="150" y="537" font-size="11.2" font-weight="800" fill="#b91c1c" text-anchor="middle">무한히 자라는 컬렉션이 있다</text>
+    <text x="150" y="554" font-size="10" fill="#b91c1c" text-anchor="middle">static Map · 리스너 미해제</text>
+    <text x="150" y="569" font-size="10" fill="#b91c1c" text-anchor="middle">ThreadLocal 미정리</text>
+    <text x="150" y="590" font-size="11.6" font-weight="800" fill="#7f1d1d" text-anchor="middle">메모리 누수</text>
+    <text x="150" y="609" font-size="10.6" font-weight="700" fill="#7f1d1d" text-anchor="middle">→ 코드 수정 (튜닝 불가)</text>
+
+    <rect x="288" y="516" width="242" height="104" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="409" y="537" font-size="11.2" font-weight="800" fill="#92400e" text-anchor="middle">전부 "있어야 할" 객체다</text>
+    <text x="409" y="554" font-size="10" fill="#92400e" text-anchor="middle">시간이 지나면 어느 선에서</text>
+    <text x="409" y="569" font-size="10" fill="#92400e" text-anchor="middle">평형에 도달한다</text>
+    <text x="409" y="590" font-size="11.6" font-weight="800" fill="#78350f" text-anchor="middle">진짜 용량 부족</text>
+    <text x="409" y="609" font-size="10.6" font-weight="700" fill="#78350f" text-anchor="middle">→ 힙 증설 / 캐시 외부화</text>
+
+    <!-- Step 3-B -->
+    <rect x="590" y="442" width="506" height="48" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="843" y="462" font-size="11.8" font-weight="800" fill="#166534" text-anchor="middle">Step 3-B. GC 로그의 cause 확인 — 특이 원인부터 배제</text>
+    <text x="843" y="480" font-size="10.4" fill="#166534" text-anchor="middle">앞의 세 가지는 <tspan font-weight="800">힙 덤프를 떠도 안 보인다</tspan> — 그래서 덤프보다 먼저</text>
+    <path d="M645,492 L645,512" stroke="#16a34a" stroke-width="1.8" marker-end="url(#t3)"/>
+    <path d="M765,492 L765,512" stroke="#16a34a" stroke-width="1.8" marker-end="url(#t3)"/>
+    <path d="M885,492 L885,512" stroke="#16a34a" stroke-width="1.8" marker-end="url(#t3)"/>
+    <path d="M1005,492 L1005,512" stroke="#16a34a" stroke-width="1.8" marker-end="url(#t3)"/>
+
+    <rect x="590" y="516" width="110" height="104" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="645" y="536" font-size="9.6" font-weight="800" fill="#166534" text-anchor="middle" class="mono">System.gc()</text>
+    <text x="645" y="556" font-size="9.6" fill="#166534" text-anchor="middle">명시적 호출</text>
+    <text x="645" y="570" font-size="9.2" fill="#166534" text-anchor="middle">(일정 간격 발생)</text>
+    <text x="645" y="592" font-size="9.8" font-weight="800" fill="#14532d" text-anchor="middle">→ 호출부 제거</text>
+    <text x="645" y="607" font-size="9.2" fill="#14532d" text-anchor="middle">DisableExplicitGC</text>
+
+    <rect x="710" y="516" width="110" height="104" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="765" y="536" font-size="9.6" font-weight="800" fill="#166534" text-anchor="middle" class="mono">Metadata GC</text>
+    <text x="765" y="549" font-size="9.6" font-weight="800" fill="#166534" text-anchor="middle" class="mono">Threshold</text>
+    <text x="765" y="568" font-size="9.6" fill="#166534" text-anchor="middle">Metaspace 임계</text>
+    <text x="765" y="592" font-size="9.8" font-weight="800" fill="#14532d" text-anchor="middle">→ 동적 클래스</text>
+    <text x="765" y="607" font-size="9.8" font-weight="800" fill="#14532d" text-anchor="middle">생성 점검</text>
+
+    <rect x="830" y="516" width="110" height="104" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="885" y="536" font-size="9.6" font-weight="800" fill="#166534" text-anchor="middle" class="mono">G1 Humongous</text>
+    <text x="885" y="549" font-size="9.6" font-weight="800" fill="#166534" text-anchor="middle" class="mono">Allocation</text>
+    <text x="885" y="568" font-size="9.6" fill="#166534" text-anchor="middle">거대 객체 할당</text>
+    <text x="885" y="592" font-size="9.8" font-weight="800" fill="#14532d" text-anchor="middle">→ 스트리밍</text>
+    <text x="885" y="607" font-size="9.8" font-weight="800" fill="#14532d" text-anchor="middle">· 페이징</text>
+
+    <rect x="950" y="516" width="110" height="104" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="1005" y="536" font-size="9.4" font-weight="800" fill="#166534" text-anchor="middle" class="mono">Allocation Failure</text>
+    <text x="1005" y="549" font-size="9.4" font-weight="800" fill="#166534" text-anchor="middle" class="mono">to-space exhausted</text>
+    <text x="1005" y="568" font-size="9.8" font-weight="800" fill="#166534" text-anchor="middle">승격 폭주</text>
+    <text x="1005" y="592" font-size="9.8" font-weight="800" fill="#14532d" text-anchor="middle">→ 대량 로딩</text>
+    <text x="1005" y="607" font-size="9.8" font-weight="800" fill="#14532d" text-anchor="middle">코드 수정</text>
+
+    <!-- Step 4 -->
+    <path d="M277,622 L277,642 L470,642 L470,656" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#t1)"/>
+    <path d="M843,622 L843,642 L650,642 L650,656" stroke="#475569" stroke-width="2" fill="none" marker-end="url(#t1)"/>
+    <rect x="252" y="660" width="616" height="50" rx="10" fill="#111827"/>
+    <text x="560" y="681" font-size="12.6" font-weight="800" fill="#fcd34d" text-anchor="middle">Step 4. 조치 — 코드가 1순위, 튜닝은 2순위</text>
+    <text x="560" y="700" font-size="10.6" fill="#e2e8f0" text-anchor="middle">즉시 완화는 튜닝으로, 근본 조치는 코드로. 그리고 <tspan font-weight="800" fill="#86efac">같은 지표로 재측정</tspan>해 검증한다</text>
+  </svg>
+  <figcaption>이 트리에서 <b>가장 위에 있는 것이 가장 싼 검사</b>다. 위에서부터 순서대로 하는 이유는 단순하다 — <b>Step 0(배포 이력 확인)은 1분, Step 3-A(힙 덤프 분석)는 반나절</b>이다. <mark>싼 검사로 지울 수 있는 후보를 비싼 검사로 지우는 것이 시간 낭비의 정체다.</mark></figcaption>
+</figure>
+
+<div class="memo">
+  <h4>5단계를 외우는 다섯 글자 — <span style="color:#2563eb">변·로·분·확·조</span></h4>
+  <div class="mnemo">
+    <div class="m"><div class="big">변</div><div class="lb">Step 0 변경</div><div class="ds">어제와 오늘의 차이</div></div>
+    <div class="m"><div class="big">로</div><div class="lb">Step 1 로그</div><div class="ds">GC 로그 / jstat</div></div>
+    <div class="m"><div class="big">분</div><div class="lb">Step 2 분기</div><div class="ds">Old가 비는가</div></div>
+    <div class="m"><div class="big">확</div><div class="lb">Step 3 확정</div><div class="ds">cause · 힙 덤프</div></div>
+    <div class="m"><div class="big">조</div><div class="lb">Step 4 조치</div><div class="ds">코드 먼저 · 검증</div></div>
+  </div>
+  <p style="margin:10px 0 0;font-size:.95rem">면접에서 막히면 이 다섯 글자부터 꺼낸다. <mark>순서를 말하는 순간 이미 "방법론이 있는 사람"으로 분류된다.</mark></p>
+</div>
+
+<h3>2-1. 각 단계가 답하는 질문 — 단계마다 "무엇을 지우는가"</h3>
+
+<div class="scroll">
+<table class="wide">
+  <caption>각 단계의 목적은 정답을 찾는 것이 아니라 <b>후보를 지우는 것</b>이다.</caption>
+  <thead><tr><th>단계</th><th>이 단계가 답하는 질문</th><th>쓰는 도구</th><th>지워지는 후보</th><th>비용</th></tr></thead>
+  <tbody>
+    <tr><td><b>Step 0</b> 변경</td><td>어제까지 멀쩡했나? 무엇이 달라졌나?</td><td>배포 이력 · 설정 diff · 트래픽 지표 · 데이터 규모</td><td>변경이 원인이면 <b>탐색 공간이 코드베이스 전체 → 커밋 몇 개</b>로 축소</td><td class="good">몇 분</td></tr>
+    <tr><td><b>Step 0.5</b> 인과</td><td>이 증상이 정말 GC 때문인가?</td><td>GC pause 시각 vs p99 스파이크 시각 대조</td><td>안 겹치면 <b>GC 전체가 후보에서 제외</b> (DB 락·외부 API·풀 고갈로)</td><td class="good">몇 분</td></tr>
+    <tr><td><b>Step 1</b> 로그</td><td>무슨 GC가 언제, 얼마나 도는가?</td><td><code>-Xlog:gc*</code> · <code>jstat -gcutil</code> · <code>jcmd</code></td><td>없으면 <b>이후 모든 단계가 불가능</b> — 지우는 게 아니라 <b>진입 조건</b></td><td class="good">즉시</td></tr>
+    <tr class="hl"><td><b>Step 2</b> 분기</td><td><b>Full GC 직후에도 Old가 남아 있나?</b></td><td>Full GC 로그의 <code>before-&gt;after</code> · <code>jstat</code>의 <code>O</code> 최저점 추이</td><td><b>두 유형 중 하나가 통째로 제거된다</b> — 이 문서에서 가장 큰 배제</td><td class="good">몇 분</td></tr>
+    <tr><td><b>Step 3-B</b> cause</td><td>JVM이 기록한 <b>촉발 사건</b>이 무엇인가?</td><td>GC 로그의 cause 라벨</td><td><code>System.gc()</code>·Metaspace·humongous <b>세 계열을 즉시 확정 또는 제외</b></td><td class="good">몇 분</td></tr>
+    <tr><td><b>Step 3-A</b> 덤프</td><td>live set을 <b>무엇이</b> 차지하고 있나?</td><td>힙 덤프 · dominator tree · retained size</td><td>누수인지 정당한 용량인지 <b>확정</b> (시차를 둔 2회 비교 필요)</td><td class="bad">반나절+</td></tr>
+    <tr><td><b>Step 4</b> 조치</td><td>고친 것이 <b>정말 효과가 있었나?</b></td><td>같은 부하 · 같은 지표 재측정</td><td>효과 없으면 <b>가설이 틀렸다는 증거</b> — Step 2로 되돌아간다</td><td class="dash">—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout warn"><span class="t">순서가 뒤집히는 가장 흔한 실수</span><b>Step 3-A(힙 덤프)를 첫 단계로 꺼내는 것.</b> 가장 비싼데다가, <mark><code>System.gc()</code>·Metaspace·humongous가 원인이면 덤프를 아무리 뜯어봐도 안 보인다.</mark> 덤프는 <b>"유형 A로 이미 분기된 뒤"</b>에 쓰는 확정 도구다.</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. Step 0 — 어제까지 멀쩡했나 (최근 변경)</h2>
+
+<p>코드를 열기 전에 먼저 묻는다. <mark>이 단계를 건너뛰고 힙 덤프부터 뜨는 것이 가장 흔한 시간 낭비다.</mark> 논리는 단순하다 — <b>어제까지 멀쩡했다면 범인은 어제와 오늘의 차이 안에 있다.</b></p>
+
+<div class="scroll">
+<table>
+  <caption>확인할 네 가지 축 — 아래로 갈수록 <b>놓치기 쉽다</b></caption>
+  <thead><tr><th>확인 항목</th><th>전형적 시나리오</th><th>어디서 확인하나</th></tr></thead>
+  <tbody>
+    <tr><td><b>최근 배포</b></td><td>새 기능이 <b>대량 조회나 캐시 적재</b>를 추가했다</td><td>배포 이력 · 릴리스 노트 · 커밋 diff</td></tr>
+    <tr><td><b>설정 변경</b></td><td><b>힙 크기 축소</b>, 캐시 TTL 연장, 배치 주기 변경</td><td>매니페스트 · JVM 옵션 · 설정 저장소 이력</td></tr>
+    <tr><td><b>트래픽 변화</b></td><td>이벤트나 프로모션으로 <b>초당 할당량 자체가 급증</b></td><td>RPS 지표 · 유입 경로별 트래픽</td></tr>
+    <tr class="bad"><td><b>데이터 변화</b></td><td>특정 고객의 데이터가 비정상적으로 커짐 (<b>한 주문에 항목 10만 개</b>)</td><td class="bad">배포 이력에 아무것도 안 남는다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4>마지막 줄, "데이터 변화"를 특히 놓치기 쉽다</h4>
+  <p style="margin:0;font-size:.95rem">코드도 설정도 그대로인데 <b>어느 고객사의 데이터 규모만 열 배</b>가 되면, <b>같은 코드가 열 배의 객체를 만든다.</b> 배포 이력에는 아무것도 안 남고, "최근에 바꾼 게 없는데요"라는 말이 나오는 순간이 정확히 여기다. <mark>"코드가 그대로"와 "부하가 그대로"는 다른 말이다.</mark> 조회 건수·페이로드 크기·특정 테넌트의 row 수 같은 <b>입력 쪽 지표</b>를 함께 본다.</p>
+</div>
+
+<h3>3-1. 롤백은 "조치"이기 전에 "진단"이다</h3>
+
+<p>배포 직후부터 시작됐다면 <b>롤백이 가장 빠른 진단이자 조치</b>다. 롤백해서 증상이 사라지면 원인은 그 diff 안에 있다 — <b>탐색 공간이 코드베이스 전체에서 커밋 몇 개로 줄어든다.</b> <b>"원인을 다 밝힌 뒤에 롤백하겠다"는 순서는 장애 시간을 늘릴 뿐이다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 880 236" role="img" aria-label="롤백 순서 비교 타임라인. 원인을 먼저 규명한 뒤 롤백하는 경우는 장애 시간이 길게 이어지지만, 먼저 롤백한 뒤 원인을 분석하면 장애 시간이 짧게 끝나고 분석은 서비스가 정상인 상태에서 진행된다.">
+    <defs><marker id="a3r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#475569"/></marker></defs>
+    <text x="16" y="22" font-size="13" font-weight="700" fill="#1f2937">같은 작업, 순서만 다르다 — <tspan fill="#dc2626">빨간 구간이 사용자가 겪는 장애 시간</tspan></text>
+
+    <text x="16" y="58" font-size="11" font-weight="800" fill="#b91c1c">원인 먼저</text>
+    <rect x="110" y="42" width="120" height="26" rx="5" fill="#fee2e2" stroke="#dc2626" stroke-width="1.3"/>
+    <text x="170" y="60" font-size="10.4" fill="#7f1d1d" text-anchor="middle">장애 인지</text>
+    <rect x="234" y="42" width="230" height="26" rx="5" fill="#fee2e2" stroke="#dc2626" stroke-width="1.3"/>
+    <text x="349" y="60" font-size="10.4" fill="#7f1d1d" text-anchor="middle">로그·덤프 분석 (수 시간)</text>
+    <rect x="468" y="42" width="110" height="26" rx="5" fill="#fee2e2" stroke="#dc2626" stroke-width="1.3"/>
+    <text x="523" y="60" font-size="10.4" fill="#7f1d1d" text-anchor="middle">원인 확정</text>
+    <rect x="582" y="42" width="100" height="26" rx="5" fill="#dcfce7" stroke="#16a34a" stroke-width="1.3"/>
+    <text x="632" y="60" font-size="10.4" fill="#14532d" text-anchor="middle">롤백 / 수정</text>
+    <rect x="110" y="74" width="472" height="10" rx="4" fill="#dc2626" opacity="0.8"/>
+    <text x="346" y="98" font-size="10.6" font-weight="800" fill="#b91c1c" text-anchor="middle">사용자는 그동안 계속 장애를 겪는다</text>
+
+    <text x="16" y="146" font-size="11" font-weight="800" fill="#166534">롤백 먼저</text>
+    <rect x="110" y="130" width="120" height="26" rx="5" fill="#fee2e2" stroke="#dc2626" stroke-width="1.3"/>
+    <text x="170" y="148" font-size="10.4" fill="#7f1d1d" text-anchor="middle">장애 인지</text>
+    <rect x="234" y="130" width="100" height="26" rx="5" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="284" y="148" font-size="10.4" font-weight="700" fill="#14532d" text-anchor="middle">즉시 롤백</text>
+    <rect x="338" y="130" width="240" height="26" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="458" y="148" font-size="10.4" fill="#1e40af" text-anchor="middle">서비스 정상 상태에서 diff 분석</text>
+    <rect x="582" y="130" width="100" height="26" rx="5" fill="#eff6ff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="632" y="148" font-size="10.4" fill="#1e40af" text-anchor="middle">수정 후 재배포</text>
+    <rect x="110" y="162" width="224" height="10" rx="4" fill="#dc2626" opacity="0.8"/>
+    <rect x="338" y="162" width="344" height="10" rx="4" fill="#2563eb" opacity="0.35"/>
+    <text x="222" y="186" font-size="10.6" font-weight="800" fill="#b91c1c" text-anchor="middle">장애 시간</text>
+    <text x="510" y="186" font-size="10.6" font-weight="800" fill="#1d4ed8" text-anchor="middle">분석 시간 (사용자 영향 없음)</text>
+
+    <rect x="110" y="200" width="572" height="26" rx="6" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.4"/>
+    <text x="396" y="218" font-size="11" font-weight="800" fill="#166534" text-anchor="middle">롤백으로 증상이 사라지는 것 자체가 "원인은 이 diff 안"이라는 강력한 증거다</text>
+  </svg>
+  <figcaption>롤백을 진단으로 쓰면 <b>장애 시간과 분석 시간이 분리</b>된다. 다만 <b>롤백해도 증상이 남는 경우</b>도 중요한 정보다 — <mark>"최근 배포가 원인이 아니다"가 확정되므로 Step 1로 넘어간다.</mark> 데이터 변화나 누적형 누수는 롤백으로 안 사라진다.</figcaption>
+</figure>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. Step 1 — 증거 확보: GC 로그와 <code>jstat</code></h2>
+
+<div class="rule">GC 로그가 없으면 추적도 없다</div>
+
+<div class="codehead plain"><span class="tag">설정</span> 운영에서 상시로 켜 두는 GC 로깅</div>
+<pre><code><span class="cm"># Java 9+ : 통합 로깅. 5개 파일을 20MB씩 돌려쓰며 시각과 uptime을 함께 남긴다</span>
+<span class="ln-good">-Xlog:gc*:file=/var/log/gc.log:<span class="st">time,uptime</span>:filecount=5,filesize=20m</span>
+<span class="cm">#                                      ^^^^ 절대 시각 — APM 스파이크와 겹쳐 보려면 필수</span>
+
+<span class="cm"># Java 8 : 레거시 플래그</span>
+-XX:+PrintGCDetails -XX:+PrintGCDateStamps -Xloggc:/var/log/gc.log
+
+<span class="cm"># 함께 걸어 두면 좋은 것 — 사고 순간의 힙을 자동으로 남긴다</span>
+<span class="ln-good">-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/log/dumps</span></code></pre>
+
+<div class="callout ok"><span class="t">왜 "사고 난 뒤에 켜기"가 아니라 "상시"인가</span><b>GC 로그의 오버헤드는 미미하다.</b> 반면 사고가 난 뒤에 켜면 <b>"다음 재현"을 기다려야</b> 하는데, 그 다음 재현이 <b>새벽 3시일 수도 있고 한 달 뒤일 수도</b> 있다. <mark>증거 수집은 사고 전에 끝내 두는 일이다.</mark></div>
+
+<h3>4-1. 로그가 없는 지금 이 순간 관찰해야 한다면</h3>
+
+<p>재시작 없이 붙는 도구를 쓴다. <b>재기동하는 순간 증거가 사라진다</b>는 점을 잊으면 안 된다 — 지금 힙에 쌓여 있는 것이 유일한 단서다.</p>
+
+<pre><code><span class="ln-good">jstat -gcutil &lt;pid&gt; 1000</span>    <span class="cm"># 1초 간격으로 영역별 사용률과 GC 횟수를 출력</span>
+jcmd &lt;pid&gt; GC.heap_info     <span class="cm"># 현재 힙 스냅샷</span>
+jcmd &lt;pid&gt; GC.class_histogram <span class="cm"># 클래스별 인스턴스 수 — 힙 덤프보다 훨씬 가볍다</span></code></pre>
+
+<h3>4-2. <code>jstat -gcutil</code>에서 볼 컬럼은 딱 세 개다</h3>
+
+<div class="termbox">
+<span class="dim">$ jstat -gcutil 1 1000</span>            <span class="dim">(일부 컬럼 생략)</span>
+  S0     S1     E      <span class="hi">O</span>      <span class="hi">M</span>     CCS    YGC    YGCT   <span class="hi">FGC</span>    FGCT
+ 0.00  38.21  61.44  <span class="rr">92.31</span>  97.55  94.02   842  38.201   <span class="rr">  7</span>  21.503
+ 0.00  41.05  74.10  <span class="rr">93.88</span>  97.56  94.02   844  38.410   <span class="rr">  8</span>  24.812   <span class="dim">&larr; Full GC가 돌았는데</span>
+ 0.00  35.77  22.06  <span class="rr">91.02</span>  97.57  94.02   845  38.502   <span class="rr">  9</span>  28.140   <span class="dim">&larr; O가 91% 아래로 안 내려간다</span>
+ 0.00  40.13  55.90  <span class="rr">92.44</span>  97.57  94.02   846  38.588   <span class="rr"> 10</span>  31.402   <span class="dim">&larr; 3초 사이 FGC 3회</span>
+</div>
+
+<div class="grid g3">
+  <div class="tile"><div class="k">O</div><div class="s">Old 영역 사용률(%)</div><div class="d"><b>GC를 거치며 어떻게 움직이는지</b>가 Step 2의 판단 재료다. Full GC 뒤에 <b>뚝 떨어지는가, 그대로인가.</b></div></div>
+  <div class="tile"><div class="k">M</div><div class="s">Metaspace 사용률(%)</div><div class="d">이 값이 <b>계속 우상향</b>이면 <b>클래스 메타데이터 누수</b>다(§7). 힙과 무관한 Full GC의 단서.</div></div>
+  <div class="tile"><div class="k">FGC</div><div class="s">Full GC 누적 횟수</div><div class="d">절대값이 아니라 <b>얼마나 빨리 증가하는가</b>가 심각도다. 위 예시는 <b>3초에 3회</b> — 비상 상황.</div></div>
+</div>
+
+<div class="callout info"><span class="t">여기서 이미 절반은 판별된다</span><b><code>O</code>가 Full GC 뒤에도 안 내려가면 → Step 3-A</b>(누수·용량). <b>뚝 떨어지면 → Step 3-B</b>(승격 폭주·특이 원인). 위 출력은 <b>FGC가 3회 늘었는데 O가 91~93%에서 안 내려온</b> 전형적인 <b>유형 A</b>다. <mark>이 판단에 힙 덤프도, 재시작도 필요 없다.</mark></div>
+
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. Step 2 — 결정적 분기: Full GC 직후 Old 잔량</h2>
+
+<p><b>이 문서에서 가장 중요한 한 단계다.</b> GC 로그에서 Full GC 라인의 <b>before → after 힙 크기</b>를 본다.</p>
+
+<div class="memo">
+  <h4>live set(라이브 셋)이라는 단어부터</h4>
+  <p style="margin:0;font-size:.96rem">"Full GC 직후 Old 잔량"이란 <b>청소를 다 하고도 여전히 힙에 남아 있는 양</b>을 말한다. <b>Full GC는 지금 죽어 있는 객체를 전부 회수하고 끝나므로, 그 뒤에 남은 것은 정의상 전부 살아있는 객체다.</b> 그래서 <mark>이 숫자 하나가 "살아있는 객체가 얼마나 되는가"를 직접 알려 준다.</mark> 이 값을 <b>live set</b>이라고 부른다.</p>
+</div>
+
+<figure>
+  <svg viewBox="0 0 880 250" role="img" aria-label="Full GC 로그 라인 해부. 화살표 왼쪽 값이 청소 전 힙 사용량, 오른쪽 값이 청소 후 남은 양인 live set, 괄호 안이 힙 전체 크기다. 유형 A는 7800M에서 7400M으로 400M만 줄었고, 유형 B는 7800M에서 1200M으로 6600M이 회수됐다.">
+    <defs><marker id="a5b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#475569"/></marker></defs>
+    <text x="16" y="22" font-size="13" font-weight="700" fill="#1f2937">GC 로그 한 줄에서 읽어야 할 세 숫자</text>
+
+    <rect x="16" y="34" width="848" height="94" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="1.6"/>
+    <text x="32" y="54" font-size="11.4" font-weight="800" fill="#b91c1c">유형 A — 청소해도 안 비는 경우</text>
+    <rect x="32" y="62" width="600" height="28" rx="6" fill="#1e293b"/>
+    <text x="44" y="81" font-size="11.6" fill="#e2e8f0" class="mono">Pause Full (G1 Compaction Pause) <tspan fill="#93c5fd">7800M</tspan>-&gt;<tspan fill="#fca5a5" font-weight="700">7400M</tspan>(<tspan fill="#94a3b8">8192M</tspan>)</text>
+    <path d="M298,92 L298,104" stroke="#475569" stroke-width="1.2"/>
+    <text x="298" y="116" font-size="9.6" fill="#1e40af" text-anchor="middle">청소 전</text>
+    <path d="M372,92 L372,104" stroke="#475569" stroke-width="1.2"/>
+    <text x="372" y="116" font-size="9.6" font-weight="800" fill="#b91c1c" text-anchor="middle">청소 후 = live set</text>
+    <path d="M452,92 L452,104" stroke="#475569" stroke-width="1.2"/>
+    <text x="452" y="116" font-size="9.6" fill="#6b7280" text-anchor="middle">힙 총량</text>
+    <text x="656" y="76" font-size="11.6" font-weight="800" fill="#b91c1c">400M밖에 못 줄였다</text>
+    <text x="656" y="94" font-size="10.6" fill="#b91c1c">→ 힙의 90%가 살아있는 객체</text>
+    <text x="656" y="112" font-size="10.6" font-weight="700" fill="#7f1d1d">→ 누수 또는 진짜 용량 부족</text>
+
+    <rect x="16" y="140" width="848" height="94" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.6"/>
+    <text x="32" y="160" font-size="11.4" font-weight="800" fill="#166534">유형 B — 청소하면 잘 비는 경우</text>
+    <rect x="32" y="168" width="600" height="28" rx="6" fill="#1e293b"/>
+    <text x="44" y="187" font-size="11.6" fill="#e2e8f0" class="mono">Pause Full (G1 Compaction Pause) <tspan fill="#93c5fd">7800M</tspan>-&gt;<tspan fill="#86efac" font-weight="700">1200M</tspan>(<tspan fill="#94a3b8">8192M</tspan>)</text>
+    <path d="M372,198 L372,210" stroke="#475569" stroke-width="1.2"/>
+    <text x="372" y="222" font-size="9.6" font-weight="800" fill="#166534" text-anchor="middle">청소 후 = live set</text>
+    <text x="656" y="182" font-size="11.6" font-weight="800" fill="#166534">6600M이 전부 죽은 객체였다</text>
+    <text x="656" y="200" font-size="10.6" fill="#166534">→ 죽을 것들이 Old까지 올라와 있었다</text>
+    <text x="656" y="218" font-size="10.6" font-weight="700" fill="#14532d">→ 승격 폭주 또는 특이 원인</text>
+  </svg>
+  <figcaption>같은 형식의 한 줄인데 <b>세 번째 숫자(청소 후)</b> 하나로 진단이 갈린다. <mark>GC 로그를 "읽을 줄 안다"는 것은 이 한 자리를 본다는 뜻이다.</mark></figcaption>
+</figure>
+
+<h3>5-1. 두 유형은 그래프 모양으로도 즉시 구분된다</h3>
+
+<p>대시보드에서 힙 사용량 추이를 볼 때, <b>봉우리(최고점)가 아니라 골짜기(최저점)</b>를 따라가야 한다. <b>최저점이 곧 매 사이클의 live set</b>이기 때문이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 340" role="img" aria-label="힙 사용량 그래프의 두 패턴 비교. 왼쪽 유형 A는 Full GC 때마다 떨어지지만 최저점이 점점 높아지는 우상향 계단 모양으로 live set이 계속 증가함을 보여준다. 오른쪽 유형 B는 Full GC마다 같은 바닥까지 떨어지는 톱니 모양으로 live set은 일정하고 차오르는 속도만 빠름을 보여준다.">
+    <defs>
+      <marker id="g1a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="g2a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="14" font-weight="700" fill="#1f2937">봉우리가 아니라 <tspan fill="#dc2626">골짜기(Full GC 직후 최저점)</tspan>를 따라가라</text>
+
+    <!-- 유형 A -->
+    <rect x="24" y="36" width="524" height="292" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="286" y="60" font-size="12.5" font-weight="800" fill="#b91c1c" text-anchor="middle">유형 A — 우상향 계단</text>
+    <line x1="70" y1="252" x2="530" y2="252" stroke="#9ca3af" stroke-width="1.4"/>
+    <line x1="70" y1="72" x2="70" y2="252" stroke="#9ca3af" stroke-width="1.4"/>
+    <text x="62" y="80" font-size="10" fill="#6b7280" text-anchor="end">힙</text>
+    <text x="528" y="270" font-size="10" fill="#6b7280" text-anchor="end">시간</text>
+    <line x1="70" y1="80" x2="530" y2="80" stroke="#dc2626" stroke-width="1.2" stroke-dasharray="5 4"/>
+    <text x="524" y="76" font-size="9.6" fill="#b91c1c" text-anchor="end">힙 최대</text>
+    <path d="M70,240 L130,92 L130,220 L190,92 L190,196 L250,92 L250,172 L310,92 L310,148 L370,92 L370,126 L430,92 L430,108 L490,92 L510,90"
+          fill="none" stroke="#dc2626" stroke-width="2.4"/>
+    <line x1="130" y1="220" x2="490" y2="94" stroke="#7f1d1d" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <circle cx="130" cy="220" r="4" fill="#7f1d1d"/><circle cx="190" cy="196" r="4" fill="#7f1d1d"/><circle cx="250" cy="172" r="4" fill="#7f1d1d"/>
+    <circle cx="310" cy="148" r="4" fill="#7f1d1d"/><circle cx="370" cy="126" r="4" fill="#7f1d1d"/><circle cx="430" cy="108" r="4" fill="#7f1d1d"/>
+    <text x="330" y="182" font-size="10.6" font-weight="800" fill="#7f1d1d" transform="rotate(-19 330 182)">Full GC 직후 잔량이 계속 올라간다</text>
+    <path d="M108,232 L124,224" stroke="#dc2626" stroke-width="1.4" marker-end="url(#g1a)"/>
+    <text x="96" y="236" font-size="9.6" fill="#b91c1c" text-anchor="end">Full GC</text>
+    <text x="286" y="288" font-size="11.6" font-weight="800" fill="#b91c1c" text-anchor="middle">청소해도 바닥이 점점 높아진다 = live set 증가</text>
+    <text x="286" y="308" font-size="11" fill="#b91c1c" text-anchor="middle">메모리 누수 이거나, live set에 비해 힙이 정말로 작은 것</text>
+    <text x="286" y="324" font-size="11" font-weight="800" fill="#7f1d1d" text-anchor="middle">→ Step 3-A (힙 덤프)</text>
+
+    <!-- 유형 B -->
+    <rect x="572" y="36" width="524" height="292" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="834" y="60" font-size="12.5" font-weight="800" fill="#166534" text-anchor="middle">유형 B — 톱니</text>
+    <line x1="618" y1="252" x2="1078" y2="252" stroke="#9ca3af" stroke-width="1.4"/>
+    <line x1="618" y1="72" x2="618" y2="252" stroke="#9ca3af" stroke-width="1.4"/>
+    <text x="610" y="80" font-size="10" fill="#6b7280" text-anchor="end">힙</text>
+    <text x="1076" y="270" font-size="10" fill="#6b7280" text-anchor="end">시간</text>
+    <line x1="618" y1="80" x2="1078" y2="80" stroke="#16a34a" stroke-width="1.2" stroke-dasharray="5 4"/>
+    <text x="1072" y="76" font-size="9.6" fill="#166534" text-anchor="end">힙 최대</text>
+    <path d="M618,224 L678,92 L678,224 L738,92 L738,224 L798,92 L798,224 L858,92 L858,224 L918,92 L918,224 L978,92 L978,224 L1038,92 L1038,224 L1070,158"
+          fill="none" stroke="#16a34a" stroke-width="2.4"/>
+    <line x1="618" y1="224" x2="1070" y2="224" stroke="#14532d" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <circle cx="678" cy="224" r="4" fill="#14532d"/><circle cx="798" cy="224" r="4" fill="#14532d"/><circle cx="918" cy="224" r="4" fill="#14532d"/><circle cx="1038" cy="224" r="4" fill="#14532d"/>
+    <text x="848" y="242" font-size="10.6" font-weight="800" fill="#14532d" text-anchor="middle">바닥은 항상 같은 높이 — live set은 일정하다</text>
+    <path d="M660,214 L672,220" stroke="#16a34a" stroke-width="1.4" marker-end="url(#g2a)"/>
+    <text x="650" y="212" font-size="9.6" fill="#166534" text-anchor="end">Full GC</text>
+    <text x="834" y="288" font-size="11.6" font-weight="800" fill="#166534" text-anchor="middle">Full GC마다 바닥까지 떨어진다 = 대부분 이미 죽어 있었다</text>
+    <text x="834" y="308" font-size="11" fill="#166534" text-anchor="middle">문제는 <tspan font-weight="800">죽을 객체가 Old에 쌓이는 속도</tspan> — 톱니 주기가 짧다</text>
+    <text x="834" y="324" font-size="11" font-weight="800" fill="#14532d" text-anchor="middle">→ Step 3-B (GC cause 확인)</text>
+  </svg>
+  <figcaption>두 그래프 모두 <b>봉우리는 힙 최대치에 닿는다</b> — 봉우리만 보면 구분이 안 된다. <mark>차이는 오직 골짜기의 높이가 유지되는가, 올라가는가</mark>이고, 이것이 곧 live set의 추이다. 대시보드에 <b>"Full GC 직후 Old 사용량"</b>이라는 지표를 따로 만들어 두면 이 판단이 한눈에 끝난다.</figcaption>
+</figure>
+
+<h3>5-2. 왜 이 분기가 그렇게 중요한가 — 조치 방향이 정반대다</h3>
+
+<div class="split">
+  <div class="pane r"><h4>유형 A에서 하면 안 되는 것</h4>
+    <ul>
+      <li><b>Young 영역을 키운다</b> → 아무 효과 없다. 누수 객체는 <b>Young에서도 안 죽는다.</b></li>
+      <li><b>pause 목표를 낮춘다</b> → 회수량이 늘지 않으므로 무의미.</li>
+      <li><b>힙 증설</b> → 효과가 있어 보이지만 <b>장애 시각을 미룰 뿐</b>이다(누수인 경우).</li>
+    </ul>
+  </div>
+  <div class="pane w"><h4>유형 B에서 하면 안 되는 것</h4>
+    <ul>
+      <li><b>힙 증설</b> → 대부분 헛수고다. 죽을 객체가 Old로 올라오는 <b>속도</b>가 문제지 <b>총량</b>이 아니다.</li>
+      <li><b>덤프부터 뜬다</b> → 덤프에는 <b>이미 죽은 객체가 안 보인다.</b> cause를 먼저 읽어야 한다.</li>
+      <li><b>누수 범인을 찾는다</b> → 애초에 <b>잘 비고 있다</b>는 증거가 있는데 누수를 찾는 셈.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">이 분기를 안 하고 옵션부터 만지는 것이 "찍는 사람"의 전형</span><b>같은 "Full GC 빈발"이라는 증상에 대해 정답이 정반대</b>다. 그래서 <mark>Step 2를 건너뛴 모든 조치는 동전 던지기</mark>가 된다. 옵션을 바꾸기 전에 반드시 이 한 줄을 확인한다 — <b>"Full GC 직후 Old가 비었는가?"</b></div>
+
+<div class="decide">
+  <div class="dq">Q. Full GC 로그의 after 값이 사이클마다 어떻게 움직이는가?</div>
+  <div class="da"><span class="yn n">계속 올라간다</span><span class="txt"><b>유형 A</b> — 누수 또는 용량 부족. <b>§6(Step 3-A)</b>으로. 구분 기준은 <b>시간축</b>: 끝없이 자라면 누수, 어느 선에서 평형이면 용량.</span></div>
+  <div class="da"><span class="yn y">낮은 값으로 일정하다</span><span class="txt"><b>유형 B</b> — 승격 폭주 또는 특이 원인. <b>§7(Step 3-B)</b>로. <b>cause를 먼저</b> 읽어 특이 원인 셋을 배제한다.</span></div>
+  <div class="da"><span class="yn m">한 번밖에 못 봤다</span><span class="txt"><b>판단하지 않는다.</b> 그 순간 마침 대형 배치가 돌았을 수 있다. <b>최소 몇 사이클의 최저점</b>을 늘어놓고 <b>기울기</b>를 본다.</span></div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. Step 3-A — 안 비는 경우: 누수인가, 진짜 부족인가</h2>
+
+<p>힙 덤프를 떠서 <b>무엇이 live set을 차지하고 있는지</b> 확인한다. <span class="sub">(덤프를 뜨는 법과 도구 사용은 23번 문서. 여기서는 <b>무엇을 보고 무엇으로 가르는가</b>만 다룬다.)</span></p>
+
+<div class="kv">
+  <dt>retained size</dt><dd>그 객체를 지웠을 때 <b>함께 사라지는 메모리의 총량</b>. "이 객체가 붙잡고 있는 전체 무게"다. <b>인스턴스 개수가 아니라 이 값</b>으로 정렬해야 범인이 보인다.</dd>
+  <dt>dominator tree</dt><dd>어떤 객체가 사라지면 <b>어떤 객체들이 함께 회수되는지</b> 보여주는 지배 관계 트리. 상위 몇 개만 보면 <b>힙의 대부분을 누가 쥐고 있는지</b>가 드러난다.</dd>
+</div>
+
+<h3>6-1. 누수라면 — dominator tree 상위에 "무한히 자라는 컬렉션"이 있다</h3>
+
+<div class="memo red">
+  <h4>전형적인 범인 셋 — 이 셋을 먼저 뒤진다</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">static 캐시</div><div class="d">넣기만 하고 <b>빼는 로직이 없는</b> <code>static Map</code>. <b>상한도 만료도 없다.</b></div></div>
+    <div class="tile red"><div class="k">리스너·콜백</div><div class="d">등록만 하고 <b>해제하지 않은</b> 경우. 등록 목록이 곧 강한 참조다.</div></div>
+    <div class="tile red"><div class="k">ThreadLocal 미정리</div><div class="d"><b>스레드 풀에서는 스레드가 죽지 않으므로</b> 값이 영구히 남는다. 요청이 끝나도 그대로.</div></div>
+  </div>
+  <p style="margin:10px 0 0;font-size:.95rem">세 범인의 공통점은 <mark>"수명이 애플리케이션 전체"인 것에 "수명이 요청 단위"인 것을 매달았다</mark>는 점이다. 누수를 찾을 때 던지는 질문도 이것 하나면 된다 — <b>"이 참조를 끊는 코드가 어디에 있는가?"</b> 없으면 누수다.</p>
+</div>
+
+<figure>
+  <svg viewBox="0 0 880 268" role="img" aria-label="GC 루트 도달 가능성 도식. 왼쪽은 static 필드가 GC 루트이므로 그 아래 매달린 Map과 세션 객체들이 모두 살아있는 것으로 판정되어 회수 불가능한 상태이고, 오른쪽은 메서드 지역 변수가 사라지면서 참조 사슬이 끊겨 객체들이 회수 대상이 되는 상태다.">
+    <defs>
+      <marker id="r1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="r2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="16" y="22" font-size="13" font-weight="700" fill="#1f2937">GC의 판단 기준은 단 하나 — <tspan fill="#dc2626">루트에서 참조로 닿을 수 있는가</tspan></text>
+
+    <rect x="16" y="34" width="422" height="218" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.7"/>
+    <text x="227" y="56" font-size="11.8" font-weight="800" fill="#b91c1c" text-anchor="middle">static 필드에 매달린 캐시 — 회수 불가</text>
+    <rect x="36" y="68" width="126" height="40" rx="8" fill="#111827"/>
+    <text x="99" y="84" font-size="10" fill="#f9fafb" text-anchor="middle">GC Root</text>
+    <text x="99" y="99" font-size="9.4" fill="#cbd5e1" text-anchor="middle">static 필드 · 스레드 스택</text>
+    <path d="M166,88 L196,88" stroke="#dc2626" stroke-width="2" marker-end="url(#r1)"/>
+    <rect x="200" y="68" width="130" height="40" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="265" y="84" font-size="10" font-weight="800" fill="#7f1d1d" text-anchor="middle" class="mono">static Map CACHE</text>
+    <text x="265" y="99" font-size="9.4" fill="#7f1d1d" text-anchor="middle">put만 있고 remove 없음</text>
+    <path d="M334,88 L360,88" stroke="#dc2626" stroke-width="2" marker-end="url(#r1)"/>
+    <circle cx="378" cy="76" r="7" fill="#dc2626"/><circle cx="400" cy="76" r="7" fill="#dc2626"/><circle cx="422" cy="76" r="7" fill="#dc2626"/>
+    <circle cx="378" cy="98" r="7" fill="#dc2626"/><circle cx="400" cy="98" r="7" fill="#dc2626"/><circle cx="422" cy="98" r="7" fill="#dc2626"/>
+    <text x="400" y="122" font-size="9.4" fill="#7f1d1d" text-anchor="middle">UserSession × N</text>
+    <rect x="36" y="140" width="384" height="46" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="1.3" stroke-dasharray="5 3"/>
+    <text x="228" y="159" font-size="10.6" font-weight="800" fill="#b91c1c" text-anchor="middle">GC: "루트에서 닿는다 → 살아있다 → 못 건드린다"</text>
+    <text x="228" y="176" font-size="10.2" fill="#b91c1c" text-anchor="middle">Full GC를 몇 번 돌려도, 힙을 몇 배로 늘려도 그대로다</text>
+    <text x="227" y="206" font-size="11" font-weight="800" fill="#7f1d1d" text-anchor="middle">→ 이 참조를 끊을 수 있는 것은 코드뿐이다</text>
+    <text x="227" y="232" font-size="10.4" fill="#b91c1c" text-anchor="middle">그래서 누수는 "정의상" 튜닝으로 풀리지 않는다</text>
+
+    <rect x="450" y="34" width="414" height="218" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.7"/>
+    <text x="657" y="56" font-size="11.8" font-weight="800" fill="#166534" text-anchor="middle">메서드 지역 변수 — 정상 회수</text>
+    <rect x="470" y="68" width="126" height="40" rx="8" fill="#111827"/>
+    <text x="533" y="84" font-size="10" fill="#f9fafb" text-anchor="middle">GC Root</text>
+    <text x="533" y="99" font-size="9.4" fill="#cbd5e1" text-anchor="middle">스레드 스택 프레임</text>
+    <path d="M600,88 L628,88" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 3"/>
+    <line x1="612" y1="76" x2="620" y2="100" stroke="#dc2626" stroke-width="2.4"/>
+    <line x1="620" y1="76" x2="612" y2="100" stroke="#dc2626" stroke-width="2.4"/>
+    <text x="616" y="118" font-size="9.2" font-weight="700" fill="#b91c1c" text-anchor="middle">메서드 종료</text>
+    <rect x="640" y="68" width="120" height="40" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <text x="700" y="92" font-size="10" fill="#14532d" text-anchor="middle" class="mono">List&lt;Order&gt; page</text>
+    <path d="M764,88 L786,88" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <circle cx="802" cy="76" r="7" fill="#cbd5e1"/><circle cx="824" cy="76" r="7" fill="#cbd5e1"/>
+    <circle cx="802" cy="98" r="7" fill="#cbd5e1"/><circle cx="824" cy="98" r="7" fill="#cbd5e1"/>
+    <rect x="470" y="140" width="374" height="46" rx="8" fill="#ffffff" stroke="#16a34a" stroke-width="1.3" stroke-dasharray="5 3"/>
+    <text x="657" y="159" font-size="10.6" font-weight="800" fill="#166534" text-anchor="middle">GC: "루트에서 못 닿는다 → 죽었다 → 회수"</text>
+    <text x="657" y="176" font-size="10.2" fill="#166534" text-anchor="middle">다음 Young GC에서 곧바로 사라진다</text>
+    <text x="657" y="206" font-size="11" font-weight="800" fill="#14532d" text-anchor="middle">→ 참조의 수명이 곧 객체의 수명이다</text>
+    <text x="657" y="232" font-size="10.4" fill="#166534" text-anchor="middle">"언제 참조가 끊기는가"를 설계하는 것이 메모리 설계다</text>
+  </svg>
+  <figcaption>GC의 계약은 <b>"루트에서 닿는 객체는 절대 건드리지 않는다"</b>이고, 이 계약을 어기면 프로그램이 깨진다. <mark>그래서 어떤 GC 옵션도 왼쪽 그림을 오른쪽으로 바꿔 주지 못한다</mark> — 이것이 §8에서 "코드가 1순위"의 근거가 된다.</figcaption>
+</figure>
+
+<h3>6-2. before / after — 상한도 만료도 없는 캐시를 고친다</h3>
+
+<div class="codehead bad"><span class="tag">before</span> 넣기만 하고 빼는 코드가 없는 static 캐시 — 전형적 누수</div>
+<pre><code><span class="ln-bad"><span class="kw">private static final</span> Map&lt;Long, UserSession&gt; CACHE = <span class="kw">new</span> <span class="fn">HashMap</span>&lt;&gt;();</span>
+<span class="kw">public void</span> <span class="fn">onLogin</span>(UserSession s) { CACHE.<span class="fn">put</span>(s.<span class="fn">getUserId</span>(), s); }
+<span class="cm">// static이라 GC의 root에 직접 매달려 있다. 즉 이 Map 안의 모든 세션은</span>
+<span class="cm">// 프로세스가 죽을 때까지 "살아있는 객체"로 판정된다. GC가 손댈 수 없다.</span>
+<span class="cm">// 로그아웃 처리가 어딘가에 있더라도, 비정상 종료·타임아웃 경로에서는 remove가 안 불린다.</span></code></pre>
+
+<div class="codehead good"><span class="tag">after</span> 상한과 만료가 있는 캐시로 교체 (Caffeine 등)</div>
+<pre><code><span class="kw">private static final</span> Cache&lt;Long, UserSession&gt; CACHE = Caffeine.<span class="fn">newBuilder</span>()
+<span class="ln-good">        .<span class="fn">maximumSize</span>(<span class="st">10_000</span>)                      <span class="cm">// 상한 — live set의 최대치를 코드로 못 박는다</span></span>
+<span class="ln-good">        .<span class="fn">expireAfterWrite</span>(Duration.<span class="fn">ofMinutes</span>(<span class="st">30</span>)) <span class="cm">// 만료 — 세션 수명과 캐시 수명을 일치시킨다</span></span>
+        .<span class="fn">build</span>();</code></pre>
+
+<div class="callout ok"><span class="t">고친 것의 본질</span>캐시 라이브러리를 쓴 것이 핵심이 아니다. <b>live set의 상한을 코드에 명시</b>한 것이 핵심이다. <mark>"최악의 경우 이 자료구조가 몇 개까지 커지는가"에 답할 수 없는 컬렉션은 전부 누수 후보</mark>다. 상한을 못 정하겠다면 그건 애초에 <b>메모리에 둘 데이터가 아니다</b>(→ Redis 등 외부로).</div>
+
+<h3>6-3. 누수가 아니라면 — 이건 버그가 아니라 용량 문제다</h3>
+
+<p>덤프에 나온 객체들이 전부 <b>"있어야 할" 객체</b>인 경우가 있다. 캐시 설계상의 크기이고, 실제 동시 세션 수만큼의 세션 객체다. <b>이건 버그가 아니라 용량 문제</b>이고, <b>힙 증설이나 캐시를 외부(Redis 등)로 빼는 구조 변경</b>이 답이다.</p>
+
+<div class="rule">둘을 구분하는 기준은 <u>시간축</u>이다</div>
+
+<figure>
+  <svg viewBox="0 0 880 250" role="img" aria-label="누수와 용량 부족을 시간축으로 구분하는 그래프. 누수는 live set이 시간이 지나도 한계 없이 계속 증가하는 직선이고, 용량 부족은 어느 수준까지 올라간 뒤 평형에 도달해 수평을 유지하는 곡선이다.">
+    <text x="16" y="22" font-size="13" font-weight="700" fill="#1f2937">한 시점의 덤프로는 구분할 수 없다 — <tspan fill="#2563eb">두 번 떠서 기울기를 본다</tspan></text>
+    <line x1="70" y1="200" x2="840" y2="200" stroke="#9ca3af" stroke-width="1.5"/>
+    <line x1="70" y1="44" x2="70" y2="200" stroke="#9ca3af" stroke-width="1.5"/>
+    <text x="60" y="52" font-size="10.4" fill="#6b7280" text-anchor="end">live set</text>
+    <text x="836" y="220" font-size="10.4" fill="#6b7280" text-anchor="end">시간</text>
+    <path d="M70,190 L820,52" fill="none" stroke="#dc2626" stroke-width="2.6"/>
+    <text x="600" y="86" font-size="11.4" font-weight="800" fill="#b91c1c" transform="rotate(-10 600 86)">누수 — 끝없이 자란다</text>
+    <path d="M70,190 C200,170 300,128 420,120 C540,114 700,112 820,112" fill="none" stroke="#16a34a" stroke-width="2.6"/>
+    <text x="620" y="132" font-size="11.4" font-weight="800" fill="#166534">용량 문제 — 어느 선에서 평형</text>
+    <line x1="300" y1="44" x2="300" y2="200" stroke="#2563eb" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <line x1="620" y1="44" x2="620" y2="200" stroke="#2563eb" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <text x="300" y="216" font-size="10.4" font-weight="700" fill="#1d4ed8" text-anchor="middle">1차 덤프</text>
+    <text x="620" y="216" font-size="10.4" font-weight="700" fill="#1d4ed8" text-anchor="middle">2차 덤프 (시차를 두고)</text>
+    <circle cx="300" cy="147" r="4.5" fill="#dc2626"/><circle cx="620" cy="88" r="4.5" fill="#dc2626"/>
+    <circle cx="300" cy="126" r="4.5" fill="#16a34a"/><circle cx="620" cy="113" r="4.5" fill="#16a34a"/>
+    <rect x="70" y="228" width="770" height="0.1" fill="none"/>
+    <text x="440" y="242" font-size="11" font-weight="800" fill="#1f2937" text-anchor="middle">같은 클래스의 retained size가 두 덤프 사이에 늘었는가 — 늘었으면 누수, 그대로면 용량</text>
+  </svg>
+  <figcaption>비교 대상은 <b>"어떤 클래스가 많은가"가 아니라 "무엇이 늘었는가"</b>다. 덤프를 두 번 뜨기 어려우면 <code>jstat</code>의 <b><code>O</code> 컬럼 최저점 추이</b>나 <code>jcmd GC.class_histogram</code> 2회 비교로 대신할 수 있다.</figcaption>
+</figure>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. Step 3-B — 잘 비는 경우: cause로 특이 원인부터 배제</h2>
+
+<p>GC 로그의 각 이벤트에는 <b>원인(cause)</b>이 함께 찍힌다. <b>GC cause란 "이 GC를 촉발한 사건이 무엇인가"를 JVM이 스스로 기록해 둔 라벨</b>이다. 이걸 먼저 읽으면 몇 가지 원인은 <b>추적 없이 즉시 판별</b>된다. <mark>힙 덤프를 뜨기 전에 반드시 확인한다.</mark></p>
+
+<div class="scroll">
+<table>
+  <caption>cause 4종 — 위의 셋은 <b>힙 덤프를 봐도 안 보이는</b> 원인이다</caption>
+  <thead><tr><th>로그의 cause</th><th>의미</th><th>조치 방향</th></tr></thead>
+  <tbody>
+    <tr><td><code>System.gc()</code></td><td>코드나 라이브러리가 <b>GC를 명시적으로 요청</b></td><td>호출부 제거, <code>-XX:+DisableExplicitGC</code></td></tr>
+    <tr><td><code>Metadata GC Threshold</code></td><td><b>Metaspace</b>가 임계치에 도달</td><td>동적 클래스 생성 누수 확인</td></tr>
+    <tr><td><code>G1 Humongous Allocation</code></td><td><b>region 절반 이상 크기</b>의 객체를 할당하려다 실패</td><td>거대 객체 생성부 수정</td></tr>
+    <tr class="hl"><td><code>Allocation Failure</code> / <code>to-space exhausted</code></td><td><b>할당·승격 속도가 GC를 추월</b></td><td>승격 폭주 분석으로 (7-4)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo">
+  <h4>cause 4종을 외우는 네 글자 — <span style="color:#2563eb">시·메·거·할</span></h4>
+  <div class="chain">
+    <span class="chip b"><b>시</b>스템 호출 — <code>System.gc()</code></span><span class="arrow">·</span>
+    <span class="chip b"><b>메</b>타스페이스 — <code>Metadata GC Threshold</code></span><span class="arrow">·</span>
+    <span class="chip b"><b>거</b>대 객체 — <code>G1 Humongous Allocation</code></span><span class="arrow">·</span>
+    <span class="chip b"><b>할</b>당 실패 — <code>Allocation Failure</code> / <code>to-space exhausted</code></span>
+  </div>
+  <p style="margin:8px 0 0;font-size:.95rem">앞의 <b>시·메·거</b> 셋은 <b>덤프에 안 보이는 특이 원인</b>이라 먼저 지운다. 셋 다 아니면 남는 것이 <b>할</b> — <b>승격 폭주</b>다. <mark>즉 cause 읽기는 "특이 원인 셋을 지우는 절차"다.</mark></p>
+</div>
+
+<h3>7-1. <code>System.gc()</code> — 코드가 GC를 직접 부르는 경우</h3>
+
+<div class="cause">
+  <div class="ch">System.gc()</div>
+  <div class="cs">"지금 Full GC를 해 달라"고 JVM에 요청하는 자바 API</div>
+  <p>이 호출이 있으면 <b>힙이 여유롭든 말든 Full GC가 돈다.</b> 직접 짠 코드에 있는 경우는 오히려 찾기 쉽다. 까다로운 것은 <b>라이브러리가 부르는 경우</b>다 — RMI(원격 메서드 호출) 기반 기능은 <b>분산 GC를 위해 주기적으로</b> 호출하고, 다이렉트 버퍼(힙 밖 메모리)를 쓰는 라이브러리가 <b>그 정리를 유도하려고</b> 호출하기도 한다.</p>
+  <div class="callout info" style="margin:10px 0 0"><span class="t">판별 단서는 규칙성이다</span>Full GC가 <b>트래픽과 무관하게 정확히 일정한 시간 간격</b>으로 발생하면 이걸 의심한다. <mark>부하가 원인인 GC는 트래픽 곡선을 따라가지 시계를 따라가지 않는다.</mark></div>
+</div>
+
+<h3>7-2. <code>Metadata GC Threshold</code> — 힙은 멀쩡한데 도는 Full GC</h3>
+
+<div class="cause">
+  <div class="ch">Metadata GC Threshold</div>
+  <div class="cs">Metaspace = 힙과 별개의 영역. <b>클래스의 메타데이터</b>(클래스 구조, 메서드 정보, 상수 풀 등)를 담는다</div>
+  <p>우리가 만드는 객체가 아니라 <b>"클래스 그 자체"</b>가 저장되는 곳이다. 여기가 임계치에 차면 JVM은 <b>Full GC를 돌려 안 쓰는 클래스를 언로드하려고 시도한다.</b> 그래서 <b>힙에는 아무 문제가 없는데 Full GC가 도는</b> 상황이 만들어진다. <mark>이 유형은 힙을 아무리 늘려도 해결되지 않는다.</mark></p>
+  <p>원인은 대개 <b>클래스를 런타임에 계속 만들어 내는 코드</b>다. 리플렉션 프록시, CGLIB 같은 <b>바이트코드 생성 라이브러리</b>, 스크립트 엔진, <b>요청마다 클래스로더를 새로 만드는 구조</b>가 전형이다. <code>jstat</code>의 <b><code>M</code> 컬럼이 우상향</b>이면 이쪽이다.</p>
+</div>
+
+<figure>
+  <svg viewBox="0 0 880 230" role="img" aria-label="Metaspace가 힙 밖에 있음을 보여주는 도식. 힙은 40퍼센트만 사용 중이어서 여유가 있는데도 힙 밖의 Metaspace가 임계치에 도달하면 JVM이 클래스 언로드를 시도하려고 Full GC를 실행한다.">
+    <defs><marker id="m1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker></defs>
+    <text x="16" y="22" font-size="13" font-weight="700" fill="#1f2937">"힙에 여유가 60%나 있는데 왜 Full GC가 돌지?" — <tspan fill="#dc2626">범인이 힙 밖에 있다</tspan></text>
+    <rect x="16" y="36" width="520" height="120" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.7"/>
+    <text x="276" y="58" font-size="11.6" font-weight="800" fill="#1e40af" text-anchor="middle">Java 힙 (GC 옵션 · 힙 덤프의 세계)</text>
+    <rect x="40" y="70" width="472" height="34" rx="6" fill="#ffffff" stroke="#93c5fd" stroke-width="1.3"/>
+    <rect x="40" y="70" width="189" height="34" rx="6" fill="#bfdbfe"/>
+    <text x="134" y="92" font-size="10.6" font-weight="700" fill="#1e40af" text-anchor="middle">사용 중 40%</text>
+    <text x="370" y="92" font-size="10.6" fill="#1e40af" text-anchor="middle">여유 60%</text>
+    <text x="276" y="126" font-size="10.6" fill="#1e40af" text-anchor="middle">힙만 보면 아무 문제가 없다 — <tspan font-weight="800">-Xmx를 올려도 소용없는 이유</tspan></text>
+    <text x="276" y="146" font-size="10.4" fill="#1e40af" text-anchor="middle">힙 덤프를 떠도 여기에는 원인이 없다</text>
+
+    <rect x="560" y="36" width="304" height="120" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.7"/>
+    <text x="712" y="58" font-size="11.6" font-weight="800" fill="#92400e" text-anchor="middle">Metaspace (힙 밖)</text>
+    <rect x="584" y="70" width="256" height="34" rx="6" fill="#ffffff" stroke="#fcd34d" stroke-width="1.3"/>
+    <rect x="584" y="70" width="243" height="34" rx="6" fill="#fde68a"/>
+    <text x="706" y="92" font-size="10.6" font-weight="800" fill="#92400e" text-anchor="middle">클래스 메타데이터로 가득 참</text>
+    <text x="712" y="126" font-size="10.6" fill="#92400e" text-anchor="middle">동적 프록시 · CGLIB · 스크립트 엔진</text>
+    <text x="712" y="146" font-size="10.4" font-weight="700" fill="#92400e" text-anchor="middle">jstat의 M 컬럼이 계속 우상향</text>
+
+    <path d="M712,158 L712,178" stroke="#dc2626" stroke-width="2.2" marker-end="url(#m1)"/>
+    <rect x="200" y="182" width="624" height="38" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="1.7"/>
+    <text x="512" y="198" font-size="11.4" font-weight="800" fill="#b91c1c" text-anchor="middle">JVM: "안 쓰는 클래스를 언로드해 보자" → Full GC 실행 (cause: Metadata GC Threshold)</text>
+    <text x="512" y="214" font-size="10.4" fill="#b91c1c" text-anchor="middle">힙 전체가 STW로 멈춘다 — 힙이 원인이 아닌데도</text>
+  </svg>
+  <figcaption>이 도식이 답해 주는 꼬리질문이 하나 있다 — <b>"힙을 2배로 늘렸는데 왜 그대로냐"</b>. <mark>트리거가 힙 안에 없으면 힙 크기는 아무 상관이 없다.</mark></figcaption>
+</figure>
+
+<h3>7-3. <code>G1 Humongous Allocation</code> — 거대 객체</h3>
+
+<div class="cause">
+  <div class="ch">G1 Humongous Allocation</div>
+  <div class="cs">G1은 힙을 <b>region</b>이라는 같은 크기의 조각(보통 1~32MB) 수천 개로 나눠 관리한다</div>
+  <p>이때 <b>크기가 region 하나의 절반 이상인 객체를 humongous(거대) 객체</b>라고 부르고 특별 취급한다. 일반 region에 안 들어가므로 <b>연속된 region 여러 개를 이어 붙여</b> 담는다.</p>
+  <p><b>문제는 "연속된"이다.</b> 힙에 빈 공간이 총 20MB 있어도 <b>여기저기 흩어져 있으면</b> 10MB짜리 객체는 못 들어간다. 그래서 humongous 할당은 <mark>힙에 여유가 있어 보이는데도 Full GC를 부르는</mark> 대표적 원인이 된다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="G1 region 배치와 humongous 할당 실패 도식. 왼쪽은 빈 region이 힙 곳곳에 흩어져 있어 총 여유 공간은 충분하지만 연속된 네 개의 region을 확보할 수 없어 거대 객체 할당이 실패하는 상황이고, 오른쪽은 같은 양의 빈 공간이 연속으로 모여 있어 할당에 성공하는 상황이다.">
+    <defs>
+      <marker id="h1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="h2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="14" font-weight="700" fill="#1f2937">"총량"의 문제가 아니라 <tspan fill="#dc2626">"연속 공간"</tspan>의 문제다</text>
+
+    <rect x="24" y="36" width="524" height="272" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="286" y="58" font-size="12.2" font-weight="800" fill="#b91c1c" text-anchor="middle">빈 region이 흩어져 있다 → 할당 실패</text>
+    <g>
+      <rect x="48" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="94" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="140" y="72" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/><rect x="186" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="232" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="278" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="324" y="72" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/><rect x="370" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="416" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="462" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="48" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="94" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="140" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="186" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="232" y="104" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/><rect x="278" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="324" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="370" y="104" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/>
+      <rect x="416" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="462" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="48" y="136" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/><rect x="94" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="140" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="186" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="232" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="278" y="136" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/>
+      <rect x="324" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="370" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="416" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="462" y="136" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/>
+    </g>
+    <text x="286" y="180" font-size="10.6" fill="#7f1d1d" text-anchor="middle">회색 = 사용 중 · 흰색 = 빈 region (총 여유는 충분하다)</text>
+    <rect x="140" y="196" width="180" height="26" rx="4" fill="#fecaca" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="230" y="214" font-size="10.6" font-weight="800" fill="#7f1d1d" text-anchor="middle">humongous 객체 (연속 4칸 필요)</text>
+    <line x1="330" y1="196" x2="360" y2="222" stroke="#dc2626" stroke-width="3"/>
+    <line x1="360" y1="196" x2="330" y2="222" stroke="#dc2626" stroke-width="3"/>
+    <text x="286" y="248" font-size="11.6" font-weight="800" fill="#b91c1c" text-anchor="middle">어디에도 연속 4칸이 없다 → 할당 실패</text>
+    <text x="286" y="268" font-size="10.8" fill="#b91c1c" text-anchor="middle">JVM: "공간을 만들어야 한다" → Full GC (compaction)</text>
+    <text x="286" y="290" font-size="10.8" font-weight="700" fill="#7f1d1d" text-anchor="middle">cause: G1 Humongous Allocation</text>
+
+    <rect x="572" y="36" width="524" height="272" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="834" y="58" font-size="12.2" font-weight="800" fill="#166534" text-anchor="middle">연속 공간이 있다 → 할당 성공</text>
+    <g>
+      <rect x="596" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="642" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="688" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="734" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="780" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="826" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="872" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="918" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="964" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="1010" y="72" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="596" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="642" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="688" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="734" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="780" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="826" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="872" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="918" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="964" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="1010" y="104" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="596" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="642" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="688" y="136" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/><rect x="734" y="136" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/>
+      <rect x="780" y="136" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/><rect x="826" y="136" width="42" height="26" rx="3" fill="#ffffff" stroke="#94a3b8"/>
+      <rect x="872" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="918" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/>
+      <rect x="964" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/><rect x="1010" y="136" width="42" height="26" rx="3" fill="#cbd5e1"/>
+    </g>
+    <text x="834" y="180" font-size="10.6" fill="#14532d" text-anchor="middle">같은 양의 여유가 <tspan font-weight="800">연속으로</tspan> 모여 있다</text>
+    <rect x="688" y="196" width="180" height="26" rx="4" fill="#bbf7d0" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="778" y="214" font-size="10.6" font-weight="800" fill="#14532d" text-anchor="middle">humongous 객체 (연속 4칸)</text>
+    <path d="M778,190 L778,172" stroke="#16a34a" stroke-width="2.2" marker-end="url(#h2)"/>
+    <text x="834" y="248" font-size="11.6" font-weight="800" fill="#166534" text-anchor="middle">그대로 들어간다 → Full GC 불필요</text>
+    <text x="834" y="270" font-size="10.8" fill="#166534" text-anchor="middle">근본 조치는 <tspan font-weight="800">그런 객체를 만들지 않는 것</tspan> — 스트리밍 · 페이징</text>
+    <text x="834" y="290" font-size="10.8" fill="#166534" text-anchor="middle">-XX:G1HeapRegionSize를 키우는 것은 판정 경계를 올리는 <tspan font-weight="700">시간 벌기</tspan></text>
+  </svg>
+  <figcaption>전형적인 발생원은 <b>파일을 통째로 읽은 바이트 배열</b>, <b>수십만 건 조회 결과 리스트</b>, <b>거대한 응답 JSON 문자열</b>이다. 셋 다 <mark>"한 번에 다 들고 있으려는" 코드</mark>라는 공통점이 있다.</figcaption>
+</figure>
+
+<h3>7-4. <code>Allocation Failure</code> / <code>to-space exhausted</code> — 승격 폭주</h3>
+
+<div class="grid g2">
+  <div class="tile"><div class="k">Allocation Failure</div><div class="d">"<b>새 객체를 할당할 공간이 없어서 GC를 시작했다</b>"는 뜻으로, <b>GC의 가장 평범한 이유</b>다. 이것만으로는 정보가 별로 없다.</div></div>
+  <div class="tile red"><div class="k">to-space exhausted</div><div class="d">"<b>옮겨 갈 공간 고갈</b>". G1은 살아있는 객체를 다른 region으로 <b>복사해</b> 수거하는데, <b>복사해 넣을 빈 region이 없어 실패</b>했다는 뜻이다. 이것을 <b>evacuation failure</b>, Young→Old 승격 중 실패면 <b>promotion failure</b>라 부른다. <b>Full GC로 떨어지는 직행 경로.</b></div></div>
+</div>
+
+<p>특이 원인이 전부 아니라면 남는 것은 <b>승격 폭주</b> — <b>객체가 Young에서 충분히 죽지 못하고 Old로 밀려 들어가는 상황</b>이다.</p>
+
+<p>왜 이게 문제인가. §1에서 본 대로 <b>Young 수거는 "대부분 죽는다"는 전제 위에서 싸게 동작</b>한다. 그런데 객체가 <b>Young GC 몇 번을 버틸 만큼 오래 참조되고 있으면</b> JVM은 "이건 오래 살 객체구나"로 판단해 <b>Old로 승격</b>시킨다. <mark>실제로는 곧 죽을 객체인데도 말이다.</mark> 그렇게 Old가 <b>죽을 객체로</b> 빠르게 차고, Old를 비우려면 무거운 GC가 필요해진다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 350" role="img" aria-label="승격 폭주 메커니즘 도식. 위쪽은 대량 조회 결과를 하나의 리스트로 들고 있어 여러 번의 Young GC를 거치는 동안 계속 참조되어 살아남고 결국 Old로 승격된 뒤 메서드가 끝나 전부 죽는 경우이고, 아래쪽은 페이지 단위로 끊어 처리해 각 페이지 참조가 다음 Young GC 전에 사라져 Young에서 회수되는 경우다.">
+    <defs>
+      <marker id="p1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="p2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="14" font-weight="700" fill="#1f2937">같은 데이터, 같은 총량 — <tspan fill="#dc2626">참조를 얼마나 오래 붙잡고 있느냐</tspan>가 승격을 가른다</text>
+
+    <rect x="24" y="36" width="1072" height="146" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="44" y="58" font-size="11.6" font-weight="800" fill="#b91c1c">before — 50만 건을 한 번에 메모리로 올린다</text>
+    <line x1="150" y1="112" x2="1010" y2="112" stroke="#9ca3af" stroke-width="1.4"/>
+    <text x="1064" y="116" font-size="10" fill="#6b7280" text-anchor="end">시간</text>
+    <g stroke="#2563eb" stroke-width="1.4" stroke-dasharray="4 3">
+      <line x1="300" y1="80" x2="300" y2="132"/><line x1="450" y1="80" x2="450" y2="132"/>
+      <line x1="600" y1="80" x2="600" y2="132"/><line x1="750" y1="80" x2="750" y2="132"/>
+    </g>
+    <text x="300" y="76" font-size="9.4" fill="#1d4ed8" text-anchor="middle">Young GC</text>
+    <text x="450" y="76" font-size="9.4" fill="#1d4ed8" text-anchor="middle">Young GC</text>
+    <text x="600" y="76" font-size="9.4" fill="#1d4ed8" text-anchor="middle">Young GC</text>
+    <text x="750" y="76" font-size="9.4" fill="#1d4ed8" text-anchor="middle">Young GC</text>
+    <rect x="170" y="98" width="660" height="20" rx="5" fill="#fca5a5" stroke="#dc2626" stroke-width="1.4"/>
+    <text x="500" y="112" font-size="10.4" font-weight="800" fill="#7f1d1d" text-anchor="middle" class="mono">List&lt;Order&gt; all — 메서드가 끝날 때까지 참조가 살아 있다</text>
+    <text x="300" y="146" font-size="9.6" fill="#b91c1c" text-anchor="middle">살아남음 age+1</text>
+    <text x="450" y="146" font-size="9.6" fill="#b91c1c" text-anchor="middle">살아남음 age+1</text>
+    <text x="600" y="146" font-size="9.6" fill="#b91c1c" text-anchor="middle">살아남음 age+1</text>
+    <text x="750" y="146" font-size="9.6" font-weight="800" fill="#7f1d1d" text-anchor="middle">임계 나이 도달</text>
+    <path d="M750,152 L750,166" stroke="#dc2626" stroke-width="2.2" marker-end="url(#p1)"/>
+    <rect x="596" y="168" width="308" height="0.1" fill="none"/>
+    <text x="750" y="178" font-size="11" font-weight="800" fill="#b91c1c" text-anchor="middle">→ Old로 승격 (곧 죽을 객체인데도)</text>
+    <text x="948" y="112" font-size="10" font-weight="700" fill="#7f1d1d" text-anchor="middle">메서드 종료</text>
+    <text x="948" y="128" font-size="9.6" fill="#7f1d1d" text-anchor="middle">전부 쓰레기가 되지만</text>
+    <text x="948" y="142" font-size="9.6" font-weight="800" fill="#7f1d1d" text-anchor="middle">이미 Old에 있다</text>
+
+    <rect x="24" y="192" width="1072" height="146" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="44" y="214" font-size="11.6" font-weight="800" fill="#166534">after — 1000건씩 페이지 단위로 끊어 처리한다</text>
+    <line x1="150" y1="268" x2="1010" y2="268" stroke="#9ca3af" stroke-width="1.4"/>
+    <text x="1064" y="272" font-size="10" fill="#6b7280" text-anchor="end">시간</text>
+    <g stroke="#2563eb" stroke-width="1.4" stroke-dasharray="4 3">
+      <line x1="300" y1="236" x2="300" y2="288"/><line x1="450" y1="236" x2="450" y2="288"/>
+      <line x1="600" y1="236" x2="600" y2="288"/><line x1="750" y1="236" x2="750" y2="288"/>
+    </g>
+    <text x="300" y="232" font-size="9.4" fill="#1d4ed8" text-anchor="middle">Young GC</text>
+    <text x="450" y="232" font-size="9.4" fill="#1d4ed8" text-anchor="middle">Young GC</text>
+    <text x="600" y="232" font-size="9.4" fill="#1d4ed8" text-anchor="middle">Young GC</text>
+    <text x="750" y="232" font-size="9.4" fill="#1d4ed8" text-anchor="middle">Young GC</text>
+    <rect x="170" y="254" width="112" height="20" rx="5" fill="#86efac" stroke="#16a34a" stroke-width="1.3"/>
+    <text x="226" y="268" font-size="9.4" fill="#14532d" text-anchor="middle" class="mono">page 1</text>
+    <rect x="318" y="254" width="112" height="20" rx="5" fill="#86efac" stroke="#16a34a" stroke-width="1.3"/>
+    <text x="374" y="268" font-size="9.4" fill="#14532d" text-anchor="middle" class="mono">page 2</text>
+    <rect x="468" y="254" width="112" height="20" rx="5" fill="#86efac" stroke="#16a34a" stroke-width="1.3"/>
+    <text x="524" y="268" font-size="9.4" fill="#14532d" text-anchor="middle" class="mono">page 3</text>
+    <rect x="618" y="254" width="112" height="20" rx="5" fill="#86efac" stroke="#16a34a" stroke-width="1.3"/>
+    <text x="674" y="268" font-size="9.4" fill="#14532d" text-anchor="middle" class="mono">page 4</text>
+    <rect x="768" y="254" width="112" height="20" rx="5" fill="#86efac" stroke="#16a34a" stroke-width="1.3"/>
+    <text x="824" y="268" font-size="9.4" fill="#14532d" text-anchor="middle" class="mono">page 5</text>
+    <text x="500" y="300" font-size="10.4" fill="#166534" text-anchor="middle">각 페이지의 참조는 <tspan font-weight="800">다음 Young GC가 오기 전에 스코프를 벗어난다</tspan></text>
+    <text x="500" y="318" font-size="11.2" font-weight="800" fill="#14532d" text-anchor="middle">→ Young에서 곧바로 회수 · Old 유입 없음 · 처리하는 총 건수는 동일</text>
+  </svg>
+  <figcaption>핵심은 <b>"총 데이터 양"이 아니라 "동시에 참조하고 있는 양과 그 지속 시간"</b>이다. <mark>Young GC 한 사이클보다 짧게 살면 Old에 갈 일이 없다.</mark></figcaption>
+</figure>
+
+<div class="codehead bad"><span class="tag">before</span> 요청 하나가 수십만 row를 한 번에 메모리로 올린다</div>
+<pre><code><span class="ln-bad">List&lt;Order&gt; all = orderRepository.<span class="fn">findAllByMonth</span>(month);  <span class="cm">// 50만 건</span></span>
+<span class="kw">return</span> all.<span class="fn">stream</span>().<span class="fn">map</span>(<span class="kw">this</span>::toDto).<span class="fn">toList</span>();
+<span class="cm">// 이 리스트는 메서드가 끝날 때까지 참조가 살아 있다.</span>
+<span class="cm">// 그동안 Young GC가 여러 번 돌고, 그때마다 이 50만 건이 "아직 살아있음"으로</span>
+<span class="cm">// 판정돼 결국 전부 Old로 승격된다. 잠시 뒤 전부 죽을 객체인데도.</span></code></pre>
+
+<div class="codehead good"><span class="tag">after</span> 페이지 단위로 끊어 처리한다</div>
+<pre><code>Page&lt;Order&gt; page;
+Pageable pageable = PageRequest.<span class="fn">of</span>(<span class="st">0</span>, <span class="st">1000</span>);
+<span class="kw">do</span> {
+<span class="ln-good">    page = orderRepository.<span class="fn">findAllByMonth</span>(month, pageable);</span>
+<span class="ln-good">    <span class="fn">process</span>(page.<span class="fn">getContent</span>());</span>
+    <span class="cm">// 이 스코프를 벗어나면 이번 페이지를 가리키는 참조가 사라진다.</span>
+    <span class="cm">// 다음 Young GC에서 곧바로 회수되므로 Old로 올라갈 일이 없다.</span>
+    pageable = pageable.<span class="fn">next</span>();
+} <span class="kw">while</span> (page.<span class="fn">hasNext</span>());</code></pre>
+
+<div class="memo red">
+  <h4>승격 폭주의 전형적 범인 셋</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">대량 배치 처리</div><div class="d">전체를 리스트로 읽어 한 번에 돌린다. <b>페이징·스트리밍</b>으로.</div></div>
+    <div class="tile red"><div class="k">응답 전체를 모으는 API</div><div class="d">JSON을 통째로 만들어 반환. <b>스트리밍 응답·페이지 API</b>로.</div></div>
+    <div class="tile red"><div class="k">수명이 어중간한 캐시</div><div class="d"><b>수 초~수 분</b>. Old에 있을 이유는 없는데 <b>Young에서 죽기엔 너무 길다.</b> 가장 까다롭다.</div></div>
+  </div>
+  <p style="margin:10px 0 0;font-size:.95rem">세 번째가 특히 어려운 이유는 <mark>"어중간한 수명"은 세대 가설(대부분 금방 죽는다 / 살면 오래 산다)의 사각지대</mark>이기 때문이다. 아주 짧게 만들거나(요청 스코프), 아주 길게 만들거나(장기 캐시로 승격을 인정), 아예 <b>힙 밖(Redis)으로</b> 빼는 셋 중 하나를 고른다.</p>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. Step 4 — 조치, 그리고 코드가 1순위인 이유</h2>
+
+<div class="scroll">
+<table>
+  <caption>원인이 확정된 뒤에야 조치를 고른다 — <b>같은 증상에 정답이 여섯 가지</b>다</caption>
+  <thead><tr><th>판별된 원인</th><th>조치</th><th>튜닝으로 되나?</th></tr></thead>
+  <tbody>
+    <tr><td><b>메모리 누수</b></td><td>코드 수정</td><td class="bad">절대 안 됨</td></tr>
+    <tr><td><b>승격 폭주</b></td><td><b>대량 로딩 코드 수정이 먼저</b>, 그다음에야 Young 영역 조정</td><td class="bad">보조만</td></tr>
+    <tr><td><b>진짜 용량 부족</b></td><td>힙 증설 또는 구조 변경(캐시를 Redis 등 외부로)</td><td class="good">여기가 튜닝의 영역</td></tr>
+    <tr><td><code>System.gc()</code></td><td>호출부 제거 또는 <code>-XX:+DisableExplicitGC</code></td><td class="bad">호출을 막는 것일 뿐</td></tr>
+    <tr><td><b>Metaspace</b></td><td>동적 클래스 생성 지점 수정</td><td class="bad">힙 옵션 무관</td></tr>
+    <tr><td><b>humongous</b></td><td>거대 객체를 만들지 않도록 <b>스트리밍·페이징</b>으로 전환</td><td class="bad">region 크기는 시간 벌기</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>8-1. 왜 코드가 1순위이고 튜닝이 2순위인가 — 결론이 아니라 근거부터</h3>
+
+<p>결론부터 외우지 말고 이유부터 보자. 근거는 <b>GC의 능력 범위</b>에 있다.</p>
+
+<div class="split">
+  <div class="pane b"><h4>사실 ① GC가 할 수 있는 일은 하나뿐</h4>
+    <p style="margin:0;font-size:.95rem"><b>"죽은 객체를 회수하는 것"</b>이 전부다. 어떤 객체가 <b>root(스레드 스택, static 필드 등)에서 참조로 닿을 수 있으면</b> GC는 그 객체를 <b>절대 건드리지 않는다.</b> 그것이 GC의 계약이고, <b>어겼다가는 프로그램이 깨진다.</b></p>
+  </div>
+  <div class="pane b"><h4>사실 ② 옵션이 바꾸는 것은 생사가 아니다</h4>
+    <p style="margin:0;font-size:.95rem">GC 옵션이 바꾸는 것은 <b>"GC가 일하는 방식·시점·예산"</b>이다. 힙 크기를 키우면 GC 간격이 늘고, pause 목표를 낮추면 GC가 잘게 자주 돈다. 하지만 <b>어떤 옵션도 살아있는 객체를 죽여 주지는 않는다.</b></p>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 342" role="img" aria-label="GC의 능력 범위와 옵션의 작용 범위 도식. GC는 죽은 객체만 회수할 수 있고 살아있는 객체는 계약상 건드리지 못한다. GC 옵션은 GC가 일하는 방식과 시점과 예산만 조절할 뿐 객체의 생사에는 관여하지 못하므로, 죽어야 할 객체가 안 죽는 문제는 코드로만 풀리고 자원과 설정이 부족한 문제만 튜닝의 영역이다.">
+    <defs>
+      <marker id="c1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="c2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="24" y="24" font-size="14" font-weight="700" fill="#1f2937">"코드가 1순위"는 규칙이 아니라 <tspan fill="#2563eb">GC의 능력 범위에서 따라 나오는 결론</tspan>이다</text>
+
+    <!-- band 1 : objects -->
+    <rect x="24" y="38" width="524" height="86" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.8"/>
+    <text x="286" y="60" font-size="12" font-weight="800" fill="#166534" text-anchor="middle">죽은 객체 — 루트에서 못 닿는다</text>
+    <circle cx="120" cy="86" r="7" fill="#cbd5e1"/><circle cx="150" cy="98" r="7" fill="#cbd5e1"/><circle cx="180" cy="84" r="7" fill="#cbd5e1"/>
+    <circle cx="210" cy="98" r="7" fill="#cbd5e1"/><circle cx="240" cy="86" r="7" fill="#cbd5e1"/>
+    <text x="380" y="86" font-size="11.4" font-weight="800" fill="#166534" text-anchor="middle">GC가 회수할 수 있다</text>
+    <text x="380" y="104" font-size="10.4" fill="#166534" text-anchor="middle">이것이 GC가 하는 일의 전부</text>
+
+    <rect x="572" y="38" width="524" height="86" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="1.8"/>
+    <text x="834" y="60" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">살아있는 객체 — 루트에서 닿는다</text>
+    <circle cx="668" cy="86" r="7" fill="#dc2626"/><circle cx="698" cy="98" r="7" fill="#dc2626"/><circle cx="728" cy="84" r="7" fill="#dc2626"/>
+    <circle cx="758" cy="98" r="7" fill="#dc2626"/><circle cx="788" cy="86" r="7" fill="#dc2626"/>
+    <text x="932" y="86" font-size="11.4" font-weight="800" fill="#b91c1c" text-anchor="middle">GC는 절대 건드리지 않는다</text>
+    <text x="932" y="104" font-size="10.4" fill="#b91c1c" text-anchor="middle">건드리면 프로그램이 깨진다 (계약)</text>
+
+    <!-- band 2 : options -->
+    <rect x="24" y="140" width="1072" height="82" rx="11" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="140" y="164" font-size="11.4" font-weight="800" fill="#334155">GC 옵션이 바꾸는 것</text>
+    <rect x="270" y="150" width="132" height="30" rx="7" fill="#ffffff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="336" y="170" font-size="9.8" fill="#1e40af" text-anchor="middle" class="mono">-Xms / -Xmx</text>
+    <rect x="414" y="150" width="152" height="30" rx="7" fill="#ffffff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="490" y="170" font-size="9.8" fill="#1e40af" text-anchor="middle" class="mono">MaxGCPauseMillis</text>
+    <rect x="578" y="150" width="176" height="30" rx="7" fill="#ffffff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="666" y="170" font-size="9.8" fill="#1e40af" text-anchor="middle" class="mono">InitiatingHeapOccupancy…</text>
+    <rect x="766" y="150" width="160" height="30" rx="7" fill="#ffffff" stroke="#2563eb" stroke-width="1.3"/>
+    <text x="846" y="170" font-size="9.8" fill="#1e40af" text-anchor="middle" class="mono">G1HeapRegionSize</text>
+    <text x="560" y="200" font-size="11" font-weight="800" fill="#334155" text-anchor="middle">= GC가 <tspan fill="#2563eb">일하는 방식 · 시점 · 예산</tspan>만 조절한다</text>
+    <text x="560" y="215" font-size="10.4" fill="#64748b" text-anchor="middle">간격이 늘거나, 잘게 자주 돌거나, 더 일찍 시작하거나</text>
+    <path d="M286,138 L286,110" stroke="#16a34a" stroke-width="2" marker-end="url(#c1)"/>
+    <text x="300" y="132" font-size="9.6" font-weight="700" fill="#166534">여기까지</text>
+    <path d="M834,138 L834,112" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4"/>
+    <line x1="824" y1="118" x2="844" y2="132" stroke="#dc2626" stroke-width="2.6"/>
+    <line x1="844" y1="118" x2="824" y2="132" stroke="#dc2626" stroke-width="2.6"/>
+    <text x="860" y="132" font-size="9.6" font-weight="700" fill="#b91c1c">생사에는 관여 못 함</text>
+
+    <!-- band 3 : conclusion -->
+    <path d="M286,224 L286,244" stroke="#475569" stroke-width="2" marker-end="url(#c1)"/>
+    <path d="M834,224 L834,244" stroke="#475569" stroke-width="2" marker-end="url(#c2)"/>
+    <rect x="24" y="248" width="524" height="86" rx="11" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
+    <text x="286" y="270" font-size="12" font-weight="800" fill="#166534" text-anchor="middle">살아야 할 객체를 다룰 자원·설정이 부족하다</text>
+    <text x="286" y="290" font-size="10.6" fill="#166534" text-anchor="middle">live set이 정당하게 큰데 힙이 작다 / pause 목표가 워크로드와 안 맞는다</text>
+    <text x="286" y="316" font-size="12.4" font-weight="800" fill="#14532d" text-anchor="middle">→ 여기가 튜닝의 영역</text>
+
+    <rect x="572" y="248" width="524" height="86" rx="11" fill="#ffffff" stroke="#dc2626" stroke-width="2"/>
+    <text x="834" y="270" font-size="12" font-weight="800" fill="#b91c1c" text-anchor="middle">죽어야 할 객체가 안 죽고 있다</text>
+    <text x="834" y="290" font-size="10.6" fill="#b91c1c" text-anchor="middle">누수 · 대량 일괄 로딩 · 거대 객체 생성 · 불필요한 System.gc()</text>
+    <text x="834" y="316" font-size="12.4" font-weight="800" fill="#7f1d1d" text-anchor="middle">→ 참조를 끊을 수 있는 것은 코드뿐</text>
+  </svg>
+  <figcaption>이 그림이 <b>시니어 변별 질문("어디까지 튜닝이고 어디부터 코드인가")의 답 전체</b>다. <mark>규칙을 외운 사람은 "누수는 코드로 고쳐야 한다"고 말하고, 유도할 줄 아는 사람은 "GC가 살아있는 객체를 못 치우니까 정의상 코드다"라고 말한다.</mark></figcaption>
+</figure>
+
+<div class="callout trap"><span class="t">누수 상황에서 힙을 두 배로 늘리면 무슨 일이 벌어지나</span>live set은 계속 자라므로 <b>차는 데 걸리는 시간만 두 배</b>가 된다. <b>장애가 사라진 게 아니라 다음 장애 시각이 뒤로 밀린 것</b>이다. 그동안 지표는 좋아 보이니 <b>아무도 코드를 안 고치고, 결국 새벽에 터진다.</b></div>
+
+<div class="memo green">
+  <h4>그래서 순서는 항상 이것</h4>
+  <div class="chain">
+    <span class="chip b">원인 규명</span><span class="arrow">→</span>
+    <span class="chip r">코드 수정</span><span class="arrow">→</span>
+    <span class="chip g">그래도 남는 부분을 튜닝</span>
+  </div>
+  <p style="margin:8px 0 0;font-size:.95rem">다만 실무에서는 <b>택일이 아니라 시간차 병행</b>인 경우가 많다 — <mark>즉시 완화는 튜닝으로, 근본 조치는 코드로</mark> 하고, <b>튜닝으로 번 시간에 코드를 고친다.</b> 이때 <b>완화 시점에 코드 수정 티켓과 기한을 함께 남기는 것</b>까지가 한 세트다. 지표가 좋아지면 근본 조치는 잊히기 때문이다.</p>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 튜닝 절차 — 철칙 셋과 손잡이 다섯</h2>
+
+<p>여기부터는 <b>원인을 안 뒤에 하는 일</b>이다. 순서가 뒤집히면 §8의 도식대로 <b>아무 효과가 없거나, 효과가 있어 보이는 착시만 남는다.</b></p>
+
+<div class="memo green">
+  <h4>튜닝의 철칙 셋 — 하나라도 어기면 결과를 해석할 수 없다</h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k">① 목표 지표를 먼저 정한다</div><div class="d">"<b>p99 pause 200ms 이하</b>"인지 "<b>배치 전체 처리량 최대</b>"인지에 따라 <b>손잡이를 돌리는 방향이 정반대</b>다.</div></div>
+    <div class="tile ok"><div class="k">② 한 번에 하나만 바꾼다</div><div class="d">두 개를 같이 바꾸면 <b>무엇이 효과였는지 영영 알 수 없다.</b> 다음번에 재사용할 지식이 하나도 안 남는다.</div></div>
+    <div class="tile ok"><div class="k">③ 같은 부하로 재측정한다</div><div class="d">트래픽이 다른 시간대끼리 비교하면 <b>결론이 오염된다.</b> <b>JIT 워밍업 구간</b>도 측정에서 뺀다.</div></div>
+  </div>
+</div>
+
+<h3>9-1. 목표가 정반대면 조치도 정반대다</h3>
+
+<p><b>지연이 목표면</b> pause 목표를 줄인다 — GC가 <b>잘게 자주</b> 돈다. <b>처리량이 목표면</b> GC 빈도를 줄인다 — <b>한 번의 pause가 길어진다.</b> <mark>목표 없이 튜닝하면 한쪽을 개선하면서 다른 쪽을 망가뜨리고도 모른다.</mark></p>
+
+<figure>
+  <svg viewBox="0 0 880 236" role="img" aria-label="지연 우선과 처리량 우선의 GC 패턴 비교. 지연 우선은 짧은 정지가 자주 발생해 최대 정지 시간은 짧지만 총 GC 오버헤드가 커지고, 처리량 우선은 정지 횟수가 적은 대신 한 번의 정지가 길어져 p99 응답시간이 나빠진다.">
+    <text x="16" y="22" font-size="13" font-weight="700" fill="#1f2937">같은 워크로드, 같은 총 회수량 — <tspan fill="#2563eb">어떻게 나눠 멈출 것인가</tspan>의 선택</text>
+
+    <rect x="16" y="34" width="848" height="88" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="1.6"/>
+    <text x="36" y="55" font-size="11.4" font-weight="800" fill="#1e40af">지연 우선 — pause 목표를 낮춘다</text>
+    <line x1="36" y1="96" x2="700" y2="96" stroke="#9ca3af" stroke-width="1.3"/>
+    <g fill="#2563eb">
+      <rect x="70" y="82" width="9" height="14" rx="2"/><rect x="118" y="82" width="9" height="14" rx="2"/><rect x="166" y="82" width="9" height="14" rx="2"/>
+      <rect x="214" y="82" width="9" height="14" rx="2"/><rect x="262" y="82" width="9" height="14" rx="2"/><rect x="310" y="82" width="9" height="14" rx="2"/>
+      <rect x="358" y="82" width="9" height="14" rx="2"/><rect x="406" y="82" width="9" height="14" rx="2"/><rect x="454" y="82" width="9" height="14" rx="2"/>
+      <rect x="502" y="82" width="9" height="14" rx="2"/><rect x="550" y="82" width="9" height="14" rx="2"/><rect x="598" y="82" width="9" height="14" rx="2"/>
+      <rect x="646" y="82" width="9" height="14" rx="2"/>
+    </g>
+    <text x="720" y="82" font-size="10.4" font-weight="700" fill="#166534">최대 pause 짧음</text>
+    <text x="720" y="98" font-size="10.4" fill="#b91c1c">총 GC 오버헤드 증가</text>
+    <text x="720" y="114" font-size="10.4" fill="#1e40af">→ p99가 중요한 API 서버</text>
+    <text x="36" y="114" font-size="10.2" fill="#1e40af">짧게 자주 멈춘다</text>
+
+    <rect x="16" y="132" width="848" height="88" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.6"/>
+    <text x="36" y="153" font-size="11.4" font-weight="800" fill="#92400e">처리량 우선 — GC 빈도를 줄인다</text>
+    <line x1="36" y1="194" x2="700" y2="194" stroke="#9ca3af" stroke-width="1.3"/>
+    <g fill="#d97706">
+      <rect x="120" y="172" width="40" height="22" rx="3"/><rect x="300" y="172" width="40" height="22" rx="3"/>
+      <rect x="480" y="172" width="40" height="22" rx="3"/><rect x="640" y="172" width="40" height="22" rx="3"/>
+    </g>
+    <text x="720" y="180" font-size="10.4" font-weight="700" fill="#166534">총 오버헤드 낮음</text>
+    <text x="720" y="196" font-size="10.4" fill="#b91c1c">한 번의 pause가 길다</text>
+    <text x="720" y="212" font-size="10.4" fill="#92400e">→ 야간 배치 · 데이터 처리</text>
+    <text x="36" y="212" font-size="10.2" fill="#92400e">길게 가끔 멈춘다</text>
+  </svg>
+  <figcaption>"GC 횟수를 줄였다"가 <b>개선인지 개악인지는 목표에 달려 있다.</b> <mark>목표 지표를 먼저 문장으로 적어 두지 않으면, 나중에 자기가 개선한 건지 망친 건지도 판단할 수 없다.</mark></figcaption>
+</figure>
+
+<div class="callout warn"><span class="t">JIT 워밍업 구간을 측정에 넣지 않는다</span>JVM은 기동 직후 코드를 <b>인터프리터로 실행</b>하다가 자주 쓰이는 코드만 <b>기계어로 컴파일</b>한다. 그래서 <b>처음 몇 분은 정상 상태보다 느리고 객체 생성 패턴도 다르다.</b> 이 구간을 포함해 측정하면 <b>튜닝 전후 비교가 통째로 오염된다.</b></div>
+
+<h3>9-2. 자주 만지는 손잡이 다섯 (G1 기준)</h3>
+
+<p>각 옵션이 <b>무엇을 조절하는 손잡이인지</b> 한 줄로 이해하고 쓴다. <b>이름을 아는 것과 무엇을 돌리는지 아는 것은 다르다.</b></p>
+
+<div class="knob">
+  <div class="kn">-Xms = -Xmx</div>
+  <div class="what">힙 시작 크기 = 최대 크기 · <b>힙 크기를 고정</b></div>
+  <p>기본 동작은 필요에 따라 <b>힙을 늘렸다 줄였다</b> 하는 것인데, 그 <b>리사이즈 자체에 비용</b>이 들고 GC 동작도 불안정해진다. <b>둘을 같은 값으로 못 박는 것이 운영 서버의 기본기</b>다.</p>
+</div>
+
+<div class="knob">
+  <div class="kn">-XX:MaxGCPauseMillis</div>
+  <div class="what">pause 목표 · 기본값 200ms</div>
+  <p>G1에게 "<b>한 번의 STW를 이 시간 안에 끝내 달라</b>"고 <b>목표를 제시</b>한다. G1은 이 목표에 맞춰 <b>다음 GC에서 처리할 region 개수를 스스로 조절</b>한다. <mark>명령이 아니라 목표</mark>라는 점이 중요하다 — <b>지켜지지 않을 수 있고</b>, 너무 낮게 잡으면 <b>GC가 잘게 자주 돌아 처리량이 떨어진다.</b></p>
+</div>
+
+<div class="knob">
+  <div class="kn">-XX:InitiatingHeapOccupancyPercent</div>
+  <div class="what">동시 마킹 시작 시점 · 초기값 45%</div>
+  <p>Old 점유율이 몇 %가 되면 <b>동시 마킹을 시작</b>할지 정한다. <b>마킹이 할당 속도를 못 따라가 Full GC로 추락하는 상황이면 이 값을 낮춰 더 일찍 시작</b>하게 한다. 마킹을 일찍 시작할수록 여유는 생기지만 <b>마킹 자체의 CPU 비용을 더 자주</b> 낸다.</p>
+</div>
+
+<div class="knob">
+  <div class="kn">-XX:G1HeapRegionSize</div>
+  <div class="what">region 크기 · 기본은 JVM이 힙 크기를 보고 자동 결정</div>
+  <p>힙을 나누는 조각 하나의 크기를 지정한다. 이 값을 키우면 <b>humongous 판정 경계(region의 절반)가 함께 올라가서</b> 거대 객체 문제를 임시로 피할 수 있다. <b>근본 조치가 아니라 시간 벌기</b>임을 인지하고 써야 한다.</p>
+</div>
+
+<div class="knob">
+  <div class="kn">-XX:+DisableExplicitGC</div>
+  <div class="what">명시적 GC 무력화</div>
+  <p><code>System.gc()</code> 호출을 무시하게 만든다. <b>원인이 명시적 호출로 확정됐는데 호출부가 우리 코드가 아니어서 못 고칠 때</b> 쓴다. 다만 <b>다이렉트 버퍼 정리를 <code>System.gc()</code>에 의존하는 코드가 있으면 그쪽이 망가질 수 있으므로</b> 부작용을 검토하고 적용한다.</p>
+</div>
+
+<div class="memo red">
+  <h4>직관 오류 두 개 — 여기서 많이 틀린다</h4>
+  <div class="review">
+    <div class="item"><span class="b">1</span><div><b>힙을 키우는 것은 공짜가 아니다.</b> Full GC <b>빈도는 줄지만</b> <b>한 번의 Full GC가 더 오래 걸린다</b> — 치울 면적이 넓어지기 때문이다. <mark>"GC 횟수는 줄었는데 p99는 더 나빠졌다"가 여기서 나온다.</mark></div></div>
+    <div class="item"><span class="b">2</span><div><b>G1에서는 <code>-Xmn</code>으로 Young 크기를 못 박지 않는다.</b> G1은 <b>pause 목표에 맞춰 young 크기를 매번 적응적으로 조절</b>하는데, <code>-Xmn</code>을 주면 <b>그 적응 기능이 꺼진다.</b> 손으로 고정한 값이 항상 옳을 리 없으므로 <b>대개 손해</b>다.</div></div>
+  </div>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. "GC 튜닝 경험" 답변의 구조</h2>
+
+<p>이 질문에 <b>옵션 이름을 나열하는 것</b>으로 답하면 감점이다. 면접관이 듣고 싶은 구조는 정해져 있다.</p>
+
+<div class="runline">
+  <div class="st">① 증상</div>
+  <div class="c"><b class="h">무엇이 어떻게 아팠는가</b>숫자로 말한다. "p99가 <b>50ms에서 4초</b>로", "<b>시간당 Full GC 12회</b>", "헬스체크 실패로 하루 3회 재시작". <span class="sub">증상을 숫자로 말하지 못하면 뒤의 검증도 숫자로 못 한다.</span></div>
+</div>
+<div class="runline">
+  <div class="st">② 추적</div>
+  <div class="c"><b class="h">런북의 어느 분기를 탔는가</b>"<b>cause가 <code>Metadata GC Threshold</code>였고</b>", "<b>Full GC 직후 Old가 7400M으로 안 내려갔고</b>" 같은 <b>구체적 관측</b>. <span class="sub">여기서 §2~§7의 언어가 그대로 나온다 — 이 부분이 있느냐가 "찍는 사람"과의 갈림길이다.</span></div>
+</div>
+<div class="runline">
+  <div class="st">③ 원인</div>
+  <div class="c"><b class="h">코드였는가 설정이었는가, 그것을 어떻게 확정했는가</b>"<b>시차를 두고 힙 덤프를 두 번 떠서</b> 같은 캐시의 retained size가 계속 늘어나는 것을 확인했다"처럼 <b>확정의 근거</b>를 말한다. <span class="sub">"아마 누수였던 것 같다"는 확정이 아니다.</span></div>
+</div>
+<div class="runline g">
+  <div class="st">④ 조치·검증</div>
+  <div class="c"><b class="h">무엇을 바꿨고, 같은 지표가 어떻게 변했는가</b>"<b>상한과 만료가 있는 캐시로 교체</b>한 뒤 <b>같은 시간대 같은 트래픽에서</b> Full GC가 <b>시간당 12회 → 0회</b>, p99가 <b>4초 → 60ms</b>". <span class="sub">이 4번까지 말하는 사람이 드물기 때문에 여기서 변별이 난다.</span></div>
+</div>
+
+<div class="rule ok">"튜닝했더니 좋아졌어요"가 아니라 <u>"원인을 특정했고, 조치 후 지표로 확인했다"</u>가 경험의 증거다</div>
+
+<div class="callout info"><span class="t">경험이 없다면 — 없다고 말하고 절차로 답한다</span>"직접 튜닝한 경험은 없습니다"로 끝내면 0점이지만, <b>"경험은 없지만 이런 순서로 접근하겠습니다"</b> 뒤에 §2의 런북을 붙이면 상당한 점수가 난다. <mark>이 질문이 진짜 확인하려는 것은 무용담이 아니라 방법론</mark>이기 때문이다. 덧붙여 <b>"우선 GC 로그를 상시로 켜 두는 것부터 하겠다"</b>고 말하면 <b>사고 전 준비까지 아는 사람</b>이 된다.</div>
+
+
+<!-- ===================== QA ===================== -->
+<h2 id="s11">11. 꼬리질문 셀프 테스트</h2>
+
+<p>질문만 먼저 읽고 <b>소리 내어 답해 본 뒤</b> 펼친다. 이 문서의 목적은 지식 확인이 아니라 <b>인출 연습</b>이다. 답이 막히는 항목은 해당 절로 돌아간다.</p>
+
+<details class="q"><summary>GC 로그에서 구체적으로 어떤 항목부터 봅니까?<span class="hint">힌트: 힙 덤프를 봐도 안 보이는 원인이 있다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>세 가지를 이 순서로 본다 — cause, Full GC 전후 힙 크기, 빈도와 간격의 패턴.</b></p>
+  <div class="review">
+    <div class="item b3"><span class="b">1</span><div><b>GC cause가 먼저다.</b> <code>System.gc()</code>·<code>Metadata GC Threshold</code>·<code>G1 Humongous Allocation</code> 중 하나면 <b>그 즉시 원인 계열이 특정</b>된다. 이 셋을 먼저 봐야 하는 이유가 중요하다 — <mark>셋 다 힙 덤프를 떠도 안 보인다.</mark> Metaspace는 <b>힙 밖</b>이고, 명시적 호출은 <b>코드에 있고</b>, humongous는 "총량"이 아니라 <b>연속 공간 배치의 문제</b>다. 덤프부터 뜨면 시간을 통째로 버린다.</div></div>
+    <div class="item b3"><span class="b">2</span><div><b>Full GC 전후 힙 크기(before → after).</b> after가 안 줄면 누수·용량(Step 3-A), 잘 줄면 승격·할당 문제(Step 3-B)로 갈라진다. 이 문서에서 가장 중요한 분기다.</div></div>
+    <div class="item b3"><span class="b">3</span><div><b>빈도와 간격의 패턴.</b> <b>정확히 일정한 간격</b>이면 명시적 호출 의심, <b>트래픽 피크와 동기화</b>되면 할당률 문제, <b>점점 잦아지면 누수의 말기 증상</b>이다. 마지막이 특히 중요하다 — 누수는 처음엔 하루에 한 번이다가 나중엔 분 단위가 된다.</div></div>
+  </div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>cause를 먼저 봅니다.</b> 명시적 호출·Metaspace·humongous는 <b>힙 덤프에 안 나타나는 원인</b>이라 덤프를 뜨기 전에 배제해야 합니다. 그다음 <b>Full GC 전후 힙 크기</b>로 누수·용량 계열과 승격 계열을 가르고, 마지막으로 <b>간격 패턴</b>을 봅니다 — 일정 간격이면 명시적 호출, 트래픽 동기면 할당률, <b>점점 잦아지면 누수 말기</b>입니다."</p>
+</div></details>
+
+<details class="q"><summary>힙을 2배로 늘렸는데도 Full GC가 계속됩니다. 왜 그럴까요?<span class="hint">힌트: "안 나았다"는 것도 정보다</span> <span class="badge core">핵심</span></summary><div class="a">
+  <p><b>힙 증설이 고치는 것은 딱 하나 — "live set은 그대로인데 여유 공간만 부족한" 경우다.</b> 계속된다면 그 경우가 아니었다는 뜻이고, 가능성은 셋이다.</p>
+  <figure style="margin-top:6px">
+    <svg viewBox="0 0 880 250" role="img" aria-label="누수 상황에서 힙을 두 배로 늘린 결과 도식. live set이 계속 증가하는 직선이 4GB 한계선에 닿는 시각과 8GB 한계선에 닿는 시각을 비교하면, 장애가 사라진 것이 아니라 발생 시각만 뒤로 밀린 것임을 보여준다.">
+      <defs><marker id="q1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker></defs>
+      <text x="16" y="20" font-size="13" font-weight="700" fill="#1f2937">누수 상황에서 힙을 2배로 — <tspan fill="#dc2626">고쳐진 것이 아니라 미뤄진 것</tspan></text>
+      <line x1="70" y1="200" x2="840" y2="200" stroke="#9ca3af" stroke-width="1.5"/>
+      <line x1="70" y1="40" x2="70" y2="200" stroke="#9ca3af" stroke-width="1.5"/>
+      <text x="46" y="46" font-size="10.5" fill="#6b7280" text-anchor="end">힙</text>
+      <text x="836" y="220" font-size="10.5" fill="#6b7280" text-anchor="end">시간</text>
+      <line x1="70" y1="140" x2="840" y2="140" stroke="#f59e0b" stroke-width="1.4" stroke-dasharray="6 4"/>
+      <text x="76" y="134" font-size="10.5" font-weight="700" fill="#b45309">기존 한계 4GB</text>
+      <line x1="70" y1="62" x2="840" y2="62" stroke="#2563eb" stroke-width="1.4" stroke-dasharray="6 4"/>
+      <text x="76" y="56" font-size="10.5" font-weight="700" fill="#1d4ed8">증설 후 한계 8GB</text>
+      <path d="M70,200 L820,44" stroke="#dc2626" stroke-width="2.6" fill="none"/>
+      <text x="600" y="120" font-size="11" font-weight="800" fill="#b91c1c" transform="rotate(-11 600 120)">live set (계속 자란다)</text>
+      <circle cx="358" cy="140" r="5" fill="#b45309"/>
+      <line x1="358" y1="140" x2="358" y2="200" stroke="#b45309" stroke-width="1.2" stroke-dasharray="3 3"/>
+      <text x="358" y="216" font-size="10.5" font-weight="700" fill="#b45309" text-anchor="middle">화요일 03:00 장애</text>
+      <circle cx="733" cy="62" r="5" fill="#1d4ed8"/>
+      <line x1="733" y1="62" x2="733" y2="200" stroke="#1d4ed8" stroke-width="1.2" stroke-dasharray="3 3"/>
+      <text x="733" y="216" font-size="10.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">금요일 03:00 장애</text>
+      <path d="M372,178 L718,178" stroke="#dc2626" stroke-width="1.8" marker-end="url(#q1a)"/>
+      <text x="545" y="172" font-size="11" font-weight="800" fill="#b91c1c" text-anchor="middle">벌어 온 시간 — 그동안 지표는 좋아 보인다</text>
+    </svg>
+    <figcaption>누수에서 힙 증설의 효과는 <b>기울기를 눕히는 것이 아니라 천장을 올리는 것</b>이다. 기울기가 그대로면 <b>닿는 시각만 미뤄진다.</b> 게다가 그 사이 대시보드가 초록색이라 <b>코드 수정이 잊히기 쉽다</b>는 것이 진짜 위험이다.</figcaption>
+  </figure>
+  <div class="review">
+    <div class="item"><span class="b">1</span><div><b>누수</b> — live set 자체가 계속 자라므로 <b>늘린 공간도 반드시 다시 찬다.</b> 시간문제일 뿐이다.</div></div>
+    <div class="item"><span class="b">2</span><div><b>힙 크기와 무관한 트리거</b> — <b>Metaspace는 힙 밖 영역</b>이고, <b>humongous는 총량이 아니라 연속 공간</b>의 문제이며, <code>System.gc()</code>는 <b>힙 상태와 아무 상관이 없다.</b></div></div>
+    <div class="item"><span class="b">3</span><div><b>할당률이 너무 높음</b> — 동시 마킹이 여전히 할당 속도를 못 따라간다. 방향은 <code>InitiatingHeapOccupancyPercent</code>를 낮춰 <b>마킹을 더 일찍 시작</b>하게 하는 것이지만, 근본 원인은 대개 <b>코드의 할당량</b>이다.</div></div>
+  </div>
+  <div class="callout ok"><span class="t">답의 진짜 핵심은 여기다</span><b>"늘렸는데도 그대로"는 실패가 아니라 유용한 배제 증거다.</b> 원인이 <b>용량이 아니라는 사실</b>을 확인했으므로 탐색 공간이 줄었다. <mark>이런 식으로 배제를 쌓아 가는 것이 이 질문 전체가 묻는 태도다.</mark></div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>힙 증설은 live set이 정당한데 여유만 부족한 경우에만 듣습니다.</b> 계속된다면 <b>누수</b>이거나, <b>Metaspace·humongous·<code>System.gc()</code>처럼 힙 크기와 무관한 트리거</b>이거나, <b>할당률 자체가 GC를 추월</b>하는 경우입니다. 그리고 <b>안 나았다는 사실 자체가 '용량이 아니다'라는 배제 증거</b>라서 다음 단계가 좁아집니다."</p>
+</div></details>
+
+<details class="q"><summary>운영 중이라 재시작할 수 없는데 GC 로그도 안 켜져 있었다면?<span class="hint">힌트: 재시작 없이 붙는 도구가 있다</span></summary><div class="a">
+  <p><b>재시작 없이 프로세스에 붙는 도구로 대체한다.</b> Step 2의 결정적 분기는 <code>jstat</code>만으로도 판단할 수 있다.</p>
+  <div class="kv">
+    <dt>jstat -gcutil &lt;pid&gt; 1000</dt><dd>1초 간격으로 <b>영역별 사용률과 FGC 증가 속도</b>를 실시간 관찰. <b>O 컬럼이 Full GC 뒤에 내려가는지</b>만 봐도 유형 A/B가 갈린다.</dd>
+    <dt>jcmd &lt;pid&gt; GC.heap_info</dt><dd>현재 힙 스냅샷.</dd>
+    <dt>jcmd &lt;pid&gt; GC.class_histogram</dt><dd>클래스별 인스턴스 수. <b>힙 덤프보다 훨씬 가볍다</b> — 시간 간격을 두고 두 번 떠서 <b>어떤 클래스가 계속 늘어나는지</b> 비교하면 누수 후보가 좁혀진다.</dd>
+  </div>
+  <div class="callout info"><span class="t">인스턴스가 여러 대라면 — 증거 확보를 위한 무중단 우회로</span><b>한 대만 로드밸런서에서 빼서</b> GC 로그 옵션을 켜고 재기동한 뒤 다시 투입한다. 서비스 영향 없이 <b>다음 재현 때 증거를 확보</b>할 수 있다. "지금 당장 원인을 못 찾더라도 <b>다음 재현에는 반드시 잡는다</b>"는 것도 대응이다.</div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b><code>jstat -gcutil</code>과 <code>jcmd</code>는 재시작 없이 붙습니다.</b> Step 2의 분기 판단은 <b><code>jstat</code>의 O 컬럼 추이만으로 가능</b>하고, <code>GC.class_histogram</code>을 시차를 두고 두 번 뜨면 누수 후보가 좁혀집니다. 그리고 <b>인스턴스 한 대만 LB에서 빼서 로그를 켜 재투입</b>하면 다음 재현 때는 확실히 증거가 남습니다. 핵심은 <b>'로그가 없어서 못 한다'가 아니라 대체 수단과 운영 제약을 아는 것</b>입니다."</p>
+</div></details>
+
+<details class="q"><summary>Young GC는 정상인데 Full GC만 문제일 때, Young 영역을 키우는 게 도움이 되나요?<span class="hint">힌트: 조건부로 예 — 그 조건이 답이다</span></summary><div class="a">
+  <p><b>될 수 있다 — 단, 승격 폭주가 원인인 경우에 한해서다.</b></p>
+  <p>Young이 작으면 Young GC가 자주 돌고, 객체가 <b>"충분히 죽을 시간"을 못 벌고 나이만 먹어</b> Old로 밀려난다. Young을 키우면(또는 G1이 pause 목표 안에서 알아서 키우게 두면) <b>"Young에서 죽을 운명"의 객체가 실제로 Young에서 죽어</b> Old 유입이 줄어든다.</p>
+  <p>하지만 <b>누수·Metaspace·humongous·명시적 호출이 원인이면 아무 효과가 없다.</b> 누수 객체는 Young을 아무리 키워도 <b>어차피 죽지 않고</b>, Metaspace는 <b>힙 밖</b>이며, humongous는 <b>처음부터 Old 취급</b>이다.</p>
+  <div class="callout warn"><span class="t">G1에서는 방법도 다르다</span><code>-Xmn</code>으로 Young을 못 박으면 <b>G1이 pause 목표에 맞춰 young 크기를 적응적으로 조절하는 기능이 꺼진다.</b> 손으로 고정한 값이 항상 옳을 리 없으므로 대개 손해다. <b>pause 목표를 조정해 G1이 스스로 young을 키우게 두는 편</b>이 낫다.</div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>승격 폭주가 원인일 때만 효과가 있습니다.</b> Young이 작아 '죽을 객체가 죽을 시간을 못 벌고' 승격되던 상황이면 유입이 줄어듭니다. 반대로 <b>누수·Metaspace·humongous·명시적 호출이면 전혀 듣지 않습니다.</b> 그래서 답의 핵심은 조치가 아니라 순서 — <b>Step 2에서 유형을 판별한 뒤에 만질 손잡이</b>이고, G1이라면 <code>-Xmn</code>보다 <b>pause 목표로 유도</b>합니다."</p>
+</div></details>
+
+<details class="q"><summary>어디까지가 튜닝으로 풀 문제이고, 어디부터가 코드를 고칠 문제인가요?<span class="hint">힌트: GC가 할 수 있는 일의 범위에서 유도된다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>기준은 한 문장으로 정리된다.</b></p>
+  <div class="rule">죽어야 할 객체가 못 죽고 있는가 <b style="color:#dc2626">(코드)</b> &nbsp;/&nbsp; 살아야 할 객체를 다룰 자원·설정이 부족한가 <b style="color:#16a34a">(튜닝)</b></div>
+  <p>근거는 외운 규칙이 아니라 <b>GC의 능력 범위</b>다. <b>GC는 죽은 객체만 회수할 수 있고, 옵션은 GC가 일하는 방식·시점·예산만 바꿀 뿐 객체의 생사를 바꾸지 못한다.</b> 그러므로 <mark>참조가 살아 있어서 안 죽는 문제는 참조를 끊는 코드로만 풀린다 — 정의상 그렇다.</mark></p>
+  <div class="split">
+    <div class="pane r"><h4>코드 쪽 (튜닝은 증상 완화)</h4>
+      <ul>
+        <li>메모리 누수</li>
+        <li>대량 일괄 로딩으로 인한 승격 폭주</li>
+        <li>거대 객체(humongous) 생성</li>
+        <li>불필요한 <code>System.gc()</code></li>
+        <li>동적 클래스 무한 생성(Metaspace)</li>
+      </ul>
+      <p style="margin:8px 0 0;font-size:.9rem"><b>트래픽이 늘면 반드시 재발한다.</b></p>
+    </div>
+    <div class="pane g"><h4>튜닝 쪽 (정당한 영역)</h4>
+      <ul>
+        <li>live set이 <b>정당하게 큰</b> 서비스의 힙 크기</li>
+        <li>pause 목표와 처리량의 균형점</li>
+        <li>동시 마킹 시작 시점(IHOP)</li>
+      </ul>
+      <p style="margin:8px 0 0;font-size:.9rem">여기는 <b>코드를 고쳐도 안 줄어드는</b> 부분이다.</p>
+    </div>
+  </div>
+  <div class="callout ok"><span class="t">여기에 실무 감각을 하나 얹으면 답이 완성된다</span><b>둘은 택일이 아니라 시간차 병행이다.</b> 장애 대응에서는 <b>즉시 완화</b>(힙 증설, 마킹 조기 시작)로 시간을 벌고, 그렇게 번 시간에 <b>근본 조치</b>(코드 수정)를 한다. 다만 <mark>완화를 하고 나면 지표가 좋아져서 근본 조치가 잊히는 것</mark>이 진짜 위험이므로, <b>완화 시점에 코드 수정 티켓과 기한을 함께 남기는 것까지가 시니어의 대응</b>이다.</div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>GC는 죽은 객체만 회수할 수 있고 옵션은 객체의 생사를 바꾸지 못합니다.</b> 그래서 <b>죽어야 할 객체가 못 죽는 문제는 정의상 코드</b>이고, <b>살아야 할 객체를 담을 자원이 부족한 문제는 튜닝</b>입니다. 실무에서는 택일이 아니라 <b>즉시 완화는 튜닝으로, 근본 조치는 코드로</b> 병행하되, <b>완화 시점에 코드 수정 티켓을 함께 남겨</b> 잊히지 않게 합니다."</p>
+</div></details>
+
+<details class="q"><summary>Full GC 직후 Old가 안 비는데, 힙 덤프를 봐도 수상한 객체가 없다면?<span class="hint">힌트: "안 비는데 누수도 아니다"의 나머지 경우들</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>가능성이 셋이고, 셋 다 실제로 흔하다.</b></p>
+  <div class="review">
+    <div class="item ok"><span class="b">1</span><div><b>누수가 아니라 진짜 용량 부족이다.</b> 덤프에 보이는 객체가 전부 "있어야 할" 객체 — 설계상의 캐시 크기이고, 실제 동시 세션 수만큼의 세션이다. 이건 버그가 아니다. <b>힙 증설이나 캐시 외부화(Redis 등)</b>가 답이다. <mark>구분 기준은 시간축</mark>이다 — 계속 자라면 누수, <b>어느 수준에서 평형에 도달하면 용량</b>이다. 한 시점의 덤프로는 알 수 없으니 <b>시차를 두고 두 번</b> 뜨거나 <code>jstat</code>의 O 추이를 본다.</div></div>
+    <div class="item"><span class="b">2</span><div><b>힙 밖에서 자라고 있다.</b> Metaspace(클래스 메타데이터)나 다이렉트 버퍼 같은 <b>네이티브 메모리</b>는 힙 덤프에 거의 안 잡힌다. <code>jstat</code>의 <b>M 컬럼이 우상향</b>이면 Metaspace 쪽이고, 이때의 Full GC cause는 <code>Metadata GC Threshold</code>로 찍힌다.</div></div>
+    <div class="item"><span class="b">3</span><div><b>덤프를 읽는 축이 틀렸다.</b> 인스턴스 <b>개수</b>가 아니라 <b>retained size</b>(그 객체를 지웠을 때 함께 사라지는 메모리 총량)와 <b>dominator tree</b>로 봐야 한다. 범인은 대개 "수상하게 많은 클래스"가 아니라 <b>평범한 <code>HashMap</code>이나 <code>byte[]</code> 하나가 거대한 것</b>이다.</div></div>
+  </div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>먼저 시간축으로 누수와 용량을 가릅니다</b> — 계속 자라면 누수, 평형에 도달하면 용량입니다. 덤프에 안 보이면 <b>Metaspace나 다이렉트 버퍼 같은 힙 밖</b>을 의심하고, 마지막으로 <b>개수가 아니라 retained size와 dominator tree</b>로 다시 봅니다."</p>
+</div></details>
+
+<details class="q"><summary><code>jstat</code> 출력만 보고 누수와 승격 폭주를 구분할 수 있나요?<span class="hint">힌트: 한 시점이 아니라 여러 사이클의 최저점</span></summary><div class="a">
+  <p><b>구분할 수 있다. 봐야 할 것은 O 컬럼의 "최고점"이 아니라 "최저점의 추이"다.</b></p>
+  <div class="split">
+    <div class="pane r"><h4>누수 (유형 A)</h4>
+      <ul>
+        <li>FGC가 증가한 <b>직후의 O 값</b>이 사이클마다 <b>점점 높아진다</b> (예: 62% → 68% → 74%).</li>
+        <li>FGC 증가 <b>간격이 점점 짧아진다.</b></li>
+        <li>Full GC를 해도 <b>바닥이 올라간다</b> = live set 증가.</li>
+      </ul>
+    </div>
+    <div class="pane g"><h4>승격 폭주 (유형 B)</h4>
+      <ul>
+        <li>FGC 직후의 O 값이 <b>항상 비슷하게 낮다</b> (예: 매번 15% 안팎).</li>
+        <li>대신 O가 <b>차오르는 속도가 빠르다.</b></li>
+        <li>바닥은 일정한데 <b>주기가 짧은</b> 톱니.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="callout warn"><span class="t">한 번의 관측으로 결론 내지 않는다</span>Full GC <b>한 사이클</b>만 보고 "안 비네"라고 판단하면 오진하기 쉽다. 그 순간 마침 정상적인 대형 배치가 돌고 있었을 수도 있다. <b>최소 몇 사이클의 최저점을 늘어놓고 추세를 본다</b> — 진단의 재료는 <b>한 점이 아니라 기울기</b>다.</div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>O 컬럼의 최고점이 아니라 Full GC 직후 최저점의 추이</b>를 봅니다. <b>최저점이 사이클마다 올라가면 누수</b>, <b>최저점은 낮게 유지되는데 차오르는 속도가 빠르면 승격 폭주</b>입니다. 그리고 <b>한 사이클로는 판단하지 않고 여러 사이클의 기울기</b>를 봅니다."</p>
+</div></details>
+
+<details class="q"><summary>Full GC 횟수는 그대로인데 pause 시간만 길어졌습니다. 무엇을 의심합니까?<span class="hint">힌트: 한 번의 GC 비용은 무엇에 비례하나</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p><b>한 번의 Full GC 비용은 "치울 면적"과 "살려서 옮길 양"에 비례한다.</b> 횟수가 그대로인데 시간만 늘었다면 그 둘 중 하나가 커진 것이다.</p>
+  <ul>
+    <li><b>live set이 커졌다</b> — 청소는 죽은 것을 버리는 일이지만, <b>compaction(살아있는 객체를 한쪽으로 모아 붙이는 작업)</b>은 살아있는 양에 비례한다. 누수의 초기 증상이 <b>"횟수"보다 "길이"로 먼저 나타나는</b> 경우가 있다.</li>
+    <li><b>힙을 키웠다</b> — <mark>힙 증설은 공짜가 아니다.</mark> 빈도는 줄지만 <b>한 번의 Full GC가 더 오래 걸린다.</b> "GC 횟수는 줄었는데 p99는 더 나빠졌다"가 정확히 여기서 나온다.</li>
+    <li><b>GC 밖의 요인</b> — CPU 경합(다른 컨테이너와 코어를 나눠 쓰는 상황), 스왑 발생, 디스크 I/O 지연으로 GC 스레드가 못 도는 경우. 이때는 <b>GC 로그의 user/sys/real 시간에서 real이 유독 큰</b> 형태로 드러난다.</li>
+  </ul>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>한 번의 Full GC 비용은 살아있는 객체를 옮기는 양에 비례</b>하므로 <b>live set 증가</b>를 먼저 의심하고, <b>최근 힙을 키웠다면 그 자체가 원인</b>일 수 있습니다 — <b>빈도와 길이는 맞바꾸는 관계</b>입니다. 둘 다 아니면 <b>CPU 경합·스왑처럼 GC 밖의 요인</b>을 보고, GC 로그에서 <b>real이 user보다 유독 큰지</b>로 확인합니다."</p>
+</div></details>
+
+<details class="q"><summary><code>OutOfMemoryError: GC overhead limit exceeded</code>는 어떤 상태를 말하는 건가요?<span class="hint">힌트: 힙이 꽉 찬 게 아니라 "일해도 소용없다"는 항복 선언</span></summary><div class="a">
+  <p><b>"GC에 시간을 쏟아붓는데 회수되는 양이 거의 없다"는 상태를 JVM이 스스로 감지해 던지는 에러다.</b> 전형적인 기준은 <b>전체 시간의 98% 이상을 GC에 쓰면서 힙의 2% 미만만 회수</b>하는 상황이 이어질 때다.</p>
+  <p>진단적으로 이 메시지가 가치 있는 이유는, <b>이미 유형 A(안 비는 경우)의 극단으로 확정해 준다</b>는 점이다. 회수량이 거의 없다는 것은 <b>힙의 거의 전부가 살아있는 객체</b>라는 뜻이므로 — <mark>누수 아니면 심각한 용량 부족</mark> 둘 중 하나다. 승격 폭주에서는 이 에러가 잘 안 나온다. 승격 폭주는 GC를 돌리면 <b>어쨌든 많이 회수되기</b> 때문이다.</p>
+  <div class="callout trap"><span class="t">가장 나쁜 대응</span><b>이 에러를 없애려고 감지 기능을 끄는 것</b>(<code>-XX:-UseGCOverheadLimit</code>)이다. 에러가 사라지는 대신 <b>애플리케이션이 죽지도 못하고 사실상 멈춘 채</b>로 남는다. <b>빨리 죽는 편이 낫다</b> — 그래야 헬스체크가 인스턴스를 교체하고, <code>-XX:+HeapDumpOnOutOfMemoryError</code>가 남긴 덤프로 원인을 찾을 수 있다.</div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>GC에 시간을 거의 다 쓰는데 회수량이 미미할 때</b> JVM이 던지는 항복 선언입니다. <b>힙의 대부분이 살아있는 객체라는 뜻</b>이라 <b>누수 아니면 용량 부족으로 이미 확정</b>된 상태이고, 승격 폭주에서는 잘 나오지 않습니다. <b>감지를 끄는 것이 아니라 덤프를 남기고 죽게 하는 것</b>이 옳은 대응입니다."</p>
+</div></details>
+
+<details class="q"><summary>컨테이너에서 프로세스가 <span class="mono">exit 137</span>로 죽었습니다. 이것도 Full GC 문제인가요?<span class="hint">힌트: 누가 죽였는지가 다르다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>먼저 "누가 죽였는가"부터 갈라야 한다. 이 둘은 증상이 비슷하지만 완전히 다른 사건이다.</b></p>
+  <div class="split">
+    <div class="pane w"><h4>JVM이 스스로 던진 <code>OutOfMemoryError</code></h4>
+      <ul>
+        <li><b>힙이 부족</b>해서 JVM이 판단한 것.</li>
+        <li>스택 트레이스가 로그에 남고, <code>-XX:+HeapDumpOnOutOfMemoryError</code>가 켜져 있으면 <b>덤프도 남는다.</b></li>
+        <li>이 문서의 진단 절차가 그대로 적용된다.</li>
+      </ul>
+    </div>
+    <div class="pane r"><h4>커널이 프로세스를 죽인 OOMKill (exit 137)</h4>
+      <ul>
+        <li>137 = 128 + 9(SIGKILL). <b>바깥에서 강제 종료</b>당한 것.</li>
+        <li><b>로그도 덤프도 남지 않는다</b> — 유언 없이 사라진다.</li>
+        <li>원인은 <b>컨테이너 메모리 한도 &lt; JVM이 실제로 쓴 총 메모리</b>.</li>
+      </ul>
+    </div>
+  </div>
+  <p><b>핵심은 "JVM이 쓰는 메모리 = 힙"이 아니라는 점이다.</b> 힙 외에 <b>Metaspace, 스레드 스택, 코드 캐시, 다이렉트 버퍼, GC 자체의 자료구조</b>가 모두 프로세스 메모리에 들어간다. 그래서 <b>컨테이너 한도를 그대로 <code>-Xmx</code>로 잡으면</b> 힙이 다 차기도 전에 커널이 먼저 프로세스를 죽인다. 힙은 한도보다 <b>여유를 두고</b> 잡아야 한다.</p>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>exit 137은 JVM의 OOM이 아니라 커널의 OOMKill</b>입니다. JVM OOM은 <b>스택 트레이스와 힙 덤프를 남기지만</b>, OOMKill은 <b>아무것도 안 남기고</b> 사라집니다. 원인은 대개 <b>힙 외 영역(Metaspace·스레드 스택·다이렉트 버퍼)까지 합친 총량이 컨테이너 한도를 넘은 것</b>이라, <b>힙을 한도보다 여유 있게</b> 잡아야 합니다."</p>
+</div></details>
+
+<details class="q"><summary><code>System.gc()</code>가 원인인데 호출부가 우리 코드가 아닌 라이브러리라면?<span class="hint">힌트: "무시"와 "가볍게 처리"는 다른 선택지다</span></summary><div class="a">
+  <p><b>선택지가 둘이고, 부작용의 성격이 다르다.</b></p>
+  <div class="grid g2">
+    <div class="tile red"><div class="k">-XX:+DisableExplicitGC</div><div class="s">호출을 통째로 무시</div><div class="d">가장 확실하지만 <b>부작용 검토가 필수</b>다. <b>다이렉트 버퍼(힙 밖 메모리) 정리를 <code>System.gc()</code>에 의존하는 코드</b>가 있으면 그쪽이 망가져 <b>네이티브 메모리가 안 풀린다.</b> 즉 힙 문제를 고치려다 <b>힙 밖 문제를 만들 수</b> 있다.</div></div>
+    <div class="tile ok"><div class="k">-XX:+ExplicitGCInvokesConcurrent</div><div class="s">호출은 살리되 무겁지 않게</div><div class="d">명시적 호출을 <b>STW Full GC 대신 동시 GC 사이클</b>로 처리하게 한다. <b>정리는 일어나되 긴 멈춤은 피하는</b> 절충안이라, 라이브러리의 의도를 깨지 않으면서 pause만 줄이고 싶을 때 쓴다.</div></div>
+  </div>
+  <p><b>물론 1순위는 여전히 호출부를 없애는 것</b>이다. 라이브러리 버전을 올려 해결되는 경우도 많고, 그 기능(예: 분산 GC를 쓰는 RMI 기반 기능)을 실제로 안 쓰고 있다면 <b>의존 자체를 걷어내는 것</b>이 근본이다.</p>
+  <div class="callout info"><span class="t">먼저 확인할 판별 단서</span>정말 명시적 호출이 맞는지는 <b>규칙성</b>으로 확인한다. <b>트래픽과 무관하게 정확히 일정한 간격</b>으로 Full GC가 발생하면 이쪽이다. <mark>부하가 원인인 GC는 트래픽 곡선을 따라가지 시계를 따라가지 않는다.</mark></div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>먼저 규칙적인 간격인지로 명시적 호출을 확정</b>합니다. 못 고치는 코드라면 <code>-XX:+DisableExplicitGC</code>로 무시하거나 <code>-XX:+ExplicitGCInvokesConcurrent</code>로 <b>동시 사이클로 대체</b>하는데, 전자는 <b>다이렉트 버퍼 정리를 그 호출에 의존하는 코드를 깨뜨릴 수 있어</b> 후자가 더 안전한 경우가 많습니다."</p>
+</div></details>
+
+<details class="q"><summary>운영 중에 힙 덤프를 뜨면 서비스에 영향이 있나요?<span class="hint">힌트: 덤프를 뜨는 동안 무슨 일이 일어나는가</span></summary><div class="a">
+  <p><b>있다. 그리고 그 영향이 진단 대상인 장애와 구분이 안 될 수 있다는 점이 더 문제다.</b></p>
+  <ul>
+    <li><b>STW가 발생한다.</b> 일관된 스냅샷을 뜨려면 객체 그래프가 움직이면 안 되므로 애플리케이션을 멈춘다. <b>힙 크기에 비례</b>해 수 초가 걸릴 수 있다.</li>
+    <li><b>살아있는 객체만 담는 옵션(<code>-dump:live</code>)은 그 전에 Full GC를 한 번 돌린다.</b> 덤프가 작아지고 분석은 쉬워지지만, <b>Full GC 한 번을 더 유발</b>하는 셈이다.</li>
+    <li><b>디스크와 I/O를 먹는다.</b> 덤프 파일 크기는 대략 힙 사용량만큼이다. 남은 디스크 용량을 먼저 확인하지 않으면 <b>디스크 부족이라는 2차 장애</b>를 만든다.</li>
+  </ul>
+  <div class="callout ok"><span class="t">그래서 실무 순서</span><b>가능하면 LB에서 한 대를 뺀 뒤</b> 그 인스턴스에서 뜬다. 즉시 떠야 한다면 <b>더 가벼운 것부터</b> — <code>jcmd GC.class_histogram</code>으로 후보를 좁히고, 정말 필요할 때 덤프를 뜬다. 그리고 <b>사고 시점의 덤프는 <code>-XX:+HeapDumpOnOutOfMemoryError</code>로 미리 자동화</b>해 두는 것이 가장 싸다.</div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>덤프는 STW를 유발하고 힙 크기에 비례해 길어집니다.</b> <code>live</code> 옵션은 <b>Full GC를 한 번 더 유발</b>하고 디스크도 힙만큼 먹습니다. 그래서 <b>LB에서 뺀 인스턴스에서</b> 뜨거나, <b>class_histogram처럼 가벼운 것부터</b> 쓰고, 사고 시점 덤프는 <b><code>HeapDumpOnOutOfMemoryError</code>로 미리 자동화</b>해 둡니다."</p>
+</div></details>
+
+<details class="q"><summary>G1에서 <code>to-space exhausted</code>가 반복됩니다. IHOP만 낮추면 되나요?<span class="hint">힌트: 마킹을 일찍 시작해도 못 따라잡는 경우가 있다</span> <span class="badge senior">시니어 변별</span></summary><div class="a">
+  <p><b>IHOP를 낮추는 것은 "마킹을 일찍 시작"하게 할 뿐, "할당을 늦추"지는 못한다.</b> 그래서 조건부로만 듣는다.</p>
+  <p><code>to-space exhausted</code>(옮겨 갈 공간 고갈)는 <b>살아있는 객체를 복사해 넣을 빈 region이 없어서 복사에 실패</b>했다는 뜻이다 — <b>evacuation failure</b>이고, Young에서 Old로 올리려다 실패했으면 <b>promotion failure</b>다. G1을 Full GC로 떨어뜨리는 직행 경로다.</p>
+  <div class="decide">
+    <div class="dq">Q. 동시 마킹이 "제때 끝나기만 하면" 빈 region이 확보되는 상황인가?</div>
+    <div class="da"><span class="yn y">그렇다</span><span class="txt"><b>IHOP를 낮추는 것이 맞다.</b> 마킹을 더 일찍 시작해 회수 시점을 앞당긴다. 대신 <b>마킹 자체의 CPU 비용을 더 자주 낸다.</b> 참고로 최근 G1은 이 값을 <b>시작점 삼아 스스로 조정</b>하기도 한다.</span></div>
+    <div class="da"><span class="yn n">아니다 — 할당·승격 속도 자체가 과하다</span><span class="txt"><b>IHOP를 낮춰도 소용없다.</b> 마킹을 아무리 일찍 시작해도 그보다 빨리 채워진다. <b>대량 로딩·거대 객체 생성 같은 코드 쪽 할당량</b>을 줄이는 것이 방향이다.</span></div>
+    <div class="da"><span class="yn m">단편화 때문이다</span><span class="txt">총량은 남는데 <b>연속된 빈 region</b>이 없는 경우 — <b>humongous 할당</b>이 섞여 있는지 본다. 이쪽이면 <b>거대 객체를 안 만드는 것</b>이 근본 조치다.</span></div>
+  </div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b><code>to-space exhausted</code>는 복사해 넣을 빈 region이 없다는 뜻</b>이라 원인이 셋으로 갈립니다. <b>마킹이 늦은 것뿐이면 IHOP를 낮추는 게 맞고</b>, <b>할당·승격 속도 자체가 과하면 IHOP는 소용없어 코드를 줄여야</b> 하며, <b>연속 공간이 없는 단편화면 humongous 쪽</b>을 봅니다."</p>
+</div></details>
+
+<details class="q"><summary>ZGC 같은 저지연 컬렉터로 바꾸면 이 문제가 사라지나요?<span class="hint">힌트: 컬렉터를 바꿔도 안 바뀌는 것이 있다</span></summary><div class="a">
+  <p><b>"멈춤이 짧아지는 것"과 "원인이 사라지는 것"은 다르다.</b> 컬렉터 교체로 얻는 것과 못 얻는 것을 나눠서 답한다.</p>
+  <div class="split">
+    <div class="pane g"><h4>얻는 것</h4>
+      <ul>
+        <li>같은 양을 치우더라도 <b>애플리케이션을 멈추는 시간이 크게 줄어든다.</b> p99 스파이크와 헬스체크 실패 연쇄는 완화될 수 있다.</li>
+      </ul>
+    </div>
+    <div class="pane r"><h4>못 얻는 것</h4>
+      <ul>
+        <li><b>누수는 그대로다.</b> 어떤 컬렉터도 <b>살아있는 객체는 회수하지 못한다</b> — 결국 힙이 차서 <code>OutOfMemoryError</code>로 간다.</li>
+        <li><b>할당 속도가 회수 속도를 넘으면</b> 결국 애플리케이션이 <b>할당을 기다리며 멈춘다.</b> 짧은 pause가 잦아지는 형태로 나타난다.</li>
+        <li><b>Metaspace·명시적 호출</b>처럼 힙과 무관한 트리거도 그대로다.</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>멈춤 시간은 줄지만 원인은 그대로입니다.</b> 어떤 컬렉터도 <b>살아있는 객체를 치우지는 못하므로</b> 누수는 결국 OOM으로 가고, <b>할당 속도가 회수 속도를 넘으면</b> 저지연 컬렉터에서도 결국 멈춥니다. 그래서 <b>컬렉터 교체는 원인 규명 뒤의 선택지</b>이지, 진단을 건너뛰는 지름길이 아닙니다."</p>
+</div></details>
+
+<details class="q"><summary>새벽에 한 번 터지고 재현이 안 됩니다. 다음 재현 때 확실히 잡으려면?<span class="hint">힌트: 사람이 깨어 있을 필요가 없게 만든다</span> <span class="badge bonus">가산점</span></summary><div class="a">
+  <p><b>"그때 붙어서 본다"는 계획은 실패한다. 사람이 없어도 증거가 남게 만드는 것이 답이다.</b></p>
+  <div class="review">
+    <div class="item b3"><span class="b">1</span><div><b>GC 로그를 상시로 켜고 로테이션을 건다.</b> 오버헤드는 미미하므로 <b>운영에서 항상 켜 두는 것이 정석</b>이다. 파일 개수·크기를 지정해 돌려쓰게 하면 디스크도 안 넘친다.</div></div>
+    <div class="item b3"><span class="b">2</span><div><b>OOM 시 자동 덤프를 건다.</b> <code>-XX:+HeapDumpOnOutOfMemoryError</code>와 <code>-XX:HeapDumpPath</code>로 <b>사고 순간의 힙</b>이 파일로 남게 한다. 이게 없으면 "재현되면 뜨자"의 무한 반복이 된다.</div></div>
+    <div class="item b3"><span class="b">3</span><div><b>덤프가 남을 곳을 확보한다.</b> 컨테이너라면 <b>재시작해도 사라지지 않는 볼륨</b>에 써야 한다. 파드가 죽으면서 덤프도 같이 증발하는 것이 가장 허무한 실패다.</div></div>
+    <div class="item b3"><span class="b">4</span><div><b>시각을 맞춰 놓는다.</b> GC 로그에 <b>절대 시각(그리고 uptime)</b>을 남겨야 APM의 응답시간 스파이크와 <b>겹쳐 볼 수</b> 있다. 이 대조가 "정말 GC 때문인가"의 첫 관문이다.</div></div>
+    <div class="item b3"><span class="b">5</span><div><b>지표를 미리 쌓는다.</b> Old 사용률과 Full GC 횟수를 <b>메트릭으로 수집</b>해 두면, 다음 재현 때 <b>Step 2의 분기(바닥이 올라가는가)</b>를 로그 없이도 그래프로 판단할 수 있다.</div></div>
+  </div>
+  <p style="margin-bottom:0"><b>정리 문장</b> — "<b>사람이 깨어 있어야 잡히는 계획은 실패</b>합니다. <b>GC 로그 상시화 + 로테이션</b>, <b>OOM 자동 힙 덤프</b>, <b>덤프가 살아남을 볼륨</b>, <b>APM과 대조 가능한 절대 시각</b>, <b>Old 사용률·FGC 메트릭 수집</b> — 이 다섯을 미리 걸어 두면 다음 재현 한 번으로 끝납니다."</p>
+</div></details>
+
+<div class="memo green">
+  <h4>60초 답변 대본 — 이 순서로 말한다</h4>
+  <ol style="margin:6px 0 0;padding-left:22px">
+    <li><b>먼저 순서를 선언한다</b>: "<b>Full GC 추적은 배제의 순서</b>라고 생각합니다. <b>최근 변경 → GC 로그 → Full GC 직후 Old 잔량 → 유형별 검증 → 힙 덤프</b>로 좁혀 들어갑니다."</li>
+    <li><b>Step 0을 강조한다</b>: "코드를 열기 전에 <b>어제까지 멀쩡했는지</b>부터 봅니다. 배포·설정·트래픽·<b>데이터 규모</b> 변화요. 배포 직후면 <b>롤백이 가장 빠른 진단</b>입니다."</li>
+    <li><b>결정적 분기를 말한다</b>: "GC 로그의 <b>before → after</b>를 봅니다. <b>안 비면 살아있는 객체가 많다는 뜻</b>이라 누수·용량이고, <b>잘 비면 죽을 객체가 Old까지 올라온 것</b>이라 승격 폭주·특이 원인입니다. <b>조치 방향이 정반대</b>라 이 분기를 먼저 합니다."</li>
+    <li><b>cause를 먼저 읽는 이유를 붙인다</b>: "덤프 전에 <b>cause</b>를 봅니다. <code>System.gc()</code>·Metaspace·humongous는 <b>힙 덤프를 봐도 안 보이는</b> 원인이라 먼저 배제해야 합니다."</li>
+    <li><b>코드/튜닝 경계로 닫는다</b>: "<b>GC는 죽은 객체만 회수</b>하고 옵션은 <b>생사를 바꾸지 못하므로</b>, 죽어야 할 객체가 안 죽는 문제는 <b>코드로만</b> 풀립니다. 튜닝은 <b>목표 지표를 정하고 한 번에 하나씩, 같은 부하로 재측정</b>하며 하고, <b>즉시 완화는 튜닝·근본 조치는 코드</b>로 병행합니다."</li>
+    <li><b>경험을 말할 때는 4단으로</b>: "<b>증상 → 추적 → 원인 → 조치와 검증</b>. 마지막 <b>검증(같은 지표가 어떻게 변했는가)</b>까지 말하는 것이 경험의 증거입니다."</li>
+  </ol>
+  <p style="margin:10px 0 0;font-size:.95rem"><mark>1·3번을 빼먹으면 나머지가 전부 "옵션 이름 나열"로 들린다.</mark> <b>순서 선언에 10초, 분기 설명에 20초, 경계와 검증에 30초.</b></p>
+</div>
+
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  Full GC 추적은 감이 아니라 <b>배제의 순서</b>다 — <b>최근 변경 / GC cause / Full GC 직후 Old 잔량</b>이라는 세 갈림길로 원인 유형을 좁히고(<b>안 비면 누수·용량, 잘 비면 승격 폭주·특이 원인</b>), <b>GC는 죽은 객체만 치울 수 있으므로 "죽어야 할 객체가 안 죽는" 문제는 코드로만 풀린다</b>는 것을 알고, 튜닝은 <b>목표 지표를 정한 뒤 한 번에 하나씩 바꿔 같은 부하로 재측정</b>하는 보조 수단으로 쓰는 사람이 "GC 튜닝 경험자"다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/01-java-kotlin/11-full-gc-troubleshooting.md</code> · 함께 볼 문서: GC 기초와 세대 구분(02) · G1GC vs ZGC(10) · JVM 힙·스레드 덤프 분석(23)</p>
+
+</main>
+</body>
+</html>
