@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>클러스터드 vs 세컨더리 인덱스 — PostgreSQL은 힙 + 전부 세컨더리, 그래도 PK 설계 2원칙은 살아남는다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">04 RDB · SQL &nbsp;|&nbsp; 기본⭐ &nbsp;|&nbsp; PostgreSQL 기준</span>
+  <h1>클러스터드 vs 세컨더리 인덱스<br><span class="sub">PostgreSQL은 힙 + 전부 세컨더리 — 그래도 PK 설계 2원칙은 살아남는다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"클러스터드 인덱스와 논클러스터드(세컨더리) 인덱스의 차이는? (InnoDB 기준)"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>PostgreSQL에는 클러스터드 인덱스가 없다.</b> 테이블은 정렬 없는 <b>힙(heap)</b>이고, PK를 포함한 <b>모든 인덱스</b>가 리프에 행의 물리 주소 <b>TID</b>(블록 번호 + 오프셋, 6바이트)를 담아 힙을 직접 가리키는 <b>세컨더리</b>다. InnoDB의 전제(테이블 = PK B+Tree, 세컨더리 리프 = PK 복제, 2단계 북마크 룩업)는 통째로 뒤집히는데 — <b>PK 설계 2원칙은 살아남는다.</b> ① <b>작게</b>: 세컨더리에 PK가 복제되는 곱셈은 없지만 <b>FK 컬럼 · FK 인덱스 · 조인 키</b>에는 PK가 그대로 들어간다. ② <b>단조 증가</b>: 힙은 랜덤 PK에 무관하지만 <b>PK B-tree의 무작위 삽입</b>은 페이지 분할 · 캐시 미스 · <code>full_page_writes</code> WAL 증폭을 그대로 일으킨다. 여기에 PG만의 셋째 비용 — <b>비-HOT UPDATE는 새 TID를 만들어 모든 인덱스를 갱신한다</b> — 가 붙는다. 비용은 "메모리 부하" 같은 뭉뚱그린 말 대신 <b>페이지 분할 · shared_buffers 적재율 · 랜덤 I/O · WAL 증폭</b>이라는 이름과 인과 사슬로 말해야 한다. <b>이름을 붙이는 순간 반박도 검증도 가능한 엔지니어링이 된다.</b>
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>PostgreSQL에서는 그 구분 자체가 성립하지 않는다</b> — 테이블은 <b>정렬 없는 힙</b>이고, <code>users_pkey</code>든 <code>idx_users_email</code>이든 리프 엔트리가 <b>(키, TID)</b>로 <b>생김새가 완전히 같다.</b> InnoDB의 어휘로 옮기면 <b>PK 인덱스를 포함해 전부 세컨더리</b>이고, 조회는 <b>인덱스 → TID → 힙 페치</b>의 1단계다(트리 재탐색이 없다).</div></li>
+    <li><span class="n">2</span><div><b>구조가 뒤집혔는데도 PK 설계 2원칙은 살아남는다</b> — ① <b>작게</b>: 세컨더리 복제 곱셈은 없지만 곱셈 계수가 <b>"자식 테이블(FK) 개수 × 자식 행 수"</b>로 <b>자리를 옮겼을 뿐</b>이다. ② <b>단조 증가</b>: 힙은 무관하지만 <b>삽입 위치를 키 값이 결정하는 PK B-tree</b>가 페이지 분할 · 인덱스 bloat · 캐시 오염 · WAL 증폭을 그대로 앓는다.</div></li>
+    <li><span class="n">3</span><div><b>여기에 PG만의 셋째 비용이 붙고, 비용은 이름으로 말한다</b> — UPDATE는 <b>새 튜플 = 새 TID</b>라서 <b>비-HOT이면 인덱스 N개 전부</b>에 새 엔트리를 꽂는다(HOT과 <code>fillfactor</code>로 완화). 그리고 "메모리에 부하가 생긴다"가 아니라 <b>shared_buffers 적재율 · 페이지 분할 · 워킹셋 · 랜덤 I/O · WAL FPI</b>라는 <b>이름의 사슬</b>로 말해야 검증도 반박도 가능해진다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">두 세계의 구조 — 클러스터드가 있는 쪽과 없는 쪽</a></li>
+    <li><a href="#s2">힙 · 라인 포인터 · <code>ctid</code> — PG의 어휘 세 개</a></li>
+    <li><a href="#s3">조회 경로 — 인덱스 → TID → 힙 페치</a></li>
+    <li><a href="#s4">비용에 이름 붙이기 — 등장인물 다섯</a></li>
+    <li><a href="#s5">원칙 ① 작게 — 곱셈 계수는 자리를 옮겼다</a></li>
+    <li><a href="#s6">원칙 ② 단조 증가 — 힙은 무관, B-tree는 앓는다</a></li>
+    <li><a href="#s7">셋째 비용 — 비-HOT UPDATE = 전 인덱스 갱신</a></li>
+    <li><a href="#s8">실무 사례 — "규모 유추 방지로 PK를 UUID로"</a></li>
+    <li><a href="#s9">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p style="margin-top:0"><b>질문</b>: "클러스터드 인덱스와 논클러스터드(세컨더리) 인덱스의 차이는? (InnoDB 기준)"</p>
+  <p><b>PostgreSQL 기준 재해석</b>: "PostgreSQL의 힙 구조와 InnoDB의 클러스터드 구조는 어떻게 다르고, 그 차이가 <b>PK 설계</b>와 <b>UPDATE 비용</b>에 어떤 영향을 주는가?"</p>
+  <p><b>출제 의도</b>: <b>저장 구조가 PK 선택을 어떻게 결정하는지</b>를 본다. InnoDB에서는 "세컨더리 인덱스가 PK를 품는 구조"에서, PostgreSQL에서는 "힙 + TID 포인터 + MVCC의 새 튜플" 구조에서 — <b>UUID PK가 왜(그리고 어디까지) 문제인지</b>가 여기서 나온다. <b>테이블 설계 첫 단추의 근거</b>를 확인하는 질문이다.</p>
+  <div class="callout trap"><span class="t">함정 — "리프에 뭐가 들었는지"를 암기해서 답하는 것</span>
+    묻는 것은 암기가 아니라 <b>도출</b>이다. 그 구조로부터 <b>"그래서 PK는 어떻게 설계해야 하는가"</b>를 스스로 끌어낼 수 있는지, 그리고 <b>"PG니까 UUID 써도 된다"는 반쪽 명제를 어디서 잘라 말할 수 있는지</b>를 본다.
+  </div>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>InnoDB 지식을 PostgreSQL에 그대로 오적용하는 것</b> → 1·5절에서 <b>"세컨더리 리프에 PK가 복제된다"는 명제가 PG에서는 성립하지 않음</b>을 도식과 엔트리 해부로 못 박고, <b>대신 어디로 자리를 옮겼는지</b>를 짚는다.<br>
+    ② <b>"PG는 힙이니까 UUID 괜찮다"로 건너뛰는 것</b> → 6절에서 <b>힙과 PK B-tree를 두 층으로 갈라</b>, 힙은 무관하지만 B-tree는 <b>분할 · 어긋남 · 워킹셋 · WAL</b> 네 갈래로 앓는다는 것을 보인다.<br>
+    ③ <b>비용을 "메모리 부하"로 뭉뚱그리는 것</b> → 4~6절에서 <b>이름 다섯 개를 정의하고 사슬로 잇는다.</b> 이름을 붙이면 <code>EXPLAIN (ANALYZE, BUFFERS)</code>로 <b>검증 가능한 주장</b>이 된다.
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">읽는 방법 — 이 문서는 "없다"에서 시작한다</span>
+  출발점이 <b>"PostgreSQL에는 클러스터드 인덱스가 없다"</b>인데, <b>없다는 말은 있는 쪽을 알아야 정보가 된다.</b> 그래서 1절은 <b>있는 쪽(InnoDB)부터</b> 세우고 나란히 놓는다. 이 문서 전체에서 MySQL 이야기는 <b>회색 "MySQL 대조" 상자</b>에만 담아 <b>섞이지 않게</b> 표시했다 — 면접에서도 같은 습관이 필요하다.
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 두 세계의 구조 — 클러스터드가 있는 쪽과 없는 쪽</h2>
+
+<h3>1-1. 먼저 클러스터드 인덱스가 무엇인지부터</h3>
+
+<p><b>클러스터드 인덱스(clustered index)</b>는 <b>인덱스의 리프에 행 자체가 들어 있는 구조</b>, 즉 <b>"테이블이 곧 하나의 인덱스"</b>인 저장 방식이다. 이름의 유래는 <b>"키 값이 가까운 행들이 디스크에서도 한 덩어리로 뭉쳐(cluster) 있다"</b>는 성질이다. MySQL/InnoDB가 이 방식을 쓴다 — 테이블은 PK 순으로 정렬된 B+Tree 하나이고, <b>리프 페이지를 왼쪽부터 읽으면 그게 곧 PK 순 전체 스캔</b>이다.</p>
+
+<p>여기서 두 가지가 따라 나온다. <b>첫째, PK로 조회하면 트리 하나만 타면 끝이다</b> — 리프에 도착한 순간 행 전체가 거기 있으니 더 갈 곳이 없다. <b>둘째, 세컨더리 인덱스의 리프에는 행이 없다.</b> 행은 클러스터드 쪽에만 있으니 세컨더리는 <b>"그 행을 클러스터드에서 어떻게 찾는지"</b>를 적어 둘 수밖에 없고, 그 값이 <b>PK</b>다. 그래서 세컨더리 조회는 트리를 두 번 탄다 — 이 2단계를 <b>북마크 룩업(bookmark lookup)</b>이라 부른다.</p>
+
+<p><b>PostgreSQL은 이 구조를 쓰지 않는다.</b> 테이블은 <b>힙(heap)</b> — 정렬 없이 행을 쌓아 두는 파일 — 이고, 인덱스는 전부 별도의 B-tree이며 리프에는 행이 아니라 <b>값과 행의 물리 주소</b>만 들어간다. 두 구조를 나란히 놓으면 이렇다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 480" role="img" aria-label="왼쪽은 MySQL InnoDB 구조로 테이블 자체가 PK 순 정렬 B플러스트리이고 리프에 행 전체가 들어 있으며 세컨더리 인덱스 리프에는 PK 값이 들어 있어 PK 트리를 루트부터 재탐색하는 2단계 북마크 룩업을 보여준다. 오른쪽은 PostgreSQL 구조로 정렬 없는 힙 파일 위에 PK 인덱스와 이메일 인덱스가 나란히 있고 둘 다 리프 엔트리가 값과 TID로 생김새가 같으며 같은 TID로 같은 힙 슬롯을 직접 가리킨다">
+    <defs>
+      <marker id="f1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="f1g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+      <marker id="f1b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <!-- ================= LEFT : InnoDB ================= -->
+    <rect x="16" y="16" width="536" height="448" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="284" y="42" font-size="14" font-weight="700" fill="#334155" text-anchor="middle">[A] MySQL InnoDB — 테이블이 곧 PK B+Tree</text>
+    <text x="284" y="62" font-size="11.5" fill="#64748b" text-anchor="middle">리프에 <tspan font-weight="700">행 전체</tspan>가 들어 있다 (16KB 페이지)</text>
+
+    <rect x="150" y="76" width="200" height="32" rx="6" fill="#fff" stroke="#94a3b8"/>
+    <text x="250" y="97" font-size="12" fill="#334155" text-anchor="middle" class="mono">│ 1 │ 5 │ 9 │</text>
+    <text x="142" y="97" font-size="10.5" fill="#64748b" text-anchor="end">브랜치</text>
+
+    <line x1="200" y1="108" x2="132" y2="136" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#f1g)"/>
+    <line x1="300" y1="108" x2="340" y2="136" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#f1g)"/>
+
+    <text x="30" y="132" font-size="10.5" fill="#64748b">리프 = 행 전체</text>
+    <rect x="30" y="140" width="200" height="62" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="42" y="163" font-size="11" fill="#334155" class="mono">1, a@x.com, 서울</text>
+    <text x="42" y="185" font-size="11" fill="#334155" class="mono">2, b@y.com, 부산</text>
+    <rect x="242" y="140" width="200" height="62" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="254" y="163" font-size="11" fill="#334155" class="mono">5, e@x.com, 대전</text>
+    <text x="254" y="185" font-size="11" fill="#334155" class="mono">7, c@z.com, 광주</text>
+
+    <text x="236" y="222" font-size="11.5" fill="#475569" text-anchor="middle">리프를 왼쪽부터 이어 읽으면 <tspan font-weight="700">그게 곧 PK 순 전체 스캔</tspan></text>
+
+    <rect x="30" y="248" width="300" height="66" rx="8" fill="#fff" stroke="#dc2626"/>
+    <text x="42" y="268" font-size="11.5" fill="#b91c1c" font-weight="700">idx_users_email (세컨더리)</text>
+    <text x="42" y="296" font-size="11.5" fill="#334155" class="mono">│ 'c@z.com' │ PK=7 │</text>
+    <text x="344" y="268" font-size="10.5" fill="#b91c1c">행 주소가 아니라</text>
+    <text x="344" y="284" font-size="10.5" fill="#b91c1c" font-weight="700">PK "값"을 적어 둔다</text>
+    <text x="344" y="304" font-size="10.5" fill="#64748b">① 여기서 PK=7을 얻고</text>
+
+    <path d="M336 281 L 500 281 L 500 92 L 358 92" fill="none" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f1r)"/>
+    <text x="514" y="192" font-size="10.5" fill="#b91c1c" font-weight="700" transform="rotate(-90 514 192)" text-anchor="middle">② 루트부터 트리 재탐색</text>
+
+    <rect x="30" y="330" width="506" height="120" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <text x="44" y="354" font-size="12.5" fill="#b91c1c" font-weight="700">2단계 북마크 룩업 — 세컨더리 리프에는 행이 없다</text>
+    <text x="44" y="378" font-size="11.5" fill="#475569">행은 클러스터드 쪽에만 있으니, 세컨더리는 "그 행을 클러스터드에서</text>
+    <text x="44" y="396" font-size="11.5" fill="#475569">어떻게 찾는지"를 적어 둘 수밖에 없고 — 그 값이 PK다.</text>
+    <text x="44" y="420" font-size="11.5" fill="#b91c1c" font-weight="700">→ PK가 크면 모든 세컨더리 리프가 그만큼 비대해진다 (곱셈 계수)</text>
+    <text x="44" y="440" font-size="11.5" fill="#166534">↔ 대신 PK 조회는 트리 하나로 끝난다 (리프에 도착하면 행이 거기 있다)</text>
+
+    <!-- ================= RIGHT : PostgreSQL ================= -->
+    <rect x="568" y="16" width="536" height="448" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="836" y="42" font-size="14" font-weight="700" fill="#1d4ed8" text-anchor="middle">[B] PostgreSQL — 정렬 없는 힙 + 전부 세컨더리</text>
+    <text x="836" y="62" font-size="11.5" fill="#1e40af" text-anchor="middle">리프에 <tspan font-weight="700">행이 아니라 (값, 물리 주소 TID)</tspan> (8KB 페이지)</text>
+
+    <rect x="584" y="76" width="250" height="98" rx="8" fill="#fff" stroke="#2563eb"/>
+    <text x="596" y="96" font-size="11.5" fill="#1d4ed8" font-weight="700">users_pkey (id B-tree)</text>
+    <text x="596" y="120" font-size="11" fill="#334155" class="mono">│ 1 │ (0,1)    │</text>
+    <text x="596" y="140" font-size="11" fill="#334155" class="mono">│ 2 │ (0,2)    │</text>
+    <text x="596" y="160" font-size="11" fill="#334155" class="mono">│ 7 │ (1042,7) │</text>
+
+    <rect x="844" y="76" width="250" height="98" rx="8" fill="#fff" stroke="#2563eb"/>
+    <text x="856" y="96" font-size="11.5" fill="#1d4ed8" font-weight="700">idx_users_email (B-tree)</text>
+    <text x="856" y="120" font-size="11" fill="#334155" class="mono">│ 'a@x.com' │ (0,1)    │</text>
+    <text x="856" y="140" font-size="11" fill="#334155" class="mono">│ 'b@y.com' │ (0,2)    │</text>
+    <text x="856" y="160" font-size="11" fill="#334155" class="mono">│ 'c@z.com' │ (1042,7) │</text>
+
+    <line x1="700" y1="178" x2="878" y2="276" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f1b)"/>
+    <line x1="980" y1="178" x2="922" y2="276" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#f1b)"/>
+    <text x="836" y="214" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">같은 TID → 같은 슬롯</text>
+
+    <rect x="584" y="252" width="510" height="104" rx="10" fill="#fff" stroke="#2563eb"/>
+    <text x="596" y="272" font-size="11.5" fill="#1d4ed8" font-weight="700">users 힙 파일 (정렬 없음)</text>
+
+    <rect x="596" y="282" width="234" height="64" rx="7" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="606" y="298" font-size="10.5" fill="#64748b" font-weight="700">블록 0</text>
+    <rect x="604" y="304" width="106" height="34" rx="5" fill="#fff" stroke="#cbd5e1"/>
+    <text x="657" y="325" font-size="9.5" fill="#334155" text-anchor="middle" class="mono">슬롯1 → 1, a@…</text>
+    <rect x="716" y="304" width="106" height="34" rx="5" fill="#fff" stroke="#cbd5e1"/>
+    <text x="769" y="325" font-size="9.5" fill="#334155" text-anchor="middle" class="mono">슬롯2 → 2, b@…</text>
+
+    <rect x="846" y="282" width="234" height="64" rx="7" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="856" y="298" font-size="10.5" fill="#64748b" font-weight="700">블록 1042</text>
+    <rect x="854" y="304" width="126" height="34" rx="5" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="917" y="325" font-size="9.5" fill="#1d4ed8" text-anchor="middle" class="mono" font-weight="700">슬롯7 → 7, c@z.com</text>
+
+    <rect x="584" y="368" width="510" height="90" rx="10" fill="#fff" stroke="#bfdbfe"/>
+    <text x="598" y="392" font-size="12.5" fill="#1d4ed8" font-weight="700">PK 인덱스와 email 인덱스의 생김새가 완전히 같다</text>
+    <text x="598" y="416" font-size="11.5" fill="#1e40af">→ "클러스터드 vs 세컨더리" 구분 자체가 성립하지 않는다 — <tspan font-weight="700">전부 세컨더리</tspan></text>
+    <text x="598" y="440" font-size="11.5" fill="#166534">조회는 <tspan font-weight="700">인덱스 → TID → 힙 페치</tspan> 1단계. 대신 PK 조회에도 힙 페치가 붙는다</text>
+  </svg>
+  <figcaption>[B]에서 <b>PK 인덱스와 email 인덱스가 구조적으로 구별되지 않는다</b>는 점이 이 문서 전체의 출발점이다. 둘 다 <b>"값 + 힙의 주소"</b>이고 <b>어느 쪽도 행을 품고 있지 않다.</b> PostgreSQL 문서에서 "세컨더리 인덱스"가 사실상 <b>"인덱스"와 동의어</b>처럼 쓰이는 이유가 이것이다. 참고로 힙에서 <b>새 행이 어느 페이지에 들어갈지는 PK 값이 아니라 FSM(Free Space Map)이 정한다</b> — 이 한 줄이 6절의 결론을 절반쯤 미리 말해 준다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>PostgreSQL 저장 구조 3줄 각인 — <span style="color:#2563eb">이 세 줄에서 나머지가 전부 도출된다</span></h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">① 테이블은 힙이다</div><div class="d">정렬 없이 <b>도착 순으로</b> 쌓인다. 삽입 위치는 <b>PK가 아니라 FSM</b>이 정한다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 모든 인덱스 리프 = (키, TID)</div><div class="d">PK 인덱스도 예외가 아니다. <b>행을 품은 인덱스도, 다른 키가 복제되는 인덱스도 없다.</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ <code>ctid</code>는 UPDATE로 바뀐다</div><div class="d">새 버전은 <b>새 주소</b>에 쓰인다. 이 한 줄이 <b>PG 인덱스 유지 비용의 뿌리</b>다(7절).</div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">①에서 <b>"랜덤 PK가 테이블을 흩뜨리지 않는다"</b>가, ②에서 <b>"세컨더리 복제 곱셈이 없다"</b>가,<br>③에서 <b>"비-HOT UPDATE는 모든 인덱스를 갱신한다"</b>가 나온다</div>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 힙 · 라인 포인터 · <code>ctid</code> — PG의 어휘 세 개</h2>
+
+<h3>2-1. 페이지 한 장을 열어 보면</h3>
+
+<p>PostgreSQL의 테이블 파일은 <b>8KB 페이지(블록)의 나열</b>이다. 행(튜플)은 정렬 없이, <b>빈 공간이 있는 페이지</b>에 들어간다. 어느 페이지에 빈 공간이 있는지는 <b>Free Space Map(FSM)</b> — 테이블마다 딸려 있는 "페이지별 남은 공간 요약본" — 이 알려주고, 새로 붙는 행은 대개 파일 끝 쪽 페이지에 쌓인다.</p>
+
+<div class="rule">이 문서 전체를 관통하는 한 줄 — <b>INSERT 위치를 정하는 것은 PK 값이 아니라 FSM이다</b><br><span style="font-size:.92rem;font-weight:600">그래서 PK가 아무리 무작위여도 <b>힙은 흔들리지 않는다</b> (6절의 결론 절반)</span></div>
+
+<figure>
+  <svg viewBox="0 0 900 344" role="img" aria-label="8KB 힙 페이지 한 장의 내부 구조. 왼쪽부터 페이지 헤더 24바이트, 라인 포인터 슬롯 배열, 가운데 빈 공간, 오른쪽 끝부터 역방향으로 채워지는 튜플 데이터가 있고, 각 라인 포인터가 해당 튜플을 가리키는 화살표가 그려져 있다. 오른쪽에는 TID가 블록 번호 4바이트와 라인 포인터 번호 2바이트로 구성된 6바이트 주소라는 설명이 있다">
+    <defs>
+      <marker id="f2a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="320" y="30" font-size="14" font-weight="700" fill="#1f2937" text-anchor="middle">힙 페이지 한 장(8KB)의 내부 — 슬롯이라는 한 겹</text>
+
+    <rect x="40" y="52" width="560" height="200" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+
+    <rect x="40" y="52" width="62" height="200" rx="0" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="71" y="152" font-size="10.5" fill="#64748b" text-anchor="middle" transform="rotate(-90 71 152)">페이지 헤더 24B</text>
+
+    <text x="112" y="78" font-size="10.5" fill="#64748b">라인 포인터(line pointer) 배열 — 슬롯 4B씩, <tspan font-weight="700">앞에서 뒤로</tspan></text>
+    <rect x="112" y="86" width="42" height="30" rx="5" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="133" y="106" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">1</text>
+    <rect x="158" y="86" width="42" height="30" rx="5" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="179" y="106" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">2</text>
+    <rect x="204" y="86" width="42" height="30" rx="5" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="225" y="106" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">3</text>
+    <rect x="250" y="86" width="42" height="30" rx="5" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    <text x="271" y="106" font-size="10" fill="#94a3b8" text-anchor="middle">…</text>
+
+    <rect x="300" y="130" width="140" height="112" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+    <text x="370" y="182" font-size="11" fill="#94a3b8" text-anchor="middle">빈 공간</text>
+    <text x="370" y="200" font-size="10" fill="#94a3b8" text-anchor="middle">(fillfactor가 남기는 여유)</text>
+
+    <text x="596" y="78" font-size="10.5" fill="#64748b" text-anchor="end">행 데이터 — <tspan font-weight="700">뒤에서 앞으로</tspan></text>
+    <rect x="456" y="86" width="140" height="44" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="526" y="113" font-size="11" fill="#166534" text-anchor="middle" class="mono">튜플 3</text>
+    <rect x="456" y="136" width="140" height="44" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="526" y="163" font-size="11" fill="#166534" text-anchor="middle" class="mono">튜플 2</text>
+    <rect x="456" y="186" width="140" height="44" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="526" y="213" font-size="11" fill="#166534" text-anchor="middle" class="mono">튜플 1</text>
+
+    <path d="M133 118 C 133 250 300 262 452 208" fill="none" stroke="#2563eb" stroke-width="1.4" marker-end="url(#f2a)"/>
+    <path d="M179 118 C 179 220 320 200 452 158" fill="none" stroke="#2563eb" stroke-width="1.4" marker-end="url(#f2a)"/>
+    <path d="M225 118 C 225 150 330 120 452 108" fill="none" stroke="#2563eb" stroke-width="1.4" marker-end="url(#f2a)"/>
+
+    <rect x="620" y="52" width="262" height="118" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="634" y="74" font-size="12" fill="#1d4ed8" font-weight="700">TID (tuple identifier)</text>
+    <text x="634" y="96" font-size="11" fill="#1e40af">= (블록 번호 4B, 슬롯 번호 2B)</text>
+    <text x="634" y="114" font-size="11.5" fill="#1d4ed8" font-weight="700">= 6바이트</text>
+    <text x="634" y="138" font-size="11.5" fill="#334155" class="mono">ctid = (1042, 7)</text>
+    <text x="634" y="158" font-size="11" fill="#1e40af">= 책의 <tspan font-weight="700">"173쪽 7번째 줄"</tspan></text>
+
+    <rect x="620" y="182" width="262" height="70" rx="10" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="634" y="204" font-size="12" fill="#166534" font-weight="700">슬롯을 한 겹 두는 이유</text>
+    <text x="634" y="226" font-size="11" fill="#15803d">페이지 <tspan font-weight="700">안에서</tspan> 행이 움직여도</text>
+    <text x="634" y="244" font-size="11" fill="#15803d">바깥에서 쓰는 <tspan font-weight="700">주소는 안 바뀐다</tspan></text>
+
+    <rect x="40" y="276" width="842" height="52" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="56" y="298" font-size="12" fill="#b45309" font-weight="700">라인 포인터는 앞에서 뒤로, 행 데이터는 뒤에서 앞으로 — 가운데서 만난다</text>
+    <text x="56" y="318" font-size="11.5" fill="#92400e">둘이 만나면 그 페이지는 "가득 참"이고, 그 다음 행은 다른 페이지로 간다</text>
+  </svg>
+  <figcaption>페이지 머리에 <b>"1번 슬롯은 몇 바이트 지점, 2번 슬롯은 몇 바이트 지점"</b> 하는 목차가 있고, 실제 행 데이터는 <b>페이지 뒤쪽부터</b> 채워진다. 이 <b>한 겹의 간접 참조</b> 덕분에 페이지 내부에서 행이 정리·이동되어도 <b>바깥(인덱스)이 들고 있는 주소는 그대로</b> 유지된다.</figcaption>
+</figure>
+
+<h3>2-2. <code>ctid</code> — 행의 물리 주소, 그리고 반드시 붙여야 할 성질 하나</h3>
+
+<p>행의 주소는 <b>TID = (블록 번호 4바이트, 라인 포인터 번호 2바이트) = 6바이트</b>다. 시스템 컬럼 <code>ctid</code>로 직접 볼 수 있다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> 물리 주소를 눈으로 확인하기</div>
+<pre><code><span class="kw">SELECT</span> ctid, id, email <span class="kw">FROM</span> users <span class="kw">LIMIT</span> 3;
+<span class="cm">--   ctid    | id | email
+--  (0,1)    |  1 | a@x.com      -- 0번 블록의 1번 라인 포인터
+--  (0,2)    |  2 | b@y.com
+--  (1042,7) |  7 | c@z.com      -- 1042번 블록의 7번 라인 포인터</span></code></pre>
+
+<div class="memo red">
+  <h4><code>ctid</code>는 <span style="color:#dc2626">불변 식별자가 아니다</span> — 이 한 줄이 7절 전체의 뿌리다</h4>
+  <p>PostgreSQL의 UPDATE는 행을 <b>제자리에서 고치지 않는다.</b> <b>새 튜플 버전을 힙에 삽입하고</b>(그러므로 <b>새 <code>ctid</code></b>), 옛 튜플에는 <b>"이 트랜잭션이 지웠음" 표시만</b> 남긴다. <b>같은 논리적 행인데 UPDATE 한 번에 물리 주소가 바뀐다.</b></p>
+<pre style="margin:8px 0 0"><code><span class="kw">SELECT</span> ctid, id, nickname <span class="kw">FROM</span> users <span class="kw">WHERE</span> id = 7;
+<span class="cm">--  (1042,7) |  7 | 오리</span>
+
+<span class="ln-bad"><span class="kw">UPDATE</span> users <span class="kw">SET</span> nickname = <span class="st">'거위'</span> <span class="kw">WHERE</span> id = 7;</span>
+
+<span class="kw">SELECT</span> ctid, id, nickname <span class="kw">FROM</span> users <span class="kw">WHERE</span> id = 7;
+<span class="cm">--  (1042,9) |  7 | 거위     ← 같은 행인데 ctid가 바뀌었다 (새 튜플 버전)</span></code></pre>
+  <p style="margin-bottom:0"><b>그러면 곤란한 일이 생긴다 — 모든 인덱스가 옛 TID를 가리키고 있기 때문이다.</b> 새 버전을 찾아가게 하려면 원칙적으로 <b>인덱스마다 (키, 새 TID) 엔트리를 하나씩 더 꽂아야</b> 한다. 어떤 컬럼을 고쳤는지와 <b>무관하게, 인덱스 N개 전부에.</b> <b>"인덱스가 많으면 UPDATE가 비싸진다"는 흔한 말의 정확한 메커니즘이 이것이다</b>(자세한 것은 7절).</p>
+</div>
+
+<h3>2-3. 왜 논리 포인터(PK)가 아니라 물리 주소(TID)인가</h3>
+
+<p>InnoDB가 세컨더리 리프에 (행 주소가 아니라) PK를 넣는 이유는 <b>"클러스터드 인덱스가 정렬을 유지하느라 행을 물리적으로 옮기기 때문"</b>이다. 페이지가 가득 차 분할되면 행 절반이 새 페이지로 이사한다. 그때 <b>물리 주소를 적어 둔 세컨더리가 있다면 전부 고쳐야</b> 하는데, <b>PK 값을 적어 뒀다면 고칠 것이 없다.</b></p>
+
+<p><b>PostgreSQL의 힙은 정렬을 유지하지 않으니 행이 저절로 이동하는 일이 없다.</b> 옮길 일이 없으면 주소를 직접 적어도 깨지지 않는다 — 그래서 TID다.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>InnoDB의 책 — 개정판에서 쪽수가 밀린다</h4>
+    <p style="margin:0;font-size:.94rem">그래서 찾아보기에 <b>"4.2절"</b>이라는 <b>논리 포인터</b>를 적는다. 본문이 어디로 옮겨가도 <b>찾아보기는 고칠 필요가 없다.</b> 대신 읽는 사람은 <b>목차에서 4.2절이 몇 쪽인지 다시 찾아야</b> 한다 — 이것이 <b>북마크 룩업</b>이다.</p>
+  </div>
+  <div class="pane b">
+    <h4>PostgreSQL의 책 — 글을 절대 옮기지 않는다</h4>
+    <p style="margin:0;font-size:.94rem">그래서 <b>"173쪽 7번째 줄"</b>이라는 <b>물리 주소</b>를 적어도 된다. <b>한 번에 그 자리로 펼친다.</b> 다만 규칙이 하나 더 있다 — <b>"고칠 때 그 자리에 덧쓰지 않고 새 자리에 새로 쓴 뒤 옛 글에 취소선을 긋는다"</b>. 그러면 <b>찾아보기에 새 줄이 하나 더</b> 필요해진다.</p>
+  </div>
+</div>
+
+<p style="margin-top:12px">이 비유의 마지막 조각까지 붙이면 — <b>취소선 그은 옛 글을 지우는 것이 VACUUM</b>이다. 즉 <b>PostgreSQL의 UPDATE 비용, 인덱스 bloat, VACUUM 부담은 전부 "옮기지 않고 새로 쓴다"는 한 가지 결정에서 파생된다.</b></p>
+
+<table class="wide">
+  <caption>구조 대조표 — 이 표의 <b>왼쪽 열을 순서대로 말하는 것</b>이 이 질문의 완결된 답이다.</caption>
+  <thead><tr><th style="width:170px">항목</th><th style="width:400px">PostgreSQL (힙)</th><th>MySQL InnoDB (클러스터드)</th></tr></thead>
+  <tbody>
+    <tr><th>테이블 자체</th><td>정렬 없는 <b>힙 페이지 나열</b> (8KB)</td><td>PK 순 정렬 <b>B+Tree</b>, 리프 = 행 (16KB)</td></tr>
+    <tr class="hl"><th>PK 인덱스 리프</th><td>(PK 값, <b>TID</b>)</td><td><b>행 전체</b></td></tr>
+    <tr class="hl"><th>세컨더리 리프</th><td>(키, <b>TID</b>) — PK 인덱스와 같은 모양</td><td>(키, <b>PK 값</b>) — PK가 복제된다</td></tr>
+    <tr><th>세컨더리 조회</th><td class="good">인덱스 → TID로 힙 점프 (1회)</td><td class="bad">세컨더리 → PK 트리 재탐색 (2회, 북마크 룩업)</td></tr>
+    <tr><th>PK 조회</th><td class="bad">인덱스 → 힙 페치 (한 번 더 읽는다)</td><td class="good">트리 하나로 끝</td></tr>
+    <tr><th>행 이동</th><td>없음 (UPDATE = 새 튜플 = <b>새 TID</b>)</td><td>페이지 분할 시 이동 (PK 불변이라 세컨더리 무영향)</td></tr>
+    <tr class="hl"><th>갱신 시 인덱스</th><td class="bad">비-HOT이면 <b>모든</b> 인덱스에 새 엔트리</td><td class="good"><b>바뀐 컬럼의</b> 인덱스만</td></tr>
+  </tbody>
+</table>
+
+<div class="callout info">
+  <span class="t">MySQL 대조 — "클러스터드 테이블"은 RDB의 보편이 아니라 엔진의 설계 선택이다</span>
+  InnoDB는 "테이블 = 클러스터드 B+Tree"라 <b>테이블당 정확히 하나</b>이고, <b>PK가 없으면 첫 NOT NULL UNIQUE 인덱스를, 그것도 없으면 6바이트 숨은 row id를</b> 클러스터드 축으로 삼는다. <b>읽기 한 단계를 내주고 쓰기 안정성을 산 설계</b>다. SQL Server는 테이블마다 클러스터드/힙을 고른다. 즉 <b>"테이블은 원래 PK 순으로 정렬돼 있다"는 감각 자체가 InnoDB에서 온 습관</b>이다.
+</div>
+
+<h3>2-4. 그럼 PostgreSQL에서 "물리 순서"는 무슨 뜻인가</h3>
+
+<p>PostgreSQL은 힙의 순서를 <b>보장하지 않지만 관찰은 한다.</b> <code>ANALYZE</code>가 컬럼마다 <code>pg_stats.correlation</code>을 계산하는데, 이 값은 −1에서 1 사이로 <b>그 컬럼의 값 순서와 힙의 물리 순서가 얼마나 일치하는지</b>를 나타낸다. 플래너는 이 값으로 Index Scan의 힙 접근을 <b>"순차에 가까움(비용 낮음)"에서 "완전 랜덤(<code>random_page_cost</code>)"</b> 사이 어디쯤으로 추정한다. 시간 순으로 쌓이는 <code>bigint IDENTITY</code>나 <code>created_at</code>은 <b>1 근처</b>, 무작위 UUID 컬럼은 <b>0 근처</b>다.</p>
+
+<div class="memo red">
+  <h4><code>CLUSTER</code> 명령은 <span style="color:#dc2626">"PostgreSQL의 클러스터드 인덱스"가 아니다</span></h4>
+  <p><code>CLUSTER orders USING orders_pkey;</code>는 힙을 그 인덱스 순으로 <b>1회 재작성</b>한다. 이름 때문에 오해하기 쉬운데 이것은 <b>"한 번 정렬해 두기"</b>이지 구조를 바꾸는 명령이 아니다. 제약이 셋이다.</p>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">잠금</div><div class="d">ACCESS EXCLUSIVE — <b>읽기까지 막힌다</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">지속성 없음</div><div class="d">이후 삽입되는 행은 <b>다시 무질서해진다</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">유지 메커니즘 없음</div><div class="d">순서를 <b>지켜주는 장치가 없다</b>(무중단은 <code>pg_repack --order-by</code>)</div></div>
+  </div>
+  <p style="margin-bottom:0">그래서 PostgreSQL에서 "정렬된 물리 순서"의 효과는 <b>명령이 아니라 조합</b>으로 얻는다 — ① <b>삽입 순서가 곧 조회 순서가 되게 키를 설계</b>해 correlation을 높게 유지하고, ② <b>커버링 인덱스 + Index Only Scan</b>으로 힙 접근 자체를 없애고, ③ 시계열이면 파티셔닝에 <b>BRIN</b>(페이지 범위마다 최솟값·최댓값만 기록하는 초소형 인덱스 — <b>correlation이 높을 때만 쓸모가 있다</b>)을 얹는다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 조회 경로 — 인덱스 → TID → 힙 페치</h2>
+
+<p><code>WHERE email = 'c@z.com'</code>은 ① <code>idx_users_email</code>을 루트에서 리프까지 내려가 <code>(1042,7)</code>을 얻고 ② <b>1042번 블록의 7번 슬롯을 읽는다.</b> InnoDB의 2단계처럼 <b>"다른 트리를 처음부터 다시 탐색"하는 게 아니라 주소를 보고 한 번에 점프</b>한다. 이 두 번째 단계를 <b>힙 페치(heap fetch)</b>라 부른다.</p>
+
+<div class="callout warn">
+  <span class="t">대칭적인 대가 — PK로 조회해도 힙 페치는 똑같이 붙는다</span>
+  InnoDB에서 PK 조회는 <b>리프가 곧 행</b>이라 페치가 없지만, PostgreSQL에서는 <b>PK 인덱스도 주소만 갖고 있으므로</b> 힙을 한 번 더 읽어야 한다. <b>"세컨더리가 빨라진 만큼 PK가 한 단계 늘었다"</b>는 것이 이 설계의 교환 조건이다.
+</div>
+
+<div class="codehead plain"><span class="tag">EXPLAIN</span> 두 단계가 <code>Buffers</code>에 그대로 보인다</div>
+<pre><code><span class="kw">EXPLAIN</span> (ANALYZE, BUFFERS)
+<span class="kw">SELECT</span> * <span class="kw">FROM</span> users <span class="kw">WHERE</span> email = <span class="st">'c@z.com'</span>;
+
+ Index Scan using idx_users_email on users  (cost=0.43..8.45 rows=1 width=120)
+                                             (actual rows=1 loops=1)
+   Index Cond: (email = <span class="st">'c@z.com'</span>::text)
+<span class="ln-good">   Buffers: shared hit=4          <span class="cm">-- 인덱스 3장(루트→브랜치→리프) + 힙 1장</span></span></code></pre>
+
+<p>힙 페치가 <b>항상 따라붙기 때문에</b> PostgreSQL은 이를 줄이는 장치를 둘 갖고 있다. 세 경로를 한 장에 놓으면 이렇다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 306" role="img" aria-label="힙 접근의 세 경로 비교. 왼쪽 Index Scan은 인덱스에서 얻은 TID 순서대로 힙 블록을 무작위로 오간다. 가운데 Bitmap Heap Scan은 TID를 모두 모아 블록 번호 순으로 정렬한 뒤 각 블록을 한 번씩만 방문한다. 오른쪽 Index Only Scan은 visibility map을 확인하고 힙을 아예 읽지 않는다">
+    <defs>
+      <marker id="f3a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="f3b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <!-- panel 1 -->
+    <rect x="16" y="16" width="352" height="274" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="192" y="40" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">Index Scan</text>
+    <text x="192" y="58" font-size="11" fill="#6b7280" text-anchor="middle">TID를 얻는 즉시 힙으로 점프</text>
+    <rect x="36" y="70" width="312" height="38" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="192" y="94" font-size="11.5" fill="#1d4ed8" text-anchor="middle">인덱스 리프 → (1042,7) (13,2) (1042,9) (7,4)</text>
+    <line x1="150" y1="110" x2="230" y2="192" stroke="#dc2626" stroke-width="1.5" marker-end="url(#f3a)"/>
+    <line x1="170" y1="110" x2="70" y2="192" stroke="#dc2626" stroke-width="1.5" marker-end="url(#f3a)"/>
+    <line x1="200" y1="110" x2="288" y2="192" stroke="#dc2626" stroke-width="1.5" marker-end="url(#f3a)"/>
+    <line x1="220" y1="110" x2="128" y2="192" stroke="#dc2626" stroke-width="1.5" marker-end="url(#f3a)"/>
+    <g fill="#f1f5f9" stroke="#94a3b8">
+      <rect x="36" y="196" width="52" height="44" rx="6"/><rect x="94" y="196" width="52" height="44" rx="6"/>
+      <rect x="152" y="196" width="52" height="44" rx="6"/><rect x="210" y="196" width="52" height="44" rx="6"/>
+      <rect x="268" y="196" width="52" height="44" rx="6"/>
+    </g>
+    <text x="192" y="258" font-size="10.5" fill="#6b7280" text-anchor="middle">힙 블록들</text>
+    <text x="192" y="278" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">같은 페이지를 여러 번 오갈 수 있다 (랜덤 I/O)</text>
+
+    <!-- panel 2 -->
+    <rect x="384" y="16" width="352" height="274" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="560" y="40" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">Bitmap Heap Scan</text>
+    <text x="560" y="58" font-size="11" fill="#6b7280" text-anchor="middle">TID를 다 모아 <tspan font-weight="700">블록 번호 순으로 정렬</tspan> 후 방문</text>
+    <rect x="404" y="70" width="312" height="38" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="94" font-size="11.5" fill="#1d4ed8" text-anchor="middle">TID 비트맵 → (7,4) (13,2) (1042,7) (1042,9)</text>
+    <line x1="440" y1="112" x2="430" y2="190" stroke="#2563eb" stroke-width="1.5" marker-end="url(#f3b)"/>
+    <line x1="500" y1="112" x2="488" y2="190" stroke="#2563eb" stroke-width="1.5" marker-end="url(#f3b)"/>
+    <line x1="560" y1="112" x2="546" y2="190" stroke="#2563eb" stroke-width="1.5" marker-end="url(#f3b)"/>
+    <line x1="620" y1="112" x2="604" y2="190" stroke="#2563eb" stroke-width="1.5" marker-end="url(#f3b)"/>
+    <line x1="680" y1="112" x2="662" y2="190" stroke="#2563eb" stroke-width="1.5" marker-end="url(#f3b)"/>
+    <g fill="#dbeafe" stroke="#2563eb">
+      <rect x="404" y="196" width="52" height="44" rx="6"/><rect x="462" y="196" width="52" height="44" rx="6"/>
+      <rect x="520" y="196" width="52" height="44" rx="6"/><rect x="578" y="196" width="52" height="44" rx="6"/>
+      <rect x="636" y="196" width="52" height="44" rx="6"/>
+    </g>
+    <text x="560" y="258" font-size="10.5" fill="#6b7280" text-anchor="middle">왼쪽에서 오른쪽으로 한 번씩</text>
+    <text x="560" y="278" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">랜덤 접근이 순차에 가까워진다</text>
+
+    <!-- panel 3 -->
+    <rect x="752" y="16" width="352" height="274" rx="12" fill="#fff" stroke="#e5e7eb"/>
+    <text x="928" y="40" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">Index Only Scan</text>
+    <text x="928" y="58" font-size="11" fill="#6b7280" text-anchor="middle">필요한 컬럼이 전부 인덱스 안에 있을 때</text>
+    <rect x="772" y="70" width="312" height="38" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="928" y="94" font-size="11.5" fill="#166534" text-anchor="middle">인덱스 리프에서 값까지 다 얻었다</text>
+    <rect x="800" y="126" width="256" height="34" rx="7" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="928" y="148" font-size="11" fill="#b45309" text-anchor="middle">visibility map: 이 페이지 <tspan font-weight="700">"모두 가시"</tspan>?</text>
+    <g fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="5 4">
+      <rect x="772" y="196" width="52" height="44" rx="6"/><rect x="830" y="196" width="52" height="44" rx="6"/>
+      <rect x="888" y="196" width="52" height="44" rx="6"/><rect x="946" y="196" width="52" height="44" rx="6"/>
+      <rect x="1004" y="196" width="52" height="44" rx="6"/>
+    </g>
+    <text x="928" y="224" font-size="14" fill="#16a34a" text-anchor="middle" font-weight="700">힙을 아예 안 읽는다</text>
+    <text x="928" y="258" font-size="10.5" fill="#6b7280" text-anchor="middle">예외가 몇 번 났는지 = 계획의 <tspan class="mono">Heap Fetches: N</tspan></text>
+    <text x="928" y="278" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">힙 페치를 0으로 만드는 유일한 경로</text>
+  </svg>
+  <figcaption><b>Bitmap Heap Scan</b>은 인덱스가 수천 건 이상을 돌려줄 때 플래너가 고르는 방식으로, <b>같은 페이지를 여러 번 오가지 않게</b> TID를 정렬해 방문한다. <b>Index Only Scan</b>은 필요한 컬럼이 전부 인덱스에 있고 그 힙 페이지가 <b>visibility map</b>(페이지 단위로 "이 페이지의 모든 튜플이 모든 트랜잭션에 보인다"를 표시해 둔 비트맵)에 <b>"모두 가시"</b>로 찍혀 있을 때만 성립한다 — <b>노드 이름이 찍혔다고 힙을 안 읽은 것이 아니라, <code>Heap Fetches</code>가 0이어야 안 읽은 것</b>이다.</figcaption>
+</figure>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 비용에 이름 붙이기 — 등장인물 다섯</h2>
+
+<p><b>여기가 이 문서의 심장이다.</b> 구조가 바뀌었으니 PK 설계 2원칙을 <b>PostgreSQL 구조에서 다시 도출</b>해야 하고, 그 비용을 뭉뚱그리지 않고 <b>이름 → 사슬</b>로 말할 수 있어야 한다.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>"메모리에 부하가 생긴다"</h4>
+    <p style="margin:0;font-size:.94rem">확인할 방법이 없다. <b>반박할 고리도, 검증할 지점도 없다.</b> 그래서 <b>인상 진술</b>로 들린다.</p>
+  </div>
+  <div class="pane g">
+    <h4>"페이지당 엔트리 수가 줄어 shared_buffers 적재율이 떨어지고, 캐시 미스가 디스크 I/O로 번진다"</h4>
+    <p style="margin:0;font-size:.94rem"><b>고리마다 반박할 수 있고</b>, <code>EXPLAIN (ANALYZE, BUFFERS)</code>로 <b>검증할 수 있다.</b></p>
+  </div>
+</div>
+
+<div class="rule ok">이름을 붙이는 순간 <b>엔지니어링</b>이 된다 — 이 절의 방법론은 이 한 줄이다</div>
+
+<div class="memo green">
+  <h4>비용의 이름 다섯 — <b>적 · 워 · 분 · 랜 · 왈</b></h4>
+  <div class="chain">
+    <span class="chip b">적재율</span><span class="arrow">·</span><span class="chip b">워킹셋</span><span class="arrow">·</span><span class="chip r">분할</span><span class="arrow">·</span><span class="chip r">랜덤 I/O</span><span class="arrow">·</span><span class="chip w">WAL(FPI)</span>
+  </div>
+  <div class="grid g3" style="margin-top:8px">
+    <div class="tile"><div class="k">적 — shared_buffers 적재율</div><div class="s">캐시에 담기는 <b>행의 수</b></div></div>
+    <div class="tile"><div class="k">워 — 워킹셋</div><div class="s">실제로 <b>자주 손대는</b> 데이터 크기</div></div>
+    <div class="tile red"><div class="k">분 — 페이지 분할</div><div class="s">가득 찬 B-tree 페이지 <b>쪼개기</b></div></div>
+    <div class="tile red"><div class="k">랜 — 랜덤 I/O</div><div class="s">흩어진 위치를 <b>오가는 접근</b></div></div>
+    <div class="tile"><div class="k">왈 — WAL의 FPI</div><div class="s">체크포인트 후 첫 변경 = <b>8KB 통째</b></div></div>
+  </div>
+  <p class="sub" style="margin-bottom:0">앞의 둘(<b>적·워</b>)은 <b>"크기" 계열</b> — 원칙 ① 작게가 때리는 곳. 뒤의 셋(<b>분·랜·왈</b>)은 <b>"순서" 계열</b> — 원칙 ② 단조 증가가 때리는 곳. <b>다섯을 두 무리로 묶어 두면 5·6절의 구조가 그대로 따라온다.</b></p>
+</div>
+
+<h3>4-1. 다섯 이름의 정의 — "무엇인가" 한 문장, "왜 비용인가" 한 문장</h3>
+
+<div class="card">
+  <h4 style="margin-top:0">(1) <code>shared_buffers</code> — PostgreSQL이 디스크 페이지를 담아 두는 공유 메모리 캐시</h4>
+  <p><b>무엇인가</b>: PostgreSQL 프로세스들이 함께 쓰는 <b>고정 크기</b> 메모리 영역으로, 디스크에서 읽어 온 8KB 페이지를 여기에 담아 둔다(기본값 128MB, 운영에서는 대개 RAM의 1/4 안팎으로 키운다). 그 뒤에 <b>OS 페이지 캐시</b>를 한 겹 더 쓰는 <b>이중 캐시</b> 구조라, 플래너에게는 <code>effective_cache_size</code>로 "둘을 합치면 이 정도는 캐시에 있다"고 알려준다.</p>
+  <p><b>왜 비용인가</b>: 원하는 페이지가 여기 있으면 <code>EXPLAIN (ANALYZE, BUFFERS)</code>에 <code>shared hit</code>으로 찍히고 <b>메모리 접근으로 끝나지만</b>, 없으면 <code>shared read</code> — 즉 <b>디스크 I/O</b>다. <b>둘의 지연 차이는 자릿수 단위다.</b></p>
+  <div class="rule" style="margin-bottom:0"><b>"적재율"이란</b> — 이 캐시에 <b>실제 행(엔트리)이 몇 건 담기느냐는 밀도</b>다<br><span style="font-size:.92rem;font-weight:600">shared_buffers는 <b>"몇 GB"로 고정</b>이지 <b>"몇 행"으로 고정이 아니다</b></span></div>
+</div>
+
+<div class="card">
+  <h4 style="margin-top:0">(2) 워킹셋(working set) — 실제로 자주 손대는 데이터의 크기</h4>
+  <p><b>무엇인가</b>: 어떤 부하를 처리하는 동안 <b>실제로 접근하는 페이지들의 집합</b>, 그리고 그 크기. OS 가상 메모리 이론에서 온 개념으로 <b>"이 부하를 감당하려면 메모리에 최소 얼마가 올라와 있어야 하는가"</b>를 뜻한다. <b>캐시가 공급이라면 워킹셋은 수요</b>다.</p>
+  <p style="margin-bottom:0"><b>왜 비용인가</b>: 둘의 대소가 성능을 가르는데, <b>경계를 넘는 순간 성능이 선형이 아니라 계단식으로 무너진다.</b> 데이터는 매일 조금씩 늘었을 뿐인데 워킹셋이 캐시를 넘어선 그날 갑자기 붕괴한다 — <b>"어제까지 멀쩡했는데" 장애의 상당수가 이 지점</b>이다.</p>
+</div>
+
+<figure>
+  <svg viewBox="0 0 900 306" role="img" aria-label="가로축은 인덱스 크기, 세로축은 INSERT 처리량인 그래프. 인덱스가 캐시 안에 들어가는 동안에는 처리량이 거의 평평하게 유지되다가, 캐시 경계를 넘는 순간 절벽처럼 급락해 낮은 값으로 평평해진다">
+    <text x="450" y="28" font-size="14" font-weight="700" fill="#1f2937" text-anchor="middle">워킹셋이 캐시를 넘는 순간 — 선형이 아니라 계단식으로 무너진다</text>
+
+    <line x1="90" y1="60" x2="90" y2="248" stroke="#94a3b8" stroke-width="1.5"/>
+    <line x1="90" y1="248" x2="840" y2="248" stroke="#94a3b8" stroke-width="1.5"/>
+    <text x="78" y="70" font-size="11" fill="#6b7280" text-anchor="end">INSERT/s</text>
+    <text x="840" y="270" font-size="11" fill="#6b7280" text-anchor="end">인덱스 크기 →</text>
+
+    <rect x="90" y="56" width="430" height="192" fill="#f0fdf4" opacity=".7"/>
+    <rect x="520" y="56" width="320" height="192" fill="#fef2f2" opacity=".7"/>
+    <line x1="520" y1="52" x2="520" y2="248" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="6 4"/>
+    <text x="520" y="46" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">캐시 경계 (shared_buffers + OS 캐시)</text>
+
+    <polyline points="120,86 300,90 460,96 520,102 566,224 640,232 800,236" fill="none" stroke="#2563eb" stroke-width="2.6"/>
+    <circle cx="120" cy="86" r="5" fill="#2563eb"/><circle cx="460" cy="96" r="5" fill="#2563eb"/><circle cx="640" cy="232" r="5" fill="#dc2626"/>
+
+    <text x="130" y="76" font-size="11" fill="#166534" font-weight="700">인덱스 200MB → 5,000/s</text>
+    <text x="380" y="86" font-size="11" fill="#166534" font-weight="700">1.5GB → 4,800/s</text>
+    <text x="656" y="228" font-size="11" fill="#b91c1c" font-weight="700">2.5GB → 300/s</text>
+
+    <text x="300" y="180" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">워킹셋 ≤ 캐시</text>
+    <text x="300" y="200" font-size="11" fill="#15803d" text-anchor="middle">쓰기가 메모리에서 끝난다</text>
+    <text x="700" y="130" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">워킹셋 &gt; 캐시</text>
+    <text x="700" y="150" font-size="11" fill="#7f1d1d" text-anchor="middle">INSERT 한 건마다 대상 페이지를</text>
+    <text x="700" y="168" font-size="11" fill="#7f1d1d" text-anchor="middle"><tspan font-weight="700">디스크에서 읽어와야</tspan> 쓸 수 있다</text>
+
+    <rect x="90" y="278" width="750" height="24" rx="7" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="465" y="295" font-size="11" fill="#b45309" text-anchor="middle" font-weight="700">예시 수치 — 값이 아니라 "절벽이 있다"는 모양을 기억한다</text>
+  </svg>
+  <figcaption>데이터는 <b>매일 조금씩 늘었을 뿐</b>인데 어느 날 갑자기 성능이 무너지는 이유가 이 그림이다. <b>"어제까지 멀쩡했는데"라는 장애 보고의 상당수가 이 경계를 넘은 날</b>이다. 그래서 <b>PK 설계로 워킹셋을 얼마나 작게 유지하느냐</b>가 곧 <b>절벽이 언제 오느냐</b>를 결정한다.</figcaption>
+</figure>
+
+<p>같은 1,000만 행 <code>orders</code>라도 <b>INSERT 한 건이 손대는 페이지</b>를 세어 보면 이렇게 갈린다.</p>
+
+<table>
+  <caption>INSERT 한 건이 손대는 페이지 — <b>힙 쪽은 같고 PK 인덱스 쪽만 만 배 이상 벌어진다.</b></caption>
+  <thead><tr><th style="width:190px">PK 타입</th><th style="width:300px">힙</th><th>PK B-tree</th></tr></thead>
+  <tbody>
+    <tr><th><code>bigint IDENTITY</code></th><td class="good">FSM이 가리키는 끝 페이지 1~2장</td><td class="good">맨 오른쪽 리프 1장 + 경로 브랜치 2~3장 — 합쳐 약 <b>30KB</b></td></tr>
+    <tr class="hl"><th><code>uuid</code> v4</th><td class="good">똑같이 끝 페이지 1~2장 (<b>PK와 무관</b>)</td><td class="bad">삽입 지점이 트리 전역에 흩어져 <b>리프 전체 약 400MB</b>(5만 장)</td></tr>
+  </tbody>
+</table>
+
+<div class="callout trap">
+  <span class="t">"모든 리프가 워킹셋"이라는 말의 뜻</span>
+  <b>"다음 INSERT가 어느 리프로 갈지 예측할 수 없으니 어느 리프든 메모리에 있어야 한다"</b> — 이것이 곧 <b>인덱스 전체가 워킹셋</b>이라는 말이다. 그리고 이 표에는 아직 <b>FK 인덱스</b>(<code>order_items.order_id</code> 등)가 빠져 있다 — <b>그것들도 uuid면 같은 일이 한 벌씩 더 생긴다.</b>
+</div>
+
+<div class="card">
+  <h4 style="margin-top:0">(3) 페이지 분할(page split) — 가득 찬 B-tree 페이지를 둘로 쪼개는 작업</h4>
+  <p><b>무엇인가</b>: B-tree 페이지에 새 엔트리를 넣어야 하는데 자리가 없으면, 페이지를 둘로 쪼개 절반을 새 페이지(파일 끝 또는 재활용된 페이지)로 옮기고, <b>부모 노드에 "여기서 갈린다"는 새 분리 키를 올린다.</b></p>
+  <p><b>왜 비용인가</b>: 세 갈래다. ① 쪼개고 옮기고 부모를 고치는 <b>작업 자체의 비용</b>. ② 쪼갠 결과 <b>반쯤 빈 페이지가 둘</b> 생긴다 — 같은 엔트리 수를 담는 데 페이지가 더 필요해지는 <b>인덱스 bloat</b>이고, 이는 곧 (1)의 <b>적재율 하락</b>이다. ③ 새 페이지는 파일 끝에 붙으므로 <b>논리 순서와 물리 순서가 어긋난다.</b></p>
+  <div class="rule red" style="margin-bottom:0">여기에 중요한 <b>비대칭</b>이 있다 — 리프 <code>fillfactor</code> 기본값 90 기준<br><span style="font-size:.95rem;font-weight:600"><b>맨 오른쪽 끝에 붙는 삽입</b> = 90%까지 채우고 오른쪽에 새 페이지를 잇는 <b>"이어 붙이기"</b><br><b>중간에 끼워 넣는 삽입</b>만 진짜 <b>반반 분할</b> — 이 비대칭이 6절의 원칙 ②를 만든다</span></div>
+</div>
+
+<div class="card">
+  <h4 style="margin-top:0">(4) 랜덤 I/O — 디스크의 흩어진 위치를 오가는 접근</h4>
+  <p><b>무엇인가</b>: 인접한 블록을 이어서 읽는 <b>순차 I/O</b>와 달리, 매번 다른 위치로 <b>건너뛰며</b> 읽고 쓰는 접근 패턴.</p>
+  <p style="margin-bottom:0"><b>왜 비용인가</b>: 같은 바이트 수를 읽어도 훨씬 느리다. 플래너가 이 차이를 모델링한 값이 <code>random_page_cost</code>(기본 4.0) 대 <code>seq_page_cost</code>(기본 1.0)이다. <b>B-tree 범위 스캔은 리프의 좌우 링크를 따라가는데</b>, 페이지 분할로 <b>리프의 논리 순서와 파일상 물리 순서가 어긋나 있으면 이 순차 스캔이 랜덤 I/O로 전락한다.</b></p>
+</div>
+
+<div class="card">
+  <h4 style="margin-top:0">(5) WAL과 <code>full_page_writes</code> — 변경을 먼저 적어 두는 로그, 그리고 페이지 통째 기록</h4>
+  <p><b>무엇인가</b>: WAL(Write-Ahead Log)은 <b>"데이터 파일을 고치기 전에 무엇을 고칠지 먼저 로그에 적는다"</b>는 내구성 장치다. 여기에 PostgreSQL 고유의 규칙이 하나 붙는다 — <b>체크포인트 이후 어떤 페이지를 처음 건드릴 때는 변경분이 아니라 8KB 페이지 전체 이미지(FPI, full page image)를 통째로 WAL에 쓴다</b>(<code>full_page_writes</code>, 기본 on).</p>
+  <p><b>왜 그런 규칙이 있는가</b>: OS가 8KB 페이지를 디스크에 쓰는 도중 전원이 나가면 페이지가 <b>반만 기록된 채 찢어질 수 있는데(torn page)</b>, 그런 페이지에는 "몇 바이트를 이렇게 고쳐라"는 <b>변경분 로그를 적용해 봐야 복구가 안 된다.</b> 그래서 체크포인트 후 첫 변경 때는 <b>성한 페이지 전체를 로그에 박아 둔다.</b></p>
+  <p><b>왜 비용인가</b>: 같은 페이지를 계속 건드리면 FPI는 <b>한 번</b>이지만, <b>매번 다른 페이지를 건드리면 매번 FPI</b>다. <b>INSERT 한 건마다 8KB가 WAL에 실린다</b>는 뜻이다.</p>
+  <div class="chain">
+    <span class="chip r">매번 다른 페이지</span><span class="arrow">→</span><span class="chip r">건당 8KB FPI</span><span class="arrow">→</span><span class="chip w">WAL 볼륨 증가</span><span class="arrow">→</span><span class="chip w">체크포인트 I/O 증가</span><span class="arrow">→</span><span class="chip r">스트리밍 복제 지연</span><span class="arrow">→</span><span class="chip r">아카이브 비용 증가</span>
+  </div>
+  <div class="callout info" style="margin-bottom:0"><span class="t">MySQL 대조</span>
+    InnoDB는 <b>같은 찢어진 페이지 문제를 doublewrite buffer로 푼다.</b> 그래서 <b>리두 로그가 페이지 단위로 부풀지는 않는다</b> — <b>FPI에 의한 WAL 증폭은 InnoDB 설명에는 없던 PostgreSQL 고유의 비용 항목</b>이다.
+  </div>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 원칙 ① 작게 — 곱셈 계수는 사라진 게 아니라 자리를 옮겼다</h2>
+
+<h3>5-1. 먼저 용어 — 엔트리(entry)란</h3>
+
+<p>사슬의 첫 고리가 "엔트리"라 이것부터 고정한다. <b>B-tree 노드 하나가 곧 8KB 페이지 한 장</b>이고, <b>엔트리는 그 페이지 안에 기록된 한 건의 레코드</b>, 즉 "행 하나에 대응하는 한 줄"이다.</p>
+
+<table>
+  <caption>엔트리 해부 — <b>B-tree 리프 줄에 PK 값이 없다</b>는 것이 이 절의 출발점이다.</caption>
+  <thead><tr><th style="width:260px">위치</th><th>엔트리 하나에 들어있는 것</th></tr></thead>
+  <tbody>
+    <tr><th>힙 페이지</th><td>라인 포인터 4B + 튜플 헤더 24B + <b>행 데이터 (모든 컬럼)</b></td></tr>
+    <tr class="hl"><th>B-tree 리프 (PK든 세컨더리든)</th><td>라인 포인터 4B + 인덱스 튜플 헤더 8B(<b>TID 6B 포함</b>) + <b>키 값</b></td></tr>
+    <tr><th>B-tree 브랜치</th><td>분리 키(피벗 — 자식을 가르는 데 필요한 <b>접두 부분만</b>) + 자식 블록 번호</td></tr>
+  </tbody>
+</table>
+
+<p><code>idx_users_email</code>의 리프 페이지 한 장(8KB)은 페이지 헤더 24B + 라인 포인터 배열 + <code>│ 헤더 8B(TID (1042,7)) │ "c@z.com" │</code> 같은 인덱스 튜플 수백 개 + 특수 영역 16B(좌우 리프 링크·레벨)로 채워진다.</p>
+
+<div class="memo red">
+  <h4>정리하면 <b>엔트리 = 키 값 + TID(헤더에 포함) + 라인 포인터</b> — <span style="color:#dc2626">여기 어디에도 PK 값이 없다</span></h4>
+  <p><code>users.id</code>가 <code>bigint</code>든 <code>uuid</code>든 <b><code>idx_users_email</code> 페이지의 엔트리 크기는 1바이트도 달라지지 않는다.</b></p>
+  <div class="rule red" style="margin-bottom:0">InnoDB의 <b>"PK는 (행 수) × (세컨더리 인덱스 수)만큼 곱해지는 계수"</b>라는 명제는<br>PostgreSQL에서 <b>성립하지 않는다</b></div>
+</div>
+
+<div class="callout info">
+  <span class="t">MySQL 대조 — 그대로 옮겨 말하면 오적용이 된다</span>
+  InnoDB 세컨더리 리프 엔트리는 <b>(키, PK)</b>라 PK가 100바이트면 인덱스 5개 × 1,000만 행에 <code>92B × 1,000만 × 5 ≈ 4.6GB</code>가 얹힌다. <b>PostgreSQL 면접에서 이 계산을 그대로 말하면 InnoDB 지식을 PostgreSQL에 오적용한 것</b>이다.
+</div>
+
+<h3>5-2. 그래서 "작게"는 폐기인가 — 아니다, PK가 들어가는 자리가 <b>세 군데</b> 남는다</h3>
+
+<div class="memo">
+  <h4>PK 크기가 실제로 청구되는 자리 셋 — <b>피 · 에프 · 조</b></h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">피 — PK 인덱스 자체</div><div class="d">리프 엔트리가 <b>(PK 값, TID)</b>라 PK가 크면 그만큼 비대해진다. 여긴 <b>곱셈 없이 1배</b>.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">에프 — FK 컬럼과 FK 인덱스</div><div class="d"><b>여기가 새 곱셈 계수다.</b> 자식 테이블마다 부모 PK가 <b>힙 컬럼으로 한 벌 + FK 인덱스 엔트리로 한 벌</b> 더 들어간다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">조 — 조인 키·해시 테이블</div><div class="d"><code>Nested Loop</code>의 <code>Index Cond</code> 비교, 해시 조인이 <code>work_mem</code> 안에 만드는 <b>해시 테이블</b> 크기.</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">곱셈 계수가 <b>"세컨더리 인덱스 개수"</b>에서 <b>"자식 테이블(FK) 개수 × 자식 행 수"</b>로<br><b>자리를 옮긴 것</b>이지 사라진 게 아니다 — 그리고 <b>자식 행은 보통 부모보다 훨씬 많다</b></div>
+</div>
+
+<div class="callout trap">
+  <span class="t">PostgreSQL은 FK 컬럼에 인덱스를 자동 생성하지 않는다</span>
+  그런데 <b>없으면 부모 행을 DELETE하거나 키를 UPDATE할 때마다 자식 테이블 전체를 훑어야 하므로 사실상 필수</b>다. 즉 <b>"만들지 않으면 성능 사고, 만들면 PK 크기가 곱해지는 자리"</b> — 어느 쪽이든 <b>PK를 작게 유지할 이유</b>가 된다.
+</div>
+
+<h3>5-3. 페이지당 엔트리 수가 주는 건 그냥 나눗셈이다</h3>
+
+<p>이유는 단순하다 — <b>페이지가 8KB로 고정이기 때문</b>이다. <b>늘어나지 않는 상자에 더 큰 물건을 넣으면 개수가 주는 것</b>과 같다.</p>
+
+<pre><code><span class="cm">페이지당 엔트리 수 ≈ (8,192 − 페이지 헤더 24 − 특수 영역 16) × fillfactor ÷ 엔트리 크기
+                   ≈ 8,152 × 0.9 ÷ 엔트리 크기 ≈ 7,300바이트 ÷ 엔트리 크기</span></code></pre>
+
+<p><code>order_items.order_id</code>의 FK 인덱스에서 <b>인덱스 컬럼은 그대로 두고 키 타입만 바꾼</b> 세 경우를 계산해 보면(8바이트 정렬 패딩은 무시한 근사):</p>
+
+<table>
+  <caption><b>컬럼 구성은 그대로인데 키 타입만 바뀌었을 뿐인데</b> 페이지당 수용량이 72%, 18%로 깎였다.</caption>
+  <thead><tr><th style="width:200px"></th><th><code>bigint</code> (8B)</th><th><code>uuid</code> (16B)</th><th>복합 PK (100B)</th></tr></thead>
+  <tbody>
+    <tr><th>엔트리 하나</th><td>4 + 8 + <b>8</b> = <b>20B</b></td><td>4 + 8 + <b>16</b> = <b>28B</b></td><td>4 + 8 + <b>100</b> = <b>112B</b></td></tr>
+    <tr class="hl"><th>페이지당 엔트리 수</th><td class="good">약 <b>366개</b></td><td>약 <b>262개</b></td><td class="bad">약 <b>65개</b></td></tr>
+  </tbody>
+</table>
+
+<figure>
+  <svg viewBox="0 0 900 276" role="img" aria-label="같은 크기의 8KB 페이지 상자 세 개에 서로 다른 크기의 엔트리를 채운 밀도 비교. 20바이트 엔트리는 366개, 28바이트는 262개, 112바이트는 65개가 들어가 상자 안의 줄무늬 밀도가 눈에 띄게 성겨진다">
+    <defs>
+      <pattern id="e20" x="0" y="0" width="1.92" height="10" patternUnits="userSpaceOnUse"><rect x="0" y="0" width="1.25" height="10" fill="#2563eb"/></pattern>
+      <pattern id="e28" x="0" y="0" width="2.68" height="10" patternUnits="userSpaceOnUse"><rect x="0" y="0" width="1.9" height="10" fill="#d97706"/></pattern>
+      <pattern id="e112" x="0" y="0" width="10.74" height="10" patternUnits="userSpaceOnUse"><rect x="0" y="0" width="8.5" height="10" fill="#dc2626"/></pattern>
+    </defs>
+
+    <text x="450" y="28" font-size="14" font-weight="700" fill="#1f2937" text-anchor="middle">상자는 안 늘어난다 — 8KB 페이지 안의 밀도가 이렇게 갈린다</text>
+    <text x="450" y="48" font-size="11" fill="#6b7280" text-anchor="middle">가로 폭 = 엔트리가 들어가는 약 7,300바이트 (헤더·특수영역·fillfactor 제외분)</text>
+
+    <text x="150" y="72" font-size="12" fill="#1d4ed8" font-weight="700"><tspan class="mono">bigint</tspan> 키 — 엔트리 20B</text>
+    <text x="850" y="72" font-size="12.5" fill="#1d4ed8" font-weight="700" text-anchor="end">페이지당 약 366개</text>
+    <rect x="150" y="78" width="700" height="40" rx="5" fill="url(#e20)" stroke="#2563eb"/>
+
+    <text x="150" y="140" font-size="12" fill="#b45309" font-weight="700"><tspan class="mono">uuid</tspan> 키 — 엔트리 28B</text>
+    <text x="850" y="140" font-size="12.5" fill="#b45309" font-weight="700" text-anchor="end">페이지당 약 262개 <tspan font-size="11">(−28%)</tspan></text>
+    <rect x="150" y="146" width="700" height="40" rx="5" fill="url(#e28)" stroke="#d97706"/>
+
+    <text x="150" y="208" font-size="12" fill="#b91c1c" font-weight="700">복합 PK 100B — 엔트리 112B</text>
+    <text x="850" y="208" font-size="12.5" fill="#b91c1c" font-weight="700" text-anchor="end">페이지당 약 65개 <tspan font-size="11">(−82%)</tspan></text>
+    <rect x="150" y="214" width="700" height="40" rx="5" fill="url(#e112)" stroke="#dc2626"/>
+
+    <text x="140" y="102" font-size="11" fill="#64748b" text-anchor="end">촘촘</text>
+    <text x="140" y="170" font-size="11" fill="#64748b" text-anchor="end">성김</text>
+    <text x="140" y="238" font-size="11" fill="#64748b" text-anchor="end">듬성</text>
+  </svg>
+  <figcaption>줄무늬 하나가 <b>엔트리 하나</b>다. <b>상자(8KB)는 절대 늘어나지 않으므로</b>, 키가 커지면 <b>같은 데이터를 담는 데 상자가 더 많이 필요해진다.</b> 이 "상자 개수"가 곧 <b>인덱스 페이지 수</b>이고, 그것이 <b>shared_buffers를 얼마나 잡아먹는가</b>로 직결된다.</figcaption>
+</figure>
+
+<p>자식 행 5,000만 건 기준으로 나머지가 <b>자동으로 따라온다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="PK가 크다에서 시작해 FK 컬럼과 FK 인덱스 엔트리 비대, 페이지당 엔트리 감소, 인덱스 페이지 수 증가, shared_buffers에 담기는 행 수 감소, 캐시 미스 증가, 디스크 I/O 증가로 이어지는 여섯 단계 인과 사슬 도식">
+    <defs>
+      <marker id="f5a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="f5b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="14.5" font-weight="700" fill="#1f2937" text-anchor="middle">"메모리에 부하가 생긴다"를 여섯 고리로 펼치면</text>
+
+    <rect x="20" y="46" width="252" height="86" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="34" y="70" font-size="12.5" fill="#1d4ed8" font-weight="700">① PK가 크다</text>
+    <text x="34" y="92" font-size="11" fill="#1e40af" class="mono">bigint 8B → uuid 16B</text>
+    <text x="34" y="110" font-size="11" fill="#1e40af" class="mono">→ 복합 PK 100B</text>
+    <line x1="274" y1="89" x2="294" y2="89" stroke="#2563eb" stroke-width="2" marker-end="url(#f5a)"/>
+
+    <rect x="296" y="46" width="252" height="86" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="310" y="70" font-size="12.5" fill="#1d4ed8" font-weight="700">② 자식 테이블마다 비대</text>
+    <text x="310" y="92" font-size="11" fill="#1e40af">FK 컬럼(힙) 한 벌 +</text>
+    <text x="310" y="110" font-size="11" fill="#1e40af">FK 인덱스 엔트리 한 벌</text>
+    <line x1="550" y1="89" x2="570" y2="89" stroke="#2563eb" stroke-width="2" marker-end="url(#f5a)"/>
+
+    <rect x="572" y="46" width="252" height="86" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="586" y="70" font-size="12.5" fill="#1d4ed8" font-weight="700">③ 페이지당 엔트리 감소</text>
+    <text x="586" y="92" font-size="11" fill="#1e40af" class="mono">366 → 262 → 65개</text>
+    <text x="586" y="110" font-size="11" fill="#1e40af">8KB 상자는 안 늘어난다</text>
+    <line x1="826" y1="89" x2="846" y2="89" stroke="#2563eb" stroke-width="2" marker-end="url(#f5a)"/>
+
+    <rect x="848" y="46" width="252" height="86" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="862" y="70" font-size="12.5" fill="#1d4ed8" font-weight="700">④ 인덱스 페이지 수 증가</text>
+    <text x="862" y="92" font-size="11" fill="#1e40af" class="mono">1.1GB → 1.5GB → 6GB</text>
+    <text x="862" y="110" font-size="11" fill="#1e40af">(+ 힙 FK 컬럼 +400MB / +4.6GB)</text>
+
+    <path d="M974 134 L 974 152 L 146 152 L 146 172" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#f5a)"/>
+
+    <rect x="20" y="176" width="252" height="100" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="34" y="200" font-size="12.5" fill="#b45309" font-weight="700">⑤ shared_buffers 적재율</text>
+    <text x="34" y="222" font-size="11" fill="#92400e">2GB = 페이지 262,144장</text>
+    <text x="34" y="240" font-size="11" fill="#92400e" class="mono">bigint: 약 9,600만 엔트리</text>
+    <text x="34" y="258" font-size="11" fill="#92400e" class="mono">uuid  : 약 6,900만 엔트리</text>
+    <line x1="274" y1="226" x2="294" y2="226" stroke="#dc2626" stroke-width="2" marker-end="url(#f5b)"/>
+
+    <rect x="296" y="176" width="252" height="100" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="310" y="200" font-size="12.5" fill="#b91c1c" font-weight="700">⑥ 캐시 미스 증가</text>
+    <text x="310" y="222" font-size="11" fill="#7f1d1d">메모리는 똑같은데</text>
+    <text x="310" y="240" font-size="11" fill="#7f1d1d" font-weight="700">캐시되는 행이 28% 줄었다</text>
+    <text x="310" y="260" font-size="11" fill="#7f1d1d" class="mono">shared hit → shared read</text>
+    <line x1="550" y1="226" x2="570" y2="226" stroke="#dc2626" stroke-width="2" marker-end="url(#f5b)"/>
+
+    <rect x="572" y="176" width="252" height="100" rx="10" fill="#dc2626"/>
+    <text x="698" y="216" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">캐시 미스는</text>
+    <text x="698" y="242" font-size="15" fill="#fff" font-weight="700" text-anchor="middle">곧 디스크 I/O다</text>
+
+    <rect x="848" y="176" width="252" height="100" rx="10" fill="#fff" stroke="#dc2626" stroke-dasharray="6 4"/>
+    <text x="862" y="200" font-size="12" fill="#b91c1c" font-weight="700">검증 수단</text>
+    <text x="862" y="222" font-size="10.5" fill="#7f1d1d" class="mono">EXPLAIN (ANALYZE, BUFFERS)</text>
+    <text x="862" y="240" font-size="10.5" fill="#7f1d1d" class="mono">pg_relation_size()</text>
+    <text x="862" y="258" font-size="10.5" fill="#7f1d1d" class="mono">pgstatindex().avg_leaf_density</text>
+
+    <rect x="20" y="294" width="1080" height="32" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="315" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">핵심은 ⑤다 — shared_buffers는 "몇 GB"로 고정이지 "몇 행"으로 고정이 아니다</text>
+  </svg>
+  <figcaption>엔트리가 뚱뚱해지면 <b>같은 메모리에 담기는 "행의 수"가 줄고</b>, <b>어제까지 메모리에서 끝나던 조회가 오늘은 디스크를 때리기 시작한다.</b> "메모리 부하"라는 말은 <b>이 사슬 전체를 한 단어로 뭉갠 것</b>이다 — 면접에서는 <b>고리를 하나씩 짚어</b> 말한다.</figcaption>
+</figure>
+
+<div class="callout warn">
+  <span class="t">보정 하나 — 중복 제거(deduplication)</span>
+  PostgreSQL 13부터 B-tree는 <b>같은 키에 딸린 TID들을 posting list로 묶는 중복 제거</b>를 하므로, <b>FK 인덱스처럼 중복 키가 많은 인덱스는 실제 크기가 위 숫자보다 작아진다.</b> 그래도 <b>키 크기의 차이는 남고 사슬의 방향은 그대로</b>다. (참고로 <b>유일한 무작위 키인 UUID PK 인덱스에는 이 최적화가 도움이 되지 않는다</b> — 6절.)
+</div>
+
+<h3>5-4. 브랜치 노드는 어떻게 되나 — 유일성은 TID가 만들고, 무게는 가볍다</h3>
+
+<p><b>InnoDB가 브랜치에도 PK를 붙이는 이유는 트리 탐색의 유일성</b>이었다. 중복 값이 허용되는 세컨더리 인덱스에서 특정 엔트리 하나를 집으러 내려가려면 분기 키가 유일해야 하기 때문이다. <b>PostgreSQL은 같은 문제를 TID로 푼다.</b> B-tree 엔트리는 <b>(키, TID) 순으로 정렬</b>되고(PostgreSQL 12부터 힙 TID가 정렬 키의 마지막 컬럼처럼 취급된다), 브랜치의 분리 키(피벗)는 <b>자식을 가르는 데 필요한 접두 부분만 남기고 잘라내므로(suffix truncation) 리프 엔트리보다 오히려 작다.</b></p>
+
+<table class="wide">
+  <caption><b>얼마나 아픈가 — 세 경로의 무게가 전혀 다르다.</b> 여기를 뭉뚱그리면 "트리 높이가 올라간다"를 주장의 중심에 세우는 실수를 하게 된다.</caption>
+  <thead><tr><th style="width:60px"></th><th style="width:280px">경로</th><th style="width:130px">무게</th><th>이유</th></tr></thead>
+  <tbody>
+    <tr><th>⑴</th><td>브랜치가 차지하는 <b>공간</b></td><td class="good"><b>무시 가능</b></td><td>fan-out이 수십~수백이라 브랜치는 전체 페이지의 수 % 이하 — 1,000만 행 <code>bigint</code> 인덱스에서 <b>리프 2.7만 장에 브랜치 100장 안팎</b></td></tr>
+    <tr><th>⑵</th><td><b>트리 높이</b></td><td>부차적</td><td>오를 수 있지만 <b>계단식이고 값이 싸다</b> — 1,000만 행에서 <code>bigint</code>는 3단, 100B PK는 4단</td></tr>
+    <tr class="hl"><th>⑶</th><td><b>리프 페이지 수 = shared_buffers 적재율</b></td><td class="bad"><b>주범</b></td><td><b>매끄럽게, 항상, 비례해서</b> 나빠진다. 앞의 ①~⑥ 사슬이 이것이다</td></tr>
+  </tbody>
+</table>
+
+<div class="memo green">
+  <h4>PK 크기가 성능을 때리는 <b>경로의 순위</b></h4>
+  <div class="rule ok" style="margin-bottom:8px">⑶ 리프 페이지 수 &nbsp;≫&nbsp; ⑵ 트리 높이 &nbsp;&gt;&nbsp; ⑴ 브랜치 공간</div>
+  <p style="margin-bottom:0"><b>브랜치 레벨은 페이지 수가 워낙 적어 사실상 항상 shared_buffers에 상주한다.</b> 그래서 <b>트리 한 단이 늘어난 비용은 대개 "디스크 I/O 한 번"이 아니라 "메모리 접근 한 번"</b>이고, 높이는 로그 함수라서 어지간해선 안 오른다. <b>⑶을 주장으로 세우고 ⑵는 "상위 레벨은 캐시에 상주하니 부차적"이라고 덧붙이는 게 정확한 그림</b>이며, <b>셋을 동급으로 나열하면 무게 차이를 모르는 것으로 읽힌다.</b></p>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 원칙 ② 단조 증가 — 힙은 무관하지만 PK B-tree는 그대로 앓는다</h2>
+
+<div class="callout trap">
+  <span class="t">여기가 PostgreSQL에서 가장 자주 틀리는 지점이다</span>
+  <b>"PostgreSQL은 힙이니까 UUID PK가 테이블을 흩뜨리지 않는다"는 맞다.</b> 그런데 거기서 <b>"그러니 UUID v4 PK는 PostgreSQL에서 문제없다"로 건너뛰면 틀린다.</b><br>
+  <b>삽입 위치를 값이 결정하는 구조가 하나 남아 있기 때문이다 — PK B-tree, 그리고 그 값을 받는 FK 인덱스들.</b>
+</div>
+
+<div class="split">
+  <div class="pane g">
+    <h4>힙 — 여기까지는 "PG는 랜덤 PK에 강하다"가 맞다</h4>
+    <p style="margin:0;font-size:.94rem">새 행은 <b>FSM이 가리키는 빈 공간</b>(대개 파일 끝)에 들어간다. PK가 <code>bigint</code>든 <code>uuid</code>든 <b>힙 쪽 워킹셋은 끝 페이지 몇 장으로 같다.</b></p>
+  </div>
+  <div class="pane r">
+    <h4>PK B-tree — 삽입 위치를 <b>키 값이 결정한다</b></h4>
+    <p style="margin:0;font-size:.94rem">여기서 <b>단조 증가</b>와 <b>랜덤</b>이 두 갈래로 갈린다. 그리고 <b>같은 값을 FK로 받는 자식 테이블의 인덱스들이 같은 병을 한 벌씩 더 앓는다.</b></p>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 456" role="img" aria-label="왼쪽은 단조 증가 PK로 새 엔트리가 항상 맨 오른쪽 리프 한 장에만 들어가는 그림이고, 오른쪽은 무작위 UUID PK로 다섯 건의 INSERT가 트리 전역의 서로 다른 리프에 흩어져 꽂히는 그림이다. 각 아래에는 결과로 생기는 비용이 정리되어 있다">
+    <defs>
+      <marker id="f6g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="f6r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <!-- LEFT -->
+    <rect x="16" y="16" width="536" height="388" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="284" y="40" font-size="13.5" font-weight="700" fill="#166534" text-anchor="middle">단조 증가 PK — 맨 오른쪽에 "이어 붙이기"</text>
+    <text x="284" y="58" font-size="11" fill="#15803d" text-anchor="middle" class="mono">bigint GENERATED ALWAYS AS IDENTITY</text>
+
+    <rect x="214" y="70" width="140" height="30" rx="6" fill="#fff" stroke="#94a3b8"/>
+    <text x="284" y="90" font-size="11.5" fill="#334155" text-anchor="middle">브랜치</text>
+    <g stroke="#cbd5e1" stroke-width="1.2">
+      <line x1="284" y1="100" x2="74" y2="138"/><line x1="284" y1="100" x2="156" y2="138"/>
+      <line x1="284" y1="100" x2="238" y2="138"/><line x1="284" y1="100" x2="320" y2="138"/>
+      <line x1="284" y1="100" x2="402" y2="138"/>
+    </g>
+    <line x1="284" y1="100" x2="484" y2="138" stroke="#16a34a" stroke-width="2"/>
+    <g fill="#f8fafc" stroke="#cbd5e1">
+      <rect x="36" y="142" width="76" height="54" rx="7"/><rect x="118" y="142" width="76" height="54" rx="7"/>
+      <rect x="200" y="142" width="76" height="54" rx="7"/><rect x="282" y="142" width="76" height="54" rx="7"/>
+      <rect x="364" y="142" width="76" height="54" rx="7"/>
+    </g>
+    <rect x="446" y="142" width="76" height="54" rx="7" fill="#dcfce7" stroke="#16a34a" stroke-width="2.4"/>
+    <text x="484" y="174" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">맨 끝</text>
+    <text x="220" y="174" font-size="11" fill="#94a3b8" text-anchor="middle">건드리지 않는다</text>
+
+    <path d="M510 106 C 530 118 512 126 494 138" fill="none" stroke="#16a34a" stroke-width="2" marker-end="url(#f6g)"/>
+    <text x="516" y="100" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">INSERT</text>
+
+    <text x="284" y="216" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">손대는 리프는 언제나 "맨 오른쪽 한 장"</text>
+
+    <rect x="36" y="228" width="486" height="162" rx="10" fill="#fff" stroke="#bbf7d0"/>
+    <text x="50" y="252" font-size="11.5" fill="#166534">손대는 페이지 = <tspan font-weight="700">맨 오른쪽 리프 1장 + 경로 브랜치 2~3장 ≈ 30KB</tspan></text>
+    <text x="50" y="276" font-size="11.5" fill="#166534">fillfactor 90까지 채우고 <tspan font-weight="700">오른쪽에 새 페이지를 이어 붙인다</tspan></text>
+    <text x="62" y="296" font-size="11" fill="#15803d">→ 반반 분할이 아니다 — <tspan font-weight="700">인덱스 bloat가 생기지 않는다</tspan></text>
+    <text x="50" y="322" font-size="11.5" fill="#166534">늘 같은 페이지 → <tspan font-weight="700">shared_buffers에 항상 상주</tspan></text>
+    <text x="50" y="346" font-size="11.5" fill="#166534">체크포인트 이후 같은 리프를 수백 번 → <tspan font-weight="700">FPI는 한 번</tspan></text>
+    <text x="50" y="370" font-size="11.5" fill="#166534">파일에도 순차로 쌓인다 → <tspan font-weight="700">범위 스캔이 순차 I/O</tspan></text>
+
+    <!-- RIGHT -->
+    <rect x="568" y="16" width="536" height="388" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="836" y="40" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">랜덤 PK — 트리 전역에 흩어져 꽂힌다</text>
+    <text x="836" y="58" font-size="11" fill="#7f1d1d" text-anchor="middle" class="mono">uuid PRIMARY KEY DEFAULT gen_random_uuid()</text>
+
+    <rect x="766" y="70" width="140" height="30" rx="6" fill="#fff" stroke="#94a3b8"/>
+    <text x="836" y="90" font-size="11.5" fill="#334155" text-anchor="middle">브랜치</text>
+    <g stroke="#dc2626" stroke-width="1.8">
+      <line x1="836" y1="100" x2="626" y2="136"/><line x1="836" y1="100" x2="708" y2="136"/>
+      <line x1="836" y1="100" x2="790" y2="136"/><line x1="836" y1="100" x2="872" y2="136"/>
+      <line x1="836" y1="100" x2="954" y2="136"/><line x1="836" y1="100" x2="1036" y2="136"/>
+    </g>
+    <g fill="#fee2e2" stroke="#dc2626" stroke-width="2">
+      <rect x="588" y="142" width="76" height="54" rx="7"/><rect x="670" y="142" width="76" height="54" rx="7"/>
+      <rect x="752" y="142" width="76" height="54" rx="7"/><rect x="834" y="142" width="76" height="54" rx="7"/>
+      <rect x="916" y="142" width="76" height="54" rx="7"/><rect x="998" y="142" width="76" height="54" rx="7"/>
+    </g>
+    <text x="626" y="176" font-size="15" fill="#dc2626" text-anchor="middle" font-weight="700">✂</text>
+    <text x="790" y="176" font-size="15" fill="#dc2626" text-anchor="middle" font-weight="700">✂</text>
+    <text x="954" y="176" font-size="15" fill="#dc2626" text-anchor="middle" font-weight="700">✂</text>
+    <text x="708" y="176" font-size="11" fill="#b91c1c" text-anchor="middle">↓</text>
+    <text x="872" y="176" font-size="11" fill="#b91c1c" text-anchor="middle">↓</text>
+    <text x="1036" y="176" font-size="11" fill="#b91c1c" text-anchor="middle">↓</text>
+
+    <text x="836" y="216" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">어느 리프로 갈지 모른다 → 모든 리프가 워킹셋 (✂ = 페이지 분할)</text>
+
+    <rect x="588" y="228" width="486" height="162" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="602" y="252" font-size="11.5" fill="#b91c1c" font-weight="700">⑴ 가득 찬 리프를 반반 분할 → 반쯤 빈 페이지 둘 = 인덱스 bloat</text>
+    <text x="616" y="271" font-size="10.5" fill="#7f1d1d">유일한 무작위 키라 PG13의 중복 제거도 도움이 안 된다</text>
+    <text x="602" y="295" font-size="11.5" fill="#b91c1c" font-weight="700">⑵ 새 페이지는 파일 끝 → 논리 순서와 물리 순서가 어긋난다</text>
+    <text x="616" y="314" font-size="10.5" fill="#7f1d1d">리프 링크를 따라가는 범위 스캔이 <tspan font-weight="700">랜덤 I/O로 전락</tspan></text>
+    <text x="602" y="338" font-size="11.5" fill="#b91c1c" font-weight="700">⑶ 모든 리프가 워킹셋 → 캐시 오염</text>
+    <text x="616" y="357" font-size="10.5" fill="#7f1d1d"><tspan font-weight="700">쓰기가 읽기 I/O를 유발하는 역설</tspan> — 써야 할 리프를 먼저 읽어와야 한다</text>
+    <text x="602" y="381" font-size="11.5" fill="#b91c1c" font-weight="700">⑷ 매 INSERT가 새 페이지 → 건당 8KB FPI → WAL·복제 지연 증폭</text>
+
+    <rect x="16" y="414" width="1088" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="436" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">힙은 양쪽 모두 "FSM이 가리키는 끝 페이지 1~2장"으로 동일하다 — 갈리는 것은 PK B-tree와 그 값을 받는 FK 인덱스들이다</text>
+  </svg>
+  <figcaption>최근 버전은 <b>맨 오른쪽 리프를 기억해 두고 루트부터의 탐색조차 건너뛴다.</b> 반면 랜덤 키는 <b>매번 루트부터 내려가 아무 리프나 열고, 가득 차 있으면 쪼갠다.</b> 관찰 수단은 <code>pgstattuple</code> 확장의 <code>pgstatindex()</code>가 주는 <code>avg_leaf_density</code>(리프 평균 적재율), <code>pg_stat_wal.wal_fpi</code>, <code>EXPLAIN (ANALYZE, WAL)</code>의 <code>WAL: fpi=</code>다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>랜덤 PK가 PK B-tree에 내는 피해 네 갈래 — <b>분 · 엇 · 워 · 왈</b></h4>
+  <div class="chain">
+    <span class="chip r">분할 → bloat</span><span class="arrow">+</span><span class="chip r">순서 어긋남 → 랜덤 I/O</span><span class="arrow">+</span><span class="chip r">전 리프 워킹셋 → 캐시 오염</span><span class="arrow">+</span><span class="chip w">FPI → WAL 증폭</span>
+  </div>
+  <p style="margin-bottom:0">4절의 <b>"순서 계열 셋(분·랜·왈)"</b>에 <b>워킹셋 하나가 더 끌려 들어온 것</b>이 이 넷이다. 그래서 <b>"원칙 ②를 어기면 원칙 ①의 피해까지 같이 온다"</b>고 말할 수 있다 — bloat로 페이지 수가 늘면 그게 곧 적재율 하락이기 때문이다.</p>
+</div>
+
+<div class="callout info">
+  <span class="t">접수창구 비유 — 상자는 멀쩡한데 카드철이 문제다</span>
+  서류 <b>원본은 상자에 도착 순으로 쌓는다</b>(힙: PK와 무관). 문제는 <b>번호별 색인 카드철</b>(PK B-tree)이다. 번호표 순서로 카드를 <b>맨 뒤에 끼우는 것</b>(단조 증가)과, 이미 꽉 찬 카드철 <b>중간을 벌려 끼우려고 카드철을 쪼개는 것</b>(랜덤)의 차이다. <b>그리고 쪼갠 카드철은 매번 복사기(WAL)에 한 장 통째로 올라간다.</b>
+</div>
+
+<div class="callout warn">
+  <span class="t">MySQL 대조 — "UUID PK가 나쁘다"의 강도는 엔진마다 다르다</span>
+  InnoDB에서는 <b>이 모든 일이 테이블 그 자체</b>(클러스터드 리프 = 행 전체, 16KB)에서 일어난다. 피해 규모가 <b>"PK 인덱스 크기"가 아니라 "테이블 크기"</b>라 랜덤 PK가 PostgreSQL보다 훨씬 치명적이다. <b>PostgreSQL은 덜 아프지만 안 아픈 게 아니다.</b>
+</div>
+
+<h3>6-1. before / after — PK 설계로 보는 두 원칙</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 랜덤 PK, 그리고 FK 인덱스 누락</div>
+<pre><code><span class="kw">CREATE TABLE</span> orders (
+<span class="ln-bad">    id  <span class="kw">uuid</span> <span class="kw">PRIMARY KEY</span> <span class="kw">DEFAULT</span> <span class="fn">gen_random_uuid</span>(),</span>
+    <span class="cm">-- v4: 16바이트 + 무작위 삽입 순서</span>
+    ...
+);
+
+<span class="kw">CREATE TABLE</span> order_items (
+<span class="ln-bad">    order_id <span class="kw">uuid</span> <span class="kw">NOT NULL</span> <span class="kw">REFERENCES</span> orders(id),</span>
+    <span class="cm">-- FK 컬럼에 16바이트 한 벌 더, 게다가 인덱스 없음</span>
+    ...
+);
+
+<span class="cm">-- ① orders_pkey: 매 INSERT가 트리 전역의 아무 리프나 열어
+--    분할 → 인덱스 bloat + 전 리프가 워킹셋 →
+--    INSERT가 읽기 I/O를 유발 + FPI로 WAL 증폭
+--
+-- ② FK 인덱스 없음 (PostgreSQL은 자동 생성하지 않는다)
+--    → 부모 DELETE마다 order_items 전체 Seq Scan
+--
+-- ③ 인덱스를 만들어도 그 FK 인덱스 역시 uuid 무작위 삽입
+--    → 같은 병을 한 벌 더 앓는다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 작고 단조 증가하는 PK + 외부 식별자 분리</div>
+<pre><code><span class="kw">CREATE TABLE</span> orders (
+<span class="ln-good">    id        <span class="kw">bigint</span> <span class="kw">GENERATED ALWAYS AS IDENTITY</span> <span class="kw">PRIMARY KEY</span>,</span>
+    <span class="cm">-- 8바이트, 항상 맨 오른쪽에 append</span>
+<span class="ln-good">    public_id <span class="kw">uuid</span> <span class="kw">NOT NULL DEFAULT</span> <span class="fn">gen_random_uuid</span>() <span class="kw">UNIQUE</span>,</span>
+    <span class="cm">-- 외부 노출용은 세컨더리 유니크로 격리</span>
+    ...
+);
+
+<span class="kw">CREATE TABLE</span> order_items (
+<span class="ln-good">    order_id <span class="kw">bigint</span> <span class="kw">NOT NULL</span> <span class="kw">REFERENCES</span> orders(id),</span>
+    ...
+);
+<span class="ln-good"><span class="kw">CREATE INDEX</span> idx_order_items_order_id <span class="kw">ON</span> order_items (order_id);</span>
+
+<span class="cm">-- 내부 조인·FK·FK 인덱스는 전부 8바이트 순차 키로 가볍게 가고,
+-- 외부에는 유추 불가능한 public_id만 노출한다.
+-- 무작위 삽입 비용은 public_id 유니크 인덱스 하나만 감당한다.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>내부 PK / 외부 식별자 분리 <span class="badge bonus">가산점</span></h4>
+  <p style="margin-bottom:0"><b>"PK를 UUID로 할까"라는 논쟁 자체를 우회하는</b> 이 패턴이 실무의 기본형이다. <b>무작위 삽입 비용은 <code>public_id</code> 유니크 인덱스 한 개가 감당하고</b>, FK와 조인 키는 <b>전부 8바이트 순차 키</b>로 간다.</p>
+  <div class="rule red" style="margin-bottom:0">UUID를 쓸 거면 반드시 <b>네이티브 <code>uuid</code> 타입(16바이트)</b>으로 담는다<br><span style="font-size:.92rem;font-weight:600"><code>text</code>나 <code>char(36)</code>에 담으면 <b>36바이트 이상</b>을 차지하고 비교도 <b>문자열 비교</b>가 된다</span></div>
+</div>
+
+<h3>6-2. 말하기 훈련 — 뭉뚱그린 표현을 사슬로 교체</h3>
+
+<table class="wide">
+  <caption>왼쪽 표현이 입에서 나오려 할 때 <b>가운데 이름을 먼저 떠올리고, 오른쪽 사슬로 바꿔 말한다.</b></caption>
+  <thead><tr><th style="width:200px">뭉뚱그린 표현</th><th style="width:210px">이름</th><th>사슬로 말하면</th></tr></thead>
+  <tbody>
+    <tr><th>"메모리에 부하가 생긴다"</th><td><b>shared_buffers 적재율</b></td><td>큰 PK → 자식 테이블의 FK 컬럼·FK 인덱스 엔트리 비대(자식 수만큼) → 8KB 페이지당 엔트리 감소 → shared_buffers에 담기는 <b>행 수</b> 감소 → 캐시 미스 증가 → <b>디스크 I/O 증가</b></td></tr>
+    <tr class="hl"><th>"왔다갔다 해서 성능 이슈"</th><td><b>페이지 분할 + 랜덤 I/O + WAL 증폭</b></td><td>랜덤 PK → PK B-tree 삽입 지점 전역 분산(<b>힙은 무관</b>) → 가득 찬 리프 쪼개기 → 인덱스 bloat + 전 리프가 워킹셋 → 캐시 오염 → INSERT마다 디스크 읽기 + 페이지마다 FPI → <b>WAL·복제 지연 증가</b></td></tr>
+    <tr><th>"UPDATE가 느려요"</th><td><b>비-HOT 갱신 = 전 인덱스 갱신</b></td><td>인덱스 컬럼 변경 또는 페이지 여유 없음 → 새 TID → <b>인덱스 N개 전부 삽입</b> → 인덱스 bloat → VACUUM 부담 증가 → Index Only Scan의 <code>Heap Fetches</code> 증가</td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 셋째 비용 — 비-HOT UPDATE는 모든 인덱스를 갱신한다</h2>
+
+<p>메커니즘은 2-2절에서 이미 봤다. <b>UPDATE는 새 튜플 = 새 TID</b>이고, 모든 인덱스가 옛 TID를 가리키고 있으므로 원칙적으로 <b>인덱스마다 (키, 새 TID) 엔트리를 하나씩 더 꽂아야</b> 한다. <b>인덱스가 8개인 테이블에서 <code>updated_at</code> 하나만 고쳤는데 인덱스 쓰기가 8건 발생하는 것</b>이다.</p>
+
+<p>이 대가를 피하는 예외 장치가 <b>HOT(Heap-Only Tuple, "힙 안에서만 사는 튜플")</b>이다. 이름 그대로 <b>"힙 안에서만 존재하고 인덱스에는 흔적을 남기지 않는 튜플"</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 360" role="img" aria-label="왼쪽은 비-HOT 업데이트로 새 튜플이 다른 블록에 생기고 인덱스 여덟 개 전부에 새 엔트리가 삽입되는 그림, 오른쪽은 HOT 업데이트로 같은 페이지 안에 새 슬롯이 생기고 페이지 안 체인으로 연결되어 인덱스는 전혀 손대지 않는 그림">
+    <defs>
+      <marker id="f7r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+      <marker id="f7g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+      <marker id="f7c" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#334155"/></marker>
+    </defs>
+
+    <!-- LEFT: non-HOT -->
+    <rect x="16" y="16" width="536" height="300" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="284" y="40" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">비-HOT UPDATE</text>
+    <text x="284" y="58" font-size="11" fill="#7f1d1d" text-anchor="middle">인덱스 컬럼이 바뀌었거나, 같은 페이지에 여유가 없다</text>
+
+    <g fill="#fff" stroke="#dc2626">
+      <rect x="36" y="72" width="56" height="34" rx="6"/><rect x="98" y="72" width="56" height="34" rx="6"/>
+      <rect x="160" y="72" width="56" height="34" rx="6"/><rect x="222" y="72" width="56" height="34" rx="6"/>
+      <rect x="284" y="72" width="56" height="34" rx="6"/><rect x="346" y="72" width="56" height="34" rx="6"/>
+      <rect x="408" y="72" width="56" height="34" rx="6"/><rect x="470" y="72" width="56" height="34" rx="6"/>
+    </g>
+    <g font-size="9.5" fill="#b91c1c" text-anchor="middle" font-weight="700">
+      <text x="64" y="94">idx1</text><text x="126" y="94">idx2</text><text x="188" y="94">idx3</text><text x="250" y="94">idx4</text>
+      <text x="312" y="94">idx5</text><text x="374" y="94">idx6</text><text x="436" y="94">idx7</text><text x="498" y="94">idx8</text>
+    </g>
+    <g stroke="#dc2626" stroke-width="1.2" opacity=".75">
+      <line x1="64" y1="108" x2="386" y2="192" marker-end="url(#f7r)"/><line x1="126" y1="108" x2="390" y2="192" marker-end="url(#f7r)"/>
+      <line x1="188" y1="108" x2="394" y2="192" marker-end="url(#f7r)"/><line x1="250" y1="108" x2="398" y2="192" marker-end="url(#f7r)"/>
+      <line x1="312" y1="108" x2="402" y2="192" marker-end="url(#f7r)"/><line x1="374" y1="108" x2="406" y2="192" marker-end="url(#f7r)"/>
+      <line x1="436" y1="108" x2="410" y2="192" marker-end="url(#f7r)"/><line x1="498" y1="108" x2="414" y2="192" marker-end="url(#f7r)"/>
+    </g>
+    <text x="150" y="150" font-size="11.5" fill="#b91c1c" font-weight="700">인덱스 8개 전부에</text>
+    <text x="150" y="168" font-size="11.5" fill="#b91c1c" font-weight="700">(키, (2077,3)) 삽입 = 쓰기 8건</text>
+
+    <rect x="36" y="198" width="230" height="72" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="46" y="216" font-size="10.5" fill="#64748b" font-weight="700">블록 1042</text>
+    <rect x="46" y="222" width="210" height="38" rx="5" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    <text x="151" y="246" font-size="10.5" fill="#94a3b8" text-anchor="middle" class="mono">슬롯7 → 옛 버전 (삭제 표시)</text>
+
+    <rect x="290" y="198" width="230" height="72" rx="8" fill="#fff" stroke="#dc2626"/>
+    <text x="300" y="216" font-size="10.5" fill="#b91c1c" font-weight="700">블록 2077</text>
+    <rect x="300" y="222" width="210" height="38" rx="5" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="405" y="246" font-size="10.5" fill="#b91c1c" text-anchor="middle" class="mono" font-weight="700">슬롯3 → 새 버전</text>
+
+    <text x="284" y="294" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">새 TID = (2077,3) → 고친 컬럼과 무관하게 모든 인덱스가 새 엔트리를 받는다</text>
+
+    <!-- RIGHT: HOT -->
+    <rect x="568" y="16" width="536" height="300" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="836" y="40" font-size="13.5" font-weight="700" fill="#166534" text-anchor="middle">HOT UPDATE (Heap-Only Tuple)</text>
+    <text x="836" y="58" font-size="11" fill="#15803d" text-anchor="middle">인덱스 컬럼 불변 + 같은 페이지에 여유 있음</text>
+
+    <g fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3">
+      <rect x="588" y="72" width="56" height="34" rx="6"/><rect x="650" y="72" width="56" height="34" rx="6"/>
+      <rect x="712" y="72" width="56" height="34" rx="6"/><rect x="774" y="72" width="56" height="34" rx="6"/>
+      <rect x="836" y="72" width="56" height="34" rx="6"/><rect x="898" y="72" width="56" height="34" rx="6"/>
+      <rect x="960" y="72" width="56" height="34" rx="6"/><rect x="1022" y="72" width="56" height="34" rx="6"/>
+    </g>
+    <g font-size="9.5" fill="#94a3b8" text-anchor="middle" font-weight="700">
+      <text x="616" y="94">idx1</text><text x="678" y="94">idx2</text><text x="740" y="94">idx3</text><text x="802" y="94">idx4</text>
+      <text x="864" y="94">idx5</text><text x="926" y="94">idx6</text><text x="988" y="94">idx7</text><text x="1050" y="94">idx8</text>
+    </g>
+    <text x="836" y="132" font-size="13" fill="#16a34a" text-anchor="middle" font-weight="700">인덱스는 손대지 않는다 — 쓰기 0건</text>
+    <line x1="700" y1="146" x2="700" y2="192" stroke="#16a34a" stroke-width="1.6" marker-end="url(#f7g)"/>
+    <text x="700" y="164" font-size="10.5" fill="#166534" text-anchor="middle">여전히 (1042,7)</text>
+
+    <rect x="588" y="198" width="490" height="72" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="598" y="216" font-size="10.5" fill="#166534" font-weight="700">블록 1042 (같은 페이지)</text>
+    <rect x="600" y="222" width="200" height="38" rx="5" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="700" y="246" font-size="10.5" fill="#64748b" text-anchor="middle" class="mono">슬롯7 → 옛 버전</text>
+    <line x1="804" y1="241" x2="858" y2="241" stroke="#334155" stroke-width="1.6" marker-end="url(#f7c)"/>
+    <text x="831" y="234" font-size="9" fill="#334155" text-anchor="middle">체인</text>
+    <rect x="866" y="222" width="200" height="38" rx="5" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="966" y="246" font-size="10.5" fill="#166534" text-anchor="middle" class="mono" font-weight="700">슬롯9 → 새 버전</text>
+
+    <text x="836" y="294" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">인덱스는 옛 TID를 가리키지만, 페이지 안 체인을 따라가면 최신 버전에 도달한다</text>
+
+    <rect x="16" y="324" width="1088" height="32" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="560" y="345" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">HOT 조건 둘 — ① 인덱스가 걸린 컬럼이 하나도 안 바뀌었고  ②  옛 튜플과 같은 힙 페이지에 새 버전을 넣을 여유 공간이 있을 것</text>
+  </svg>
+  <figcaption>HOT은 <b>새 튜플을 같은 페이지에 넣고 옛 슬롯에서 새 슬롯으로 페이지 안 체인만 건다.</b> 인덱스는 여전히 옛 TID를 가리키지만 <b>체인을 따라가면 최신 버전에 도달하므로 인덱스 갱신이 전부 생략된다.</b> 조건 둘 중 <b>하나만 깨져도 왼쪽 그림으로 돌아간다</b>는 점이 설계 지침 전체를 만든다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>설계 지침 셋 — <span style="color:#2563eb">이 절은 InnoDB 기준 문서에는 없던 항목이다</span></h4>
+  <div class="step red"><span class="n">①</span><div class="body"><b>인덱스 하나를 추가하는 비용은 "그 인덱스를 유지하는 비용"만이 아니다.</b> 그 컬럼을 UPDATE하는 순간 <b>HOT 조건 ①이 깨져 다른 모든 인덱스까지</b> 갱신된다. <b>자주 바뀌는 컬럼</b>(<code>updated_at</code>, 카운터, 상태 값)에 인덱스를 거는 결정은 <b>이 비용을 알고</b> 해야 한다.</div></div>
+  <div class="step ok"><span class="n">②</span><div class="body"><b>갱신이 잦은 테이블은 테이블 <code>fillfactor</code>를 낮춘다.</b> 힙의 기본값은 <b>100(꽉 채움)</b>인데, 이러면 <b>HOT 조건 ②(같은 페이지의 여유 공간)를 만족할 수가 없다.</b> <b>70~80으로 낮춰</b> 새 버전이 들어갈 자리를 미리 비워 둔다. <b>다만 이미 꽉 찬 페이지에는 소급되지 않는다.</b></div></div>
+  <div class="step"><span class="n">③</span><div class="body"><b>관찰은 <code>pg_stat_user_tables</code>의 <code>n_tup_upd</code> 대비 <code>n_tup_hot_upd</code>로 한다.</b> <b>UPDATE가 많은데 HOT 비율이 낮은 테이블</b>이 인덱스 bloat와 VACUUM 부담의 <b>진원지</b>다.</div></div>
+  <div class="rule" style="margin-bottom:0">그리고 PK 설계와 만나는 지점 — <b>PK 값 자체를 UPDATE하는 설계(자연 키를 PK로 쓰는 경우)는 비-HOT이 확정</b>이고 <b>FK cascade까지 끌고 온다</b><br><span style="font-size:.92rem;font-weight:600">"PK는 불변이어야 한다"는 원칙이 PostgreSQL에서는 <b>HOT 때문에 한 번 더 무게를 얻는다</b></span></div>
+</div>
+
+<div class="callout info">
+  <span class="t">MySQL 대조 — 같은 상황에서 비용을 결정하는 요인이 정반대다</span>
+  InnoDB는 행을 <b>제자리에서 갱신</b>하고 옛 버전은 <b>언두 로그</b>로 보낸다. 세컨더리 인덱스는 <b>바뀐 컬럼의 인덱스만</b> 삭제 표시 + 삽입한다.<br>
+  <b>"인덱스 8개 테이블에서 컬럼 하나 UPDATE"의 비용을 결정하는 요인</b> — <b>PostgreSQL은 HOT 여부가</b>, <b>InnoDB는 그 컬럼에 인덱스가 걸렸는지가</b> 결정한다.
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 실무 사례 — "규모 유추 방지를 위해 PK를 UUID로 하자"는 제안</h2>
+
+<h3>8-1. 요건은 정당하다, 그리고 "PG니까 괜찮다"는 반론은 반쪽이다</h3>
+
+<p>연속 번호 PK를 외부에 노출하면 경쟁사가 <b>"주문 번호가 하루에 얼마나 늘어나는지"로 규모를 유추</b>할 수 있다. <b>요건 자체는 정당하고, 이걸 "기우"라고 잘라내는 답은 좋지 않다.</b></p>
+
+<p>그러면 팀에서 <b>"우리는 PostgreSQL이니까 InnoDB의 UUID 문제는 해당 없다"</b>는 반론이 따라붙는다. <b>반쯤 맞다.</b></p>
+
+<div class="split">
+  <div class="pane g">
+    <h4>맞는 부분 — 힙에 대해서는</h4>
+    <p style="margin:0;font-size:.94rem">테이블은 정렬 없는 힙이고 삽입 위치는 <b>FSM</b>이 정하므로, <b>랜덤 PK가 테이블을 물리적으로 흩뜨리지 않는다.</b> InnoDB에서 <b>테이블 그 자체가 조각나는</b> 일은 <b>PostgreSQL에서는 일어나지 않는다.</b></p>
+  </div>
+  <div class="pane r">
+    <h4>틀린 부분 — PK B-tree · FK 인덱스 · WAL에 대해서는</h4>
+    <p style="margin:0;font-size:.94rem">삽입 위치를 <b>값이 결정하는 구조</b>가 남아 있다. 6절의 <b>⑴ 분할·bloat ⑵ 순서 어긋남 → 랜덤 I/O ⑶ 전 리프 워킹셋 → 캐시 오염 ⑷ FPI → WAL 증폭</b>이 그대로 발생한다.</p>
+  </div>
+</div>
+
+<div class="rule">이 문장을 <b>정확히 잘라 말하는 것</b>이 이 사례에서 가져갈 한 마디다<br><span style="font-size:.95rem;font-weight:600">"힙에 대해서는 맞고, <b>PK B-tree · FK 인덱스 · WAL에 대해서는 틀립니다</b>"</span></div>
+
+<h3>8-2. MySQL에서 비싼 이유와 PostgreSQL에서 비싼 이유는 다르다</h3>
+
+<p>여기를 뭉뚱그리면 <b>"UUID는 나쁘다"는 미신</b>이 되고, 반대로 뭉뚱그린 반론에 부딪히면 <b>논거를 못 댄다.</b> 두 엔진의 이유를 나눠서 정리한다.</p>
+
+<table class="wide">
+  <caption><b>결론(대리 키를 쓰라)은 같은데 이유의 위치가 다르다</b> — 이 차이를 말할 수 있으면 "두 엔진을 원리로 구분한다"로 들린다.</caption>
+  <thead><tr><th style="width:150px"></th><th style="width:420px">MySQL / InnoDB에서의 대가</th><th>PostgreSQL에서의 대가</th></tr></thead>
+  <tbody>
+    <tr class="hl"><th>주된 이유</th><td><b>행 자체가 PK 순으로 물리 정렬</b>되므로, 무작위 PK는 테이블(= 클러스터드 B+Tree) 중간을 계속 벌려 <b>페이지 분할</b>을 일으킨다</td><td><b>힙은 무관하다.</b> 대신 <b>PK 인덱스 B-tree의 삽입 지역성</b>이 무너진다</td></tr>
+    <tr><th>피해 규모</th><td class="bad"><b>테이블 크기</b> 전체</td><td><b>PK 인덱스 + FK 인덱스</b> 크기</td></tr>
+    <tr><th>세컨더리 인덱스</th><td class="bad">리프에 PK가 복제돼 <b>인덱스 개수만큼 곱해진다</b></td><td class="good">리프가 (키, TID)라 <b>영향 없다</b></td></tr>
+  </tbody>
+</table>
+
+<div class="memo red">
+  <h4>PostgreSQL에서 UUID v4 PK가 지불하는 <b>진짜 대가 셋</b></h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 삽입 지역성 상실</div><div class="d">무작위 키는 트리 전역에 흩어져 꽂히므로 <b>가득 찬 리프를 계속 쪼갠다</b> — 페이지 분할과 캐시 미스가 늘어난다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② 워킹셋 부풀기 + 적재율 하락</div><div class="d">키가 8B→16B면 페이지당 엔트리가 <b>366 → 262</b>로 줄고 bloat까지 겹친다. 게다가 <b>인덱스 전체가 워킹셋</b>이 된다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ WAL 기록량 증가</div><div class="d">매 INSERT가 새 페이지를 처음 건드리므로 <code>full_page_writes</code>로 <b>건당 8KB FPI</b>. 복제 지연과 아카이브 비용까지 번진다.</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">MySQL을 인용할 때는 <b>MySQL이라고 명시하고 섞지 않는다</b><br><span style="font-size:.92rem;font-weight:600">"UUID PK를 쓰면 <b>행이 물리적으로 흩어져 테이블이 조각난다</b>"는 문장은<br>InnoDB에서는 맞고 <b>PostgreSQL에서는 틀린 말</b>이라, 그냥 말하면 오답이 된다</span></div>
+</div>
+
+<h3>8-3. 대안 — "유추 불가능"과 "무작위 삽입 순서"를 분리한다</h3>
+
+<div class="rule ok">핵심 통찰 — <b>요건이 요구하는 건 "유추 불가능"이지 "무작위 삽입 순서"가 아니다</b><br><span style="font-size:.92rem;font-weight:600">UUID v4는 <b>두 성질을 한 몸으로 팔고 있을 뿐</b>이고, 랜덤성은 <b>힙에는 무해해도 B-tree에는 최악의 성질</b>이다</span></div>
+
+<div class="split">
+  <div class="pane b">
+    <h4>(가) 시간 순 정렬성이 있는 ID로 바꾼다</h4>
+    <p style="margin:0 0 8px;font-size:.94rem"><b>UUID v7</b>은 타임스탬프가 앞쪽에 오는 UUID다 — v4와 같은 <b>16바이트 <code>uuid</code> 타입</b>에 담기면서 삽입은 <b>맨 오른쪽 리프에 가깝게</b> 꽂힌다(PostgreSQL 18부터 <code>uuidv7()</code> 내장, 그 전에는 애플리케이션에서 생성). <b>Snowflake ID</b>는 64비트에 타임스탬프를 상위 비트로 넣는 방식이라 <code>bigint</code>에 그대로 들어간다.</p>
+    <p style="margin:0;font-size:.92rem;color:#b91c1c"><b>대가</b> — <b>생성 시각이 값에 드러난다.</b> 값을 디코딩하면 언제 만들어진 행인지 알 수 있고, <b>두 ID의 시각 차이도 계산된다.</b> "총량·증가율 유추 방지"가 요건이면 충분하지만, <b>"생성 시각조차 숨겨야 한다"가 요건이면 부적합</b>하다. 또 UUID v7은 16바이트라 8바이트 <code>bigint</code>보다는 <b>여전히 무겁다.</b></p>
+  </div>
+  <div class="pane b">
+    <h4>(나) 별도의 공개용 식별자 컬럼을 둔다 (6-1절의 after)</h4>
+    <p style="margin:0 0 8px;font-size:.94rem">내부 PK는 <code>bigint IDENTITY</code>로 두고, 외부에는 <code>public_id uuid ... UNIQUE</code>만 노출한다. <b>FK와 조인 키는 전부 8바이트 순차 키</b>로 가므로 <b>자식 테이블 수만큼 곱해지던 비용이 없어진다.</b></p>
+    <p style="margin:0;font-size:.92rem;color:#b91c1c"><b>대가</b> — 무작위 삽입 비용이 <b>사라지는 게 아니라 <code>public_id</code> 유니크 인덱스 하나로 격리</b>되는 것이다. <b>그 인덱스는 여전히 페이지 분할과 FPI를 겪는다.</b> 추가로 <b>"외부에는 <code>public_id</code>, 내부에는 <code>id</code>"라는 규칙을 API 계층에서 지켜야 하는 운영 부담</b>이 생긴다.</p>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">이 사례에서 진짜 평가되는 것</span>
+  <b>요건을 한 단계 쪼개서 "어느 성질이 진짜 필요한지" 되묻는 것</b> — 이게 시니어의 답변 태도다. <b>"UUID는 안 됩니다"도, "PG니까 괜찮습니다"도 아니고</b>, <b>"유추 불가능은 지키고 무작위 삽입만 걷어내는 방법이 둘 있고, 각각의 대가는 이렇습니다"</b>가 완결된 답이다.
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>9-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">PG 저장 구조 3줄?</div><div class="d">① 테이블은 <b>정렬 없는 힙</b>(삽입 위치는 FSM이 정한다) ② 모든 인덱스 리프 = <b>(키, TID)</b> ③ <code>ctid</code>는 <b>UPDATE로 바뀐다</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">조회 경로 비교?</div><div class="d"><b>세컨더리</b>: PG는 <b>TID로 한 번에 점프</b>(1단계), InnoDB는 <b>PK 트리 재탐색</b>(2단계 북마크 룩업). <b>PK</b>: PG는 <b>힙 페치가 붙고</b>, InnoDB는 <b>트리 하나로 끝</b>.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">비용의 이름 다섯?</div><div class="d"><b>적 · 워 · 분 · 랜 · 왈</b> — 적재율 · 워킹셋 · 페이지 분할 · 랜덤 I/O · WAL(FPI). 앞 둘은 <b>크기 계열</b>, 뒤 셋은 <b>순서 계열</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">PK 크기가 청구되는 자리 셋?</div><div class="d"><b>피 · 에프 · 조</b> — <b>P</b>K 인덱스 자체(1배) · <b>F</b>K 컬럼과 FK 인덱스(<b>새 곱셈 계수</b>) · <b>조</b>인 키와 해시 테이블. <b>세컨더리 인덱스는 영향 없음.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">페이지당 엔트리 수 산식?</div><div class="d"><code>≈ 7,300B ÷ 엔트리 크기</code>. 엔트리 = 라인 포인터 4B + 헤더 8B(TID 포함) + 키. <b>20B / 28B / 112B → 366 / 262 / 65개</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">랜덤 PK 피해 네 갈래?</div><div class="d"><b>분 · 엇 · 워 · 왈</b> — 분할→bloat · 논리/물리 순서 어긋남→랜덤 I/O · 전 리프 워킹셋→캐시 오염 · FPI→WAL 증폭. <b>힙은 무관.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">PK 크기가 때리는 경로 순위?</div><div class="d"><b>⑶ 리프 페이지 수 ≫ ⑵ 트리 높이 &gt; ⑴ 브랜치 공간.</b> 브랜치는 <b>항상 캐시에 상주</b>하므로 높이는 부차적이다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">HOT 조건 둘?</div><div class="d">① <b>인덱스 걸린 컬럼이 하나도 안 바뀜</b> ② <b>같은 힙 페이지에 여유 공간</b>. 처방은 <code>fillfactor</code> 70~80, 관찰은 <code>n_tup_hot_upd</code>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">"PG니까 UUID 괜찮다"를 어디서 자르나?</div><div class="d"><b>"힙에 대해서는 맞고, PK B-tree · FK 인덱스 · WAL에 대해서는 틀립니다."</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit"><code>CLUSTER</code> 명령의 정체?</div><div class="d"><b>"한 번 정렬해 두기"</b>이지 클러스터드 인덱스가 아니다. ACCESS EXCLUSIVE · <b>이후 삽입은 다시 무질서</b> · 유지 메커니즘 없음.</div></div>
+</div>
+
+<h3>9-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>PostgreSQL은 왜 인덱스 리프에 PK가 아니라 물리 주소(TID)를 넣나요? 행이 옮겨지면 어떻게 하나요? <span class="badge core">필수</span><span class="hint">힌트: "옮길 일이 없어서"가 이유의 절반이고, 나머지 절반은 트레이드오프 양쪽을 함께 말하는 것이다</span></summary><div class="a">
+  <p><b>힙은 정렬을 유지하지 않으므로 행이 저절로 이동하는 일이 없다.</b> InnoDB가 논리 포인터(PK)를 택한 이유 — <b>클러스터드 인덱스가 정렬을 유지하느라 페이지 분할 시 행을 물리적으로 옮기고, 그러면 물리 주소를 적어 둔 세컨더리를 전부 고쳐야 한다</b> — 가 PostgreSQL에는 없으니, <b>물리 주소를 적어 트리 재탐색 없이 한 번에 점프</b>하는 쪽을 택했다.</p>
+  <p>행이 "옮겨지는" 유일한 경우는 UPDATE인데, PostgreSQL은 옮기는 게 아니라 <b>새 버전을 새 TID에 쓰고 옛 버전에 삭제 표시</b>를 한다. 그래서 <b>인덱스마다 새 엔트리를 꽂아야 하고(비-HOT), 그걸 피하는 장치가 HOT</b>이다. <code>VACUUM FULL</code>이나 <code>CLUSTER</code>처럼 <b>힙을 통째로 다시 쓰는 작업은 인덱스도 전부 재구축</b>한다.</p>
+  <div class="rule">완결된 답은 <b>트레이드오프 양쪽</b>을 함께 말하는 것이다<br><span style="font-size:.95rem;font-weight:600"><b>PostgreSQL</b>: 세컨더리 읽기 1단계 + <b>쓰기 시 전 인덱스 갱신 부담</b>(HOT으로 완화)<br><b>InnoDB</b>: 세컨더리 읽기 2단계 + <b>쓰기 안정</b></span></div>
+  <p style="margin-bottom:0"><b>가산점</b> — PostgreSQL 인덱스 엔트리에는 <b>버전 가시성 정보가 없어</b> 옛 버전의 엔트리도 남는다. 이것이 <b>Index Only Scan이 visibility map을 확인해야 하는 이유</b>이자, <b>VACUUM이 힙뿐 아니라 인덱스도 청소하는 이유</b>다.</p>
+</div></details>
+
+<details class="q"><summary>100바이트 복합 PK에 세컨더리 인덱스가 5개면, PostgreSQL에서는 정확히 무슨 일이 벌어지나요? <span class="badge trap">함정</span><span class="hint">힌트: InnoDB의 계산을 그대로 옮기면 오답이다. 비용이 나는 자리를 다시 찾아야 한다</span></summary><div class="a">
+  <p><b>함정 질문이다.</b> InnoDB라면 "5개 인덱스 × 1,000만 행에 92B씩 복제"가 정답이지만, <b>PostgreSQL의 세컨더리 인덱스 5개는 PK 크기에 영향받지 않는다</b> — 리프 엔트리가 <b>(키, TID)</b>이므로 <code>users.id</code>가 무엇이든 <b>1바이트도 달라지지 않는다.</b></p>
+  <p><b>대신 비용이 나는 자리를 짚는다.</b></p>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">① PK 인덱스 자체</div><div class="d">엔트리 112B라 <b>페이지당 65개</b> — <code>bigint</code>의 <b>1/5.6 밀도</b>.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② 자식 테이블마다</div><div class="d">FK 컬럼 100B(힙) + FK 인덱스 엔트리 112B. 자식 행 5,000만이면 <b>힙 +4.6GB, FK 인덱스 약 6GB</b>.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">③ 조인과 해시</div><div class="d">100바이트 비교 비용, <code>work_mem</code> 해시 테이블이 커져 <b><code>Batches &gt; 1</code>로 디스크에 쏟아지는 시점</b>이 빨라진다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">④ 갱신</div><div class="d">복합 PK 컬럼 중 <b>하나라도 UPDATE되면 비-HOT + FK cascade</b>.</div></div>
+  </div>
+  <p style="margin-bottom:0">처방은 복합 키를 <b>UNIQUE 제약으로 내리고</b> <code>bigint GENERATED ALWAYS AS IDENTITY</code> 대리 키를 PK로 세우는 것 — <b>결론은 InnoDB와 같다.</b> <b>결론은 같은데 이유의 위치가 다르다는 걸 보여주면 "두 엔진을 원리로 구분한다"로 들린다.</b></p>
+</div></details>
+
+<details class="q"><summary>UUID v4를 PK로 쓴 테이블에 INSERT가 몰리면 PostgreSQL에서는 무슨 일이 벌어지나요? <span class="badge core">필수</span><span class="hint">힌트: 두 층으로 갈라 답한다. 한 층은 "아무 일도 없다"이다</span></summary><div class="a">
+  <p><b>힙</b>: <b>아무 일도 없다</b> — FSM이 가리키는 끝 페이지에 순서대로 쌓인다.</p>
+  <p><b>PK B-tree(그리고 그 값을 받는 FK 인덱스들)</b>: 여기서 전부 일어난다.</p>
+  <div class="chain">
+    <span class="chip r">삽입 지점 전역 분산</span><span class="arrow">→</span><span class="chip r">가득 찬 리프마다 페이지 분할</span><span class="arrow">→</span><span class="chip r">반쯤 빈 리프 = 인덱스 bloat</span><span class="arrow">→</span><span class="chip r">모든 리프가 워킹셋</span><span class="arrow">→</span><span class="chip r">INSERT마다 리프를 디스크에서 읽어옴</span><span class="arrow">→</span><span class="chip w">건당 8KB FPI → WAL 증폭 → 체크포인트·복제 지연</span>
+  </div>
+  <p><b>관찰 수단</b>: <code>pgstattuple</code> 확장의 <code>pgstatindex()</code>가 주는 <code>avg_leaf_density</code>(리프 평균 적재율), <code>pg_stat_wal.wal_fpi</code>, <code>EXPLAIN (ANALYZE, WAL)</code>. <b>대안</b>은 UUID v7 / Snowflake / 내부 PK와 외부 식별자 분리다.</p>
+  <div class="rule red" style="margin-bottom:0">"왜 IDENTITY는 안 그런가"를 물으면 — <b>삽입 위치를 키 값이 결정하는 B-tree에서</b><br><b>단조 증가는 "맨 오른쪽 한 장"만 만지지만 랜덤은 "아무 장이나" 만지기 때문</b></div>
+</div></details>
+
+<details class="q"><summary>PK를 안 만들면 PostgreSQL은 어떻게 하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: InnoDB와 결론은 같은데 이유가 정반대다</span></summary><div class="a">
+  <p><b>아무것도 안 한다.</b> InnoDB는 <b>테이블이 곧 클러스터드 인덱스</b>라 PK가 없으면 <b>NOT NULL UNIQUE 인덱스를 승격</b>하거나 <b>6바이트 숨은 row id라도 만들지만</b>, <b>PostgreSQL의 힙은 PK 없이도 완전히 성립한다</b> — <b>숨은 대리 키를 만들지 않는다.</b> <code>ctid</code>가 있긴 하지만 <b>불변 식별자가 아니다</b>(UPDATE로 바뀌고, VACUUM이 슬롯을 재사용한다).</p>
+  <p>그래서 <b>PK 없는 테이블의 대가는 성능이 아니라 운영 기능 쪽</b>에서 온다.</p>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 논리 복제</div><div class="d"><code>REPLICA IDENTITY</code>가 없어 UPDATE/DELETE가 <b>에러</b>가 난다(<code>cannot update table … does not have a replica identity</code>).</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② UPSERT 불가</div><div class="d"><code>INSERT … ON CONFLICT</code>의 <b>충돌 대상이 없다.</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ 운영·매핑</div><div class="d">중복 행 제거를 <code>ctid</code>로 골라 지우는 <b>수공업</b>으로 해야 하고, <b>ORM 매핑도 안 된다.</b></div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">결론은 InnoDB와 같되 이유가 반대다<br><span style="font-size:.95rem;font-weight:600"><b>InnoDB</b>: "어차피 만들어지니 <b>의도적으로 설계하라</b>" &nbsp;/&nbsp; <b>PostgreSQL</b>: "안 만들면 <b>정말 없으니 반드시 만들어라</b>"</span></div>
+</div></details>
+
+<details class="q"><summary>MySQL로 물어보면 답이 달라지는 부분은? <span class="badge senior">경험 대조</span><span class="hint">힌트: 다섯 지점 — 리프 · 곱셈 계수 · 랜덤 PK 피해 범위 · UPDATE 방향 · PK 부재</span></summary><div class="a">
+  <div class="step"><span class="n">①</span><div class="body"><b>리프에 든 것</b> — InnoDB는 <b>클러스터드 리프 = 행 전체, 세컨더리 리프 = PK 값</b>. PostgreSQL은 <b>모든 리프가 (키, TID)</b>라 "클러스터드 vs 세컨더리" <b>구분 자체가 없다</b>.</div></div>
+  <div class="step"><span class="n">②</span><div class="body"><b>곱셈 계수의 위치</b> — InnoDB는 <b>세컨더리 인덱스 개수만큼 PK가 복제</b>되고, PostgreSQL은 세컨더리에는 영향 없이 <b>자식 테이블의 FK 컬럼·FK 인덱스</b>로 자리를 옮긴다(그리고 <b>PostgreSQL은 FK 인덱스를 자동 생성하지 않는다</b>).</div></div>
+  <div class="step"><span class="n">③</span><div class="body"><b>랜덤 PK의 피해 범위</b> — InnoDB는 <b>테이블 자체</b>가 흩어지지만, PostgreSQL은 힙은 무관하고 <b>PK B-tree + FK 인덱스 + WAL FPI</b>가 앓는다. <b>덜 아프지만 안 아픈 게 아니다.</b></div></div>
+  <div class="step"><span class="n">④</span><div class="body"><b>UPDATE 비용의 방향</b> — InnoDB는 <b>제자리 갱신 + 바뀐 컬럼의 인덱스만</b>, PostgreSQL은 <b>새 TID + 비-HOT이면 모든 인덱스</b>.</div></div>
+  <div class="step"><span class="n">⑤</span><div class="body"><b>PK가 없을 때</b> — InnoDB는 <b>숨은 row id를 강제로 만들고</b>, PostgreSQL은 <b>정말 없다</b>(대가는 논리 복제·UPSERT·ORM).</div></div>
+  <p style="margin-bottom:0"><b>덤으로</b> — InnoDB는 세컨더리에 <b>PK가 공짜로 들어 있어</b> PK 컬럼이 자동으로 커버링되지만, <b>PostgreSQL은 <code>INCLUDE</code>로 명시해야 한다.</b> 이 다섯을 짚으면 <b>"한쪽만 써봤다"가 아니라 "저장 구조에서 도출했다"로 들린다.</b></p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary><code>CLUSTER</code>라는 명령이 있잖아요 — 그게 PostgreSQL의 클러스터드 인덱스 아닌가요? <span class="badge trap">함정</span><span class="hint">힌트: 이름이 함정이다. "무엇을 하는가"와 "무엇을 유지하는가"를 갈라 말한다</span></summary><div class="a">
+  <p><b>아니다.</b> <code>CLUSTER orders USING orders_pkey;</code>는 <b>힙을 그 인덱스 순으로 1회 재작성</b>하는 명령이지, <b>저장 구조를 클러스터드로 바꾸는 명령이 아니다.</b> 정확한 표현은 <b>"클러스터드 인덱스"가 아니라 "한 번 정렬해 두기"</b>다.</p>
+  <p>제약이 셋이다. ① <b>ACCESS EXCLUSIVE 잠금</b>이라 그동안 <b>읽기까지 막힌다</b>(무중단이 필요하면 <code>pg_repack --order-by</code>). ② <b>이후 삽입되는 행은 다시 무질서해진다.</b> ③ <b>순서를 유지하는 메커니즘이 아예 없다</b> — 즉 <b>한 번 찍고 마는 스냅샷</b>이다.</p>
+  <p style="margin-bottom:0">그래서 PostgreSQL에서 "정렬된 물리 순서"의 효과는 <b>명령이 아니라 조합</b>으로 얻는다 — ① <b>삽입 순서가 곧 조회 순서가 되게 키를 설계</b>해 <code>pg_stats.correlation</code>을 높게 유지하고, ② <b>커버링 인덱스 + Index Only Scan</b>으로 힙 접근 자체를 없애고, ③ 시계열이면 <b>파티셔닝 + BRIN</b>을 얹는다.</p>
+</div></details>
+
+<details class="q"><summary>PK 조회에도 힙 페치가 붙는다면, PostgreSQL이 InnoDB보다 PK 단건 조회에서 느린 건가요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "느리다/빠르다"가 아니라 "무엇을 내주고 무엇을 샀는가"로 답한다</span></summary><div class="a">
+  <p><b>단계 수만 보면 InnoDB가 하나 적은 게 맞다.</b> InnoDB의 PK 조회는 <b>리프가 곧 행</b>이라 도착하는 순간 끝나지만, PostgreSQL은 <b>PK 인덱스도 주소만 갖고 있으므로 힙을 한 번 더 읽어야</b> 한다. 실제로 <code>EXPLAIN (ANALYZE, BUFFERS)</code>에 <b>인덱스 3장 + 힙 1장 = <code>shared hit=4</code></b>로 찍힌다.</p>
+  <p><b>다만 "그래서 느리다"로 끝내면 절반이다.</b> 대칭적으로 <b>세컨더리 조회에서는 방향이 반대</b>다 — PostgreSQL은 <b>TID를 보고 한 번에 점프</b>하지만 InnoDB는 <b>PK 트리를 루트부터 다시 내려간다</b>(북마크 룩업). <b>즉 PostgreSQL은 "PK 조회 한 단계"를 내주고 "세컨더리 조회의 트리 재탐색"을 산 것</b>이다.</p>
+  <p>그리고 <b>이 교환은 읽기에서 끝나지 않는다.</b> 물리 주소를 쓰는 대가로 <b>UPDATE 때 비-HOT이면 모든 인덱스를 갱신</b>해야 하고(HOT으로 완화), InnoDB는 <b>제자리 갱신이라 바뀐 컬럼의 인덱스만</b> 손댄다.</p>
+  <div class="rule">한 문장으로 — <b>PostgreSQL: 세컨더리 읽기 1단계 + 쓰기 시 전 인덱스 갱신 부담</b><br><b>InnoDB: 세컨더리 읽기 2단계 + 쓰기 안정</b></div>
+  <p style="margin-bottom:0"><b>덧붙일 것 하나</b> — PostgreSQL에서 힙 페치를 <b>0으로 만드는 경로</b>가 있다. 필요한 컬럼을 <code>INCLUDE</code>로 인덱스에 넣고 <b>Index Only Scan</b>이 성립하면 힙을 아예 안 읽는다(단, <b>visibility map이 "모두 가시"여야</b> 하므로 <code>Heap Fetches</code>를 함께 봐야 한다). InnoDB는 <b>세컨더리에 PK가 공짜로 들어 있어 PK 컬럼이 자동 커버링</b>되지만 PostgreSQL은 <b>명시해야 한다.</b></p>
+</div></details>
+
+<details class="q"><summary>"인덱스가 많으면 UPDATE가 비싸진다"는 말의 정확한 메커니즘을 PostgreSQL 기준으로 말해보세요. <span class="badge core">필수</span><span class="hint">힌트: 출발점은 "PG의 UPDATE는 제자리 갱신이 아니다"라는 한 줄이다</span></summary><div class="a">
+  <p>출발점은 <b><code>ctid</code>가 불변이 아니라는 한 줄</b>이다. PostgreSQL의 UPDATE는 행을 제자리에서 고치지 않고 <b>새 튜플 버전을 힙에 삽입</b>하고(그러므로 <b>새 TID</b>) 옛 튜플에는 <b>삭제 표시만</b> 남긴다.</p>
+  <p><b>그러면 모든 인덱스가 옛 TID를 가리키고 있게 된다.</b> 새 버전을 찾아가게 하려면 원칙적으로 <b>인덱스마다 (키, 새 TID) 엔트리를 하나씩 더 꽂아야</b> 하는데 — <b>어떤 컬럼을 고쳤는지와 무관하게 인덱스 N개 전부에</b>. 인덱스가 8개인 테이블에서 <code>updated_at</code> 하나만 고쳤는데 <b>인덱스 쓰기가 8건</b> 발생하는 것이다.</p>
+  <p><b>예외 장치가 HOT이다.</b> ① <b>인덱스가 걸린 컬럼이 하나도 안 바뀌었고</b> ② <b>같은 힙 페이지에 여유 공간이 있으면</b>, 새 튜플을 같은 페이지에 넣고 <b>페이지 안 체인</b>만 걸어 <b>인덱스 갱신을 전부 생략</b>한다.</p>
+  <div class="chain">
+    <span class="chip r">비-HOT</span><span class="arrow">→</span><span class="chip r">새 TID</span><span class="arrow">→</span><span class="chip r">인덱스 N개 전부 삽입</span><span class="arrow">→</span><span class="chip r">인덱스 bloat</span><span class="arrow">→</span><span class="chip w">VACUUM 부담 증가</span><span class="arrow">→</span><span class="chip w">Index Only Scan의 <code>Heap Fetches</code> 증가</span>
+  </div>
+  <p style="margin-bottom:0">그래서 설계 지침이 셋 나온다 — <b>① 자주 바뀌는 컬럼에 인덱스를 거는 결정은 "다른 모든 인덱스까지 갱신된다"는 비용을 알고 한다. ② 갱신이 잦은 테이블은 <code>fillfactor</code>를 70~80으로 낮춘다. ③ <code>pg_stat_user_tables</code>의 <code>n_tup_hot_upd / n_tup_upd</code> 비율로 관찰한다.</b> <b>MySQL 대조</b>: InnoDB에서는 이 비용을 <b>"그 컬럼에 인덱스가 걸렸는지"</b>가 결정한다.</p>
+</div></details>
+
+<details class="q"><summary>갱신이 잦은 테이블에 <code>fillfactor</code>를 70으로 낮추면 무엇을 얻고 무엇을 잃나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 얻는 것 하나, 잃는 것 둘, 그리고 함정 하나</span></summary><div class="a">
+  <p><b>얻는 것</b> — <b>HOT 조건 ②(같은 페이지의 여유 공간)를 만족시킬 확률이 올라간다.</b> 힙의 기본값은 <b>100(꽉 채움)</b>이라 그대로 두면 <b>여유가 없어 HOT이 성립할 수 없다.</b> 70~80으로 낮추면 새 버전이 들어갈 자리를 미리 비워 두게 되고, 그 결과 <b>비-HOT 갱신이 줄어 인덱스 bloat와 VACUUM 부담이 함께 줄어든다.</b></p>
+  <p><b>잃는 것</b> — ① 같은 행 수를 담는 데 <b>힙 페이지가 더 필요해진다</b>(빈 공간을 일부러 남기므로). ② 페이지가 늘어난 만큼 <b>순차 스캔이 읽어야 할 페이지도 늘고, shared_buffers에 담기는 행 수도 줄어든다</b> — <b>5절의 적재율 사슬을 스스로 한 칸 당기는 셈</b>이다.</p>
+  <div class="rule red">함정 — <b><code>fillfactor</code>를 낮춰도 이미 꽉 찬 페이지에는 소급되지 않는다</b><br><span style="font-size:.92rem;font-weight:600">새로 쓰이는 페이지부터 적용되므로, 즉시 효과를 보려면 <b>테이블 재작성</b>이 필요하다</span></div>
+  <p style="margin-bottom:0">그래서 <b>모든 테이블에 기본으로 거는 설정이 아니다.</b> 판단 기준은 <b>"UPDATE가 잦고 인덱스가 많은데 <code>n_tup_hot_upd</code> 비율이 낮은 테이블"</b>이고, 조정 후에는 <b>같은 지표로 효과를 확인</b>한다. <b>측정 없이 거는 순간 그냥 테이블만 커진다.</b></p>
+</div></details>
+
+<details class="q"><summary>UUID v7으로 바꾸면 문제가 완전히 사라지나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 두 가지가 남는다 — 하나는 비용, 하나는 요건 쪽이다</span></summary><div class="a">
+  <p><b>대부분 사라지지만 전부는 아니다.</b> UUID v7은 <b>타임스탬프가 앞쪽에 오는 UUID</b>라 v4와 같은 16바이트 <code>uuid</code> 타입에 담기면서 <b>삽입이 맨 오른쪽 리프에 가깝게</b> 꽂힌다. 즉 <b>6절의 네 갈래(분할·bloat, 순서 어긋남, 전 리프 워킹셋, FPI 증폭)가 대부분 해소된다.</b></p>
+  <p><b>남는 것 ① 크기</b> — 여전히 <b>16바이트</b>다. 8바이트 <code>bigint</code>에 비하면 <b>FK 컬럼·FK 인덱스·조인 키에 두 배가 실리고</b>, 페이지당 엔트리 수도 <b>366 → 262</b>로 줄어든다. <b>원칙 ①(작게)은 여전히 위반</b>이라는 뜻이다.</p>
+  <p><b>남는 것 ② 요건 쪽 — 생성 시각이 값에 드러난다.</b> 값을 디코딩하면 <b>언제 만들어진 행인지</b>를 알 수 있고, <b>두 ID의 시각 차이도 계산된다.</b> <b>"총량·증가율 유추 방지"가 요건이면 충분하지만, "생성 시각조차 숨겨야 한다"가 요건이면 부적합</b>하다.</p>
+  <div class="rule">그래서 되물어야 할 질문 — <b>"우리 요건이 막으려는 것은 총량 유추인가, 시점 노출인가?"</b></div>
+  <p style="margin-bottom:0">시점 노출까지 막아야 한다면 <b>내부 PK(<code>bigint IDENTITY</code>) + 외부 <code>public_id uuid</code> v4 UNIQUE</b> 분리가 답이다 — 이때도 <b>무작위 삽입 비용이 사라지는 게 아니라 유니크 인덱스 하나로 격리</b>된다는 점을 함께 말한다. 참고로 <b>Snowflake ID</b>는 64비트라 <code>bigint</code>에 그대로 들어가 크기 문제까지 해결하지만, <b>시각이 드러나는 성질은 같다.</b></p>
+</div></details>
+
+<details class="q"><summary>"PK가 크면 트리 높이가 올라가서 느려지는 거죠?"라고 물으면 어떻게 답하나요? <span class="badge trap">함정</span><span class="hint">힌트: 틀린 말은 아니지만, 주장의 중심에 세우면 무게를 모르는 것으로 읽힌다</span></summary><div class="a">
+  <p><b>"오를 수 있지만 그건 주범이 아니다"</b>가 답이다. 세 경로의 무게가 전혀 다르다.</p>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k" style="font-family:inherit">⑴ 브랜치 공간 — 무시 가능</div><div class="d">fan-out이 수십~수백이라 브랜치는 전체 페이지의 <b>수 % 이하</b>. 1,000만 행 <code>bigint</code> 인덱스에서 <b>리프 2.7만 장에 브랜치 100장 안팎</b>.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">⑵ 트리 높이 — 부차적</div><div class="d"><b>계단식이고 값이 싸다.</b> 1,000만 행에서 <code>bigint</code>는 <b>3단</b>, 100B PK는 <b>4단</b>. 게다가 <b>상위 레벨은 페이지가 적어 사실상 항상 캐시에 상주</b>하므로 한 단의 비용은 대개 <b>"디스크 I/O 한 번"이 아니라 "메모리 접근 한 번"</b>이다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">⑶ 리프 페이지 수 — 주범</div><div class="d"><b>매끄럽게, 항상, 비례해서</b> 나빠진다. 페이지당 엔트리 감소 → 페이지 수 증가 → <b>shared_buffers 적재율 하락</b> → 캐시 미스 → 디스크 I/O.</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0"><b>⑶ ≫ ⑵ &gt; ⑴</b> — ⑶을 주장으로 세우고 ⑵는 <b>"상위 레벨은 캐시에 상주하니 부차적"</b>이라고 덧붙인다<br><span style="font-size:.92rem;font-weight:600">셋을 <b>동급으로 나열하면</b> 무게 차이를 모르는 것으로 읽힌다</span></div>
+</div></details>
+
+<details class="q"><summary><code>pg_stats.correlation</code>은 무엇이고 왜 보나요? <span class="badge bonus">가산점</span><span class="hint">힌트: PG에는 클러스터드가 없어서 "보장" 대신 "관찰"을 한다</span></summary><div class="a">
+  <p><code>ANALYZE</code>가 컬럼마다 계산하는 통계값으로, <b>−1에서 1 사이</b>에서 <b>그 컬럼의 값 순서와 힙의 물리 순서가 얼마나 일치하는지</b>를 나타낸다. 시간 순으로 쌓이는 <code>bigint IDENTITY</code>나 <code>created_at</code>은 <b>1 근처</b>, 무작위 UUID 컬럼은 <b>0 근처</b>다.</p>
+  <p><b>왜 보는가</b> — PostgreSQL은 힙의 순서를 <b>보장하지 않지만 관찰은 하기 때문</b>이다. 플래너는 이 값으로 <b>Index Scan의 힙 접근</b>을 "순차에 가까움(비용 낮음)"에서 "완전 랜덤(<code>random_page_cost</code>)" 사이 <b>어디쯤으로 추정</b>한다. 즉 <b>correlation이 낮으면 같은 인덱스라도 플래너가 더 비싸게 보고, Seq Scan이나 Bitmap Heap Scan 쪽으로 기운다.</b></p>
+  <p style="margin-bottom:0"><b>설계로 연결하면</b> — <b>"삽입 순서가 곧 조회 순서가 되게 키를 설계한다"</b>는 지침이 여기서 나온다. 그리고 <b>BRIN</b>(페이지 범위마다 최솟값·최댓값만 기록하는 초소형 인덱스)은 <b>correlation이 높을 때만 쓸모가 있다</b> — 무작위로 쌓인 컬럼에 BRIN을 얹으면 <b>모든 범위가 모든 값을 포함하게 되어 사실상 전체 스캔</b>이 된다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  PostgreSQL에는 클러스터드 인덱스가 없다 — <b>테이블은 정렬 없는 힙</b>이고, <b>PK를 포함한 모든 인덱스는 리프에 (키, TID)를 담아 힙을 직접 가리키는 세컨더리</b>이며, 조회는 <b>인덱스 → TID → 힙 페치 1단계</b>다. 그런데도 <b>PK 설계 2원칙은 살아남는다</b> — ① <b>작게</b>(세컨더리 복제 곱셈은 없지만 <b>자식 테이블의 FK 컬럼·FK 인덱스·조인 키</b>에 PK가 들어가 페이지당 엔트리가 줄고 → <b>shared_buffers 적재율</b>이 떨어지고 → 디스크 I/O가 는다), ② <b>단조 증가</b>(힙은 무관하지만 <b>PK B-tree의 무작위 삽입</b>이 <b>페이지 분할 → 인덱스 bloat + 캐시 오염 + <code>full_page_writes</code> WAL 증폭</b>을 부른다). 여기에 PG만의 셋째 비용, <b>비-HOT UPDATE = 새 TID = 모든 인덱스 갱신</b>(HOT과 <code>fillfactor</code>로 완화)이 붙는다. <b>비용은 뭉뚱그리지 말고 이 이름들의 사슬로 말한다.</b>
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/04-rdb-sql/03-clustered-vs-secondary-index.md</code> · 이어서 볼 문서: 인덱스와 B+Tree(<code>01-index-and-bplus-tree.md</code>) · 인덱스를 못 타는 경우(<code>02-index-not-used-full-scan.md</code>) · 복합 인덱스 컬럼 순서(<code>08-composite-index-column-order.md</code>) · 커버링 인덱스(<code>09-covering-index.md</code>) · MVCC와 VACUUM(<code>11-mvcc-postgresql.md</code>) · 대량 UPSERT 부작용(<code>32-bulk-upsert-side-effects.md</code>) · 대규모 유니크 ID 생성(<code>26-unique-id-generation-at-scale.md</code>)</p>
+</main>
+</body>
+</html>

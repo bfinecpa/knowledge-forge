@@ -1,0 +1,1629 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>갭 락과 넥스트 키 락 — PostgreSQL에는 없다. 팬텀은 스냅샷이 막고, 데드락은 다른 곳에서 난다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">04 RDB · SQL &nbsp;|&nbsp; 심화⭐⭐⭐ &nbsp;|&nbsp; PostgreSQL 기준 재해석</span>
+  <h1>갭 락과 넥스트 키 락 — PostgreSQL에는 없다<br><span class="sub">팬텀은 스냅샷이 막고, 데드락은 다른 곳에서 난다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"갭 락(gap lock), 넥스트 키 락이란? 어떤 상황에서 데드락을 유발하나요?"</b> — 자기 DB에 <b>없는 개념</b>을 물었을 때가 진짜 시험이다</p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>갭 락은 MySQL이 팬텀</b>(같은 조건으로 두 번 조회했는데 두 번째에 없던 행이 끼어드는 현상)<b>을 막으려고 행과 행 사이의 빈 구간까지 잠그는 장치</b>이고, <b>넥스트 키 락은 그 갭 락에 레코드 락을 붙여 놓은 것</b>이다. <b>PostgreSQL에는 둘 다 없다</b> — PG의 행 락은 별도 락 메모리가 아니라 <b>튜플 헤더의 <code>xmax</code>에 적히는 표시</b>라서, <b>존재하는 튜플만 잠글 수 있고 아직 없는 행에는 표시를 적을 자리 자체가 없다.</b> 갭 락이 풀던 문제는 다른 도구가 푼다 — <b>팬텀은 REPEATABLE READ의 스냅샷이 아예 안 보여 주고</b>, "읽고 판단해서 쓰기"는 <b>SERIALIZABLE의 SSI가 커밋 시점에 사후 감지해 한쪽을 <code>40001</code>로 abort</b>하며(그래서 재시도 코드가 선택이 아니라 <b>프로토콜의 일부</b>다), "조회해서 없으면 INSERT" 경쟁은 <b><code>UNIQUE</code> 제약과 <code>INSERT ... ON CONFLICT</code></b>가 막는다. 그래서 PG의 핵심 함정은 데드락이 아니라 <b>"없는 행에 <code>FOR UPDATE</code>를 걸면 아무것도 안 잠기고 두 트랜잭션이 모두 INSERT에 성공해 조용히 중복이 생긴다"</b>는 것이다. PG의 데드락은 넷 — <b>① 같은 행들을 다른 순서로 ② 유니크 키 삽입 대기 교차 ③ 부모 행 <code>FOR UPDATE</code>와 자식 INSERT의 FK <code>KEY SHARE</code> 충돌 ④ UPSERT 배치의 행 순서 불일치.</b> <code>deadlock_timeout</code>(기본 1초) 뒤 한쪽이 <code>40P01</code>로 abort되고, 진단은 서버 로그의 <b>"waits for ShareLock on transaction"</b>과 <code>pg_blocking_pids()</code>, 처방은 <b>격리 수준이 아니라</b> 키 순서 정렬 · <code>FOR NO KEY UPDATE</code> · 배치 <code>ORDER BY</code> · 없는 행은 제약에 맡기기에 <b>트랜잭션 밖의 제한된 재시도</b>를 안전망으로 얹는 것이다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>정의를 말한 뒤 "우리 DB엔 없다"까지 간다</b> — 갭 락은 <b>레코드 사이의 빈 구간</b>을 잠가 "여기 새 행 넣지 마라"를 강제하는 장치이고, 넥스트 키 락은 <b>갭 락 + 오른쪽 레코드 락</b>이다. <b>PostgreSQL에는 둘 다 없다</b> — 행 락이 <b>튜플 헤더 <code>xmax</code>에 적는 표시</b>라서 <b>존재하는 행에만</b> 붙일 수 있기 때문이다.</div></li>
+    <li><span class="n">2</span><div><b>없으면 그 일을 누가 대신하는지가 진짜 답이다</b> — 갭 락은 두 가지 일을 하고 있었다. <b>팬텀 차단</b>은 <b>RR의 스냅샷</b>이 "막는" 대신 <b>"안 보여주는" 방식</b>으로(락 비용 0), <b>읽고 판단해서 쓰기</b>는 <b>SERIALIZABLE의 SSI</b>가 커밋 시점에 <b>사후 감지해 <code>40001</code></b>로, <b>"없으면 INSERT"</b>는 <b><code>UNIQUE</code> + <code>ON CONFLICT</code></b>가 맡는다.</div></li>
+    <li><span class="n">3</span><div><b>그래서 PG의 사고 지점이 달라진다</b> — MySQL이 <b>시끄럽게 데드락</b>으로 실패하던 "없는 행 <code>FOR UPDATE</code> + INSERT"가 PG에서는 <b>조용한 중복</b>이 된다. PG의 데드락은 <b>순 · 유 · 키 · 배</b> 네 유형이고 <b><code>deadlock_timeout</code> 1초</b> 뒤 <code>40P01</code>로 드러나며, 처방은 <b>격리 수준이 아니라</b> 키 순서 · 락 모드 · 제약 · 짧은 트랜잭션이다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">있는 쪽부터 — 팬텀과 갭 락 · 넥스트 키 락</a></li>
+    <li><a href="#s2">PG의 행 락은 "튜플에 붙이는 스티커"다</a></li>
+    <li><a href="#s3">락 모드 4종과 충돌표 — 유형 ③의 씨앗</a></li>
+    <li><a href="#s4">갭 락의 일을 PG는 무엇으로 하나 (스냅샷 · SSI)</a></li>
+    <li><a href="#s5">핵심 함정 — "없으면 INSERT"는 조용한 중복</a></li>
+    <li><a href="#s6">PG 데드락 네 유형 — 순 · 유 · 키 · 배</a></li>
+    <li><a href="#s7">진단 — 서버 로그와 <code>pg_blocking_pids()</code></a></li>
+    <li><a href="#s8">예방과 안전망을 코드로 고정한다</a></li>
+    <li><a href="#s9">MySQL로 물으면 갈리는 다섯 지점</a></li>
+    <li><a href="#s10">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "갭 락(gap lock), 넥스트 키 락이란? 어떤 상황에서 데드락을 유발하나요?"</p>
+  <p><b>PostgreSQL 기준 재해석</b>: "PostgreSQL에는 갭 락·넥스트 키 락이 <b>없다</b>. 그러면 갭 락이 막던 문제(팬텀, 존재하지 않는 행을 둘러싼 경쟁)를 PG는 <b>무엇으로</b> 막고, 그 대신 <b>PG의 데드락은 어디서 나는가</b>?"</p>
+  <p><b>출제 의도</b>: <b>"INSERT만 하는데 데드락"</b>이라는, 원리를 모르면 이해 불가능한 운영 현상의 정체. <b>데드락 로그를 읽고 원인 트랜잭션 쌍을 특정하는 실무 능력</b>과 직결된다. PG 사용자에게는 한 겹 더 까다롭다 — 질문에 등장하는 개념이 자기 DB에 없으므로 <b>"없다"고 말한 뒤 "그러면 같은 문제를 무엇이 대신 푸는가"까지</b> 가야 답이 된다.</p>
+  <div class="grid g3" style="margin-top:12px">
+    <div class="tile"><div class="k" style="font-family:inherit">채점 지점 ①</div><div class="d">PG 행 락의 <b>구조</b>를 사실로 아는가 — 튜플 헤더 <code>xmax</code>, 락 모드 4종, <b>없는 행은 못 잠금</b>.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">채점 지점 ②</div><div class="d">그 구조에서 <b>"check-then-insert는 데드락이 아니라 중복으로 끝나고, 데드락은 행 순서 · 유니크 대기 · FK KEY SHARE에서 난다"</b>는 타임라인을 <b>스스로 그려내는가</b>.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">채점 지점 ③</div><div class="d">서버 로그와 <code>pg_locks</code>로 <b>원인 트랜잭션 쌍을 특정</b>하고, 재발 방지를 <b>코드로 고정</b>하는가.</div></div>
+  </div>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 네 가지</span>
+    ① <b>락 충돌은 알면 즉시 보이고 모르면 영원히 안 보이는 유형</b> → 결론 대신 <b>두 세션의 시간 순 표</b>로 t1부터 한 스텝씩 그린다(6절 전체).<br>
+    ② <b>MySQL 경험을 그대로 옮긴 "없으면 INSERT"</b> → PG에서는 <b>에러 없이 중복</b>이 된다. 데드락보다 조용하고 위험한 함정을 5절에서 정면으로 다룬다.<br>
+    ③ <b>비용을 "락 경합"으로 뭉뚱그리는 습관</b> → 락 대기 비용을 <b>메커니즘 사슬</b>로 끝까지 잇고(2-4절), 처방마다 <b>얻는 것 / 내주는 것</b>을 나란히 둔다(8-5절).<br>
+    ④ <b>안전망을 코드로 고정하지 않는 습관</b> → 로그 읽기 5절차 · 래치 재현 테스트 · 재시도 정책을 전부 <b>코드와 절차</b>로 적는다(7·8절).
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 있는 쪽부터 — 팬텀이 무엇이고, MySQL은 그것을 어떻게 막나</h2>
+
+<p>이 문서의 출발점은 <b>"PostgreSQL에는 갭 락도 넥스트 키 락도 없다"</b>는 사실이다. 그런데 <b>없다는 말이 정보가 되려면 있는 쪽이 무엇을 하고 있었는지를 먼저 알아야 한다.</b> 그래서 순서를 뒤집어, <b>갭 락이 태어난 이유</b>부터 본다.</p>
+
+<h3>1-1. 팬텀 읽기 — 없던 것이 유령처럼 나타난다</h3>
+
+<p><b>팬텀 읽기(phantom read)</b>란 한 트랜잭션이 <b>같은 조건으로 두 번 조회했는데 두 번째에 없던 행이 끼어들어 오는</b> 현상이다. 사이에 다른 트랜잭션이 그 조건에 맞는 행을 INSERT하고 커밋했기 때문이다.</p>
+
+<div class="scroll">
+<table>
+  <caption>선착순 100명 쿠폰 — 같은 조건, 다른 결과</caption>
+  <thead><tr><th style="width:70px">시각</th><th>트랜잭션 T1</th><th>트랜잭션 T2</th><th>결과</th></tr></thead>
+  <tbody>
+    <tr><td>t1</td><td><code>SELECT count(*) WHERE coupon_id = 7</code></td><td></td><td>→ 99</td></tr>
+    <tr><td>t2</td><td></td><td><code>INSERT (user 15, coupon 7)</code> → <code>COMMIT</code></td><td>막히지 않는다</td></tr>
+    <tr class="hl"><td>t3</td><td><code>SELECT count(*) WHERE coupon_id = 7</code></td><td></td><td class="bad">→ 100 (없던 행이 끼어들었다 = 팬텀)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>이게 <b>왜 사고가 되는지</b>가 중요하다. T1이 "99개니까 한도에 아직 여유가 있다"고 판단하고 <b>자기도 하나 넣으면 결과는 101개</b>다. <b>읽은 순간에는 맞았던 판단이, 쓰는 순간에는 이미 틀린 판단</b>이 되어 있다.</p>
+
+<div class="callout trap"><span class="t">여기서 평범한 행 락은 도움이 되지 않는다</span>
+  행 락은 <b>이미 존재하는 행</b>에 거는 것인데, 문제를 일으킨 행은 <b>조회 시점에 아직 존재하지 않았다.</b> <b>잠글 대상 자체가 없다.</b>
+</div>
+
+<h3>1-2. MySQL InnoDB의 답 — 빈 구간을 잠근다</h3>
+
+<p>인덱스는 값 순으로 정렬된 레코드들의 나열이고, 그 레코드와 레코드 <b>사이의 빈 구간</b>을 "갭"이라 부른다. <b>갭 락(gap lock)</b>은 그 빈 구간에 거는 락이고, 뜻은 <b>"이 구간에 새 행을 넣지 마라"</b>다. 존재하는 행이 아니라 <b>앞으로 존재할 수 있는 자리</b>를 예약해 두는 장치인 셈이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 348" role="img" aria-label="인덱스 위에 레코드 5, 10, 20, 30이 놓이고 그 사이가 갭이다. WHERE user_id = 15 FOR UPDATE는 행이 없어도 (10,20) 갭을 잠그고, 넥스트 키 락은 그 갭에 레코드 20을 붙인 범위다. PostgreSQL에는 이 그림에 해당하는 장치가 없다">
+    <defs>
+      <marker id="g1a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">인덱스 위의 "레코드"와 "갭" — 갭 락은 아직 없는 행의 자리를 예약한다</text>
+    <text x="560" y="48" font-size="12" fill="#64748b" text-anchor="middle" class="mono">uk(user_id, coupon_id) 인덱스에 user_id 5, 10, 20, 30 이 있을 때</text>
+
+    <!-- strip -->
+    <rect x="50" y="120" width="118" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    <text x="109" y="147" font-size="11.5" fill="#64748b" text-anchor="middle" class="mono">(-∞, 5)</text>
+    <rect x="168" y="120" width="64" height="44" rx="6" fill="#e2e8f0" stroke="#64748b"/>
+    <text x="200" y="147" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">[5]</text>
+    <rect x="232" y="120" width="136" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    <text x="300" y="147" font-size="11.5" fill="#64748b" text-anchor="middle" class="mono">(5, 10)</text>
+    <rect x="368" y="120" width="64" height="44" rx="6" fill="#e2e8f0" stroke="#64748b"/>
+    <text x="400" y="147" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">[10]</text>
+    <rect x="432" y="120" width="176" height="44" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="520" y="147" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle" class="mono">(10, 20)</text>
+    <rect x="608" y="120" width="64" height="44" rx="6" fill="#e2e8f0" stroke="#64748b"/>
+    <text x="640" y="147" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">[20]</text>
+    <rect x="672" y="120" width="176" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    <text x="760" y="147" font-size="11.5" fill="#64748b" text-anchor="middle" class="mono">(20, 30)</text>
+    <rect x="848" y="120" width="64" height="44" rx="6" fill="#e2e8f0" stroke="#64748b"/>
+    <text x="880" y="147" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">[30]</text>
+    <rect x="912" y="120" width="158" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+    <text x="991" y="147" font-size="11.5" fill="#64748b" text-anchor="middle" class="mono">(30, +∞)</text>
+
+    <text x="200" y="112" font-size="10.5" fill="#475569" text-anchor="middle">레코드</text>
+    <text x="300" y="112" font-size="10.5" fill="#94a3b8" text-anchor="middle">갭</text>
+    <text x="640" y="112" font-size="10.5" fill="#475569" text-anchor="middle">레코드</text>
+    <text x="760" y="112" font-size="10.5" fill="#94a3b8" text-anchor="middle">갭</text>
+
+    <!-- pointer -->
+    <text x="520" y="88" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle" class="mono">WHERE user_id = 15 FOR UPDATE</text>
+    <line x1="520" y1="94" x2="520" y2="116" stroke="#dc2626" stroke-width="1.8" marker-end="url(#g1a)"/>
+
+    <!-- bands -->
+    <rect x="432" y="188" width="176" height="32" rx="7" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="520" y="209" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle">갭 락 (10, 20)</text>
+    <text x="622" y="209" font-size="12" fill="#7f1d1d">행이 <tspan font-weight="700">없어도</tspan> 이 구간을 잠근다 = "여기 아무도 못 넣는다"</text>
+
+    <rect x="432" y="234" width="240" height="32" rx="7" fill="#fecaca" stroke="#dc2626"/>
+    <text x="552" y="255" font-size="12" font-weight="700" fill="#7f1d1d" text-anchor="middle">넥스트 키 락 = 갭 (10, 20) + 레코드 [20]</text>
+    <text x="686" y="255" font-size="12" fill="#7f1d1d">"next-key" = 갭의 <tspan font-weight="700">다음 키까지</tspan> 함께 잠근다는 뜻</text>
+
+    <text x="50" y="200" font-size="12" fill="#334155" font-weight="700">MySQL RR에서</text>
+    <text x="50" y="218" font-size="11.5" fill="#475569">없는 행에 잠금 읽기를 걸면</text>
+    <text x="50" y="248" font-size="11.5" fill="#475569">범위 잠금은 스캔 구간을</text>
+    <text x="50" y="266" font-size="11.5" fill="#475569">넥스트 키 락으로 덮는다 → 팬텀 원천 차단</text>
+
+    <!-- bottom -->
+    <rect x="50" y="288" width="1020" height="48" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="66" y="309" font-size="13" font-weight="700" fill="#1d4ed8">PostgreSQL에는 이 그림 자체가 없다</text>
+    <text x="66" y="328" font-size="12" fill="#1e40af">잠글 수 있는 것은 <tspan font-weight="700">존재하는 튜플</tspan>뿐이라, <tspan class="mono">(10, 20)</tspan> 같은 <tspan font-weight="700">빈 구간에는 락을 놓을 자리가 없다</tspan> (2절)</text>
+  </svg>
+  <figcaption><b>넥스트 키 락</b>은 갭 락에 <b>오른쪽 레코드 락을 붙인 덩어리</b>다. MySQL의 REPEATABLE READ에서 범위 조회에 잠금을 걸면 <b>스캔한 구간이 이 넥스트 키 락으로 덮이고</b>, 그래서 팬텀이 원천 차단된다. 이 그림에서 붉은 구간이 <b>PostgreSQL에는 존재하지 않는 개념</b>이다.</figcaption>
+</figure>
+
+<h3>1-3. 갭 락에는 부산물이 하나 더 있었다</h3>
+
+<p><b>"없는 행을 잠글 수 있다"</b>는 것. 그래서 MySQL 개발자들은 <b>"조회해서 없으면 INSERT"</b>를 <code>SELECT ... FOR UPDATE</code> → 없으면 <code>INSERT</code>로 짜는 관용구를 오래 써 왔다. <b>없는 행에 <code>FOR UPDATE</code>를 걸어도 갭 락이 남아 두 번째 트랜잭션의 INSERT를 막아 주기 때문</b>이다.</p>
+
+<div class="memo">
+  <h4>이 문서의 뼈대 — 갭 락은 <b>두 가지 일</b>을 하고 있었다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">(a) 팬텀 차단</div><div class="d">범위 조회에 <b>새 행이 끼어드는 것</b>을 막는다. → PG는 이것을 <b>락 없이</b> 푼다(4절).</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">(b) 없는 행을 둘러싼 상호 배제</div><div class="d">"조회해서 없으면 INSERT"의 <b>두 번째 요청을 세운다.</b> → PG는 <b>애초에 락으로 풀지 말라</b>고 요구한다(5절).</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">왜 그럴 수밖에 없는지는 <b>PG의 행 락이 어디에 저장되는지</b>를 보면 바로 나온다. 다음 절이 이 문서 전체의 축이다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. PostgreSQL의 행 락은 "튜플에 붙이는 스티커"라서 없는 행은 못 잠근다</h2>
+
+<p><code>SELECT ... FOR UPDATE</code>나 <code>UPDATE</code>가 행을 잠글 때 PG가 하는 일은 <b>그 튜플 헤더의 <code>xmax</code> 필드에 자기 트랜잭션 ID를 적고, infomask 비트로 "이건 삭제가 아니라 락"이라고 표시하는 것</b>이다. <b>별도의 락 테이블에 "이 행은 잠겼음" 항목을 만드는 방식이 아니다.</b> 공유 계열 락을 여러 트랜잭션이 함께 잡으면 XID 대신 <code>multixact</code> ID가 적힌다.</p>
+
+<div class="rule">MySQL의 락은 <b>관리사무소 장부에 적는 예약</b>, PostgreSQL의 락은 <b>물건 자체에 붙이는 스티커</b><br><span style="font-size:.92rem;font-weight:600">장부에는 아직 없는 물건도 "이 자리 예약"이라고 적을 수 있지만, <b>스티커는 물건이 있어야 붙일 수 있다.</b></span></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="왼쪽은 MySQL의 별도 락 테이블에 행과 갭 구간을 기록하는 장부 방식이고, 오른쪽은 PostgreSQL이 힙 페이지의 튜플 헤더 xmax에 직접 표시를 적는 방식이다. 존재하지 않는 user 15 행에는 표시를 적을 자리가 없다">
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">락이 어디에 저장되는가 — 이 한 가지가 나머지를 전부 결정한다</text>
+
+    <!-- LEFT: ledger -->
+    <rect x="30" y="44" width="510" height="238" rx="12" fill="#fff" stroke="#94a3b8"/>
+    <text x="285" y="68" font-size="13.5" font-weight="700" fill="#334155" text-anchor="middle">MySQL InnoDB — 별도의 락 테이블(장부)</text>
+    <rect x="52" y="84" width="466" height="28" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="66" y="103" font-size="11.5" font-weight="700" fill="#475569">잠금 대상</text>
+    <text x="286" y="103" font-size="11.5" font-weight="700" fill="#475569">모드</text>
+    <text x="400" y="103" font-size="11.5" font-weight="700" fill="#475569">소유 트랜잭션</text>
+    <rect x="52" y="112" width="466" height="28" fill="#fff" stroke="#e2e8f0"/>
+    <text x="66" y="131" font-size="11.5" fill="#334155" class="mono">users 행 id = 5</text>
+    <text x="286" y="131" font-size="11.5" fill="#334155" class="mono">X (레코드)</text>
+    <text x="400" y="131" font-size="11.5" fill="#334155" class="mono">trx 8811</text>
+    <rect x="52" y="140" width="466" height="28" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="66" y="159" font-size="11.5" font-weight="700" fill="#b91c1c" class="mono">구간 (10, 20)</text>
+    <text x="286" y="159" font-size="11.5" font-weight="700" fill="#b91c1c" class="mono">GAP</text>
+    <text x="400" y="159" font-size="11.5" fill="#b91c1c" class="mono">trx 8811</text>
+    <rect x="52" y="168" width="466" height="28" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="66" y="187" font-size="11.5" font-weight="700" fill="#b91c1c" class="mono">구간 (20, 30]</text>
+    <text x="286" y="187" font-size="11.5" font-weight="700" fill="#b91c1c" class="mono">NEXT-KEY</text>
+    <text x="400" y="187" font-size="11.5" fill="#b91c1c" class="mono">trx 8812</text>
+    <text x="52" y="224" font-size="12" fill="#475569">장부는 <tspan font-weight="700">대상의 이름만 적으면 되므로</tspan></text>
+    <text x="52" y="244" font-size="12" font-weight="700" fill="#b91c1c">아직 존재하지 않는 자리도 "예약"할 수 있다</text>
+    <text x="52" y="266" font-size="11.5" fill="#64748b">대신 락이 많아지면 락 테이블 메모리가 한계다</text>
+
+    <!-- RIGHT: heap -->
+    <rect x="580" y="44" width="510" height="238" rx="12" fill="#fff" stroke="#2563eb"/>
+    <text x="835" y="68" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">PostgreSQL — 힙 페이지의 튜플 헤더에 적는 표시</text>
+
+    <rect x="602" y="82" width="466" height="34" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="616" y="104" font-size="11.5" fill="#334155" class="mono">tuple(user 5)   xmin 8801   xmax 0</text>
+    <text x="960" y="104" font-size="11" fill="#64748b">잠기지 않음</text>
+
+    <rect x="602" y="120" width="466" height="34" rx="6" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="616" y="142" font-size="11.5" font-weight="700" fill="#b45309" class="mono">tuple(user 10)  xmin 8801   xmax 8811</text>
+    <text x="960" y="142" font-size="11" font-weight="700" fill="#b45309">여기가 "락"</text>
+
+    <rect x="602" y="158" width="466" height="34" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="616" y="180" font-size="11.5" fill="#334155" class="mono">tuple(user 20)  xmin 8802   xmax 0</text>
+    <text x="960" y="180" font-size="11" fill="#64748b">잠기지 않음</text>
+
+    <rect x="602" y="196" width="466" height="38" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-dasharray="6 4" stroke-width="2"/>
+    <text x="616" y="213" font-size="11.5" font-weight="700" fill="#b91c1c" class="mono">user 15 → 그런 튜플이 없다</text>
+    <text x="616" y="229" font-size="11" fill="#7f1d1d">표시를 적을 <tspan font-weight="700">헤더 자체가 없다</tspan> — 스티커를 붙일 물건이 없는 것</text>
+
+    <text x="602" y="256" font-size="12" fill="#1e40af">락이 튜플 안에 있으므로 <tspan font-weight="700">락 테이블 넘침도, 락 에스컬레이션도 없다</tspan></text>
+    <text x="602" y="274" font-size="11.5" fill="#475569">대신 100만 행을 잠그면 100만 튜플에 쓰기가 일어나 WAL이 늘어난다</text>
+
+    <!-- bottom -->
+    <rect x="30" y="300" width="1060" height="56" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="48" y="324" font-size="13.5" font-weight="700" fill="#b91c1c">그래서 PG에서 <tspan class="mono">SELECT ... WHERE user_id = 15 FOR UPDATE</tspan> 는 — 0행을 반환하고 <tspan text-decoration="underline">아무것도 잠그지 않는다</tspan></text>
+    <text x="48" y="345" font-size="12" fill="#7f1d1d">범위도 마찬가지다. <tspan class="mono">WHERE id &gt; 10 FOR UPDATE</tspan> 는 <tspan font-weight="700">지금 있는 행들만</tspan> 잠그고, <tspan font-weight="700">앞으로 들어올 행은 막지 못한다.</tspan></text>
+  </svg>
+  <figcaption>이 그림의 오른쪽 아래 붉은 점선 상자가 <b>이 문서 전체의 축</b>이다. 갭 락은 "아직 없는 행을 미리 잠그는" 장치인데, <b>PG에는 그 장치를 놓아 둘 자리가 없다.</b></figcaption>
+</figure>
+
+<h3>2-1. 락이 튜플 안에 있으므로 따라오는 것 셋</h3>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">① 행 수 제한도 에스컬레이션도 없다</div><div class="d">100만 행을 잠가도 <b>락 테이블이 넘치지 않는다.</b> 대신 100만 튜플에 <b>쓰기</b>가 일어나 WAL이 늘어난다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">② 대기 대상이 "행"이 아니라 "XID"다</div><div class="d"><code>pg_stat_activity</code>에 <code>wait_event_type = Lock</code>, <code>wait_event = transactionid</code>로 보이고, 데드락 로그에 <b>"ShareLock on transaction N"</b>으로 찍히는 이유(7절).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">③ 없는 튜플에는 적을 자리가 없다</div><div class="d"><code>FOR UPDATE</code>는 <b>0행 반환 + 락 없음.</b> 범위도 <b>지금 있는 행만</b> 잠근다.</div></div>
+</div>
+
+<h3>2-2. MySQL 대조 — 여기서 사라지는 데드락 하나</h3>
+
+<div class="split">
+  <div class="pane r">
+    <h4>MySQL InnoDB RR — "INSERT만 하는데 데드락"</h4>
+    <ul>
+      <li>없는 행에 <code>FOR UPDATE</code> → <code>(10, 20)</code> <b>갭 락이 남는다</b></li>
+      <li><b>갭 락끼리는 서로 호환</b>이라 두 트랜잭션이 <b>둘 다 잠그기에 성공</b></li>
+      <li>이어서 각자 INSERT가 잡으려는 <b>인서트 인텐션 락</b>이 상대의 갭 락에 막혀 <b>순환</b></li>
+      <li>결과 — <b>"둘 다 잠그기 성공, 둘 다 넣기 실패"</b> = 그 유명한 <code>ERROR 1213</code></li>
+    </ul>
+  </div>
+  <div class="pane b">
+    <h4>PostgreSQL — 그 데드락은 구조적으로 성립하지 않는다</h4>
+    <ul>
+      <li>같은 문장이 <b>아무것도 잠그지 않으므로</b> 순환의 재료가 만들어지지 않는다</li>
+      <li>대신 <b>다른 사고</b>가 난다 — 둘 다 통과하고 둘 다 INSERT에 성공(5절)</li>
+      <li><b>제약이 없으면 조용한 중복, 있으면 두 번째가 <code>23505</code></b></li>
+      <li>즉 <b>실패가 시끄러운 쪽에서 조용한 쪽으로 이동</b>했다</li>
+    </ul>
+  </div>
+</div>
+
+<h3>2-3. 유니크 인덱스 삽입은 "락"이 아니라 "상대 트랜잭션 종료 대기"다</h3>
+
+<p>INSERT가 유니크 인덱스에 키를 넣을 때 <b>아직 커밋되지 않은 같은 키</b>를 만나면 어떻게 될까. 여기서 PG는 <b>그 키에 공유 락을 잡는 대신, 그 튜플을 넣은 트랜잭션(XID)이 끝날 때까지 기다린 뒤 다시 검사</b>한다.</p>
+
+<div class="grid g2">
+  <div class="tile ok"><div class="k" style="font-family:inherit">상대가 커밋했으면</div><div class="d"><code>ERROR 23505 duplicate key value violates unique constraint</code></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">상대가 롤백했으면</div><div class="d">그 자리는 비었으니 <b>자기가 넣는다</b></div></div>
+</div>
+
+<p><code>ON CONFLICT</code>도 <b>같은 대기 위에서</b> 동작한다(커밋이면 <code>DO NOTHING</code>/<code>DO UPDATE</code> 경로, 롤백이면 삽입). <b>"락"이 아니라 "대기"</b>라는 이 차이가 <b>데드락 유형 ②의 모양</b>과 MySQL 대조를 가른다(6-3절).</p>
+
+<h3>2-4. 락 대기의 비용을 "사슬"로 말하기</h3>
+
+<p><b>"락 경합이 있었습니다"에서 멈추지 말 것.</b> 데드락이 나지 않아도 락 대기는 이렇게 비용을 만든다. <b>화살표 하나하나가 면접의 "왜요?"에 대한 답</b>이다.</p>
+
+<div class="chain">
+  <span class="chip r">필요 이상으로 넓은 행 · 강한 모드로 <code>FOR UPDATE</code></span><span class="arrow">→</span>
+  <span class="chip r">무관한 UPDATE와 FK 자식 INSERT가 <code>transactionid</code> 대기</span><span class="arrow">→</span>
+  <span class="chip w">대기 트랜잭션 수명이 <b>잠금 트랜잭션 수명만큼</b> 늘어남</span>
+</div>
+<div class="chain">
+  <span class="chip w">그 시간 동안 <b>커넥션을 쥔 채 놓지 못함</b> (PG는 커넥션 하나가 OS 프로세스 하나라 더 비싸다)</span><span class="arrow">→</span>
+  <span class="chip r">풀 활성 커넥션 증가</span><span class="arrow">→</span>
+  <span class="chip r">풀 고갈</span>
+</div>
+<div class="chain">
+  <span class="chip r">무관한 API까지 <code>getConnection</code>에서 대기</span><span class="arrow">→</span>
+  <span class="chip r">전 서비스 응답 시간 상승</span><span class="arrow">+</span>
+  <span class="chip b">덤: 오래 열린 트랜잭션이 <code>backend_xmin</code>으로 VACUUM을 붙들어 <b>bloat</b></span>
+</div>
+
+<div class="callout info" style="margin-bottom:0"><span class="t">이 사슬은 통째로 입에 붙여 둔다</span>
+  면접에서 "락이 오래 걸리면 뭐가 문제죠?"라는 질문에 <b>"느려집니다"로 답하면 0점</b>이고, <b>"커넥션 → 풀 → 무관한 API → 전 서비스"</b>까지 이어야 한 칸 위다.
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 락 모드 4종과 충돌표 — 데드락 유형 ③의 씨앗</h2>
+
+<p>PG의 행 락은 강도가 다른 <b>네 모드</b>로 나뉜다. <b>이름을 외우는 게 목적이 아니라, 누가 자동으로 어떤 모드를 잡는지</b>를 알아야 6-4절의 데드락이 보인다.</p>
+
+<div class="scroll">
+<table>
+  <caption>행 락 4종 — 강한 것부터</caption>
+  <thead><tr><th style="width:190px">모드</th><th>누가 잡나</th><th>뜻</th></tr></thead>
+  <tbody>
+    <tr><td><code>FOR UPDATE</code></td><td><code>SELECT ... FOR UPDATE</code>, <code>DELETE</code>, <b>유니크 인덱스에 속한 컬럼을 바꾸는</b> <code>UPDATE</code></td><td>"이 행을 지우거나 <b>키를 바꿀 수 있다</b>" — 가장 강함</td></tr>
+    <tr><td><code>FOR NO KEY UPDATE</code></td><td><b>키가 아닌 컬럼만 바꾸는 <code>UPDATE</code>(자동)</b>, 명시적 <code>SELECT ... FOR NO KEY UPDATE</code></td><td>"값은 바꾸지만 <b>키는 그대로</b>"</td></tr>
+    <tr><td><code>FOR SHARE</code></td><td><code>SELECT ... FOR SHARE</code></td><td>읽기 공유 — 모든 갱신을 막는다</td></tr>
+    <tr class="hl"><td><code>FOR KEY SHARE</code></td><td><b>FK 검사</b>: 자식 행 INSERT/UPDATE 시 <b>부모 행에 자동</b>, 명시적 <code>SELECT ... FOR KEY SHARE</code></td><td>"이 행의 <b>키만 사라지지 않으면</b> 된다"</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout info"><span class="t">여기서 "키"란 유니크 인덱스에 참여하는 컬럼을 뜻한다</span>
+  그래서 평범한 <code>UPDATE users SET balance = ... WHERE id = 1</code>은 <b>키를 안 바꾸므로 <code>FOR NO KEY UPDATE</code>를 자동으로</b> 잡는다.<br>
+  반면 <b>JPA의 <code>@Lock(PESSIMISTIC_WRITE)</code>가 만드는 <code>SELECT ... FOR UPDATE</code>는 가장 강한 모드</b>다. <b>"잔액만 바꾸려는 코드가 가장 강한 락을 잡는다"</b>는 이 어긋남이 유형 ③의 데드락을 만든다.
+</div>
+
+<h3>3-1. 충돌표 — 이 표의 첫 열이 유형 ③을 설명한다</h3>
+
+<table class="wide">
+  <caption>이미 잡힌 락(세로) × 새로 요청하는 락(가로) — 어느 조합이 대기를 만드는가</caption>
+  <thead><tr><th style="width:220px">이미 잡힌 락 ↓ / 새 요청 →</th><th><code>KEY SHARE</code></th><th><code>SHARE</code></th><th><code>NO KEY UPDATE</code></th><th><code>UPDATE</code></th></tr></thead>
+  <tbody>
+    <tr><th style="text-align:left"><code>KEY SHARE</code></th><td class="good">호환</td><td class="good">호환</td><td class="good">호환</td><td class="bad">대기</td></tr>
+    <tr><th style="text-align:left"><code>SHARE</code></th><td class="good">호환</td><td class="good">호환</td><td class="bad">대기</td><td class="bad">대기</td></tr>
+    <tr><th style="text-align:left"><code>NO KEY UPDATE</code></th><td class="good">호환 <span class="badge bonus">여기가 처방</span></td><td class="bad">대기</td><td class="bad">대기</td><td class="bad">대기</td></tr>
+    <tr><th style="text-align:left"><code>UPDATE</code></th><td class="bad">대기 <span class="badge trap">여기가 사고</span></td><td class="bad">대기</td><td class="bad">대기</td><td class="bad">대기</td></tr>
+  </tbody>
+</table>
+
+<div class="rule red"><code>FOR UPDATE</code>는 <code>KEY SHARE</code>와 <b>충돌</b>하고, <code>FOR NO KEY UPDATE</code>는 <b>충돌하지 않는다</b></div>
+
+<p><b>이 한 칸의 실무적 의미가 크다.</b> FK 검사가 부모 행에 <code>KEY SHARE</code>를 요구하므로, <b>부모 행을 <code>FOR UPDATE</code>로 잠근 트랜잭션이 살아 있는 동안 다른 트랜잭션의 자식 INSERT는 전부 대기</b>한다. 같은 자리에 <code>FOR NO KEY UPDATE</code>를 썼다면 그 INSERT들은 <b>그냥 지나간다.</b></p>
+
+<div class="memo green">
+  <h4>PG에서 락 범위를 불필요하게 넓히는 <b>1순위 실수</b></h4>
+  <div class="rule ok" style="margin:0"><code>FOR UPDATE</code>는 <b>"이 행을 지우거나 키를 바꿀 것"</b>일 때만.<br>값만 바꿀 거면 <b><code>FOR NO KEY UPDATE</code></b> 또는 <b>잠금 읽기 없는 원자적 UPDATE</b>.</div>
+</div>
+
+<h3>3-2. 격리 수준은 "무엇이 보이는가"를 바꾸지, 락 범위를 바꾸지 않는다</h3>
+
+<p><b>MySQL을 쓰다 온 사람이 가장 자주 틀리는 지점</b>이다. 먼저 사실 셋을 고정한다.</p>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">사실 ①</div><div class="d">일반 SELECT는 <b>어떤 격리 수준에서도</b> 행 락을 잡지 않는다(MVCC 스냅샷을 읽을 뿐).</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">사실 ②</div><div class="d">잠금 읽기(<code>FOR ...</code> 계열)와 UPDATE/DELETE의 대상 탐색만 <code>xmax</code>를 건드린다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">사실 ③</div><div class="d">기본 격리 수준은 <b>READ COMMITTED</b>이고, RR·SERIALIZABLE로 올려도 잠기는 것은 <b>WHERE를 통과해 반환된 행뿐</b>이다.</div></div>
+</div>
+
+<p>즉 격리 수준이 바꾸는 것은 <b>스냅샷의 범위와 충돌 시 실패 방식(<code>40001</code>)</b>이지 <b>락 범위가 아니다.</b> MySQL의 <b>"RR이면 갭 락, RC로 낮추면 레코드 락"이라는 스위치가 PG에는 아예 없고</b>, 그래서 <b>격리 수준은 PG의 데드락 처방이 될 수 없다</b>(8-2절).</p>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 갭 락이 하던 일을 PostgreSQL은 무엇으로 하나</h2>
+
+<p>1-3절에서 갭 락의 일을 둘로 나눴다. <b>각각의 대체 수단을 한 표에 둔다. 이 표가 이 문항의 답안 골격이다.</b></p>
+
+<table class="wide">
+  <caption>갭 락 → PostgreSQL 대체 수단 대비표 (면접 답안의 뼈대)</caption>
+  <thead><tr><th style="width:230px">갭 락이 하던 일</th><th style="width:230px">MySQL의 방식</th><th>PostgreSQL의 대체 수단</th><th style="width:180px">실패 방식</th></tr></thead>
+  <tbody>
+    <tr><td><b>(a)</b> 범위 조회에 새 행이 끼어드는 것을 막는다 <span class="sub">(팬텀)</span></td><td>REPEATABLE READ의 <b>넥스트 키 락</b>으로 스캔 범위를 잠근다</td><td>REPEATABLE READ의 <b>스냅샷</b> — 나중에 커밋된 행이 <b>아예 안 보인다.</b> 락이 없어 상대의 INSERT를 막지도 않는다</td><td class="good">없음 (동시성 비용 0)</td></tr>
+    <tr><td><b>(b1)</b> "읽은 결과를 근거로 쓴 것"이 여전히 옳은지 보장</td><td>범위 락으로 두 번째 트랜잭션을 <b>세운다</b></td><td>SERIALIZABLE의 <b>SSI</b> — 사전 차단이 아니라 <b>커밋 시점의 사후 감지</b></td><td class="bad"><code>40001</code> abort → <b>재시도 필수</b></td></tr>
+    <tr class="hl"><td><b>(b2)</b> 없는 행을 잠가 상호 배제 <span class="sub">("조회해서 없으면 INSERT")</span></td><td><b>갭 락</b>으로 두 번째 INSERT를 막는다</td><td><code>UNIQUE</code> 제약 + <code>INSERT ... ON CONFLICT</code> (또는 <b>존재하는 앵커 행 락</b>, advisory lock)</td><td class="bad"><code>23505</code> 또는 <b>예외 없이 무시</b></td></tr>
+  </tbody>
+</table>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="갭 락이 하던 두 가지 일이 세 갈래로 나뉘어 각각 PostgreSQL의 다른 도구로 대체되는 분기도. 팬텀은 REPEATABLE READ 스냅샷, 읽고 판단해서 쓰기는 SERIALIZABLE SSI, 없으면 INSERT는 UNIQUE와 ON CONFLICT가 맡고, 각각의 실패 방식이 다르다">
+    <defs>
+      <marker id="s4m" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"없다"로 끝내지 않는 답 — 갭 락의 일을 셋으로 쪼개 각각 다른 도구에 맡긴다</text>
+
+    <rect x="24" y="112" width="176" height="96" rx="12" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="112" y="146" font-size="13" font-weight="700" fill="#b45309" text-anchor="middle">갭 락</text>
+    <text x="112" y="166" font-size="11.5" fill="#92400e" text-anchor="middle">(MySQL)이 혼자</text>
+    <text x="112" y="184" font-size="11.5" fill="#92400e" text-anchor="middle">하던 두 가지 일</text>
+
+    <!-- middle jobs -->
+    <rect x="248" y="52" width="248" height="60" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="264" y="76" font-size="12.5" font-weight="700" fill="#334155">(a) 팬텀 차단</text>
+    <text x="264" y="96" font-size="11.5" fill="#475569">범위 조회에 새 행이 끼어들지 않게</text>
+
+    <rect x="248" y="130" width="248" height="60" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="264" y="154" font-size="12.5" font-weight="700" fill="#334155">(b1) 읽고 판단해서 쓰기</text>
+    <text x="264" y="174" font-size="11.5" fill="#475569">"99개니까 넣어도 된다"가 계속 참인가</text>
+
+    <rect x="248" y="208" width="248" height="60" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="264" y="232" font-size="12.5" font-weight="700" fill="#b91c1c">(b2) 없는 행의 상호 배제</text>
+    <text x="264" y="252" font-size="11.5" fill="#7f1d1d">"조회해서 없으면 INSERT"</text>
+
+    <line x1="202" y1="146" x2="244" y2="86" stroke="#64748b" stroke-width="1.6" marker-end="url(#s4m)"/>
+    <line x1="202" y1="160" x2="244" y2="160" stroke="#64748b" stroke-width="1.6" marker-end="url(#s4m)"/>
+    <line x1="202" y1="176" x2="244" y2="234" stroke="#64748b" stroke-width="1.6" marker-end="url(#s4m)"/>
+
+    <!-- PG tools -->
+    <rect x="560" y="52" width="330" height="60" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="576" y="76" font-size="12.5" font-weight="700" fill="#166534">REPEATABLE READ 스냅샷</text>
+    <text x="576" y="96" font-size="11.5" fill="#15803d">막는 게 아니라 <tspan font-weight="700">안 보여준다</tspan> — 상대를 세우지 않는다</text>
+
+    <rect x="560" y="130" width="330" height="60" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="576" y="154" font-size="12.5" font-weight="700" fill="#1d4ed8">SERIALIZABLE의 SSI</text>
+    <text x="576" y="174" font-size="11.5" fill="#1e40af">읽은 범위를 추적해 <tspan font-weight="700">커밋 시점에 사후 감지</tspan></text>
+
+    <rect x="560" y="208" width="330" height="60" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="576" y="232" font-size="12.5" font-weight="700" fill="#1d4ed8">UNIQUE + ON CONFLICT</text>
+    <text x="576" y="252" font-size="11.5" fill="#1e40af">또는 <tspan font-weight="700">앵커 행 락</tspan> · <tspan font-weight="700">advisory lock</tspan> · SERIALIZABLE</text>
+
+    <line x1="500" y1="82" x2="556" y2="82" stroke="#64748b" stroke-width="1.6" marker-end="url(#s4m)"/>
+    <line x1="500" y1="160" x2="556" y2="160" stroke="#64748b" stroke-width="1.6" marker-end="url(#s4m)"/>
+    <line x1="500" y1="238" x2="556" y2="238" stroke="#64748b" stroke-width="1.6" marker-end="url(#s4m)"/>
+
+    <!-- failure modes -->
+    <text x="1005" y="42" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">실패 방식</text>
+    <rect x="910" y="58" width="190" height="48" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="1005" y="80" font-size="12" font-weight="700" fill="#166534" text-anchor="middle">없음</text>
+    <text x="1005" y="98" font-size="11" fill="#15803d" text-anchor="middle">동시성 비용 0</text>
+
+    <rect x="910" y="136" width="190" height="48" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="1005" y="158" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle" class="mono">40001</text>
+    <text x="1005" y="176" font-size="11" fill="#7f1d1d" text-anchor="middle">재시도가 <tspan font-weight="700">프로토콜의 일부</tspan></text>
+
+    <rect x="910" y="214" width="190" height="48" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="1005" y="236" font-size="12" font-weight="700" fill="#b91c1c" text-anchor="middle" class="mono">23505</text>
+    <text x="1005" y="254" font-size="11" fill="#7f1d1d" text-anchor="middle">또는 예외 없이 무시</text>
+
+    <rect x="24" y="284" width="1076" height="28" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="562" y="303" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">사고방식의 전환 — 팬텀을 "막는" 것이 아니라 "안 보이게" 한다. 막을 필요가 없으니 다른 세션의 INSERT를 세우지도 않는다</text>
+  </svg>
+  <figcaption>이 분기도를 <b>말로 재생할 수 있으면</b> 이 문항은 끝난 것이다. "PG엔 갭 락이 없습니다"에서 멈추면 <b>절반</b>이고, <b>세 갈래와 각각의 실패 방식(<code>40001</code> · <code>23505</code>)까지</b> 말해야 답이 된다.</figcaption>
+</figure>
+
+<h3>4-1. (a) 팬텀 — REPEATABLE READ의 스냅샷이 "안 보여준다"</h3>
+
+<p>PG의 REPEATABLE READ는 <b>스냅샷 격리(snapshot isolation)</b>다. 트랜잭션의 <b>첫 문장</b>에서 "이 시점의 세계"를 사진처럼 고정하고, 이후 모든 문장이 <b>같은 사진</b>을 읽는다. 다른 트랜잭션이 범위 안에 행을 INSERT하고 커밋해도 <b>내 스냅샷에는 그 행이 존재하지 않으므로</b> 두 번째 SELECT에도 안 나온다.</p>
+
+<div class="codehead plain"><span class="tag">PG</span> 팬텀이 나지 않는다 — 그런데 <b>락도 없다</b></div>
+<pre><code><span class="cm">-- 세션 A</span>
+<span class="kw">BEGIN</span> ISOLATION LEVEL REPEATABLE READ;
+<span class="kw">SELECT</span> count(*) <span class="kw">FROM</span> coupon_issue <span class="kw">WHERE</span> coupon_id = 7;   <span class="cm">-- 4</span>
+<span class="cm">--   세션 B: INSERT INTO coupon_issue (user_id, coupon_id) VALUES (15, 7); COMMIT;  ← 막히지 않는다</span>
+<span class="ln-good"><span class="kw">SELECT</span> count(*) <span class="kw">FROM</span> coupon_issue <span class="kw">WHERE</span> coupon_id = 7;   <span class="cm">-- 여전히 4 (팬텀 없음, 락 없음)</span></span>
+<span class="kw">COMMIT</span>;</code></pre>
+
+<div class="callout warn"><span class="t">공짜는 아니다 — 대가는 하나</span>
+  스냅샷 이후 다른 트랜잭션이 커밋한 행을 <b>내가 UPDATE/DELETE하려 하면</b> <code>ERROR 40001 could not serialize access due to concurrent update</code>로 실패한다. <b>그러면 재시도한다.</b>
+</div>
+
+<h3>4-2. (b1) 스냅샷이 못 막는 것 — write skew와 SSI</h3>
+
+<p>스냅샷은 <b>읽기</b>를 보호할 뿐, <b>"읽은 결과를 근거로 쓴 것"이 여전히 옳은지</b>는 보장하지 않는다.</p>
+
+<p>선착순 100명 쿠폰을 다시 보자. 두 트랜잭션이 <b>각자 자기 스냅샷에서 99를 세고</b>, 각자 "아직 여유가 있다"고 판단해 각자 INSERT하면 <b>결과는 101</b>이다. <b>둘 다 팬텀은 안 봤는데 결과는 틀렸다.</b> 각자가 읽은 행 집합과 각자가 쓴 행이 서로 엇갈려 <b>어떤 순차 실행 순서로도 재현할 수 없는 결과</b>가 나온 것 — 이것을 <b>write skew(쓰기 편향)</b>라 부른다.</p>
+
+<div class="callout trap"><span class="t">여기서 MySQL 관용구가 PG에서 무력해진다</span>
+  MySQL이라면 <code>count(*) ... FOR UPDATE</code>로 <b>범위에 넥스트 키 락</b>을 걸어 두 번째 트랜잭션을 세우면 된다. 그러나 <b>PG의 <code>FOR UPDATE</code>는 지금 있는 99행만 잠그고, 100번째 INSERT는 아무것도 막지 않는다.</b>
+</div>
+
+<p>PG의 정식 답은 <b>SERIALIZABLE</b>이고, 그 구현이 <b>SSI(Serializable Snapshot Isolation)</b>다. <b>이 문서에서 PostgreSQL 고유 내용으로 가장 중요한 부분</b>이므로 동작을 한 단계씩 본다.</p>
+
+<div class="step"><span class="n">1</span><div class="body">각 트랜잭션이 <b>읽은 범위</b>를 기록한다. <code>pg_locks</code>에 <b><code>SIReadLock</code></b>이라는 이름으로 튜플·페이지·릴레이션 단위로 남는다. <b>이름에 lock이 붙어 있지만 아무도 블로킹하지 않는다</b> — "내가 여기를 읽었다"는 <b>흔적</b>일 뿐이다.</div></div>
+<div class="step"><span class="n">2</span><div class="body">트랜잭션들이 평소처럼 <b>그냥 진행</b>한다. <b>아무도 기다리지 않는다.</b></div></div>
+<div class="step red"><span class="n">3</span><div class="body"><b>커밋하려는 순간</b>, PG가 읽기/쓰기 의존성 그래프를 검사한다. 어떤 순차 실행 순서로도 설명할 수 없는 모양(직렬화 불가능한 사이클)이 만들어졌으면 <b>한쪽을 <code>40001</code>로 abort</b>한다.</div></div>
+
+<figure>
+  <svg viewBox="0 0 900 300" role="img" aria-label="위쪽은 MySQL 넥스트 키 락의 사전 차단 방식으로 T2가 T1 커밋까지 대기하는 타임라인이고, 아래쪽은 PostgreSQL SSI의 사후 감지 방식으로 두 트랜잭션이 모두 대기 없이 진행하다가 커밋 시점에 T2가 40001로 abort되는 타임라인이다">
+    <text x="450" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">사전 차단 vs 사후 감지 — 실패가 언제 오는가</text>
+
+    <!-- group 1 -->
+    <text x="30" y="62" font-size="12.5" font-weight="700" fill="#b45309">사전 차단 — MySQL 넥스트 키 락</text>
+    <text x="30" y="94" font-size="11.5" fill="#475569" font-weight="700">T1</text>
+    <rect x="70" y="76" width="300" height="26" rx="6" fill="#fffbeb" stroke="#d97706"/>
+    <text x="220" y="94" font-size="11.5" fill="#92400e" text-anchor="middle">범위 잠금 → 쓰기 → COMMIT</text>
+    <text x="30" y="128" font-size="11.5" fill="#475569" font-weight="700">T2</text>
+    <rect x="70" y="110" width="300" height="26" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4"/>
+    <text x="220" y="128" font-size="11.5" fill="#64748b" text-anchor="middle">대기 — 아무 일도 못 한다</text>
+    <rect x="374" y="110" width="200" height="26" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="474" y="128" font-size="11.5" fill="#166534" text-anchor="middle">진행 → COMMIT</text>
+    <text x="592" y="128" font-size="11.5" fill="#64748b">실패는 없지만 <tspan font-weight="700">기다린 시간</tspan>을 냈다</text>
+
+    <line x1="30" y1="156" x2="870" y2="156" stroke="#e5e7eb" stroke-width="1"/>
+
+    <!-- group 2 -->
+    <text x="30" y="184" font-size="12.5" font-weight="700" fill="#1d4ed8">사후 감지 — PostgreSQL SSI</text>
+    <text x="30" y="216" font-size="11.5" fill="#475569" font-weight="700">T1</text>
+    <rect x="70" y="198" width="360" height="26" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="250" y="216" font-size="11.5" fill="#1e40af" text-anchor="middle">읽기(SIReadLock 기록) → 쓰기 → COMMIT</text>
+    <rect x="434" y="198" width="96" height="26" rx="6" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="482" y="216" font-size="11.5" font-weight="700" fill="#166534" text-anchor="middle">성공</text>
+
+    <text x="30" y="250" font-size="11.5" fill="#475569" font-weight="700">T2</text>
+    <rect x="70" y="232" width="360" height="26" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="250" y="250" font-size="11.5" fill="#1e40af" text-anchor="middle">읽기(SIReadLock 기록) → 쓰기 → COMMIT</text>
+    <rect x="434" y="232" width="150" height="26" rx="6" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="509" y="250" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle" class="mono">40001 abort</text>
+    <text x="600" y="250" font-size="11.5" fill="#7f1d1d"><tspan font-weight="700">아무도 기다리지 않았다.</tspan></text>
+    <text x="600" y="268" font-size="11.5" fill="#7f1d1d">실패는 <tspan font-weight="700">마지막에</tspan> 온다</text>
+
+    <rect x="30" y="278" width="840" height="0" fill="none"/>
+  </svg>
+  <figcaption><b>낙관적 락과 같은 사고방식</b>이다 — 일단 다 하게 두고, <b>커밋 시점에 "그러면 안 되는 조합이었네"를 판정</b>한다. 여기서 곧장 따라오는 귀결이 있다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>재시도 없이 SERIALIZABLE을 켠 것은 <b>SSI를 쓴 것이 아니다</b></h4>
+  <p style="margin:0">애플리케이션에 <b><code>40001</code> 재시도 코드가 반드시 있어야 한다.</b> 재시도가 없으면 SERIALIZABLE은 <b>"가끔 이유 없이 500이 뜨는 API"</b>가 될 뿐이다. 데드락 재시도가 <b>진통제</b>인 것과 달리, <b>SSI의 재시도는 프로토콜의 일부</b>다 — 정상 동작 중에도 abort가 나는 설계이기 때문이다.</p>
+</div>
+
+<div class="codehead plain"><span class="tag">SQL</span> 선착순 한도 검사 — 둘 중 하나가 <code>40001</code>로 죽고, 재시도에서 101번째를 거른다</div>
+<pre><code><span class="kw">BEGIN</span> ISOLATION LEVEL SERIALIZABLE;
+<span class="kw">SELECT</span> count(*) <span class="kw">FROM</span> coupon_issue <span class="kw">WHERE</span> coupon_id = 7;   <span class="cm">-- 99 → 한도 미만</span>
+<span class="kw">INSERT INTO</span> coupon_issue (user_id, coupon_id) <span class="kw">VALUES</span> (15, 7);
+<span class="ln-bad"><span class="kw">COMMIT</span>;   <span class="cm">-- 다른 세션이 같은 범위를 읽고 썼다면 여기서(또는 앞 문장에서) 40001</span></span></code></pre>
+
+<div class="codehead good"><span class="tag">good</span> SERIALIZABLE을 쓰기로 했으면 <b>이 재시도가 세트</b>다</div>
+<pre><code><span class="kw">@Service</span>
+<span class="kw">public class</span> CouponIssueFacade {
+
+    <span class="kw">private final</span> CouponIssueService service;   <span class="cm">// 이 안의 issue()가 @Transactional(isolation = SERIALIZABLE)</span>
+
+<span class="ln-good">    <span class="kw">@Retryable</span>(</span>
+<span class="ln-good">        retryFor = CannotSerializeTransactionException.<span class="kw">class</span>,   <span class="cm">// 스프링이 40001을 이 예외로 번역한다</span></span>
+<span class="ln-good">        maxAttempts = 5,                                        <span class="cm">// SSI는 정상 동작 중에도 abort → 데드락보다 넉넉히</span></span>
+<span class="ln-good">        backoff = <span class="kw">@Backoff</span>(delay = 20, multiplier = 2, random = <span class="kw">true</span>))</span>
+    <span class="kw">public</span> IssueResult <span class="fn">issue</span>(<span class="kw">long</span> userId, <span class="kw">long</span> couponId) {
+        <span class="kw">return</span> service.<span class="fn">issue</span>(userId, couponId);   <span class="cm">// 매 시도마다 새 트랜잭션이 열린다 (경계가 이 메서드 안쪽)</span>
+    }
+}</code></pre>
+
+<div class="callout warn" style="margin-bottom:0"><span class="t">SSI의 대가 둘</span>
+  ① <b><code>40001</code> 재시도 루프가 필수</b>. ② <b>읽기 범위가 넓으면 오탐 abort가 늘 수 있다</b> — SSI는 "정말 문제가 되는 조합"보다 <b>넓게 잡는 보수적 판정</b>을 하므로, 트랜잭션이 테이블 전체를 훑으면 <code>SIReadLock</code>이 <b>릴레이션 단위로 승격</b>되며 abort율이 올라간다.<br>
+  같은 요구를 <b>락으로</b> 풀고 싶다면 방법이 하나 더 있다 — <b>존재하는 행</b>(예: <code>coupons</code> 행)을 <code>FOR NO KEY UPDATE</code>로 잠가 "세고 → 넣기"를 직렬화하는 <b>앵커 방식</b>(5-3절 처방 ③).
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 핵심 함정 — "조회해서 없으면 INSERT"는 데드락이 아니라 <span style="color:#dc2626">중복</span>으로 끝난다</h2>
+
+<p>이제 갭 락의 두 번째 용도 <b>(b2)</b>다. 쿠폰 발급 요구사항: <b>"이 사용자가 이미 받았는지 잠그고 확인한 뒤, 없으면 INSERT"</b>. MySQL 경험자가 <b>그대로 옮겨 오는 코드</b>가 이것이다.</p>
+
+<div class="codehead bad"><span class="tag">before</span> 없는 행을 <code>FOR UPDATE</code>로 "잠근다"고 믿는 코드 — PG에서는 <b>아무것도 잠기지 않는다</b></div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">issue</span>(<span class="kw">long</span> userId, <span class="kw">long</span> couponId) {
+<span class="ln-bad">    <span class="kw">var</span> existing = repo.<span class="fn">findForUpdate</span>(userId, couponId);   <span class="cm">// SELECT ... FOR UPDATE → 0행 → 락 없음</span></span>
+    <span class="kw">if</span> (existing.<span class="fn">isPresent</span>()) <span class="kw">throw new</span> <span class="fn">AlreadyIssued</span>();
+    repo.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">CouponIssue</span>(userId, couponId));           <span class="cm">// INSERT</span>
+}</code></pre>
+
+<p>사용자 15번이 발급 버튼을 <b>두 번 눌러</b> 요청 둘이 거의 동시에 들어온다. <code>coupon_issue</code>에 아직 <code>UNIQUE (user_id, coupon_id)</code>가 <b>없다고</b> 하자.</p>
+
+<table class="wide">
+  <caption>두 세션의 시간 순 — <b>t2에서 아무 일도 일어나지 않는 것</b>이 이 표의 전부다</caption>
+  <thead><tr><th style="width:60px">시각</th><th>세션 A (user 15)</th><th>세션 B (user 15, 더블 클릭)</th><th style="width:300px">상태</th></tr></thead>
+  <tbody>
+    <tr><td>t1</td><td><code>SELECT ... WHERE user_id = 15 AND coupon_id = 7 FOR UPDATE</code> → <b>0행</b></td><td></td><td>잠긴 것 없음</td></tr>
+    <tr class="hl"><td>t2</td><td></td><td>같은 SELECT → <b>0행</b></td><td class="bad">잠긴 것 없음 — <b>A를 기다리지 않는다</b></td></tr>
+    <tr><td>t3</td><td><code>INSERT (15, 7)</code> 성공</td><td></td><td>A의 새 튜플(미커밋)</td></tr>
+    <tr><td>t4</td><td></td><td><code>INSERT (15, 7)</code> 성공</td><td>B의 새 튜플(미커밋) — <b>서로 안 보임</b></td></tr>
+    <tr><td>t5</td><td><code>COMMIT</code></td><td><code>COMMIT</code></td><td class="bad"><b>중복 2건. 에러도 데드락도 없다</b></td></tr>
+  </tbody>
+</table>
+
+<p>유니크 제약이 있으면 t4에서 B가 A의 미커밋 튜플을 만나 <b>A의 종료를 기다리고</b>(2-3절), t5에 A가 커밋하는 순간 B는 <code>23505</code>로 실패한다. 즉 <b>제약이 있으면 "중복"이 "유니크 위반 예외"로 바뀔 뿐, <code>FOR UPDATE</code>는 여전히 아무 역할이 없다.</b></p>
+
+<div class="rule red">PG에서 이 코드의 <code>FOR UPDATE</code>는 <b>읽기 비용만 내는 장식</b>이다</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="같은 check-then-insert 코드가 MySQL에서는 갭 락 데드락으로 시끄럽게 실패하지만 PostgreSQL에서는 유니크 제약이 없으면 조용히 중복이 들어가고 제약이 있으면 23505로 끝난다는 갈림길 도식">
+    <defs>
+      <marker id="s5m" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 코드, 다른 결말 — 실패가 "시끄러운 쪽"에서 "조용한 쪽"으로 이동한다</text>
+
+    <rect x="24" y="112" width="230" height="76" rx="12" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+    <text x="139" y="140" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">SELECT ... FOR UPDATE</text>
+    <text x="139" y="160" font-size="12.5" font-weight="700" fill="#334155" text-anchor="middle">→ 없으면 INSERT</text>
+    <text x="139" y="178" font-size="11" fill="#64748b" text-anchor="middle">MySQL에서 옮겨 온 관용구</text>
+
+    <line x1="256" y1="132" x2="316" y2="96" stroke="#64748b" stroke-width="1.6" marker-end="url(#s5m)"/>
+    <line x1="256" y1="168" x2="316" y2="204" stroke="#64748b" stroke-width="1.6" marker-end="url(#s5m)"/>
+
+    <!-- MySQL branch -->
+    <rect x="320" y="58" width="300" height="80" rx="10" fill="#fffbeb" stroke="#d97706"/>
+    <text x="336" y="82" font-size="12.5" font-weight="700" fill="#b45309">MySQL InnoDB RR</text>
+    <text x="336" y="102" font-size="11.5" fill="#92400e">둘 다 <tspan font-weight="700">(10,20) 갭 락 획득 성공</tspan>(갭끼리 호환)</text>
+    <text x="336" y="122" font-size="11.5" fill="#92400e">각자 INSERT가 <tspan font-weight="700">상대의 갭 락에 막힘</tspan> → 순환</text>
+    <line x1="624" y1="98" x2="676" y2="98" stroke="#64748b" stroke-width="1.6" marker-end="url(#s5m)"/>
+    <rect x="680" y="66" width="410" height="64" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="696" y="90" font-size="12.5" font-weight="700" fill="#b91c1c" class="mono">ERROR 1213 Deadlock found</text>
+    <text x="696" y="112" font-size="12" fill="#7f1d1d"><tspan font-weight="700">정합성은 지켜지고</tspan>, 실패가 로그·모니터링에 <tspan font-weight="700">시끄럽게</tspan> 남는다</text>
+
+    <!-- PG branch -->
+    <rect x="320" y="164" width="300" height="80" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="336" y="188" font-size="12.5" font-weight="700" fill="#1d4ed8">PostgreSQL</text>
+    <text x="336" y="208" font-size="11.5" fill="#1e40af"><tspan font-weight="700">아무것도 잠기지 않음</tspan> — 둘 다 그냥 통과</text>
+    <text x="336" y="228" font-size="11.5" fill="#1e40af">둘 다 INSERT <tspan font-weight="700">성공</tspan></text>
+    <line x1="624" y1="190" x2="676" y2="176" stroke="#64748b" stroke-width="1.6" marker-end="url(#s5m)"/>
+    <line x1="624" y1="216" x2="676" y2="234" stroke="#64748b" stroke-width="1.6" marker-end="url(#s5m)"/>
+
+    <rect x="680" y="148" width="410" height="56" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="696" y="170" font-size="12.5" font-weight="700" fill="#b91c1c">UNIQUE 제약이 없으면 — 중복 2건</text>
+    <text x="696" y="190" font-size="12" fill="#7f1d1d">예외도, 데드락도, 로그도 <tspan font-weight="700">없다</tspan>. 아무도 모른다</text>
+
+    <rect x="680" y="212" width="410" height="52" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="696" y="234" font-size="12.5" font-weight="700" fill="#166534">UNIQUE 제약이 있으면 — <tspan class="mono">23505</tspan></text>
+    <text x="696" y="253" font-size="12" fill="#15803d">B가 A의 커밋을 기다렸다가 유니크 위반. <tspan font-weight="700">FOR UPDATE는 여전히 무관</tspan></text>
+
+    <rect x="24" y="272" width="1066" height="26" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="557" y="290" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">PG 쪽이 더 조용하고 더 위험하다 — 유니크 제약 없는 테이블에서 이 패턴을 쓰고 있다면 지금 데이터를 세어 볼 일이다</text>
+  </svg>
+  <figcaption>MySQL은 <b>정합성을 지키며 시끄럽게 실패</b>하고, PostgreSQL은 <b>제약이 없으면 조용히 틀린다.</b> 이 대비가 이 문서에서 가장 실무적인 한 장면이다.</figcaption>
+</figure>
+
+<h3>5-1. 처방 다섯 — 각각 대가가 있다</h3>
+
+<div class="memo">
+  <h4>암기 — <b>제 · 번 · 앵 · 애 · 직</b></h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k">① 제약</div><div class="d"><code>UNIQUE</code> + <code>INSERT ... ON CONFLICT</code> 단일 문장</div></div>
+    <div class="tile"><div class="k">② 번역</div><div class="d">그냥 INSERT 후 <code>23505</code>를 <b>"이미 발급됨"</b>으로 번역</div></div>
+    <div class="tile"><div class="k">③ 앵커</div><div class="d"><b>존재하는</b> 행을 <code>FOR NO KEY UPDATE</code>로 잠근다</div></div>
+    <div class="tile"><div class="k">④ 애드바이저리</div><div class="d"><code>pg_advisory_xact_lock</code> — 행이 없어도 잠글 수 있는 이름 있는 락</div></div>
+    <div class="tile"><div class="k">⑤ 직렬화</div><div class="d">SERIALIZABLE(SSI) + <code>40001</code> 재시도</div></div>
+    <div class="tile red"><div class="k">공통 전제</div><div class="d"><b>없는 행을 잠그려는 시도 자체를 버린다.</b> 다섯은 전부 "락 말고 다른 것"이다</div></div>
+  </div>
+</div>
+
+<h4>처방 ① — 유니크 제약 + 단일 <code>INSERT ... ON CONFLICT</code></h4>
+
+<p>사전 조회를 <b>아예 없애고</b> DB가 원자적으로 "있으면 무시하거나 갱신, 없으면 삽입"한다. 충돌을 판정할 대상(arbiter)은 <b>유니크 인덱스나 제약</b>이어야 한다. 동시에 들어온 두 INSERT 중 뒤쪽은 앞쪽의 커밋을 기다렸다가 <code>DO NOTHING</code> 경로로 빠지므로 <b>예외조차 나지 않는다.</b> <code>RETURNING</code>이 비어 있으면 <b>"이미 발급됨"</b>이라는 뜻이다.</p>
+
+<div class="codehead good"><span class="tag">after</span> 네이티브 SQL로 <code>RETURNING</code>을 읽는다 (JPA <code>save()</code>로는 <code>ON CONFLICT</code>를 못 만든다)</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public</span> IssueResult <span class="fn">issue</span>(<span class="kw">long</span> userId, <span class="kw">long</span> couponId) {
+<span class="ln-good">    <span class="kw">var</span> ids = jdbc.<span class="fn">queryForList</span>(</span>
+<span class="ln-good">        <span class="st">"INSERT INTO coupon_issue (user_id, coupon_id) VALUES (?, ?) "</span> +</span>
+<span class="ln-good">        <span class="st">"ON CONFLICT (user_id, coupon_id) DO NOTHING RETURNING id"</span>, Long.<span class="kw">class</span>, userId, couponId);</span>
+    <span class="cm">// 반환이 비었다 = 충돌해서 아무것도 안 넣었다 = 이미 발급된 상태. 예외 없이 분기된다</span>
+    <span class="kw">return</span> ids.<span class="fn">isEmpty</span>() ? IssueResult.ALREADY_ISSUED : IssueResult.ISSUED;
+}</code></pre>
+
+<h4>처방 ② — 유니크 제약 + 그냥 INSERT, <code>23505</code>를 도메인 의미로 번역</h4>
+
+<p>JPA <code>save()</code> 경로를 그대로 두고 <code>DataIntegrityViolationException</code>을 받아 도메인 의미로 바꾸는 방식이다. 다만 <b>예외가 나면 그 트랜잭션이 rollback-only가 되므로 경계를 나누는 처리</b>가 필요하다.</p>
+
+<h4>처방 ③ — 존재하는 <b>앵커 행</b>을 <code>FOR NO KEY UPDATE</code>로 잠근다</h4>
+
+<p>발급 전에 <b>복잡한 판단</b>(한도, 자격, 등급별 규칙)이 있어서 <b>사용자별로 아예 직렬화</b>하고 싶을 때 쓴다. 없는 <code>coupon_issue</code> 행이 아니라 <b>항상 존재하는 <code>users</code> 행</b>(또는 <code>coupons</code> 행)을 잠그는 것이 요령이다 — 그 행이 <b>"이 사용자의 발급 절차"를 대표하는 닻(anchor)</b> 역할을 한다. 두 번째 트랜잭션은 t2에서 <b>대기</b>하고 첫 번째가 끝나면 이어서 진행한다(<b>직렬화이지 데드락이 아니다</b>).</p>
+
+<div class="callout trap"><span class="t">모드는 반드시 <code>FOR NO KEY UPDATE</code>여야 한다</span>
+  <code>FOR UPDATE</code>로 잠그면 <b>그 사용자를 참조하는 모든 자식 INSERT(주문, 로그 등)가 FK <code>KEY SHARE</code> 충돌로 같이 멈춘다</b>(3-1절 충돌표, 6-4절).
+</div>
+
+<div class="codehead good"><span class="tag">after</span> 앵커 행 락 — <b>존재하는</b> 부모 행에, <b>키를 안 바꾸는</b> 모드로</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">issue</span>(<span class="kw">long</span> userId, <span class="kw">long</span> couponId) {
+    <span class="cm">// users 행은 항상 존재한다. 이 한 줄이 "이 사용자의 발급 절차"를 직렬화하는 닻이다</span>
+<span class="ln-good">    jdbc.<span class="fn">queryForObject</span>(<span class="st">"SELECT id FROM users WHERE id = ? FOR NO KEY UPDATE"</span>, Long.<span class="kw">class</span>, userId);</span>
+    <span class="kw">if</span> (repo.<span class="fn">existsByUserIdAndCouponId</span>(userId, couponId)) <span class="kw">throw new</span> <span class="fn">AlreadyIssued</span>();
+    <span class="cm">// ... 한도·자격 판단 (이 구간은 사용자 단위로 직렬화돼 있다) ...</span>
+    repo.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">CouponIssue</span>(userId, couponId));
+}</code></pre>
+
+<h4>처방 ④ — advisory lock: 행이 없어도 잠글 수 있는 "이름 있는 락"</h4>
+
+<p>잠글 행이 없고 <b>마땅한 앵커도 없을 때</b> PG가 주는 도구다. 테이블·행과 무관하게 <b>임의의 정수 키</b>에 락을 잡는다 — <b>DB가 제공하는 분산 뮤텍스</b>라고 보면 된다. <code>_xact_</code> 변형은 트랜잭션이 끝나면 자동으로 풀린다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> 트랜잭션 범위 advisory lock — <code>(user_id, coupon_id)</code> 조합을 키로 삼는다</div>
+<pre><code><span class="ln-good"><span class="kw">SELECT</span> <span class="fn">pg_advisory_xact_lock</span>(<span class="fn">hashtext</span>(<span class="st">'coupon_issue:'</span> || $1 || <span class="st">':'</span> || $2));</span>
+<span class="kw">SELECT</span> 1 <span class="kw">FROM</span> coupon_issue <span class="kw">WHERE</span> user_id = $1 <span class="kw">AND</span> coupon_id = $2;   <span class="cm">-- 이제 이 조회는 직렬화된다</span>
+<span class="kw">INSERT INTO</span> coupon_issue (user_id, coupon_id) <span class="kw">VALUES</span> ($1, $2);
+<span class="kw">COMMIT</span>;   <span class="cm">-- 락 해제</span></code></pre>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">주의 ① 해시 충돌</div><div class="d">무관한 요청끼리 <b>불필요하게 직렬화</b>될 뿐 <b>정합성은 안 깨진다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">주의 ② PgBouncer</div><div class="d">세션 범위(<code>pg_advisory_lock</code>)는 transaction pooling에서 <b>커넥션이 바뀌면 엉킨다</b> → <b><code>_xact_</code> 변형만</b> 쓴다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">주의 ③ 순서</div><div class="d">advisory lock끼리도 <b>잡는 순서가 다르면</b> 6-2절과 같은 <b>평범한 데드락</b>이 난다.</div></div>
+</div>
+
+<h4>처방 ⑤ — SERIALIZABLE</h4>
+<p>4-2절. 조회-판단-삽입 <b>전체를 SSI에 맡기고</b> <code>40001</code>을 재시도한다.</p>
+
+<div class="callout trap" style="margin-bottom:0"><span class="t">같은 뿌리의 실수 하나 — "UPSERT 흉내"</span>
+  <code>UPDATE ... WHERE key = ?</code>를 먼저 날리고 <b>affected rows가 0이면 INSERT</b>하는 방식도 같은 이유로 깨진다 — <b>0행 UPDATE는 아무것도 잠그지 않는다.</b> 답은 처방 ①의 <code>ON CONFLICT DO UPDATE</code>다.
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. PostgreSQL에서 데드락은 어디서 나는가 — 네 유형</h2>
+
+<p><b>데드락(deadlock)</b>은 두 트랜잭션이 각자 상대가 쥔 것을 기다려서 <b>양쪽 다 영원히 진행하지 못하는</b> 상태다. <b>순환이 완성된 순간 이미 끝난 것</b>이라, 누군가 하나를 죽이지 않으면 풀리지 않는다.</p>
+
+<div class="rule">갭이 없는 PG에서 <b>순환의 재료</b>가 될 수 있는 것은 둘뿐이다 — <b>존재하는 행에 대한 락</b>과 <b>유니크 키 삽입 대기</b></div>
+
+<div class="codehead plain"><span class="tag">DDL</span> 이 절 전체가 쓰는 예시 스키마</div>
+<pre><code><span class="kw">CREATE TABLE</span> users (
+  id      bigint GENERATED ALWAYS AS IDENTITY <span class="kw">PRIMARY KEY</span>,
+  balance numeric(12,2) <span class="kw">NOT NULL</span>
+);
+<span class="kw">CREATE TABLE</span> transfers (
+  id         bigint GENERATED ALWAYS AS IDENTITY <span class="kw">PRIMARY KEY</span>,
+<span class="ln-bad">  from_user  bigint <span class="kw">NOT NULL</span> <span class="kw">REFERENCES</span> users(id),   <span class="cm">-- 이 FK가 유형 ③의 원인이 된다</span></span>
+<span class="ln-bad">  to_user    bigint <span class="kw">NOT NULL</span> <span class="kw">REFERENCES</span> users(id),</span>
+  amount     numeric(12,2) <span class="kw">NOT NULL</span>
+);
+<span class="kw">CREATE TABLE</span> coupon_issue (
+  id        bigint GENERATED ALWAYS AS IDENTITY <span class="kw">PRIMARY KEY</span>,
+  user_id   bigint <span class="kw">NOT NULL</span> <span class="kw">REFERENCES</span> users(id),
+  coupon_id bigint <span class="kw">NOT NULL</span>,
+<span class="ln-good">  <span class="kw">UNIQUE</span> (user_id, coupon_id)                        <span class="cm">-- 이 제약이 유형 ②의 재료가 된다</span></span>
+);</code></pre>
+
+<h3>6-1. 감지 시점이 PG의 특징이다 — 최소 1초의 멈춤</h3>
+
+<p>PG는 <b>락 대기에 들어갈 때 즉시 사이클을 찾지 않는다.</b> <b><code>deadlock_timeout</code>(기본 1초)만큼 기다려도 락을 못 얻었으면</b> 그때서야 그 프로세스가 <b>대기 그래프를 검사</b>하고, 자기가 사이클 안에 있으면 <b>자기 트랜잭션을</b> <code>ERROR: deadlock detected</code>(SQLSTATE <code>40P01</code>)로 abort한다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 296" role="img" aria-label="세션 A와 B가 t1부터 t4까지 서로의 행을 잠그고 대기하다가 순환이 완성되지만 아무도 그것을 모른 채 deadlock_timeout 1초가 지나야 검사가 시작되고 먼저 기다리기 시작한 A가 40P01로 abort되는 타임라인">
+    <defs>
+      <marker id="s6m" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="450" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">PG의 데드락은 항상 "최소 1초의 멈춤" 뒤에 드러난다</text>
+
+    <line x1="70" y1="240" x2="860" y2="240" stroke="#cbd5e1" stroke-width="1.5"/>
+    <text x="110" y="260" font-size="11" fill="#64748b" text-anchor="middle">t1</text>
+    <text x="230" y="260" font-size="11" fill="#64748b" text-anchor="middle">t2</text>
+    <text x="350" y="260" font-size="11" fill="#64748b" text-anchor="middle">t3</text>
+    <text x="470" y="260" font-size="11" fill="#64748b" text-anchor="middle">t4</text>
+    <text x="720" y="260" font-size="11" font-weight="700" fill="#b91c1c" text-anchor="middle">t3 + 1초</text>
+
+    <text x="40" y="90" font-size="12" font-weight="700" fill="#475569">A</text>
+    <rect x="80" y="72" width="130" height="26" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="145" y="90" font-size="11" fill="#1e40af" text-anchor="middle" class="mono">UPDATE id=1</text>
+    <rect x="330" y="72" width="380" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-dasharray="5 4"/>
+    <text x="520" y="90" font-size="11.5" fill="#b91c1c" text-anchor="middle">UPDATE id=2 → <tspan font-weight="700">대기 시작</tspan> (여기서 타이머가 돌기 시작한다)</text>
+    <rect x="714" y="72" width="146" height="26" rx="6" fill="#dc2626"/>
+    <text x="787" y="90" font-size="11.5" font-weight="700" fill="#fff" text-anchor="middle" class="mono">40P01 abort</text>
+
+    <text x="40" y="140" font-size="12" font-weight="700" fill="#475569">B</text>
+    <rect x="200" y="122" width="130" height="26" rx="6" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="265" y="140" font-size="11" fill="#1e40af" text-anchor="middle" class="mono">UPDATE id=2</text>
+    <rect x="450" y="122" width="260" height="26" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-dasharray="5 4"/>
+    <text x="580" y="140" font-size="11.5" fill="#b91c1c" text-anchor="middle">UPDATE id=1 → 대기 시작</text>
+    <rect x="714" y="122" width="146" height="26" rx="6" fill="#16a34a"/>
+    <text x="787" y="140" font-size="11.5" font-weight="700" fill="#fff" text-anchor="middle">진행 → COMMIT</text>
+
+    <line x1="470" y1="152" x2="470" y2="172" stroke="#dc2626" stroke-width="1.5" marker-end="url(#s6m)"/>
+    <rect x="330" y="176" width="280" height="42" rx="8" fill="#fffbeb" stroke="#d97706"/>
+    <text x="470" y="196" font-size="11.5" font-weight="700" fill="#b45309" text-anchor="middle">t4에 순환은 이미 완성됐다</text>
+    <text x="470" y="212" font-size="11" fill="#92400e" text-anchor="middle">그런데 <tspan font-weight="700">아무도 그것을 모른다</tspan></text>
+
+    <line x1="714" y1="176" x2="714" y2="106" stroke="#dc2626" stroke-width="1.5"/>
+    <rect x="620" y="176" width="256" height="42" rx="8" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="748" y="196" font-size="11.5" font-weight="700" fill="#b91c1c" text-anchor="middle">deadlock_timeout 만료 → 그때서야</text>
+    <text x="748" y="212" font-size="11" fill="#7f1d1d" text-anchor="middle">대기 그래프 검사 → 사이클 발견</text>
+  </svg>
+  <figcaption>왜 즉시 검사하지 않는가 — <b>대기 그래프 탐색은 공짜가 아니고, 락 대기의 절대다수는 데드락이 아니라 곧 풀릴 평범한 대기</b>이기 때문이다. 1초는 <b>"이쯤 기다렸으면 의심해 볼 만하다"는 경험적 문턱</b>이다.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>여기서 갈리는 두 가지 사실</h4>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">희생자 결정 규칙</div><div class="d">"수정 행이 적은 쪽"이 아니라 <b>대기를 먼저 시작해 타임아웃이 먼저 만료된 쪽</b>이다. (MySQL이 "수정 행이 적은 쪽"을 고르는 것과 다르다.)</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">지연 시간</div><div class="d">PG의 데드락은 <b>항상 최소 1초의 멈춤</b> 뒤에 드러난다. <b>사이클이 만들어진 순간에 즉시 터지지 않는다.</b> 살아남은 쪽은 락을 얻어 계속 진행한다.</div></div>
+  </div>
+</div>
+
+<h3>6-2. 유형 ① — 같은 행들을 <b>다른 순서로</b> 잠근다 (가장 흔함)</h3>
+
+<p>송금 두 건이 엇갈린다. A는 1번 계좌에서 2번으로, B는 2번에서 1번으로. 각자 <b>"출금 계좌 먼저, 입금 계좌 나중"</b> 순서로 UPDATE한다. <b>코드는 한 벌인데 인자 순서만 반대</b>다.</p>
+
+<table class="wide">
+  <caption>유형 ① 타임라인 — 평범한 UPDATE 두 줄이 만드는 순환</caption>
+  <thead><tr><th style="width:110px">시각</th><th>세션 A (1 → 2 송금)</th><th>세션 B (2 → 1 송금)</th><th style="width:290px">락 상태</th></tr></thead>
+  <tbody>
+    <tr><td>t1</td><td><code>UPDATE users SET balance = balance - 100 WHERE id = 1</code></td><td></td><td>users#1의 <code>xmax</code> = A (NO KEY UPDATE)</td></tr>
+    <tr><td>t2</td><td></td><td><code>UPDATE users SET balance = balance - 50 WHERE id = 2</code></td><td>users#2의 <code>xmax</code> = B</td></tr>
+    <tr><td>t3</td><td><code>UPDATE ... WHERE id = 2</code> → <b>대기</b></td><td></td><td>A가 B의 XID를 기다림 (<code>wait_event = transactionid</code>)</td></tr>
+    <tr class="hl"><td>t4</td><td></td><td><code>UPDATE ... WHERE id = 1</code> → <b>대기</b></td><td class="bad">B가 A를 기다림 = <b>순환 완성</b></td></tr>
+    <tr><td>t5 (= t3 + 1s)</td><td class="bad">타임아웃 만료 → 검사 → 사이클 발견 → <b>A abort <code>40P01</code></b></td><td class="good">락 획득 → 진행 → <code>COMMIT</code></td><td></td></tr>
+  </tbody>
+</table>
+
+<p><b>처방은 잠금 순서 고정</b>이다. 갱신하기 전에 <b>관련 행 전부를 키 오름차순으로 먼저 잠근다.</b> 누가 먼저 오든 <b>항상 1번 → 2번</b> 순서가 되므로 <b>순환이 만들어질 수 없다.</b></p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 잠금 순서가 <b>호출 인자 순서</b>를 따른다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">transfer</span>(<span class="kw">long</span> from, <span class="kw">long</span> to, BigDecimal amount) {
+<span class="ln-bad">    accountRepo.<span class="fn">debit</span>(from, amount);    <span class="cm">// UPDATE ... WHERE id = from</span></span>
+<span class="ln-bad">    accountRepo.<span class="fn">credit</span>(to, amount);     <span class="cm">// UPDATE ... WHERE id = to</span></span>
+}
+
+<span class="cm">// (1,2) 호출과 (2,1) 호출이 교차하면 t3·t4에서 순환</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 관련 행을 <b>키 순서로 먼저</b> 잠근다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">transfer</span>(<span class="kw">long</span> from, <span class="kw">long</span> to, BigDecimal amount) {
+    <span class="cm">// ORDER BY id 가 붙으면 계획상 Sort 위에 LockRows 가 놓여</span>
+    <span class="cm">// "정렬된 순서대로" 잠근다</span>
+<span class="ln-good">    jdbc.<span class="fn">queryForList</span>(</span>
+<span class="ln-good">        <span class="st">"SELECT id FROM users WHERE id IN (?, ?) "</span> +</span>
+<span class="ln-good">        <span class="st">"ORDER BY id FOR NO KEY UPDATE"</span>, Long.<span class="kw">class</span>, from, to);</span>
+    accountRepo.<span class="fn">debit</span>(from, amount);
+    accountRepo.<span class="fn">credit</span>(to, amount);
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">주의할 반례 — 한 문장으로 쓴 <code>UPDATE ... WHERE id IN (1, 2)</code>도 안전하지 않다</span>
+  잠금 순서는 <b>스캔 순서</b>를 따르고, 두 세션의 <b>실행 계획이 다르면</b>(한쪽은 Index Scan, 한쪽은 Seq Scan) <b>교차할 수 있다.</b> 순서를 보장하려면 <b><code>ORDER BY</code>를 명시한 잠금 SELECT를 앞세워야</b> 한다.<br>
+  JPA로 쓴다면 <code>@Lock</code> JPQL에 <code>ORDER BY u.id</code>를 넣고 id 목록도 정렬해 넘긴다. 단 <b><code>PESSIMISTIC_WRITE</code>는 <code>FOR UPDATE</code>를 만든다</b>는 점을 기억해야 한다(6-4절).
+</div>
+
+<h3>6-3. 유형 ② — 유니크 키 삽입 대기가 교차한다 ("INSERT만 하는데 데드락"의 PG 판)</h3>
+
+<p>트랜잭션에 <b>INSERT밖에 없는데</b> 데드락이 나는 경우가 PG에도 있다. 열쇠는 2-3절이다 — <b>미커밋 상태의 같은 유니크 키를 만나면 상대 트랜잭션의 종료를 기다린다</b>는 것. 두 트랜잭션이 <b>같은 키 두 개를 서로 반대 순서로</b> 넣으면 그 <b>대기가 순환</b>이 된다. 재적재 배치 둘이 같은 파일을 다른 순서로 처리하거나, <b>멱등키 테이블에 재시도 요청이 겹칠 때</b> 나온다.</p>
+
+<table class="wide">
+  <caption>유형 ② 타임라인 — 각 세션의 <b>두 번째 INSERT가 상대의 첫 INSERT와 같은 키</b>다</caption>
+  <thead><tr><th style="width:110px">시각</th><th>세션 A</th><th>세션 B</th><th style="width:290px">상태</th></tr></thead>
+  <tbody>
+    <tr><td>t1</td><td><code>INSERT INTO coupon_issue VALUES (15, 7)</code> 성공(미커밋)</td><td></td><td>유니크 인덱스에 (15,7) 미커밋 엔트리</td></tr>
+    <tr><td>t2</td><td></td><td><code>INSERT ... VALUES (17, 7)</code> 성공(미커밋)</td><td>(17,7) 미커밋 엔트리</td></tr>
+    <tr><td>t3</td><td></td><td><code>INSERT ... VALUES (15, 7)</code> → 미커밋 중복 발견 → <b>A의 XID 대기</b></td><td>B가 A를 기다림</td></tr>
+    <tr class="hl"><td>t4</td><td><code>INSERT ... VALUES (17, 7)</code> → 미커밋 중복 발견 → <b>B의 XID 대기</b></td><td></td><td class="bad">A가 B를 기다림 = <b>순환 완성</b></td></tr>
+    <tr><td>t5 (= t3 + 1s)</td><td class="good">B의 (17,7)이 사라짐 → 진행 → 삽입 → <code>COMMIT</code></td><td class="bad">타임아웃 <b>먼저</b> 만료 → <b>B abort <code>40P01</code></b></td><td></td></tr>
+  </tbody>
+</table>
+
+<p>주목할 점 — 이것은 <b>"같은 자원 둘을 다른 순서로"라는 유형 ①의 변형</b>이고, <b>처방도 같다.</b> 배치 안의 행을 <b>키 순서로 정렬</b>해 넣는다. (한 문장 안에서 같은 키를 두 번 넣는 것과는 다른 문제다 — 그쪽은 데드락이 아니라 <code>ON CONFLICT DO UPDATE command cannot affect row a second time</code> 에러다.)</p>
+
+<div class="callout info"><span class="t">MySQL 대조 — PG에는 "없는" 데드락 하나 <span class="badge bonus">가산점</span></span>
+  InnoDB는 유니크 중복 검사에서 미커밋 행에 <b>공유(S) 락</b>을 잡고 기다린다. 그래서 A가 (15,7)을 넣고 B·C가 같은 키로 대기하다 <b>A가 롤백</b>하면, B와 C가 <b>동시에 S 락을 얻고</b>(S끼리 호환) 이어서 각자 삽입용 X 락을 요구하며 <b>서로의 S 락에 막혀 데드락</b>이 난다 — "재시도 폭풍"과 "지우고 다시 넣기 배치"에서 나던, <b>RC로 낮춰도 남는</b> 사고였다.<br>
+  <b>PG는 중복 검사에서 락을 잡지 않고 XID를 기다릴 뿐</b>이므로, A가 롤백하면 B와 C 중 먼저 깨어난 쪽이 넣고 나머지는 다시 그 XID를 기다렸다가 <code>23505</code>를 받는다. <b>데드락이 아니라 직렬화로 끝난다.</b>
+</div>
+
+<h3>6-4. 유형 ③ — 부모 행 <code>FOR UPDATE</code>와 자식 INSERT의 FK <code>KEY SHARE</code> <span class="badge senior">PG 고유</span></h3>
+
+<p><b>실무에서 가장 당황스러운 유형</b>이다. <b>명시적 락을 아무도 교차해서 걸지 않았고, 각 세션이 users 행을 하나씩만 잠갔는데도 데드락이 난다.</b></p>
+
+<p>상황은 유형 ①의 송금에 <code>transfers</code> <b>이력 INSERT가 붙은 것뿐</b>이다. 그리고 잔액 행을 JPA <code>@Lock(PESSIMISTIC_WRITE)</code>(= <code>SELECT ... FOR UPDATE</code>)로 잠근다 — <b>아주 흔한 구현</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="세션 A가 users 1번을 FOR UPDATE로 잠그고 세션 B가 users 2번을 FOR UPDATE로 잠근 상태에서, A의 transfers INSERT가 FK 검사 때문에 users 2번에 KEY SHARE를 요청해 대기하고 B의 INSERT가 users 1번에 KEY SHARE를 요청해 대기하면서 순환이 완성되는 도식">
+    <defs>
+      <marker id="s6a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="s6b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">개발자가 쓴 적 없는 락(FK KEY SHARE)이 순환을 완성한다</text>
+
+    <!-- sessions -->
+    <rect x="40" y="140" width="240" height="92" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="160" y="170" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">세션 A (1 → 2 송금)</text>
+    <text x="160" y="192" font-size="11.5" fill="#1e40af" text-anchor="middle" class="mono">SELECT users#1 FOR UPDATE</text>
+    <text x="160" y="212" font-size="11.5" fill="#1e40af" text-anchor="middle" class="mono">INSERT transfers(1, 2, 100)</text>
+
+    <rect x="840" y="140" width="240" height="92" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="960" y="170" font-size="13" font-weight="700" fill="#1d4ed8" text-anchor="middle">세션 B (2 → 1 송금)</text>
+    <text x="960" y="192" font-size="11.5" fill="#1e40af" text-anchor="middle" class="mono">SELECT users#2 FOR UPDATE</text>
+    <text x="960" y="212" font-size="11.5" fill="#1e40af" text-anchor="middle" class="mono">INSERT transfers(2, 1, 50)</text>
+
+    <!-- rows -->
+    <rect x="450" y="82" width="220" height="56" rx="10" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+    <text x="560" y="106" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">users #1</text>
+    <text x="560" y="126" font-size="11" fill="#475569" text-anchor="middle">A가 FOR UPDATE로 보유</text>
+
+    <rect x="450" y="238" width="220" height="56" rx="10" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+    <text x="560" y="262" font-size="13" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">users #2</text>
+    <text x="560" y="282" font-size="11" fill="#475569" text-anchor="middle">B가 FOR UPDATE로 보유</text>
+
+    <!-- holds -->
+    <line x1="282" y1="168" x2="446" y2="126" stroke="#2563eb" stroke-width="2" marker-end="url(#s6a)"/>
+    <text x="300" y="140" font-size="11.5" font-weight="700" fill="#1d4ed8">① 내가 쓴 락</text>
+    <line x1="838" y1="168" x2="674" y2="126" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#s6b)"/>
+    <text x="700" y="140" font-size="11.5" font-weight="700" fill="#b91c1c">④ KEY SHARE 요청 → 대기</text>
+
+    <line x1="282" y1="206" x2="446" y2="250" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#s6b)"/>
+    <text x="290" y="248" font-size="11.5" font-weight="700" fill="#b91c1c">③ KEY SHARE 요청 → 대기</text>
+    <line x1="838" y1="206" x2="674" y2="250" stroke="#2563eb" stroke-width="2" marker-end="url(#s6a)"/>
+    <text x="756" y="248" font-size="11.5" font-weight="700" fill="#1d4ed8">② 내가 쓴 락</text>
+
+    <rect x="452" y="160" width="216" height="56" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="560" y="182" font-size="12.5" font-weight="700" fill="#b91c1c" text-anchor="middle">순환 완성</text>
+    <text x="560" y="202" font-size="11" fill="#7f1d1d" text-anchor="middle">1초 뒤 A가 <tspan class="mono" font-weight="700">40P01</tspan></text>
+
+    <!-- explanation -->
+    <rect x="40" y="308" width="1040" height="52" rx="10" fill="#fffbeb" stroke="#d97706"/>
+    <text x="58" y="330" font-size="12.5" font-weight="700" fill="#b45309">개발자는 "그냥 이력 한 줄 INSERT"를 했다고 생각한다 — 그러나 transfers.to_user의 FK가 부모 행의 존재를 확인해야 하고,</text>
+    <text x="58" y="350" font-size="12.5" fill="#92400e">그 확인은 "확인하는 동안 이 부모 행의 키가 사라지면 안 된다"는 요구이므로 <tspan font-weight="700">부모 행에 FOR KEY SHARE를 자동으로 건다.</tspan> 상대가 그 행을 FOR UPDATE로 쥐고 있으면 충돌한다(3-1절 첫 열).</text>
+  </svg>
+  <figcaption>각 세션은 <b>행을 하나만</b> 잠갔다. 그래서 이 데드락은 <b>락 순서를 통일해도 안 없어진다</b> — 애초에 순서라는 게 없다. <b>원인은 순서가 아니라 모드다.</b></figcaption>
+</figure>
+
+<table class="wide">
+  <caption>유형 ③ 타임라인 — t3·t4의 <code>KEY SHARE</code>는 <b>개발자가 쓰지 않은 락</b>이다</caption>
+  <thead><tr><th style="width:110px">시각</th><th>세션 A (1 → 2 송금)</th><th>세션 B (2 → 1 송금)</th><th style="width:280px">락 상태</th></tr></thead>
+  <tbody>
+    <tr><td>t1</td><td><code>SELECT ... FROM users WHERE id = 1 FOR UPDATE</code></td><td></td><td>users#1: A의 <code>FOR UPDATE</code></td></tr>
+    <tr><td>t2</td><td></td><td><code>SELECT ... FROM users WHERE id = 2 FOR UPDATE</code></td><td>users#2: B의 <code>FOR UPDATE</code></td></tr>
+    <tr><td>t3</td><td><code>INSERT INTO transfers VALUES (1, 2, 100)</code> → FK 검사가 users#2에 <code>KEY SHARE</code> 요청 → <b>대기</b></td><td></td><td><code>KEY SHARE</code> vs <code>FOR UPDATE</code> = <b>충돌</b> → A가 B를 기다림</td></tr>
+    <tr class="hl"><td>t4</td><td></td><td><code>INSERT INTO transfers VALUES (2, 1, 50)</code> → users#1에 <code>KEY SHARE</code> 요청 → <b>대기</b></td><td class="bad">B가 A를 기다림 = <b>순환 완성</b></td></tr>
+    <tr><td>t5 (= t3 + 1s)</td><td class="bad"><b>A abort <code>40P01</code></b></td><td class="good">진행 → <code>COMMIT</code></td><td></td></tr>
+  </tbody>
+</table>
+
+<p>같은 코드에서 <code>FOR UPDATE</code>를 <code>FOR NO KEY UPDATE</code>로 바꾸면 <b>t3·t4의 <code>KEY SHARE</code>가 충돌하지 않아 대기 자체가 없다.</b> 잠금 읽기를 아예 없애고 <code>UPDATE users SET balance = ...</code>로 바로 갱신해도 같다 — <b>키를 안 바꾸는 UPDATE는 자동으로 NO KEY UPDATE를 잡기 때문</b>이다.</p>
+
+<div class="codehead bad"><span class="tag">before</span> 잔액만 바꾸면서 <code>FOR UPDATE</code> — 이 사용자를 참조하는 <b>모든 자식 INSERT</b>를 막는다</div>
+<pre><code><span class="ln-bad"><span class="kw">@Lock</span>(LockModeType.PESSIMISTIC_WRITE)                       <span class="cm">// PG에서는 SELECT ... FOR UPDATE</span></span>
+<span class="kw">@Query</span>(<span class="st">"select u from User u where u.id = :id"</span>)
+Optional&lt;User&gt; <span class="fn">findForUpdate</span>(<span class="kw">@Param</span>(<span class="st">"id"</span>) Long id);</code></pre>
+
+<div class="codehead good"><span class="tag">after 1</span> 키를 안 바꾸는 갱신은 <code>NO KEY UPDATE</code> — FK <code>KEY SHARE</code>와 충돌하지 않는다</div>
+<pre><code><span class="cm">// JPA 표준 락 모드로는 이 SQL을 만들 수 없어 네이티브로 내려간다</span>
+<span class="ln-good"><span class="kw">@Query</span>(value = <span class="st">"SELECT * FROM users WHERE id = :id FOR NO KEY UPDATE"</span>, nativeQuery = <span class="kw">true</span>)</span>
+Optional&lt;User&gt; <span class="fn">findForBalanceUpdate</span>(<span class="kw">@Param</span>(<span class="st">"id"</span>) Long id);</code></pre>
+
+<div class="codehead good"><span class="tag">after 2</span> 또는 <b>잠금 읽기 자체를 없앤</b> 원자적 UPDATE — 잔액 조건까지 한 문장에</div>
+<pre><code><span class="cm">// 이 UPDATE 가 잡는 락도 자동으로 NO KEY UPDATE 다</span>
+<span class="kw">@Modifying</span>
+<span class="ln-good"><span class="kw">@Query</span>(value = <span class="st">"UPDATE users SET balance = balance - :amt WHERE id = :id AND balance &gt;= :amt"</span>,</span>
+<span class="ln-good">       nativeQuery = <span class="kw">true</span>)</span>
+<span class="kw">int</span> <span class="fn">debit</span>(<span class="kw">@Param</span>(<span class="st">"id"</span>) Long id, <span class="kw">@Param</span>(<span class="st">"amt"</span>) BigDecimal amt);   <span class="cm">// 반환 0이면 잔액 부족</span></code></pre>
+
+<div class="memo green">
+  <h4>원칙으로 굳히면 — 이 한 줄이 유형 ③을 통째로 없앤다</h4>
+  <div class="rule ok" style="margin:0"><code>FOR UPDATE</code>는 <b>"이 행을 지우거나 키를 바꿀 것"</b>일 때만.<br>값만 바꿀 거면 <code>FOR NO KEY UPDATE</code>.</div>
+  <p style="margin-bottom:0" class="sub"><b>JPA의 <code>PESSIMISTIC_WRITE</code>가 항상 <code>FOR UPDATE</code>를 만든다</b>는 사실이 PG에서 이 실수를 양산한다 <span class="badge bonus">가산점 포인트</span>. 5-1절 처방 ③의 앵커 행 락이 <code>FOR NO KEY UPDATE</code>여야 하는 이유도 이것이다.</p>
+</div>
+
+<h3>6-5. 유형 ④ — 대량 UPSERT 배치의 <b>행 순서 불일치</b></h3>
+
+<p><code>INSERT ... ON CONFLICT DO UPDATE</code>에 여러 행을 실어 보내는 배치는 <b>한 문장 안에서 행마다 순서대로</b> 삽입하거나(충돌 시) 기존 행을 잠가 갱신한다. <b>두 배치의 행 순서가 다르면 유형 ①·②가 한 문장 안에서 벌어진다.</b> 개발자 눈에는 <b>"쿼리 하나"</b>라서 순서 문제라는 생각을 못 하는 것이 함정이다.</p>
+
+<table class="wide">
+  <caption>유형 ④ 타임라인 — 실패 단위가 <b>배치 전체</b>라는 것이 이 유형의 비용이다</caption>
+  <thead><tr><th style="width:110px">시각</th><th>배치 A <code>VALUES (k1), (k2), (k3)</code></th><th>배치 B <code>VALUES (k3), (k2), (k1)</code></th><th style="width:260px">상태</th></tr></thead>
+  <tbody>
+    <tr><td>t1</td><td>k1 행 잠금·갱신</td><td>k3 행 잠금·갱신</td><td></td></tr>
+    <tr><td>t2</td><td>k2 행 잠금·갱신</td><td>k2 → <b>A 대기</b></td><td>B가 A를 기다림</td></tr>
+    <tr class="hl"><td>t3</td><td>k3 → <b>B 대기</b></td><td></td><td class="bad">A가 B를 기다림 = <b>순환 완성</b></td></tr>
+    <tr><td>t4 (= t2 + 1s)</td><td class="good">진행 → <code>COMMIT</code></td><td class="bad"><b>B abort <code>40P01</code></b> — <b>문장 전체(배치 전체)가 롤백</b></td><td></td></tr>
+  </tbody>
+</table>
+
+<div class="grid g3">
+  <div class="tile ok"><div class="k" style="font-family:inherit">처방 ① 정렬</div><div class="d">배치를 보내기 전에 <b>키 순서로 정렬</b> — 애플리케이션에서 정렬하거나 <code>INSERT INTO t SELECT ... FROM staging ORDER BY key ON CONFLICT ...</code>로 DB에 맡긴다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">처방 ② 청크</div><div class="d">청크를 작게 자르면 <b>한 번에 쥐는 행 수와 재시도 비용</b>이 줄어든다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">처방 ③ 키 범위 분할</div><div class="d">같은 키 공간을 두 배치가 <b>동시에 만지지 않도록</b> 나누는 것이 <b>근본 처방</b>이다.</div></div>
+</div>
+
+<h3>6-6. 네 유형을 한 장으로</h3>
+
+<table class="wide">
+  <caption>PG 데드락 4유형 — <b>순 · 유 · 키 · 배</b></caption>
+  <thead><tr><th style="width:180px">유형</th><th style="width:230px">자원</th><th>순환의 재료</th><th style="width:320px">1순위 처방</th></tr></thead>
+  <tbody>
+    <tr><td><b>① 행 <u>순</u>서 역전</b></td><td>존재하는 행의 <code>xmax</code></td><td>같은 행 둘, 반대 순서</td><td>키 순서 고정 (<code>ORDER BY id FOR NO KEY UPDATE</code>)</td></tr>
+    <tr><td><b>② <u>유</u>니크 삽입 대기 교차</b></td><td>유니크 인덱스의 <b>미커밋 엔트리</b></td><td>같은 키 둘, 반대 순서</td><td>배치 키 정렬, <code>ON CONFLICT</code></td></tr>
+    <tr class="hl"><td><b>③ FK <u>키</u> SHARE 충돌</b></td><td>부모 행 <code>FOR UPDATE</code> vs 자식 INSERT</td><td class="bad"><b>순서가 아니라 모드</b></td><td><code>FOR NO KEY UPDATE</code> / 원자적 UPDATE</td></tr>
+    <tr><td><b>④ UPSERT <u>배</u>치</b></td><td>①+②가 <b>한 문장 안에서</b></td><td>배치 간 행 순서 불일치</td><td><code>ORDER BY key</code>, 청크, 키 범위 분할</td></tr>
+  </tbody>
+</table>
+
+<div class="memo">
+  <h4>3초 인출 — <b>순 · 유 · 키 · 배</b> + "①②④는 순서 문제, ③만 모드 문제"</h4>
+  <div class="chain">
+    <span class="chip b">① 순서 역전</span><span class="chip b">② 유니크 대기</span><span class="chip b">④ 배치 순서</span><span class="arrow">→</span><span class="chip g">전부 <b>키 순서 정렬</b>로 사라진다</span>
+  </div>
+  <div class="chain">
+    <span class="chip r">③ FK KEY SHARE</span><span class="arrow">→</span><span class="chip r">순서를 통일해도 <b>안 사라진다</b></span><span class="arrow">→</span><span class="chip g">모드를 <code>FOR NO KEY UPDATE</code>로</span>
+  </div>
+  <p style="margin-bottom:0" class="sub">그리고 <b>5절의 check-then-insert는 아예 데드락이 아니다</b> — 중복이라 <b>설계</b>로 풀어야 한다. 이 세 갈래를 구분하면 "데드락 = 락 순서 문제"라는 단순 모델에서 한 단계 올라간다.</p>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 진단 — 서버 로그를 1차 자료로 삼는다</h2>
+
+<p>여기서부터가 이 문서의 <b>실무 착지점</b>이다. <b>애플리케이션 예외만으로는 "누구와" 데드락이 났는지 알 수 없다</b> — 상대는 성공했고 아무 로그도 남기지 않았다.</p>
+
+<div class="callout info"><span class="t">1차 자료는 PostgreSQL 서버 로그다</span>
+  PG는 데드락을 감지하면 <b>자동으로 서버 로그에 기록</b>한다. <b>별도 설정이 필요 없다.</b> 반면 클라이언트가 받는 에러에는 <b>보안상 상대 프로세스의 쿼리가 빠지고</b>(<code>HINT: See server log for query details.</code>) 서버 로그에만 실린다. 즉 <b>서버 로그를 못 보면 원인 쌍을 특정할 수 없다.</b>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="유형 1 데드락이 났을 때의 PostgreSQL 서버 로그와, 각 줄이 무엇을 뜻하는지 설명하는 주석 상자들. ERROR를 찍은 프로세스가 희생자이고, DETAIL 두 줄이 순환을 이루며, Process N 다음의 문장은 대기 중이던 마지막 문장이고, CONTEXT가 어느 튜플인지 알려준다">
+    <defs>
+      <marker id="s7m" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">데드락 로그 한 덩어리에서 읽어낼 것 네 가지</text>
+
+    <rect x="30" y="42" width="630" height="258" rx="10" fill="#1e293b"/>
+    <g class="mono" font-size="10.5" fill="#e2e8f0">
+      <text x="46" y="70" fill="#fca5a5" font-weight="700">ERROR:  deadlock detected</text>
+      <text x="46" y="96">DETAIL:  Process 4213 waits for ShareLock on transaction 8812;</text>
+      <text x="46" y="112">         blocked by process 4214.</text>
+      <text x="46" y="134">         Process 4214 waits for ShareLock on transaction 8811;</text>
+      <text x="46" y="150">         blocked by process 4213.</text>
+      <text x="46" y="180" fill="#fcd34d">         Process 4213: UPDATE users SET balance = balance + 100 WHERE id = 2</text>
+      <text x="46" y="196" fill="#fcd34d">         Process 4214: UPDATE users SET balance = balance + 50 WHERE id = 1</text>
+      <text x="46" y="222" fill="#94a3b8">HINT:  See server log for query details.</text>
+      <text x="46" y="248" fill="#86efac">CONTEXT:  while updating tuple (0,2) in relation "users"</text>
+      <text x="46" y="274" fill="#94a3b8">STATEMENT:  UPDATE users SET balance = balance + 100 WHERE id = 2</text>
+    </g>
+
+    <line x1="664" y1="66" x2="694" y2="66" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#s7m)"/>
+    <rect x="698" y="46" width="392" height="42" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="712" y="66" font-size="11.5" font-weight="700" fill="#b91c1c">① 희생자 — ERROR를 찍은 pid(4213)가 40P01을 받은 쪽</text>
+    <text x="712" y="82" font-size="11" fill="#7f1d1d">앱 에러 로그의 시각·스레드와 맞춰 어느 요청인지 좁힌다</text>
+
+    <line x1="664" y1="122" x2="694" y2="122" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#s7m)"/>
+    <rect x="698" y="96" width="392" height="56" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="712" y="116" font-size="11.5" font-weight="700" fill="#1d4ed8">② 순환 — 이 두 줄이 사이클 그 자체</text>
+    <text x="712" y="132" font-size="11" fill="#1e40af">"ShareLock on transaction N" = 행이 아니라 <tspan font-weight="700">상대 XID를 기다린다</tspan></text>
+    <text x="712" y="146" font-size="11" fill="#1e40af">락이 튜플 헤더 xmax에 있기 때문(2절)</text>
+
+    <line x1="664" y1="188" x2="694" y2="188" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#s7m)"/>
+    <rect x="698" y="160" width="392" height="60" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="712" y="180" font-size="11.5" font-weight="700" fill="#b45309">③ 이 문장들은 "대기 중이던 마지막 문장"일 뿐</text>
+    <text x="712" y="196" font-size="11" fill="#92400e"><tspan font-weight="700">앞에서 실행한 문장은 로그에 없다.</tspan> 반대편 줄에서 역산한다 —</text>
+    <text x="712" y="210" font-size="11" fill="#92400e">"8811(=4213)이 4214가 원하는 행을 이미 쥐고 있다"</text>
+
+    <line x1="664" y1="244" x2="694" y2="244" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#s7m)"/>
+    <rect x="698" y="228" width="392" height="58" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="712" y="248" font-size="11.5" font-weight="700" fill="#166534">④ CONTEXT — 어느 튜플, 어느 작업인가</text>
+    <text x="712" y="264" font-size="11" fill="#15803d">(0,2)는 블록 0의 오프셋 2 = ctid.</text>
+    <text x="712" y="278" font-size="11" fill="#15803d" class="mono">SELECT * FROM users WHERE ctid = '(0,2)'</text>
+  </svg>
+  <figcaption>초보가 가장 많이 헷갈리는 곳이 <b>③</b>이다. 4213의 줄에는 <code>id = 2</code> UPDATE만 보이는데, <b>4213이 <code>id = 1</code>을 먼저 잠갔다는 사실은 반대편 줄에서 역산</b>해야 나온다.</figcaption>
+</figure>
+
+<h3>7-1. 읽는 절차를 다섯 걸음으로 고정한다</h3>
+
+<div class="step"><span class="n">1</span><div class="body"><b>행 찾기.</b> <code>deadlock detected</code>로 검색한다. 사전에 <code>log_line_prefix</code>에 <code>%p</code>(pid) · <code>%u@%d</code>(사용자@DB) · <code>%a</code>(application_name) · <code>%x</code>(XID)를 넣어 두고, <b><code>application_name</code>을 서비스·배치 이름으로</b>(pgjdbc URL에 <code>ApplicationName=</code>) 설정해 두었어야 <b>어느 서비스의 어느 트랜잭션</b>인지 바로 읽힌다. <b>이건 사고가 난 뒤에는 못 하는 준비다.</b></div></div>
+<div class="step"><span class="n">2</span><div class="body"><b>희생자 특정.</b> <code>ERROR</code>를 찍은 pid(4213)가 <code>40P01</code>을 받은 쪽이다. 애플리케이션 에러 로그의 <b>시각·스레드</b>와 맞춰 어느 요청이었는지 좁힌다.</div></div>
+<div class="step red"><span class="n">3</span><div class="body"><b>대기 문장 해독.</b> <code>Process N: &lt;문장&gt;</code>은 각 프로세스가 <b>대기 중이던 마지막 문장</b>이다. <b>그 트랜잭션이 앞에서 실행한 문장은 로그에 나오지 않는다.</b> 반대편 줄에서 <b>역산</b>한다.</div></div>
+<div class="step"><span class="n">4</span><div class="body"><b>"ShareLock on transaction" 해독.</b> PG의 행 락 대기는 "행"이 아니라 <b>"상대 트랜잭션 ID에 대한 ShareLock 대기"</b>로 찍힌다(2절). 어느 행인지는 <code>CONTEXT: while updating tuple (0,2) in relation "users"</code>에서 안다.</div></div>
+<div class="step ok"><span class="n">5</span><div class="body"><b>패턴 분류.</b> 양쪽 CONTEXT가 같은 테이블의 <b>다른 튜플</b>이면 <b>유형 ①</b>, <code>while inserting index tuple</code>이면 <b>유형 ②</b>, 자식 INSERT 쪽 CONTEXT에 <code>FOR KEY SHARE OF x</code>가 보이면 <b>유형 ③</b>, 양쪽 문장이 같은 <code>INSERT ... ON CONFLICT</code>면 <b>유형 ④</b>다. 앞 문장까지 복원해야 하면 <b>그 시간대에만</b> <code>log_min_duration_statement = 0</code>을 켜서 <code>%x</code> 기준으로 이어 붙인다.</div></div>
+
+<h3>7-2. 로그 문자열 해독표</h3>
+
+<table class="wide">
+  <caption>이 표만 있으면 로그에서 유형까지 3분 안에 간다</caption>
+  <thead><tr><th style="width:480px">로그 문자열</th><th>뜻</th></tr></thead>
+  <tbody>
+    <tr><td><code>waits for ShareLock on transaction N</code></td><td>행 락 대기 — <code>xmax</code>에 N이 적힌 튜플을 기다린다 <b>(유형 ①②③④ 공통)</b></td></tr>
+    <tr><td><code>waits for ExclusiveLock on tuple (b,o) of relation R</code></td><td>같은 행을 기다리는 대기 줄의 <b>두 번째 이후</b> 대기자 (첫 대기자만 튜플 락을 쥔다)</td></tr>
+    <tr><td><code>CONTEXT: while updating tuple</code> / <code>while locking tuple</code> / <code>while deleting tuple</code></td><td>각각 <b>UPDATE</b> / <b><code>FOR ...</code> 계열 잠금 읽기</b> / <b>DELETE</b> 가 막혔다</td></tr>
+    <tr><td><code>CONTEXT: while inserting index tuple (b,o) in relation "uk_..."</code></td><td>유니크 인덱스 삽입 대기 <b>(유형 ②)</b></td></tr>
+    <tr class="hl"><td><code>CONTEXT: while locking tuple ... in relation "users"</code> + <code>SQL statement "SELECT 1 FROM ONLY "public"."users" x WHERE ... FOR KEY SHARE OF x"</code></td><td>FK 검사의 <code>KEY SHARE</code> 대기 <b>(유형 ③)</b></td></tr>
+    <tr><td><code>still waiting for ShareLock on transaction N after 1000.052 ms</code></td><td>데드락은 아니지만 <code>deadlock_timeout</code>을 넘긴 <b>긴 대기</b> (<code>log_lock_waits</code>)</td></tr>
+  </tbody>
+</table>
+
+<div class="rule red">로그에서 <code>FOR KEY SHARE</code>가 보이면 반사적으로 <b>"누가 부모를 <code>FOR UPDATE</code>로 잡고 있나"</b>를 찾는다</div>
+
+<h3>7-3. 살아 있는 락 대기 보기 — 데드락이 나기 전에 잡는다</h3>
+
+<p>로그는 <b>사후 자료</b>다. <b>지금 이 순간</b> 누가 누구를 막고 있는지는 <code>pg_stat_activity</code>와 <code>pg_blocking_pids()</code>로 본다. <code>pg_blocking_pids(pid)</code>는 <b>그 pid를 막고 있는 pid 목록</b>을 돌려주는 함수다 — <b>데드락 조사에서 가장 먼저 치는 쿼리</b>다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> 지금 락에 막힌 세션과, 그것을 막고 있는 세션</div>
+<pre><code><span class="kw">SELECT</span> a.pid, a.application_name, a.state,
+       a.wait_event_type, a.wait_event,          <span class="cm">-- 'Lock' / 'transactionid' 또는 'tuple'</span>
+       now() - a.xact_start <span class="kw">AS</span> xact_age,         <span class="cm">-- 트랜잭션이 얼마나 오래 열려 있나</span>
+<span class="ln-good">       <span class="fn">pg_blocking_pids</span>(a.pid) <span class="kw">AS</span> blocked_by,    <span class="cm">-- 이 pid를 막고 있는 pid 목록</span></span>
+       a.query
+<span class="kw">FROM</span> pg_stat_activity a
+<span class="kw">WHERE</span> a.wait_event_type = <span class="st">'Lock'</span>;</code></pre>
+
+<pre><code> pid  | application_name | state  | wait_event_type | wait_event    | xact_age  | blocked_by | query
+------+------------------+--------+-----------------+---------------+-----------+------------+------------------------------
+<span class="ln-bad"> 4213 | shop-api         | active | Lock            | transactionid | 00:00:03  | {4214}     | UPDATE users ... id=2</span>
+<span class="ln-bad"> 4214 | shop-api         | active | Lock            | transactionid | 00:00:02  | {4213}     | UPDATE users ... id=1</span></code></pre>
+
+<div class="grid g2">
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>blocked_by</code>가 서로를 가리키면</div><div class="d">그것이 <b>순환</b>이고, <b>1초 뒤 한쪽이 <code>40P01</code></b>을 받는다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit"><code>blocked_by</code>의 pid가 <code>idle in transaction</code>이면</div><div class="d">데드락이 아니라 <b>애플리케이션이 트랜잭션을 열어 둔 채 딴 일(외부 API 호출 등)을 하는 중</b>이라는 뜻이고, <b>처방이 완전히 달라진다.</b></div></div>
+</div>
+
+<div class="callout warn"><span class="t">헷갈리기 쉬운 사실 — <code>pg_locks</code>에는 행 락 자체가 없다</span>
+  락이 <b>튜플 안에</b> 있기 때문이다(2절). <b>대기 중인 행 락만</b> <code>locktype = 'transactionid'</code>, <code>granted = false</code>로 보이고, 같은 행의 <b>첫 대기자만</b> <code>locktype = 'tuple'</code> 항목을 하나 더 쥔다. 재현 테스트(8-3절)를 t3에서 멈춰 놓고 위 쿼리를 치면 <b>"A가 B의 XID를 기다린다"를 눈으로</b> 확인할 수 있다.
+</div>
+
+<div class="memo green">
+  <h4>상시로 켜 둘 것 둘 — <b>사고가 난 뒤에는 못 하는 준비</b></h4>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k"><code>log_lock_waits = on</code></div><div class="d">어떤 대기가 <code>deadlock_timeout</code>을 넘기면 <b>데드락이 아니어도</b> <code>LOG: process 4213 still waiting for ShareLock ... after 1000.052 ms</code> + <code>DETAIL: Process holding the lock: 4214. Wait queue: 4213.</code>을 남긴다. <b>데드락으로 발전하기 전의 긴 락 대기</b>를 잡는 상시 감시 장치이고 <b>비용이 거의 없다.</b></div></div>
+    <div class="tile ok"><div class="k"><code>pg_stat_database.deadlocks</code></div><div class="d">DB별 <b>누적 데드락 수</b>. 메트릭으로 내보내 <b>증가 추세에 알람</b>을 건다. <b>"재시도로 조용히 덮이고 있는 데드락"은 이 카운터만 안다.</b></div></div>
+  </div>
+</div>
+
+<h3>7-4. 스프링에서 무엇으로 올라오나</h3>
+
+<table class="wide">
+  <caption>SQLSTATE → 스프링 예외 → 대응</caption>
+  <thead><tr><th style="width:110px">SQLSTATE</th><th style="width:290px">PG 메시지</th><th>스프링 예외</th><th style="width:220px">대응</th></tr></thead>
+  <tbody>
+    <tr><td><code>40P01</code></td><td>deadlock detected</td><td><code>DeadlockLoserDataAccessException</code> (JdbcTemplate) / Hibernate 경유 시 <code>CannotAcquireLockException</code></td><td>재시도 <b>(진통제)</b> + 구조 수정</td></tr>
+    <tr><td><code>55P03</code></td><td>canceling statement due to lock timeout (<code>lock_timeout</code>) / <code>NOWAIT</code> 실패</td><td><code>CannotAcquireLockException</code></td><td>재시도 또는 사용자 안내</td></tr>
+    <tr><td><code>40001</code></td><td>could not serialize access (RR 갱신 충돌 · SSI)</td><td><code>CannotSerializeTransactionException</code></td><td>재시도 <b>(프로토콜의 일부)</b></td></tr>
+    <tr class="hl"><td><code>23505</code></td><td>duplicate key value violates unique constraint</td><td><code>DuplicateKeyException</code> (<code>DataIntegrityViolationException</code>의 자식)</td><td class="bad"><b>재시도 대상이 아니다</b> — "이미 있음"으로 번역</td></tr>
+  </tbody>
+</table>
+
+<div class="memo">
+  <h4>숫자 암기 — 네 개만 외우면 로그가 읽힌다</h4>
+  <div class="grid g4">
+    <div class="tile big red"><div class="k">40P01</div><div class="s">deadlock detected</div></div>
+    <div class="tile big"><div class="k">40001</div><div class="s">직렬화 실패 (RR·SSI)</div></div>
+    <div class="tile big"><div class="k">23505</div><div class="s">유니크 위반</div></div>
+    <div class="tile big"><div class="k">55P03</div><div class="s">lock_timeout · NOWAIT</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">앞의 셋(<code>40P01</code>·<code>55P03</code>·<code>40001</code>)은 공통 부모 <b><code>PessimisticLockingFailureException</code></b> 아래에 있다 — <b>재시도 대상은 이 부모로 잡는다.</b> <code>23505</code>는 <b>재시도가 아니라 번역할 대상</b>이다. 그리고 <code>deadlock_timeout</code> <b>기본 1초</b>.</p>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 예방과 안전망을 코드로 고정한다</h2>
+
+<h3>8-1. 설계 규칙 여섯 — <b>없 · 순 · 모 · 인 · 짧 · 타</b></h3>
+
+<div class="memo green">
+  <h4>이 여섯 줄이 유형 ①②③④와 5절의 함정을 전부 덮는다</h4>
+  <div class="grid g2">
+    <div class="tile red"><div class="k">① <u>없</u>는 행을 잠그지 마라 — 제약에 맡겨라</div><div class="d">check-then-insert는 <code>UNIQUE</code> + <code>INSERT ... ON CONFLICT</code>. 잠글 것이 정말 필요하면 <b>존재하는 앵커 행</b> 또는 <b>advisory lock</b>(5-1절).</div></div>
+    <div class="tile"><div class="k">② 여러 행은 키 <u>순</u>서로 먼저 잠근다</div><div class="d"><code>SELECT id FROM t WHERE id IN (...) ORDER BY id FOR NO KEY UPDATE</code> 후 갱신. 배치도 <code>ORDER BY key</code>.</div></div>
+    <div class="tile"><div class="k">③ 락 <u>모</u>드를 낮춰라</div><div class="d"><code>FOR UPDATE</code>는 <b>삭제·키 변경 의도</b>일 때만. 값 갱신은 <code>FOR NO KEY UPDATE</code> 또는 <b>잠금 읽기 없는 원자적 UPDATE</b>. JPA <code>PESSIMISTIC_WRITE</code>가 만드는 <code>FOR UPDATE</code>를 의심한다(6-4절).</div></div>
+    <div class="tile"><div class="k">④ 잠금 읽기의 WHERE는 <u>인</u>덱스를 타게</div><div class="d">PG는 인덱스를 못 타도 <b>조건 미충족 행을 잠그진 않지만</b>, Seq Scan만큼 <b>락 보유 시간</b>이 늘고 스캔 중 갱신 중인 후보 행마다 대기가 붙는다.</div></div>
+    <div class="tile"><div class="k">⑤ 트랜잭션을 <u>짧</u>게</div><div class="d">행 락은 <b>트랜잭션 끝까지</b> 유지된다. <b>외부 API 호출·파일 처리는 트랜잭션 밖으로</b> 뺀다.</div></div>
+    <div class="tile"><div class="k">⑥ 무한 대기를 금지 — <u>타</u>임아웃</div><div class="d"><code>lock_timeout</code>을 건다(<code>ALTER ROLE app SET lock_timeout = '3s'</code> 또는 트랜잭션 첫 문장에 <code>SET LOCAL lock_timeout</code>). <b>데드락은 1초면 풀리지만, 데드락이 아닌 긴 락 대기는 스스로 안 풀린다.</b></div></div>
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">타임아웃에서 자주 틀리는 두 가지</span>
+  ① <b>스프링 <code>@Transactional(timeout = n)</code>은 JDBC 쿼리 타임아웃</b>이라 <code>lock_timeout</code>을 대신하지 못한다.<br>
+  ② <b><code>deadlock_timeout</code>은 "대기 상한"이 아니라 "데드락 검사를 시작하는 문턱"</b>이다. 데드락이 아니면 그 뒤로도 <b>계속 기다린다</b> — 그래서 <code>lock_timeout</code>이 따로 필요하다. 작업 큐는 <code>FOR UPDATE SKIP LOCKED</code>, 즉시 실패가 필요하면 <code>NOWAIT</code>.
+</div>
+
+<h3>8-2. 격리 수준은 PG에서 데드락 처방이 아니다</h3>
+
+<p>MySQL에서는 <b>"RC로 낮추면 갭 락이 꺼져서 '없는 행 <code>FOR UPDATE</code> + INSERT' 데드락이 사라진다"</b>가 유효한 카드였다. 그래서 PG에서도 <b>격리 수준을 만지려는 반사</b>가 나온다.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>이렇게 생각하면 틀린다</h4>
+    <ul>
+      <li>"RC로 낮추면 락이 줄겠지" → <b>PG의 기본이 이미 RC</b>이고, <b>RR로 올려도 잠기는 행은 똑같다</b></li>
+      <li>"SERIALIZABLE로 올리면 안전하겠지" → <b>SIReadLock은 아무도 블로킹하지 않지만 행 락은 그대로 남는다.</b> 유형 ①~④는 <b>SERIALIZABLE에서도 그대로</b> 난다</li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>정확한 정리</h4>
+    <ul>
+      <li>PG에서 격리 수준은 <b>팬텀 · write skew를 막는 정합성 도구</b>이지 <b>데드락 도구가 아니다</b></li>
+      <li>위로 올리는 것은 데드락을 없애는 게 아니라 <b>"블로킹 대신 abort"로 실패 방식을 바꾸는 것</b></li>
+      <li>데드락은 <b>8-1의 순서 · 모드 · 설계</b>로만 사라진다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="codehead plain"><span class="tag">기준</span> 격리 수준을 올리는 <b>이유</b>가 무엇인지가 답을 가른다</div>
+<pre><code><span class="cm">// 격리 수준을 올리는 이유가 "데드락"이면 잘못 짚은 것 — 이유는 "조회-판단-쓰기의 정합성"이어야 한다</span>
+<span class="kw">@Transactional</span>(isolation = Isolation.SERIALIZABLE)   <span class="cm">// 40001 재시도(4-2, 8-4)가 세트. 새 트랜잭션을 여는 쪽에서만 유효</span>
+<span class="kw">public void</span> <span class="fn">issueWithLimit</span>(<span class="kw">long</span> userId, <span class="kw">long</span> couponId) { ... }</code></pre>
+
+<h3>8-3. 재현 테스트 — 두 스레드 <code>CountDownLatch</code>로 타임라인을 강제한다</h3>
+
+<p>데드락은 <b>"동시에 돌리면 가끔" 나는 것이 아니라</b> 6-2절의 <b>t1 → t2 → t3 → t4 순서가 만들어지면 반드시</b> 난다. 그러니 테스트는 <b>스레드를 동시에 출발시키는 게 아니라 그 순서를 래치로 강제</b>해야 한다.</p>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k" style="font-family:inherit">전제 ① 실제 PostgreSQL</div><div class="d"><b>Testcontainers</b>여야 한다 — <b>H2는 락 모델이 달라</b> 이 타임라인이 재현되지 않는다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">전제 ② <code>@Transactional</code> 금지</div><div class="d">테스트 스레드의 트랜잭션은 <b>워커 스레드로 전파되지 않고</b>, 시드 데이터가 롤백에 묶여 <b>다른 커넥션에서 안 보인다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">전제 ③ 각자 트랜잭션</div><div class="d">두 스레드가 각자 <code>TransactionTemplate</code>으로 열고, 뒷정리는 <code>@BeforeEach</code>에서 직접 한다.</div></div>
+</div>
+
+<div class="codehead good"><span class="tag">test</span> 유형 ① 재현 — 래치로 t1 → t2 → t3 → t4를 강제한다</div>
+<pre><code><span class="kw">@SpringBootTest</span> <span class="kw">@Testcontainers</span>
+<span class="kw">class</span> RowOrderDeadlockTest {
+
+    <span class="kw">@Autowired</span> TransactionTemplate tx;     <span class="cm">// 각 스레드가 자기 트랜잭션을 연다</span>
+    <span class="kw">@Autowired</span> JdbcTemplate jdbc;
+
+    <span class="kw">@BeforeEach</span>
+    <span class="kw">void</span> <span class="fn">seed</span>() {
+        jdbc.<span class="fn">update</span>(<span class="st">"TRUNCATE transfers, users RESTART IDENTITY CASCADE"</span>);
+        jdbc.<span class="fn">update</span>(<span class="st">"INSERT INTO users (balance) VALUES (1000), (1000)"</span>);   <span class="cm">// id 1, 2</span>
+    }
+
+    <span class="kw">@Test</span>
+    <span class="kw">void</span> <span class="fn">같은_행_둘을_반대_순서로_갱신하면_데드락이_재현된다</span>() <span class="kw">throws</span> Exception {
+        <span class="kw">var</span> aLockedOne = <span class="kw">new</span> <span class="fn">CountDownLatch</span>(1);
+        <span class="kw">var</span> bLockedTwo = <span class="kw">new</span> <span class="fn">CountDownLatch</span>(1);
+        <span class="kw">var</span> pool = Executors.<span class="fn">newFixedThreadPool</span>(2);
+
+        Future&lt;?&gt; a = pool.<span class="fn">submit</span>(() -&gt; tx.<span class="fn">executeWithoutResult</span>(s -&gt; {
+<span class="ln-good">            jdbc.<span class="fn">update</span>(<span class="st">"UPDATE users SET balance = balance - 100 WHERE id = 1"</span>);   <span class="cm">// t1</span></span>
+            aLockedOne.<span class="fn">countDown</span>();
+            <span class="fn">await</span>(bLockedTwo);                                                       <span class="cm">// B가 2번을 잠글 때까지</span>
+<span class="ln-good">            jdbc.<span class="fn">update</span>(<span class="st">"UPDATE users SET balance = balance + 100 WHERE id = 2"</span>);   <span class="cm">// t3: 대기</span></span>
+        }));
+        Future&lt;?&gt; b = pool.<span class="fn">submit</span>(() -&gt; tx.<span class="fn">executeWithoutResult</span>(s -&gt; {
+            <span class="fn">await</span>(aLockedOne);
+<span class="ln-good">            jdbc.<span class="fn">update</span>(<span class="st">"UPDATE users SET balance = balance - 50 WHERE id = 2"</span>);    <span class="cm">// t2</span></span>
+            bLockedTwo.<span class="fn">countDown</span>();
+<span class="ln-good">            jdbc.<span class="fn">update</span>(<span class="st">"UPDATE users SET balance = balance + 50 WHERE id = 1"</span>);    <span class="cm">// t4: 순환 완성</span></span>
+        }));
+
+        <span class="kw">var</span> failures = <span class="kw">new</span> ArrayList&lt;Throwable&gt;();
+        <span class="kw">for</span> (<span class="kw">var</span> f : List.<span class="fn">of</span>(a, b)) {
+            <span class="kw">try</span> { f.<span class="fn">get</span>(10, TimeUnit.SECONDS); } <span class="kw">catch</span> (ExecutionException e) { failures.<span class="fn">add</span>(e.<span class="fn">getCause</span>()); }
+        }
+        pool.<span class="fn">shutdownNow</span>();
+
+        <span class="cm">// deadlock_timeout(1s) 뒤 정확히 한 트랜잭션만 40P01 희생자, 나머지 하나는 커밋된다</span>
+        <span class="fn">assertThat</span>(failures).<span class="fn">hasSize</span>(1);
+        <span class="fn">assertThat</span>(failures.<span class="fn">get</span>(0)).<span class="fn">isInstanceOf</span>(PessimisticLockingFailureException.<span class="kw">class</span>);
+        <span class="cm">// 살아남은 쪽만 반영: A가 이겼으면 900, B가 이겼으면 1050</span>
+        <span class="fn">assertThat</span>(jdbc.<span class="fn">queryForObject</span>(<span class="st">"SELECT balance FROM users WHERE id = 1"</span>, BigDecimal.<span class="kw">class</span>))
+            .<span class="fn">isIn</span>(<span class="kw">new</span> <span class="fn">BigDecimal</span>(<span class="st">"900.00"</span>), <span class="kw">new</span> <span class="fn">BigDecimal</span>(<span class="st">"1050.00"</span>));
+    }
+}</code></pre>
+
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">테스트의 쓰임 ① 빨간 불 먼저</div><div class="d"><b>"우리 코드가 정말 데드락을 내는가"를 사실로 만든다.</b> 그 다음 처방(키 순서 잠금)을 적용한 뒤에는 <b>데드락 예외 0건, 두 송금 모두 반영</b>을 단언하는 <b>회귀 테스트</b>로 바꿔 남긴다. 누군가 "잠금용 SELECT가 불필요해 보인다"며 지우면 <b>이 테스트가 막는다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">테스트의 쓰임 ② 5절 함정용은 모양이 다르다</div><div class="d">단언할 것이 <b>데드락 예외가 아니라 중복 행(또는 <code>23505</code>)</b>이기 때문. 래치 순서는 A <code>FOR UPDATE</code>(0행) → B <code>FOR UPDATE</code>(0행, <b>대기 없음</b> — 여기가 PG의 핵심) → A INSERT → B INSERT → 둘 다 커밋. 유니크 제약이 없으면 <code>count = 2</code>가 빨간 불이고, 처방 ①로 바꾼 뒤엔 <code>count = 1</code> + 예외 0건.</div></div>
+</div>
+
+<p class="sub">예외 타입은 단언하기 전에 <b>실제로 무엇이 올라오는지 먼저 확인</b>한다 — <code>JdbcTemplate</code> 경로는 <code>DeadlockLoserDataAccessException</code>, JPA 경로는 <code>CannotAcquireLockException</code>일 수 있다. <b>공통 부모 <code>PessimisticLockingFailureException</code>으로 잡는 것이 안전</b>하다. 이 테스트는 <code>deadlock_timeout</code>(1초)만큼 반드시 걸린다.</p>
+
+<h3>8-4. 재시도 정책 — 트랜잭션 <b>밖</b>에서, 상한과 지터를 두고</h3>
+
+<p>데드락 희생자는 PG가 <b>트랜잭션 전체를 abort</b>했으므로 <b>"처음부터 다시"가 안전</b>하다. 단, <b>다시 시작하는 위치가 트랜잭션 경계 밖</b>이어야 한다.</p>
+
+<div class="callout trap"><span class="t">왜인지가 중요하다 — "재시도 코드가 있는데 아무것도 재시도되지 않는" 최악의 형태</span>
+  트랜잭션 <b>안</b>에서 catch하고 다시 시도하면 PG 쪽 트랜잭션은 <b>이미 aborted 상태</b>라 이후 모든 문장이 <code>current transaction is aborted, commands ignored until end of transaction block</code>으로 <b>거부된다.</b> 스프링 쪽도 <b>rollback-only</b> 표시가 붙어 커밋 시점에 <code>UnexpectedRollbackException</code>을 만난다.
+</div>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 트랜잭션 <b>안</b>에서 재시도</div>
+<pre><code><span class="ln-bad"><span class="kw">@Transactional</span></span>
+<span class="kw">public void</span> <span class="fn">transfer</span>(<span class="kw">long</span> from, <span class="kw">long</span> to, BigDecimal amount) {
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; 3; i++) {
+        <span class="kw">try</span> { <span class="fn">doTransfer</span>(from, to, amount); <span class="kw">return</span>; }
+<span class="ln-bad">        <span class="kw">catch</span> (PessimisticLockingFailureException e) { <span class="cm">/* 재시도 */</span> }</span>
+    }
+}
+<span class="cm">// PG 트랜잭션은 이미 aborted → 이후 문장 전부 거부</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 재시도는 <b>바깥 빈</b>, 트랜잭션은 <b>안쪽 빈</b></div>
+<pre><code><span class="kw">@Service</span>
+<span class="kw">public class</span> TransferFacade {
+    <span class="kw">private final</span> TransferService service;   <span class="cm">// 이 안이 @Transactional</span>
+
+<span class="ln-good">    <span class="kw">@Retryable</span>(</span>
+<span class="ln-good">        retryFor = PessimisticLockingFailureException.<span class="kw">class</span>,  <span class="cm">// 40P01+55P03+40001</span></span>
+<span class="ln-good">        maxAttempts = 3,                                      <span class="cm">// 상한</span></span>
+<span class="ln-good">        backoff = <span class="kw">@Backoff</span>(delay = 50, multiplier = 2, random = <span class="kw">true</span>))  <span class="cm">// 지터</span></span>
+    <span class="kw">public void</span> <span class="fn">transfer</span>(<span class="kw">long</span> from, <span class="kw">long</span> to, BigDecimal amount) {
+        service.<span class="fn">transfer</span>(from, to, amount);   <span class="cm">// 매 시도마다 새 트랜잭션</span>
+    }
+
+    <span class="kw">@Recover</span>
+    <span class="kw">public void</span> <span class="fn">giveUp</span>(PessimisticLockingFailureException e, <span class="kw">long</span> from, <span class="kw">long</span> to, BigDecimal amount) {
+        <span class="kw">throw new</span> <span class="fn">TemporarilyUnavailable</span>(<span class="st">"잠시 후 다시 시도해 주세요"</span>, e);
+    }
+}</code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>세 가지 규칙을 코드에 그대로 박는다 — <b>상한 · 지터 · 멱등성</b></h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k" style="font-family:inherit">상한</div><div class="d">데드락이 <b>구조적</b>이면(before 코드가 그대로면) 재시도는 <b>매번 같은 자리에서 다시 죽는다.</b> 상한 없는 재시도는 <b>커넥션과 CPU만 태운다.</b></div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">지터(random backoff)</div><div class="d">두 요청이 <b>같은 간격</b>으로 재시도하면 <b>같은 박자로 다시 충돌</b>한다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">멱등성 확인</div><div class="d">트랜잭션 안에서 <b>롤백되지 않는 부수효과</b>(외부 API 호출, 메일 발송, 트랜잭션 밖 이벤트 발행)가 있었다면 재시도가 그것을 <b>두 번</b> 실행한다. <b>재시도를 붙이기 전에 확인한다.</b></div></div>
+  </div>
+</div>
+
+<div class="callout info"><span class="t">재시도의 성격이 둘로 갈린다 <span class="badge bonus">가산점 포인트</span></span>
+  <b>SERIALIZABLE의 <code>40001</code>은 재시도가 프로토콜의 일부</b>다 — 정상 동작 중에도 abort가 나는 설계이므로, 재시도 없이는 SSI를 쓴 게 아니다.<br>
+  반면 <b>데드락 재시도는 진통제</b>다. <code>pg_stat_database.deadlocks</code>가 <b>우상향이면 재시도가 덮고 있는 구조적 원인</b>이 있다는 뜻이므로 8-1절로 돌아가야 한다.
+</div>
+
+<h3>8-5. 트레이드오프 양면 조립 — 처방마다 "얻는 것 / 내주는 것"</h3>
+
+<p>한쪽 면만 말하는 습관을 깨기 위해 위 처방 각각을 <b>두 면으로 나란히</b> 둔다. <b>면접에서 처방을 하나 고르면 반드시 오른쪽 열까지 한 호흡에</b> 말한다.</p>
+
+<table class="wide">
+  <caption>처방 × 얻는 것 / 내주는 것</caption>
+  <thead><tr><th style="width:280px">처방</th><th>얻는 것</th><th>내주는 것</th></tr></thead>
+  <tbody>
+    <tr><td><code>UNIQUE</code> + <code>ON CONFLICT</code> 단일 문장 <span class="sub">(5-1 ①)</span></td><td class="good">잠금 문장 없음, 라운드트립 1회, <code>RETURNING</code>으로 예외 없이 판별</td><td class="bad">유니크 인덱스 필수, 충돌해도 시퀀스 소모, 영속성 컨텍스트 우회, <code>DO UPDATE</code>는 값이 같아도 새 튜플 버전</td></tr>
+    <tr><td><code>UNIQUE</code> + INSERT 시도, <code>23505</code> 번역 <span class="sub">(②)</span></td><td class="good">모든 진입 경로를 DB가 방어, JPA <code>save()</code> 그대로</td><td class="bad">예외 기반 흐름, rollback-only 경계 처리</td></tr>
+    <tr><td>앵커 행 <code>FOR NO KEY UPDATE</code> <span class="sub">(③)</span></td><td class="good">사용자 단위 직렬화, 발급 전 복잡한 판단 가능</td><td class="bad">앵커가 <b>핫스팟</b>, 앵커 존재 전제, <code>FOR UPDATE</code>로 쓰면 FK 자식 INSERT까지 차단</td></tr>
+    <tr><td>advisory lock <span class="sub">(④)</span></td><td class="good">행이 없어도 잠금, 임의 키 사용</td><td class="bad">앱 규약 의존(<b>한 경로라도 안 잡으면 무의미</b>), PgBouncer에선 <code>_xact_</code>만, 해시 충돌 시 불필요한 직렬화</td></tr>
+    <tr><td>SERIALIZABLE <span class="sub">(⑤)</span></td><td class="good">조회-판단-쓰기 전체의 정합성, <b>블로킹 없음</b></td><td class="bad"><code>40001</code> 재시도 필수, 오탐 abort, 읽기 범위가 넓으면 abort율 상승</td></tr>
+    <tr class="hl"><td>키 순서 정렬 <span class="sub">(6-2, 6-5)</span></td><td class="good">유형 <b>①②④ 소멸</b></td><td class="bad">잠금용 SELECT 한 번 추가, 코드 규약 유지 부담</td></tr>
+    <tr class="hl"><td><code>FOR NO KEY UPDATE</code> / 원자적 UPDATE <span class="sub">(6-4)</span></td><td class="good">유형 <b>③ 소멸</b>, 자식 INSERT 동시성 유지</td><td class="bad">JPA 표준 락 모드로는 못 만듦(네이티브 필요), 삭제·키 변경 의도에는 부족</td></tr>
+    <tr><td><code>lock_timeout</code></td><td class="good">긴 대기가 <b>풀 고갈로 번지기 전에</b> 실패</td><td class="bad">실패 처리 필요, 정상적으로 긴 배치엔 별도 값</td></tr>
+    <tr><td>재시도 <span class="sub">(8-4)</span></td><td class="good">일시적 충돌을 사용자 실패로 노출 안 함</td><td class="bad">처리량 저하, 멱등성 요구, <b>구조적 원인을 숨김</b></td></tr>
+  </tbody>
+</table>
+
+<div class="split">
+  <div class="pane g">
+    <h4>"갭 락이 없다"의 얻는 것</h4>
+    <ul>
+      <li>잠금 읽기가 <b>무관한 INSERT를 막지 않아</b> 쓰기 동시성이 높다</li>
+      <li><b>격리 수준과 무관하게</b> 락 범위가 예측 가능하다</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>"갭 락이 없다"의 내주는 것</h4>
+    <ul>
+      <li><b>"없는 행을 잠가 상호 배제"라는 편한 관용구가 없다</b></li>
+      <li>제약 · 앵커 · advisory lock · SSI 중 하나를 <b>의식적으로 골라야</b> 하고, <b>고르지 않으면 조용한 중복</b>이 된다</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. MySQL로 물으면 갈리는 다섯 지점</h2>
+
+<p>면접관이 MySQL 기준으로 물을 수도 있다. <b>다섯 지점을 대조해 두면 어느 쪽으로 물어도 같은 답안이 돌아간다.</b></p>
+
+<table class="wide">
+  <caption>MySQL(InnoDB) vs PostgreSQL — 이 다섯 줄이 답변의 차이를 만든다</caption>
+  <thead><tr><th style="width:200px">지점</th><th>MySQL InnoDB</th><th>PostgreSQL</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>① "INSERT만 하는데 데드락"의 정체</b></td><td>없는 행 <code>FOR UPDATE</code>가 <b>갭 락</b>을 남기고, INSERT의 <b>인서트 인텐션 락</b>이 서로의 갭 락에 막혀 순환</td><td class="bad"><b>없는 행을 못 잠가</b> 그 데드락이 없다. 대신 <b>조용한 중복</b>(5절)</td></tr>
+    <tr><td><b>② 유니크 중복 검사</b></td><td>미커밋 중복 키에 <b>공유(S) 락</b> → 홀더가 <b>롤백</b>하면 대기자끼리 데드락, <b>RC에서도 남는다</b></td><td class="good">락 없이 <b>XID 종료를 기다릴 뿐</b> → <b>직렬화로 끝난다</b>(6-3절)</td></tr>
+    <tr><td><b>③ 격리 수준과 락 범위</b></td><td><b>RR이 기본</b>이고 갭 락이 켜지며 <b>RC로 낮추면 꺼지는 스위치</b>가 있다</td><td><b>RC가 기본</b>이고 <b>어떤 격리 수준에서도</b> 잠기는 것은 <b>반환된 행뿐</b></td></tr>
+    <tr class="hl"><td><b>④ 락 모드의 결</b></td><td><code>FOR UPDATE</code> vs <code>FOR NO KEY UPDATE</code> <b>구분이 없어</b> FK 검사의 부모 S 락이 X 락과 <b>늘 충돌</b></td><td>비키 갱신을 <code>FOR NO KEY UPDATE</code>로 잡아 FK <code>KEY SHARE</code>와 <b>공존</b>시킨다 → <b>PG 고유의 유형 ③</b>과 그 처방이 여기서 나온다</td></tr>
+    <tr><td><b>⑤ 감지와 진단</b></td><td><b>즉시 감지</b>해 <b>수정 행이 적은 쪽</b>을 롤백. <code>SHOW ENGINE INNODB STATUS</code> · <code>performance_schema.data_locks</code></td><td><code>deadlock_timeout</code>(1초) 뒤 <b>검사한 쪽</b>이 <code>40P01</code>로 abort. 서버 로그의 <b>"ShareLock on transaction"</b> + <code>pg_blocking_pids()</code> · <code>pg_stat_database.deadlocks</code></td></tr>
+  </tbody>
+</table>
+
+<div class="rule">한 문장으로 압축하면 — <b>MySQL은 "없는 행까지 잠가 시끄럽게 실패"하고, PostgreSQL은 "있는 행만 잠그고 조용히 통과시킨다"</b></div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>10-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">갭 락 한 문장 정의?</div><div class="d">인덱스의 <b>레코드와 레코드 사이 빈 구간</b>에 거는 락. 뜻은 <b>"이 구간에 새 행을 넣지 마라"</b> — <b>앞으로 존재할 자리</b>를 예약한다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">넥스트 키 락?</div><div class="d"><b>갭 락 + 오른쪽 레코드 락.</b> "next-key" = <b>갭의 다음 키까지</b> 함께 잠근다. MySQL RR의 범위 잠금이 이걸로 덮인다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">PG에 없는 이유 한 줄?</div><div class="d">행 락이 <b>튜플 헤더 <code>xmax</code>에 적는 표시</b>라서. <b>스티커는 물건이 있어야 붙인다</b> — 없는 행엔 적을 자리가 없다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">갭 락의 두 일 → 대체 수단?</div><div class="d">① <b>팬텀</b> → RR <b>스냅샷</b>(안 보여준다) ② <b>read-then-write</b> → SERIALIZABLE <b>SSI</b>(<code>40001</code>) ③ <b>없으면 INSERT</b> → <code>UNIQUE</code> + <code>ON CONFLICT</code>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">행 락 4종?</div><div class="d">강한 순으로 <code>FOR UPDATE</code> → <code>FOR NO KEY UPDATE</code> → <code>FOR SHARE</code> → <code>FOR KEY SHARE</code>. <b>비키 UPDATE는 자동으로 NO KEY UPDATE, FK 검사는 자동으로 KEY SHARE.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">충돌표에서 외울 한 칸?</div><div class="d"><b><code>FOR UPDATE</code> ↔ <code>KEY SHARE</code> = 대기</b>, <b><code>NO KEY UPDATE</code> ↔ <code>KEY SHARE</code> = 호환.</b> 이 한 칸이 유형 ③의 전부다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">없는 행에 <code>FOR UPDATE</code>를 걸면?</div><div class="d"><b>0행 반환 + 아무것도 안 잠김.</b> 제약이 없으면 <b>조용한 중복</b>, 있으면 두 번째가 <code>23505</code>. <b>MySQL이면 데드락으로 시끄럽게 실패했을 자리.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">check-then-insert 처방 5종?</div><div class="d"><b>제 · 번 · 앵 · 애 · 직</b> — <b>제</b>약(<code>ON CONFLICT</code>) / <code>23505</code> <b>번</b>역 / <b>앵</b>커 행 <code>FOR NO KEY UPDATE</code> / <b>애</b>드바이저리 락 / <b>직</b>렬화(SSI).</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">PG 데드락 4유형?</div><div class="d"><b>순 · 유 · 키 · 배</b> — 행 <b>순</b>서 역전 / <b>유</b>니크 삽입 대기 교차 / FK <b>키</b> SHARE 충돌 / UPSERT <b>배</b>치 순서.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">유형 ③이 특별한 이유?</div><div class="d">각 세션이 <b>행을 하나씩만</b> 잠갔다 → <b>순서 문제가 아니라 모드 문제.</b> 락 순서를 통일해도 <b>안 사라진다.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">감지 시점과 희생자 규칙?</div><div class="d"><code>deadlock_timeout</code> <b>기본 1초</b> 뒤 검사. 희생자는 "수정 행이 적은 쪽"이 아니라 <b>먼저 기다려 타임아웃이 먼저 만료된 쪽</b>. <b>항상 최소 1초 멈춤.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">SQLSTATE 넷?</div><div class="d"><code>40P01</code> 데드락 / <code>40001</code> 직렬화 실패 / <code>23505</code> 유니크 위반 / <code>55P03</code> lock_timeout. <b>앞의 셋만 재시도 대상.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">진단 3종 세트?</div><div class="d">서버 로그의 <b>"waits for ShareLock on transaction"</b> + <code>CONTEXT</code> / <code>pg_blocking_pids()</code> / 상시 <code>log_lock_waits</code> · <code>pg_stat_database.deadlocks</code>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">격리 수준이 데드락 처방인가?</div><div class="d"><b>아니다.</b> PG는 격리 수준이 <b>락 범위를 바꾸지 않는다.</b> SERIALIZABLE에서도 유형 ①~④는 <b>그대로</b> 난다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">설계 규칙 6?</div><div class="d"><b>없 · 순 · 모 · 인 · 짧 · 타</b> — <b>없</b>는 행 잠그지 마라 / 키 <b>순</b>서 / <b>모</b>드 낮추기 / <b>인</b>덱스 / <b>짧</b>은 트랜잭션 / <code>lock_<b>타</b>imeout</code>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">재시도 3규칙과 두 성격?</div><div class="d"><b>상한 · 지터 · 멱등성</b>, 그리고 <b>트랜잭션 경계 밖</b>에서. <code>40001</code>은 <b>프로토콜의 일부</b>, <code>40P01</code>은 <b>진통제</b>.</div></div>
+</div>
+
+<h3>10-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>PostgreSQL에는 갭 락이 없다면 팬텀 리드는 어떻게 막나요? <span class="badge core">필수</span><span class="hint">힌트: 두 층으로 답한다. 스냅샷이 막는 것과 못 막는 것을 갈라라</span></summary><div class="a">
+  <p><b>두 층으로 답한다. 첫 층은 REPEATABLE READ의 스냅샷이다.</b> 트랜잭션 시작 시점의 스냅샷을 고정하므로 <b>이후 커밋된 행이 아예 안 보인다</b> — <b>락으로 막는 게 아니라 스냅샷이 안 보여 주는 것</b>이라 다른 세션의 INSERT를 막지도 않는다(동시성 비용 0). 단 스냅샷 밖의 행을 갱신하려 하면 <code>40001</code>이다.</p>
+  <p><b>그런데 스냅샷은 읽기만 보호한다.</b> "읽은 결과를 근거로 쓴 것"(선착순 한도 검사 → INSERT 같은 <b>write skew</b>)은 못 막는다 — 두 트랜잭션이 각자 99를 세고 각자 넣으면 <b>둘 다 팬텀은 안 봤는데 결과는 101</b>이다.</p>
+  <p><b>그 층은 SERIALIZABLE(SSI)이다.</b> 읽은 범위를 predicate lock(<code>SIReadLock</code>)으로 추적해 <b>직렬화 불가능한 의존성이 생기면 한쪽을 <code>40001</code>로 abort</b>한다. <b>사전 차단이 아니라 커밋 시점 사후 감지</b>이므로 블로킹이 없고 데드락도 없지만, 대신 <b>재시도 루프가 필수</b>다.</p>
+  <p style="margin-bottom:0">MySQL RR의 넥스트 키 락이 하던 <b>"범위 소유"</b>는 PG에서 <b>SSI 또는 존재하는 앵커 행 락</b>으로 대체된다.</p>
+</div></details>
+
+<details class="q"><summary>"조회해서 없으면 INSERT"를 <code>FOR UPDATE</code>로 짜면 PostgreSQL에서는 무슨 일이 벌어지나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "데드락이 납니다"라고 답하면 MySQL 사람이다</span></summary><div class="a">
+  <p><b>아무것도 잠기지 않는다.</b> PG의 행 락은 <b>튜플 헤더 <code>xmax</code>에 적는 표시</b>라 없는 행에는 적을 자리가 없고, <code>FOR UPDATE</code>는 <b>0행을 반환하며 그냥 끝난다.</b></p>
+  <p>그래서 <b>두 요청이 둘 다 "없음"을 보고 둘 다 INSERT에 성공</b>한다 — 유니크 제약이 없으면 <b>에러 없이 중복</b>, 있으면 두 번째가 첫 번째의 커밋을 기다렸다가 <code>23505</code>다. <b>MySQL이라면 같은 코드가 갭 락 데드락으로 시끄럽게 실패했을 것을 PG는 조용히 틀린다</b>는 것이 위험의 핵심이다.</p>
+  <p style="margin-bottom:0">처방은 잠금 읽기를 지우고 <code>UNIQUE</code> + <code>INSERT ... ON CONFLICT DO NOTHING RETURNING</code> <b>한 문장으로 끝내거나</b>, 사전 판단이 꼭 필요하면 <b>앵커 행 <code>FOR NO KEY UPDATE</code></b> 또는 <code>pg_advisory_xact_lock</code>. <b>이 코드를 리뷰에서 잡아낼 수 있으면 변별된다.</b></p>
+</div></details>
+
+<details class="q"><summary>데드락 로그에 UPDATE 한 줄만 찍혀 있으면 원인을 어떻게 찾나요? <span class="badge core">필수</span><span class="hint">힌트: 없는 정보를 어디서 역산하는지가 답이다</span></summary><div class="a">
+  <p>서버 로그의 <code>Process N: &lt;문장&gt;</code>은 <b>대기 중이던 마지막 문장</b>일 뿐, <b>앞 문장은 나오지 않는다.</b> 대신 <b>반대편 줄이 흔적</b>이다 — <code>Process 4214 waits for ShareLock on transaction 8811; blocked by 4213</code>은 <b>"4213의 트랜잭션이 4214가 원하는 행을 이미 잠갔다"</b>는 뜻이므로 <b>4213이 앞 문장에서 그 행을 건드렸다고 역산</b>한다.</p>
+  <p><code>CONTEXT: while updating tuple (0,2) in relation "users"</code>로 <b>어느 튜플</b>인지 알고, <code>FOR KEY SHARE OF x</code>가 보이면 <b>유형 ③</b>, <code>while inserting index tuple</code>이면 <b>유형 ②</b>로 분류한다.</p>
+  <p style="margin-bottom:0"><code>application_name</code>과 <code>log_line_prefix</code>의 <code>%x</code>를 <b>미리</b> 갖춰 두면 트랜잭션 단위로 문장을 이어 붙일 수 있고, 확신이 안 서면 <b>재현하면서 <code>pg_blocking_pids()</code>로 t3 상태를 직접</b> 본다. <code>log_lock_waits = on</code>이면 <b>데드락 직전의 긴 대기</b>가 미리 로그에 남는다.</p>
+</div></details>
+
+<details class="q"><summary><code>SELECT ... FOR UPDATE</code>의 WHERE가 인덱스를 못 타면 어떻게 되나요? <span class="badge core">필수</span><span class="hint">힌트: "테이블 전체가 잠깁니다"는 MySQL 답이다. PG는 다르고, 그래도 위험은 셋이다</span></summary><div class="a">
+  <p>PG는 Seq Scan으로 전 행을 읽지만 <b>락은 WHERE를 통과해 반환된 행에만</b> 건다 — <b>조건에 안 맞는 행도, 행 사이의 갭도 잠그지 않는다.</b> (MySQL RR이 스캔한 <b>모든 레코드와 갭</b>에 넥스트 키 락을 걸어 <b>사실상 테이블 락</b>이 되는 것과 다른 점이다.)</p>
+  <p>그래도 <b>위험은 셋</b>이다. ① 스캔이 느린 만큼 <b>락 보유 시간이 길어지고</b> 커넥션을 쥔 채 오래 산다 → 2-4절 비용 사슬. ② 스캔 중 다른 트랜잭션이 <b>갱신 중인 후보 행</b>을 만나면 그 XID를 <b>대기</b>하고, READ COMMITTED에서는 <b>최신 버전으로 조건을 다시 평가</b>한다. ③ <b>오래 열린 트랜잭션이 VACUUM을 막는다.</b></p>
+  <p style="margin-bottom:0">그래서 <b>잠금 읽기는 배포 전 <code>EXPLAIN</code>으로 <code>Index Scan</code> + <code>LockRows</code>인지 확인하는 것이 규칙</b>이어야 한다.</p>
+</div></details>
+
+<details class="q"><summary>락 순서를 통일하면 데드락은 다 사라지나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "네"도 "아니오"도 아니다. 하나가 남는다</span></summary><div class="a">
+  <p>PG에서는 <b>대부분 그렇다 — 단 하나가 남는다.</b> 유형 ①②④는 모두 <b>"같은 자원 둘을 반대 순서로"라는 순서 문제의 변형</b>이라 키 순서 정렬로 사라진다.</p>
+  <p>그러나 <b>유형 ③</b>(부모 <code>FOR UPDATE</code>와 자식 INSERT의 FK <code>KEY SHARE</code>)은 <b>각 세션이 행을 하나씩만 잠갔는데도</b> 나므로 <b>순서가 아니라 락 모드</b> 문제다 — <code>FOR UPDATE</code>를 <code>FOR NO KEY UPDATE</code>(또는 원자적 UPDATE)로 바꿔야 사라진다.</p>
+  <p style="margin-bottom:0">그리고 5절의 <b>check-then-insert는 데드락이 아니라 중복</b>이라 <b>순서와 무관하게 설계로</b> 풀어야 한다. <b>"데드락 = 락 순서 문제" 모델에 <code>FOR UPDATE</code> vs <code>FOR NO KEY UPDATE</code>의 구분을 더할 수 있으면 PG를 써 본 사람으로 들린다.</b></p>
+</div></details>
+
+<details class="q"><summary>왜 PostgreSQL은 데드락을 즉시 감지하지 않고 1초를 기다리나요? 희생자는 어떻게 정해지나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 검사 비용과 대기의 통계적 성질. 그리고 희생자 규칙은 MySQL과 다르다</span></summary><div class="a">
+  <p><b>대기 그래프 탐색이 공짜가 아니고, 락 대기의 절대다수는 데드락이 아니라 곧 풀릴 평범한 대기</b>이기 때문이다. 모든 대기마다 사이클을 찾으면 <b>정상 경로에 검사 비용을 상시로 물리게</b> 된다. <code>deadlock_timeout</code>(<b>기본 1초</b>)은 <b>"이쯤 기다렸으면 의심해 볼 만하다"는 경험적 문턱</b>이고, 이 시간이 지나면 <b>기다리던 그 프로세스가</b> 그래프를 검사한다.</p>
+  <p><b>희생자는 "수정 행이 적은 쪽"이 아니라 대기를 먼저 시작해 타임아웃이 먼저 만료된 쪽</b>이다 — 검사한 프로세스가 자기가 사이클 안에 있으면 <b>자기 트랜잭션을</b> abort한다. (<b>MySQL은 즉시 감지하고 "수정 행이 적은 쪽"을 롤백</b>한다는 점이 대조 포인트다.)</p>
+  <p style="margin-bottom:0">여기서 실무적으로 중요한 귀결 — <b>PG의 데드락은 항상 최소 1초의 멈춤을 동반한다.</b> 초당 수십 건씩 데드락이 나는 경로라면 <b>실패율보다 지연이 먼저 문제</b>가 된다. 그리고 <code>deadlock_timeout</code>을 낮추면 감지는 빨라지지만 <b>정상 대기에도 검사 비용을 물린다.</b></p>
+</div></details>
+
+<details class="q"><summary>SERIALIZABLE로 올리면 데드락도 같이 사라지나요? <span class="badge trap">함정</span><span class="hint">힌트: SSI가 추가하는 것과 그대로 남는 것을 갈라 말한다</span></summary><div class="a">
+  <p><b>사라지지 않는다.</b> SSI가 추가하는 <code>SIReadLock</code>은 <b>"내가 여기를 읽었다"는 흔적일 뿐 아무도 블로킹하지 않는다.</b> 반면 <b>행 락은 격리 수준과 무관하게 그대로 남으므로</b> 유형 ①②③④는 <b>SERIALIZABLE에서도 똑같이</b> 난다.</p>
+  <p>더 근본적으로, <b>PG에서 격리 수준은 락 범위를 바꾸지 않는다.</b> MySQL의 <b>"RR이면 갭 락, RC면 레코드 락"이라는 스위치가 PG에는 없다.</b> 기본이 이미 READ COMMITTED이고, 올려도 <b>잠기는 것은 WHERE를 통과해 반환된 행뿐</b>이다.</p>
+  <p style="margin-bottom:0">정리하면 — <b>격리 수준은 팬텀 · write skew를 막는 정합성 도구</b>이지 <b>데드락 도구가 아니다.</b> 격리 수준을 올리는 것은 데드락을 없애는 게 아니라 <b>"블로킹 대신 abort"로 실패 방식을 바꾸는 것</b>이고, 데드락은 <b>키 순서 · 락 모드 · 설계</b>로만 사라진다.</p>
+</div></details>
+
+<details class="q"><summary>평범한 <code>UPDATE users SET balance = ... WHERE id = 1</code>은 어떤 락을 잡나요? <span class="badge trap">함정</span><span class="hint">힌트: 자동으로 잡히는 모드가 있고, JPA가 만드는 것은 그것보다 강하다</span></summary><div class="a">
+  <p><b><code>FOR NO KEY UPDATE</code>를 자동으로 잡는다.</b> PG는 <b>유니크 인덱스에 참여하는 컬럼(=키)</b>을 바꾸는지로 모드를 고르는데, <code>balance</code>는 키가 아니므로 <b>더 약한 모드</b>면 충분하기 때문이다.</p>
+  <p><b>그런데 같은 일을 하는 JPA 코드는 더 강한 락을 잡는다.</b> <code>@Lock(PESSIMISTIC_WRITE)</code>는 PG에서 <code>SELECT ... FOR UPDATE</code>를 만들고, 이것은 <b>가장 강한 모드</b>다. <b>"잔액만 바꾸려는 코드가 가장 강한 락을 잡는다"</b>는 어긋남이 유형 ③ 데드락의 씨앗이다 — <code>FOR UPDATE</code>는 <b>FK 검사의 <code>KEY SHARE</code>와 충돌</b>하므로, 그 사용자를 참조하는 <b>모든 자식 INSERT가 멈춘다.</b></p>
+  <p style="margin-bottom:0">그래서 원칙은 하나다 — <b><code>FOR UPDATE</code>는 "이 행을 지우거나 키를 바꿀 것"일 때만, 값만 바꿀 거면 <code>FOR NO KEY UPDATE</code>(또는 잠금 읽기 없는 원자적 UPDATE).</b> JPA 표준 락 모드로는 <code>FOR NO KEY UPDATE</code>를 만들 수 없어 <b>네이티브 쿼리로 내려가야</b> 한다.</p>
+</div></details>
+
+<details class="q"><summary>대량 UPSERT 배치에서 데드락이 났습니다. 쿼리는 하나인데요? <span class="badge trap">함정</span><span class="hint">힌트: "쿼리 하나"라는 인식이 함정이다. 실패 단위도 함께 말하라</span></summary><div class="a">
+  <p><b>한 문장 안에서도 행은 순서대로 처리된다.</b> <code>INSERT ... ON CONFLICT DO UPDATE</code>에 여러 행을 실으면 <b>행마다 삽입하거나(충돌 시) 기존 행을 잠가 갱신</b>하므로, <b>두 배치의 행 순서가 다르면 유형 ①·②가 한 문장 안에서 벌어진다.</b> A가 <code>k1, k2, k3</code> 순으로, B가 <code>k3, k2, k1</code> 순으로 보내면 <b>k2에서 교차</b>한다.</p>
+  <p><b>비용이 특히 큰 이유는 실패 단위다.</b> 희생자가 되면 <b>그 문장 전체, 즉 배치 전체가 롤백</b>된다. 1만 건 배치가 <b>한 건의 순서 충돌 때문에 통째로</b> 사라진다.</p>
+  <p style="margin-bottom:0">처방은 셋이다 — ① 보내기 전에 <b>키 순서로 정렬</b>(앱에서 정렬하거나 <code>INSERT INTO t SELECT ... FROM staging ORDER BY key ON CONFLICT ...</code>), ② <b>청크를 작게</b> 잘라 한 번에 쥐는 행 수와 재시도 비용을 줄이기, ③ 근본 처방으로 <b>키 범위 분할</b> — 같은 키 공간을 두 배치가 동시에 만지지 않게 한다.</p>
+</div></details>
+
+<details class="q"><summary>데드락 재시도를 붙였는데도 계속 실패합니다. 무엇을 확인하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 세 가지를 순서대로 — 경계 / 구조 / 성격</span></summary><div class="a">
+  <p><b>① 재시도가 트랜잭션 안에 있는지부터 본다.</b> 트랜잭션 안에서 catch하고 다시 시도하면 PG 쪽 트랜잭션은 <b>이미 aborted</b>라 이후 문장이 전부 <code>current transaction is aborted</code>로 거부되고, 스프링은 <b>rollback-only</b>가 붙어 <code>UnexpectedRollbackException</code>을 던진다 — <b>"재시도 코드가 있는데 아무것도 재시도되지 않는" 최악의 형태</b>다. 재시도는 <b>바깥 빈</b>에, 트랜잭션은 <b>안쪽 빈</b>에 두어 <b>매 시도마다 새 트랜잭션</b>이 열리게 해야 한다.</p>
+  <p><b>② 데드락이 구조적인지 본다.</b> 잠금 순서가 여전히 교차하거나 <code>FOR UPDATE</code> 모드가 그대로면 <b>재시도는 매번 같은 자리에서 다시 죽는다.</b> 상한 없는 재시도는 <b>커넥션과 CPU만 태운다.</b> 지터가 없으면 두 요청이 <b>같은 박자로 재충돌</b>한다.</p>
+  <p><b>③ 재시도의 성격을 구분한다.</b> <code>40001</code>(SSI)은 <b>정상 동작 중에도 나는 것</b>이라 재시도가 프로토콜의 일부지만, <code>40P01</code>(데드락) 재시도는 <b>진통제</b>다. <code>pg_stat_database.deadlocks</code>가 <b>우상향이면 재시도가 구조적 원인을 덮고 있다</b>는 신호이므로 설계로 돌아가야 한다.</p>
+  <p style="margin-bottom:0">덧붙여 <b>부수효과의 멱등성</b>도 확인한다 — 트랜잭션 안에서 <b>롤백되지 않는 일</b>(외부 API 호출, 메일 발송)이 있었다면 재시도가 그것을 <b>두 번</b> 실행한다.</p>
+</div></details>
+
+<details class="q"><summary>앵커 행 락과 advisory lock은 언제 갈라 쓰나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 판단 기준은 "잠글 만한 행이 실제로 존재하는가" 하나다</span></summary><div class="a">
+  <p><b>기준은 하나 — 이 작업을 대표할 만한 행이 항상 존재하는가.</b></p>
+  <p><b>존재하면 앵커 행 락</b>이다. 쿠폰 발급이라면 <code>users</code> 행이나 <code>coupons</code> 행이 그 닻이 된다. 장점은 <b>DB가 락을 관리하므로 규약을 어길 여지가 적고</b>, 대기·순환이 전부 <b>평범한 행 락으로 진단</b>된다는 것. 모드는 반드시 <b><code>FOR NO KEY UPDATE</code></b>여야 한다 — <code>FOR UPDATE</code>로 잠그면 <b>그 행을 참조하는 자식 INSERT까지 전부 멈춘다.</b> 대가는 <b>앵커가 핫스팟</b>이 된다는 것이다.</p>
+  <p><b>마땅한 앵커가 없으면 advisory lock</b>이다. <code>pg_advisory_xact_lock(hashtext('coupon_issue:15:7'))</code>처럼 <b>임의의 키에 거는 DB 제공 뮤텍스</b>다. 대가는 <b>앱 규약에 의존</b>한다는 것 — <b>한 경로라도 락을 안 잡으면 무의미</b>하다. 그리고 <b>PgBouncer transaction pooling에서는 세션 범위 <code>pg_advisory_lock</code>이 엉키므로 <code>_xact_</code> 변형만</b> 쓰고, <b>해시 충돌 시 무관한 요청끼리 직렬화</b>되지만 정합성은 깨지지 않는다.</p>
+  <p style="margin-bottom:0">둘 다 <b>잡는 순서가 다르면 평범한 데드락</b>이 난다는 점은 동일하다. 그리고 <b>둘 중 어느 것도 첫 선택지는 아니다</b> — 사전 판단이 필요 없다면 <code>UNIQUE</code> + <code>ON CONFLICT</code>가 <b>라운드트립 1회에 예외도 없이</b> 끝난다.</p>
+</div></details>
+
+<details class="q"><summary><code>deadlock_timeout</code> · <code>lock_timeout</code> · <code>statement_timeout</code>은 각각 무엇을 자르나요? <span class="badge core">필수</span><span class="hint">힌트: 하나는 "검사 시작 문턱", 하나는 "대기 상한", 하나는 "실행 상한"이다</span></summary><div class="a">
+  <p><b><code>deadlock_timeout</code>(기본 1초)</b> — <b>대기 상한이 아니다.</b> "이만큼 기다려도 못 얻었으면 <b>데드락 검사를 시작하라</b>"는 문턱이다. <b>데드락이 아니면 그 뒤로도 계속 기다린다.</b> <code>log_lock_waits = on</code>이면 이 문턱을 넘긴 대기가 로그에 남는다.</p>
+  <p><b><code>lock_timeout</code></b> — <b>락 대기 상한.</b> 이 시간을 넘기면 <code>55P03</code>으로 문장이 취소된다. <b>데드락은 1초면 풀리지만 데드락이 아닌 긴 락 대기는 스스로 안 풀리므로</b>, 풀 고갈로 번지기 전에 자르는 안전장치가 이것이다. <code>ALTER ROLE app SET lock_timeout = '3s'</code>나 트랜잭션 첫 문장의 <code>SET LOCAL lock_timeout</code>으로 건다.</p>
+  <p><b><code>statement_timeout</code></b> — <b>문장 실행 시간 상한.</b> 락 대기든 계산이든 <b>이유를 가리지 않고</b> 오래 걸리는 문장을 자른다.</p>
+  <p style="margin-bottom:0">흔한 오해 하나 — <b>스프링 <code>@Transactional(timeout = n)</code>은 JDBC 쿼리 타임아웃</b>이라 <code>lock_timeout</code>을 대신하지 못한다. 그리고 <b>대기 자체를 원하지 않는 경로</b>에는 타임아웃 대신 <code>NOWAIT</code>(즉시 실패)나 <code>FOR UPDATE SKIP LOCKED</code>(잠긴 행 건너뛰기 — 작업 큐의 기본형)를 쓴다.</p>
+</div></details>
+
+<details class="q"><summary>MySQL로 물어보면 답이 달라지는 부분은? <span class="badge senior">경험 대조</span><span class="hint">힌트: 다섯 지점을 세어 답한다</span></summary><div class="a">
+  <p><b>① "INSERT만 하는데 데드락"의 정체</b> — MySQL은 <b>없는 행 <code>FOR UPDATE</code>가 갭 락을 남기고</b> INSERT의 <b>인서트 인텐션 락</b>이 서로의 갭 락에 막히는 것이지만, PG는 <b>없는 행을 못 잠가 그 데드락이 없다.</b> 대신 <b>조용한 중복</b>이 된다.</p>
+  <p><b>② 유니크 중복 검사의 S 락 데드락</b> — MySQL은 미커밋 중복 키에 <b>공유 락</b>을 잡아 <b>홀더가 롤백하면 대기자끼리 데드락</b>이 나고 <b>RC에서도 남지만</b>, PG는 <b>락 없이 XID 종료를 기다릴 뿐</b>이라 <b>직렬화로 끝난다.</b></p>
+  <p><b>③ 격리 수준과 락 범위</b> — MySQL은 <b>RR이 기본</b>이고 갭 락이 켜지며 <b>RC로 낮추면 꺼지는 스위치</b>가 있지만, PG는 <b>RC가 기본</b>이고 <b>어떤 격리 수준에서도 잠기는 것은 반환된 행뿐</b>이다.</p>
+  <p><b>④ <code>FOR UPDATE</code> vs <code>FOR NO KEY UPDATE</code></b> — MySQL에는 <b>이 구분이 없어</b> FK 검사의 부모 S 락이 X 락과 <b>늘 충돌</b>하지만, PG는 비키 갱신을 <code>FOR NO KEY UPDATE</code>로 잡아 FK <code>KEY SHARE</code>와 <b>공존</b>시킨다. <b>PG 고유의 유형 ③과 그 처방이 여기서 나온다.</b></p>
+  <p style="margin-bottom:0"><b>⑤ 감지와 진단</b> — MySQL은 <b>즉시 감지</b>해 <b>수정 행이 적은 쪽</b>을 롤백하고 <code>SHOW ENGINE INNODB STATUS</code> · <code>performance_schema.data_locks</code>로 읽지만, PG는 <b><code>deadlock_timeout</code>(1초) 뒤 검사한 쪽</b>이 <code>40P01</code>로 abort되고 <b>서버 로그의 "ShareLock on transaction"</b> + <code>pg_blocking_pids()</code> · <code>pg_stat_database.deadlocks</code>로 읽는다.</p>
+</div></details>
+
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  갭 락은 MySQL이 <b>팬텀</b>(같은 조건으로 두 번 조회했는데 새 행이 끼어드는 것)을 막으려고 <b>행 사이의 빈 구간까지 잠그는 장치</b>이고 <b>넥스트 키 락은 거기에 레코드 락을 붙인 것</b>인데, <b>PostgreSQL에는 둘 다 없다</b> — 행 락이 <b>튜플 헤더 <code>xmax</code>에 적히는 표시</b>라 <b>존재하는 행만 잠글 수 있기 때문</b>이다. 갭 락이 하던 일은 다른 도구가 나눠 맡는다: <b>팬텀은 REPEATABLE READ의 스냅샷이 안 보여 주고</b>, "읽고 판단해서 쓰기"는 <b>SERIALIZABLE의 SSI가 커밋 시점에 사후 감지해 <code>40001</code>로 걸러내며</b>(그래서 <b>재시도 코드가 필수</b>다), "없으면 INSERT"는 <b><code>UNIQUE</code> + <code>INSERT ... ON CONFLICT</code> · 앵커 행 <code>FOR NO KEY UPDATE</code> · advisory lock</b>이 막는다. 그래서 MySQL의 "없는 행 <code>FOR UPDATE</code> + INSERT" 갭 락 데드락은 <b>PG에서 조용한 중복</b>이 되고, PG의 데드락은 <b>① 같은 행들을 다른 순서로 ② 유니크 키 삽입 대기 교차 ③ 부모 <code>FOR UPDATE</code>와 자식 INSERT의 FK <code>KEY SHARE</code> 충돌 ④ UPSERT 배치의 행 순서 불일치</b> 넷이며 <b><code>deadlock_timeout</code> 1초 뒤 한쪽이 <code>40P01</code>로 abort</b>된다. 진단은 서버 로그의 <b>"waits for ShareLock on transaction"</b>과 <code>CONTEXT</code>, <code>pg_blocking_pids()</code> · <code>log_lock_waits</code>이고, 처방은 <b>격리 수준이 아니라</b> 키 순서 정렬 · <code>FOR NO KEY UPDATE</code> · 배치 <code>ORDER BY</code> · 짧은 트랜잭션에 <b>트랜잭션 밖의 제한된 재시도와 래치 재현 테스트</b>를 안전망으로 얹는 것이다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/04-rdb-sql/12-gap-lock-next-key-lock-deadlock.md</code> · 이어서 볼 문서: MVCC와 PostgreSQL 구현(<code>11-mvcc-postgresql.md</code>) · 트랜잭션 격리 수준(<code>transaction-isolation-levels.md</code>) · <code>SELECT ... FOR UPDATE</code> 락 범위(<code>19-select-for-update-lock-scope.md</code>) · 긴 트랜잭션의 해악(<code>16-long-transaction-harm-and-shortening.md</code>) · 대량 UPSERT의 부작용(<code>32-bulk-upsert-side-effects.md</code>) · 복합 유니크 제약과 동시 INSERT(<code>../03-jpa-orm/14-unique-constraint-concurrent-insert.md</code>) · flush 순서와 SQL 정렬(<code>../03-jpa-orm/15-flush-timing-and-sql-ordering.md</code>) · 자바 데드락 분석과 예방(<code>../01-java-kotlin/24-deadlock-analysis-prevention.md</code>)</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,1828 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>실행 계획 읽기와 느린 쿼리 개선 프로세스 — 견적서를 읽고, 청구서로 검증하고, 사이클을 팀 자산으로 고정한다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">04 RDB · SQL &nbsp;|&nbsp; 중급⭐⭐ &nbsp;|&nbsp; PostgreSQL 기준</span>
+  <h1>실행 계획 읽기와 느린 쿼리 개선 프로세스<br><span class="sub">견적서(cost·rows)를 읽고, 청구서(actual·Buffers)로 검증하고, 사이클을 팀 자산으로 고정한다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"실행 계획(EXPLAIN)을 어떻게 읽나요? 느린 쿼리를 발견했을 때의 개선 프로세스를 설명해주세요."</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <code>EXPLAIN</code>은 플래너가 통계를 보고 쓴 <b>"견적서"(추정)</b>이고, <code>EXPLAIN (ANALYZE, BUFFERS)</code>는 실제로 실행해 받은 <b>"청구서"(실측)</b>다. PostgreSQL의 계획은 표가 아니라 <b>트리</b>이고, 실행은 <b>들여쓰기가 깊은 안쪽에서 시작해 바깥으로 올라오며</b>, 노드마다 견적(<code>cost= rows= width=</code>)과 청구서(<code>actual time= rows= loops=</code>)가 나란히 찍힌다. 읽는 순서는 <b>① 모양</b>(안쪽·아래부터 실행, 조인 노드의 첫 자식이 outer) → <b>② 노드 이름</b>(<code>Seq Scan</code>은 전부 읽은 것, <code>Index</code>·<code>Bitmap</code> 계열은 좁힌 것 — 단 <code>Index Cond</code> 없는 <code>Index Scan</code>은 전수 조사) → <b>③ 추정 <code>rows</code> vs 실제 <code>rows</code></b>(자릿수가 다르면 튜닝이 아니라 통계가 먼저 — <b>1순위 진단</b>) → <b>④ <code>Buffers</code></b>(느린 이유가 I/O인지 CPU인지를 가른다) → <b>⑤ 경고등</b>(<code>Rows Removed by Filter</code>·<code>external merge</code>·<code>Batches &gt; 1</code>·<code>Heap Fetches</code>·안쪽 <code>loops</code>)이다. 느린 쿼리 개선은 <b>"인덱스 추가해봄 → 빨라짐"이 아니라</b> <b>측정</b>(<code>pg_stat_statements</code>로 가장 비싼 쿼리를 숫자로) → <b>가설</b>(비용이 새는 지점을 힙 랜덤 I/O 사슬로) → <b>검증</b>(같은 파라미터의 실측 + 부작용까지 양면으로) → <b>고정</b>(<code>auto_explain</code>·쿼리 수 단정 테스트·<code>pg_stat_statements</code> 기준선을 설정과 코드로)의 사이클이며, <b>마지막 "고정"까지 가야 한 사이클이 끝난 것</b>이다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>두 도구는 견적서와 청구서다</b> — <code>EXPLAIN</code>은 <b>통계로 추정</b>한 계획이라 실행하지 않고, <code>EXPLAIN (ANALYZE, BUFFERS)</code>는 <b>실제로 실행</b>해 <code>actual</code>과 <code>Buffers</code>를 붙여 준다. 첫 진단은 견적서로, <b>추정과 현실의 괴리 확인과 개선 전후 비교는 청구서로</b> 한다.</div></li>
+    <li><span class="n">2</span><div><b>트리는 다섯 단계 순서로 읽는다 — 모 · 이 · 행 · 버 · 경</b> — <b>모</b>양(안쪽부터 실행, 첫 자식이 outer) → 노드 <b>이</b>름(전부 읽었나 좁혔나) → <b>행</b> 수(추정 vs 실측, <b>자릿수가 다르면 튜닝이 아니라 통계 교정이 먼저</b>) → <b>버</b>퍼(I/O 병목인지 CPU 병목인지) → <b>경</b>고등(<code>Rows Removed by Filter</code>·스필·<code>loops</code>).</div></li>
+    <li><span class="n">3</span><div><b>개선은 사건이 아니라 사이클이다 — 측 · 가 · 검 · 고</b> — <b>측</b>정(무엇이 얼마나 비싼가를 숫자로) → <b>가</b>설(비용이 새는 지점을 메커니즘 사슬로, 예상 효과를 숫자로) → <b>검</b>증(같은 파라미터의 실측 + <b>대가까지 한 호흡에</b>) → <b>고</b>정(설정·테스트·파이프라인). <b>고정까지 가야 다음 느린 쿼리가 사용자 항의가 아니라 알람으로 도착한다.</b></div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">견적서와 청구서 — 두 도구의 분업</a></li>
+    <li><a href="#s2">계획은 표가 아니라 트리다 — 실행 순서와 노드 한 줄 해부</a></li>
+    <li><a href="#s3">읽는 순서 5단계 — 모 · 이 · 행 · 버 · 경</a></li>
+    <li><a href="#s4"><code>Buffers</code>가 기준선인 이유 — I/O인가 CPU인가</a></li>
+    <li><a href="#s5">③이 1순위인 이유 — 오추정 하나가 계획을 통째로 틀리게 한다</a></li>
+    <li><a href="#s6">사이클 개관 + ① 측정 — "느리다"를 숫자와 재현 조건으로</a></li>
+    <li><a href="#s7">② 가설 — 비용이 "어디서 새는지"를 사슬로</a></li>
+    <li><a href="#s8">③ 검증 — 이득과 대가를 한 호흡에</a></li>
+    <li><a href="#s9">④ 고정 — 설정 · 테스트 · 파이프라인 3층</a></li>
+    <li><a href="#s10">한 사이클을 처음부터 끝까지 — 주문 목록 API</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "실행 계획(EXPLAIN)을 어떻게 읽나요? 느린 쿼리를 발견했을 때의 개선 프로세스를 설명해주세요."</p>
+  <p><b>관련 질문</b>: "잘 돌던 쿼리의 실행 계획이 어느 날 갑자기 바뀌어 느려졌습니다. 가능한 원인과 대응은?" / "<code>ORDER BY</code>가 인덱스를 타는 조건은? 계획에 <code>Sort</code> 노드가 남는 건 언제이고, <code>Sort Method: external merge</code>는 왜 문제인가요?"</p>
+  <p><b>출제 의도</b>: 느린 쿼리 개선을 <b>"인덱스 추가해봄 → 빨라짐"이 아니라 측정 → 가설 → 검증의 사이클</b>로 수행하는지. 프로세스를 묻는 이유는 <b>이 능력이 쿼리를 넘어 모든 성능 문제에 이식되기 때문</b>이다.</p>
+  <div class="callout warn"><span class="t">이 문항은 두 겹이다</span>
+    겉은 <b>"PostgreSQL 계획 트리의 노드와 숫자를 읽을 줄 아는가"</b>(인출 테스트)이고, 속은 <b>"성능 문제를 재현 가능한 절차로 다루는가"</b>(태도 테스트)다. <b>인덱스 하나 추가해서 빨라진 경험은 누구나 있다.</b> 면접관이 가르고 싶은 것은 그 경험을 <b>왜 빨라졌는지 <code>Buffers</code> 숫자로 설명하고, 다음에 같은 문제가 재발하지 않도록 무엇을 남겼는가</b>까지 말하는 사람이다.
+  </div>
+  <div class="callout trap" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>계획을 "본다"고 하지만 눈이 어디로 갈지 모르는 것</b> → 2·3절에서 <b>실행 순서(안쪽 → 바깥)</b>와 <b>다섯 단계 읽기 순서</b>를 카드로 고정한다.<br>
+    ② <b><code>Index Scan</code>이 찍혔으니 됐다고 안심하는 것</b> → 3·4절에서 <b>판별은 노드 이름이 아니라 <code>Rows Removed by Filter</code>와 <code>Buffers</code></b>임을 못 박고, 5절에서 <b>오추정 하나가 조인 방식을 통째로 틀리게 만드는 계획 두 벌</b>을 실측으로 본다.<br>
+    ③ <b>개선을 "고쳤다"에서 끝내는 것</b> → 6~10절에서 <b>측정·가설·검증·고정</b>을 하나의 사이클로 밟고, 특히 <b>고정(설정·테스트·파이프라인 3층)</b>에 가장 큰 지면을 쓴다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 견적서와 청구서 — 두 도구의 분업</h2>
+
+<h3>1-1. 플래너는 데이터를 세지 않는다 — 통계로 추정한다</h3>
+
+<p><b>플래너(planner)</b>는 PostgreSQL에서 "이 SQL을 어떤 순서로, 어떤 방법으로 실행할지"를 정하는 부품이다. 이름 그대로 <b>계획을 세우는 자리</b>이고, 실행은 그다음 단계인 <b>익스큐터(executor)</b>가 한다.</p>
+
+<p>플래너가 계획을 세울 때 <b>실제 데이터를 세어보지는 않는다.</b> 100만 행짜리 테이블에서 "<code>status = 'ACTIVE'</code>인 행이 몇 개냐"를 매번 세면 <b>그 자체가 쿼리 한 번 값</b>이기 때문이다. 대신 미리 모아 둔 <b>통계</b>를 본다. 그 통계를 모으는 명령이 <code>ANALYZE</code>이고, 테이블에서 <b>표본</b>을 뽑아 분포를 요약해 시스템 카탈로그 <code>pg_statistic</code>에 저장한다(사람이 읽는 뷰가 <code>pg_stats</code>). autovacuum이 백그라운드에서 주기적으로 이 일을 대신 돌려 준다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 418" role="img" aria-label="왼쪽은 EXPLAIN이 통계에서 뽑아낸 견적서로 cost rows width가 적혀 있고, 오른쪽은 EXPLAIN ANALYZE BUFFERS가 실제 실행에서 받은 청구서로 actual time rows loops와 Buffers가 적혀 있으며, 아래 띠에서 두 rows 값을 비교해 자릿수가 다르면 통계 문제라고 판정하는 도식">
+    <defs>
+      <marker id="ma1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="ma2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="ma3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 노드, 두 개의 숫자 — 견적서는 통계에서 나오고 청구서는 실행에서 나온다</text>
+
+    <!-- left: estimate -->
+    <rect x="26" y="44" width="490" height="252" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <rect x="26" y="44" width="490" height="34" rx="12" fill="#2563eb"/>
+    <text x="46" y="67" font-size="13" fill="#fff" font-weight="700" class="mono">EXPLAIN</text>
+    <text x="150" y="67" font-size="13" fill="#dbeafe" font-weight="700">견적서 — 추정 (실행하지 않는다)</text>
+
+    <rect x="46" y="92" width="200" height="46" rx="9" fill="#fff" stroke="#93c5fd"/>
+    <text x="146" y="112" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">pg_statistic 통계</text>
+    <text x="146" y="129" font-size="10.5" fill="#3b82f6" text-anchor="middle">표본으로 만든 분포 요약</text>
+    <line x1="252" y1="115" x2="286" y2="115" stroke="#2563eb" stroke-width="1.8" marker-end="url(#ma1)"/>
+    <text x="300" y="112" font-size="11.5" fill="#1d4ed8" font-weight="700">플래너가</text>
+    <text x="300" y="128" font-size="11.5" fill="#1d4ed8" font-weight="700">후보 계획의 비용을 비교</text>
+
+    <rect x="46" y="152" width="450" height="98" rx="9" fill="#0f172a" stroke="#334155"/>
+    <text x="62" y="174" font-size="11.5" fill="#94a3b8" class="mono">Index Scan using idx_orders_user on orders o</text>
+    <text x="78" y="196" font-size="12" fill="#93c5fd" class="mono" font-weight="700">(cost=0.56..61893.40 rows=4800 width=32)</text>
+    <text x="78" y="216" font-size="10.5" fill="#64748b" class="mono">  시작비용..전체비용     내보낼 행    행당 바이트</text>
+    <text x="62" y="240" font-size="11" fill="#fbbf24">전부 "이럴 것이다" — 통계가 낡으면 통째로 틀린다</text>
+
+    <rect x="46" y="260" width="450" height="26" rx="8" fill="#dbeafe" stroke="#93c5fd"/>
+    <text x="271" y="278" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">운영 DB에서도 안전 · 첫 진단은 여기서</text>
+
+    <!-- right: actual -->
+    <rect x="604" y="44" width="490" height="252" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <rect x="604" y="44" width="490" height="34" rx="12" fill="#16a34a"/>
+    <text x="624" y="67" font-size="12" fill="#fff" font-weight="700" class="mono">EXPLAIN (ANALYZE, BUFFERS)</text>
+    <text x="856" y="67" font-size="13" fill="#dcfce7" font-weight="700">청구서 — 실측 (진짜 실행한다)</text>
+
+    <rect x="624" y="92" width="200" height="46" rx="9" fill="#fff" stroke="#86efac"/>
+    <text x="724" y="112" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">쿼리를 실제로 실행</text>
+    <text x="724" y="129" font-size="10.5" fill="#22c55e" text-anchor="middle">노드마다 계측기를 붙여 둔 채</text>
+    <line x1="830" y1="115" x2="864" y2="115" stroke="#16a34a" stroke-width="1.8" marker-end="url(#ma2)"/>
+    <text x="878" y="112" font-size="11.5" fill="#15803d" font-weight="700">노드마다 실제로</text>
+    <text x="878" y="128" font-size="11.5" fill="#15803d" font-weight="700">몇 행·몇 ms·몇 페이지</text>
+
+    <rect x="624" y="152" width="450" height="98" rx="9" fill="#0f172a" stroke="#334155"/>
+    <text x="640" y="174" font-size="12" fill="#86efac" class="mono" font-weight="700">(actual time=0.071..283.917 rows=4720 loops=1)</text>
+    <text x="640" y="192" font-size="10.5" fill="#64748b" class="mono">  첫행..마지막행 ms    실제 행   반복 횟수</text>
+    <text x="640" y="214" font-size="11.5" fill="#fca5a5" class="mono">Rows Removed by Filter: 42495</text>
+    <text x="640" y="234" font-size="11.5" fill="#fcd34d" class="mono">Buffers: shared hit=5412 read=41856</text>
+
+    <rect x="624" y="260" width="450" height="26" rx="8" fill="#dcfce7" stroke="#86efac"/>
+    <text x="849" y="278" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">변경문에 붙이면 데이터가 진짜 바뀐다 (1-3)</text>
+
+    <!-- middle vs -->
+    <circle cx="560" cy="170" r="26" fill="#fff" stroke="#94a3b8" stroke-width="2"/>
+    <text x="560" y="176" font-size="14" fill="#475569" text-anchor="middle" font-weight="700">VS</text>
+    <line x1="516" y1="170" x2="530" y2="170" stroke="#94a3b8" stroke-width="1.6"/>
+    <line x1="590" y1="170" x2="604" y2="170" stroke="#94a3b8" stroke-width="1.6"/>
+
+    <!-- bottom band -->
+    <line x1="271" y1="296" x2="271" y2="320" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ma3)"/>
+    <line x1="849" y1="296" x2="849" y2="320" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ma3)"/>
+    <rect x="26" y="326" width="1068" height="78" rx="12" fill="#fffbeb" stroke="#fde68a" stroke-width="2"/>
+    <text x="48" y="352" font-size="13.5" fill="#b45309" font-weight="700">이 두 숫자를 나란히 놓는 것이 진단의 출발점이다</text>
+    <text x="48" y="376" font-size="12.5" fill="#92400e">추정 <tspan class="mono" font-weight="700">rows=4800</tspan>  vs  실측 <tspan class="mono" font-weight="700">actual rows=4720</tspan>  →  거의 일치 = 통계는 멀쩡하다. 계획 자체를 손볼 차례.</text>
+    <text x="48" y="396" font-size="12.5" fill="#b91c1c">추정 <tspan class="mono" font-weight="700">rows=1000</tspan>  vs  실측 <tspan class="mono" font-weight="700">actual rows=500000</tspan>  →  <tspan font-weight="700">자릿수가 다르면 튜닝이 아니라 통계 교정이 먼저다 (5절)</tspan></text>
+    <text x="1072" y="352" font-size="11.5" fill="#b45309" text-anchor="end" font-weight="700">공사 견적서에 "벽지 30롤"이라 적혀 있었는데</text>
+    <text x="1072" y="372" font-size="11.5" fill="#b45309" text-anchor="end" font-weight="700">청구서에 45롤이 찍혔다면 —</text>
+    <text x="1072" y="392" font-size="11.5" fill="#b91c1c" text-anchor="end" font-weight="700">잘못된 것은 공사가 아니라 견적의 근거(통계)다</text>
+  </svg>
+  <figcaption><b>공사 견적서 비유</b> — 견적서에는 "벽지 30롤, 인건비 2일"처럼 <b>예상</b> 수량이 적혀 있고, 실제로 공사를 해보면 벽지가 45롤 들 수도 있다. <code>EXPLAIN</code>의 <code>rows=</code>가 이 "30롤"이고 <code>actual rows=</code>가 "45롤"이다. 그래서 <code>EXPLAIN</code>을 읽을 때 붙잡아야 할 첫 전제는 <b>"여기 적힌 숫자는 전부 추정이고, 추정은 통계가 낡으면 틀린다"</b>이다. 이 전제를 놓치면 <b>"EXPLAIN은 멀쩡한데 왜 느리지"</b>에서 멈춘다.</figcaption>
+</figure>
+
+<h3>1-2. 통계에 무엇이 들어 있나 — 추정의 재료</h3>
+
+<div class="scroll">
+<table>
+  <caption>플래너가 "몇 행이 나올까"를 계산할 때 쓰는 재료들. 이 재료가 낡으면 5절의 사고가 난다.</caption>
+  <thead><tr><th>통계 항목</th><th>어디에</th><th>무엇을 알려주나</th></tr></thead>
+  <tbody>
+    <tr><td><code>reltuples</code> / <code>relpages</code></td><td><code>pg_class</code></td><td>테이블의 대략적인 <b>행 수</b> / <b>페이지(8KB 블록) 수</b></td></tr>
+    <tr><td><code>n_distinct</code></td><td><code>pg_stats</code></td><td>컬럼의 고유값 개수 — "이 컬럼으로 좁히면 몇 분의 1로 줄어드나"</td></tr>
+    <tr class="hl"><td><code>most_common_vals</code> / <code>most_common_freqs</code> (MCV)</td><td><code>pg_stats</code></td><td>최빈값 목록과 그 비율 — <b>"<code>status</code>의 90%가 <code>ACTIVE</code>"</b> 같은 편중을 잡는다</td></tr>
+    <tr><td><code>histogram_bounds</code></td><td><code>pg_stats</code></td><td>값의 분포를 구간으로 나눈 경계 — 범위 조건(<code>created_at &gt; …</code>)의 선택도 추정</td></tr>
+    <tr><td><code>correlation</code></td><td><code>pg_stats</code></td><td>컬럼 값 순서와 <b>물리적 저장 순서의 상관</b> — 1에 가까우면 인덱스 순서로 읽어도 힙이 순차에 가깝다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>1-3. 옵션 고정 — 이 문서가 계속 쓰는 조합은 하나다</h3>
+
+<div class="scroll">
+<table class="wide">
+  <caption>실무에서 사실상 기본 조합은 <code>EXPLAIN (ANALYZE, BUFFERS)</code> 하나다. 나머지는 상황별 추가 옵션.</caption>
+  <thead><tr><th>옵션</th><th>하는 일</th><th>언제 켜나</th></tr></thead>
+  <tbody>
+    <tr><td>(없음)</td><td>계획과 추정만. <b>실행하지 않는다</b></td><td>첫 진단, 운영에서 언제든</td></tr>
+    <tr class="hl"><td><code>ANALYZE</code></td><td><b>실제 실행</b> 후 노드마다 <code>actual time/rows/loops</code></td><td>추정 vs 실측 비교</td></tr>
+    <tr class="hl"><td><code>BUFFERS</code></td><td>노드마다 읽은 페이지 수(<code>shared hit/read</code>, <code>temp</code>)</td><td>ANALYZE와 항상 같이 (최신 버전에서는 ANALYZE 시 기본으로 켜지도록 바뀌었지만 습관적으로 명시한다)</td></tr>
+    <tr><td><code>VERBOSE</code></td><td>노드별 출력 컬럼(<code>Output:</code>), 스키마 한정 이름</td><td>컬럼 하나 때문에 <code>Index Only Scan</code>이 안 되는지 볼 때</td></tr>
+    <tr><td><code>SETTINGS</code></td><td>기본값과 다른 플래너 설정을 함께 출력</td><td>"내 세션만 <code>work_mem</code>이 달랐나" 확인</td></tr>
+    <tr><td><code>WAL</code></td><td>생성한 WAL 양</td><td>DML 비용 볼 때</td></tr>
+    <tr><td><code>FORMAT JSON</code></td><td>트리를 JSON으로</td><td>테스트 단정(9절), 시각화 도구</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo red">
+  <h4><code>ANALYZE</code>라는 이름은 두 가지로 쓰인다 — 이름만 같고 하는 일이 다르다</h4>
+  <div class="split" style="margin:10px 0">
+    <div class="pane b"><h4>단독 명령 <code>ANALYZE orders;</code></h4><p style="margin:0;font-size:.94rem"><b>통계를 수집</b>하는 명령. 표본을 다시 뽑아 <code>pg_statistic</code>을 갱신한다. <b>계획을 보여주지 않는다.</b></p></div>
+    <div class="pane g"><h4>옵션 <code>EXPLAIN (ANALYZE) SELECT …</code></h4><p style="margin:0;font-size:.94rem"><b>쿼리를 실제로 실행해 실측을 붙이라</b>는 옵션. <b>통계를 갱신하지 않는다.</b></p></div>
+  </div>
+  <p style="margin-bottom:0">5절의 처방이 <b>"<code>ANALYZE orders;</code>를 돌린다"</b>인데 <b>"<code>EXPLAIN ANALYZE</code>를 한 번 더 떠본다"</b>로 잘못 알아듣는 사고가 여기서 나온다. 실행 몇 번 더 해봐야 통계는 그대로다.</p>
+</div>
+
+<h3>1-4. <code>ANALYZE</code>는 진짜로 실행한다 — 변경문에 붙이면 데이터가 바뀐다</h3>
+
+<p>"실제로 실행한다"는 말은 비유가 아니다. <b>데이터를 바꾸는 문에 붙이면 데이터가 진짜로 바뀐다.</b></p>
+
+<div class="codehead bad"><span class="tag">bad</span> 되돌릴 방법이 없는 한 줄</div>
+<pre><code><span class="cm">-- EXPLAIN: 실행하지 않는다. 운영 DB에서도 안전하다.</span>
+<span class="kw">EXPLAIN</span> <span class="kw">UPDATE</span> orders <span class="kw">SET</span> status = <span class="st">'CANCELED'</span> <span class="kw">WHERE</span> user_id = 100;
+<span class="cm">-- 계획만 출력된다. orders의 데이터는 하나도 바뀌지 않았다.</span>
+
+<span class="cm">-- EXPLAIN (ANALYZE): 실측을 붙이려고 "실제로 실행"한다 = UPDATE가 진짜 일어난다.</span>
+<span class="ln-bad"><span class="kw">EXPLAIN</span> (<span class="kw">ANALYZE</span>) <span class="kw">UPDATE</span> orders <span class="kw">SET</span> status = <span class="st">'CANCELED'</span> <span class="kw">WHERE</span> user_id = 100;</span>
+<span class="cm">-- 계획도 나오고, 주문 4,720건의 status도 진짜로 바뀐다. 되돌릴 방법이 없다.</span></code></pre>
+
+<div class="codehead good"><span class="tag">good</span> 변경문은 반드시 트랜잭션으로 감싸고 롤백한다</div>
+<pre><code><span class="ln-good"><span class="kw">BEGIN</span>;</span>
+<span class="kw">EXPLAIN</span> (<span class="kw">ANALYZE</span>, BUFFERS) <span class="kw">UPDATE</span> orders <span class="kw">SET</span> status = <span class="st">'CANCELED'</span> <span class="kw">WHERE</span> user_id = 100;
+<span class="ln-good"><span class="kw">ROLLBACK</span>;   <span class="cm">-- 계획과 실측은 이미 손에 들어왔고, 데이터 변경만 취소된다</span></span></code></pre>
+
+<div class="memo red">
+  <h4><code>BEGIN … ROLLBACK</code>이 <b>되돌리지 않는</b> 네 가지 — 락 · 시 · 트 · 왈</h4>
+  <div class="grid g4">
+    <div class="tile red"><div class="k" style="font-family:inherit">락</div><div class="d"><b>행 락은 ROLLBACK 시점까지 유지된다.</b> UPDATE가 건드린 4,720행은 그동안 다른 트랜잭션의 갱신을 막는다 — <b>운영 프라이머리에서 대량 UPDATE를 이렇게 재보면 그 자체가 장애</b>가 될 수 있다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">시퀀스</div><div class="d"><b><code>nextval()</code>은 롤백해도 되돌아가지 않는다</b>(동시성을 위해 의도된 동작). INSERT를 재보면 ID에 <b>구멍</b>이 생긴다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">트리거</div><div class="d"><b>트리거가 실제로 발화한다.</b> DB 안에서만 일한다면 함께 롤백되지만, <b>외부로 나가는 부수효과</b>(다른 시스템 호출 등)는 되돌아오지 않는다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">WAL</div><div class="d"><b>WAL이 실제로 쌓인다.</b> 롤백해도 이미 기록된 WAL은 남으므로 <b>복제 지연과 디스크</b>를 건드린다.</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">그래서 원칙은 <b>읽기 레플리카나 운영 규모 스테이징</b>에서 돌리는 것<br><span style="font-size:.92rem;font-weight:600">운영 프라이머리에서 꼭 해야 한다면 — <b>SELECT만, 트래픽 낮은 시간에, <code>statement_timeout</code>을 걸고</b></span></div>
+</div>
+
+<h3>1-5. 두 도구를 한 표로 고정</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th></th><th><code>EXPLAIN</code></th><th><code>EXPLAIN (ANALYZE, BUFFERS)</code></th></tr></thead>
+  <tbody>
+    <tr><th>실행 여부</th><td class="good"><b>안 함</b></td><td class="bad"><b>실제 실행</b></td></tr>
+    <tr><th>숫자의 성격</th><td>통계 기반 <b>추정</b> (<code>cost</code>, <code>rows</code>, <code>width</code>)</td><td><b>실측</b> (<code>actual time/rows/loops</code>, <code>Buffers</code>, <code>Rows Removed</code>, <code>Sort Method</code>, <code>Heap Fetches</code>)</td></tr>
+    <tr><th>운영 DB에서</th><td class="good">안전 (계획만 봄)</td><td class="bad">주의 — 무거운 SELECT는 그대로 부하가 되고, <b>데이터를 바꾸는 문은 실제로 바뀐다</b></td></tr>
+    <tr><th>쓰는 순간</th><td>배포 전 검토, 첫 진단</td><td>추정과 현실의 괴리 확인, <b>개선 전후 비교</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="rule">첫 진단은 <code>EXPLAIN</code>, 괴리 확인과 전후 비교는 <code>EXPLAIN (ANALYZE, BUFFERS)</code><br><span style="font-size:.92rem;font-weight:600">이 <b>분업</b>이 답의 뼈대다</span></div>
+
+<div class="callout info"><span class="t">그리고 PostgreSQL에는 "지금 돌고 있는 쿼리의 계획"을 보는 내장 명령이 없다 <span class="badge senior">시니어 변별</span></span>
+  장애 중에는 <code>pg_stat_activity</code>의 <code>query</code>를 같은 파라미터로 다시 <code>EXPLAIN</code>하거나 <b><code>auto_explain</code> 로그</b>(9절)를 본다. 그것이 <code>auto_explain</code>을 <b>미리</b> 켜 두어야 하는 이유다 — <b>사고가 난 뒤에 켜면 그 사고의 계획은 영영 알 수 없다.</b> (MySQL의 <code>EXPLAIN FOR CONNECTION</code>에 해당하는 대응물이 없다.)
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 계획은 표가 아니라 트리다 — 실행 순서와 노드 한 줄 해부</h2>
+
+<p>처음 <code>EXPLAIN</code> 출력을 보면 화살표와 들여쓰기가 뒤엉킨 덩어리로 보인다. 여기에는 규칙이 <b>셋뿐</b>이다.</p>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">① 한 줄이 노드 하나다</div><div class="d">노드는 <b>"스캔 하나, 조인 하나, 정렬 하나"</b> 같은 작업 단위이고, 노드마다 자기 이름(<code>Seq Scan</code>, <code>Sort</code>, <code>Nested Loop</code>…)이 있다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">② 들여쓰기가 깊을수록 자식이다</div><div class="d"><code>-&gt;</code>로 시작하며 한 단계 더 들어간 줄들이 <b>바로 위 노드의 자식</b>이다. 자식이 만든 행을 부모가 받아 처리한다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">③ 실행은 가장 안쪽에서 시작해 바깥으로</div><div class="d"><b>맨 위 줄이 마지막에 끝나는 노드</b>다. 그리고 조인 노드의 <b>첫 번째 자식이 outer(드라이빙, 바깥 루프)</b>, 두 번째가 inner다.</div></div>
+</div>
+
+<p><b>세 번째가 핵심이다.</b> 출력은 위에서 아래로 인쇄되지만 <b>실행 순서는 아래에서 위로</b> 간다. 그래서 "무엇이 먼저 일어났나"를 알려면 <b>눈을 맨 아래·맨 안쪽에 두고 올라와야 한다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 424" role="img" aria-label="왼쪽은 EXPLAIN 출력 텍스트로 위에서 아래로 인쇄되고 각 줄에 실행 순서 번호가 5 4 3 1 2 순으로 붙어 있으며, 오른쪽은 같은 계획을 트리로 그린 것으로 가장 안쪽 orders 인덱스 스캔이 1번, products 인덱스 스캔이 2번, Nested Loop이 3번, Sort가 4번, Limit이 5번 순서로 아래에서 위로 실행된다는 것을 보여주는 도식">
+    <defs>
+      <marker id="mt1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="mt2" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">인쇄 순서와 실행 순서는 반대다 — 눈을 맨 아래·맨 안쪽에 두고 올라온다</text>
+
+    <!-- left: printed text -->
+    <text x="42" y="60" font-size="12.5" fill="#475569" font-weight="700">출력 — 위에서 아래로 인쇄된다</text>
+    <rect x="26" y="68" width="556" height="212" rx="10" fill="#0f172a" stroke="#334155"/>
+    <g class="mono" font-size="11" fill="#e2e8f0">
+      <text x="44" y="92">Limit  (cost=64273.36..64273.41 rows=20 width=52)</text>
+      <text x="44" y="113">  -&gt;  Sort  (cost=64273.36..64285.36 rows=4800 width=52)</text>
+      <text x="44" y="134" fill="#94a3b8">        Sort Key: o.created_at DESC</text>
+      <text x="44" y="155">        -&gt;  Nested Loop  (cost=0.99..64145.62 rows=4800)</text>
+      <text x="44" y="176" fill="#86efac">              -&gt;  Index Scan using idx_orders_user on orders o</text>
+      <text x="44" y="197" fill="#94a3b8">                    Index Cond: (user_id = 100)</text>
+      <text x="44" y="218" fill="#fca5a5">                    Filter: (status = 'ACTIVE')</text>
+      <text x="44" y="243" fill="#86efac">              -&gt;  Index Scan using products_pkey on products p</text>
+      <text x="44" y="264" fill="#94a3b8">                    Index Cond: (id = o.product_id)</text>
+    </g>
+    <g>
+      <circle cx="556" cy="88" r="11" fill="#94a3b8"/><text x="556" y="92" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">5</text>
+      <circle cx="556" cy="109" r="11" fill="#94a3b8"/><text x="556" y="113" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">4</text>
+      <circle cx="556" cy="151" r="11" fill="#94a3b8"/><text x="556" y="155" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+      <circle cx="556" cy="172" r="11" fill="#16a34a"/><text x="556" y="176" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+      <circle cx="556" cy="239" r="11" fill="#16a34a"/><text x="556" y="243" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+    </g>
+    <text x="42" y="298" font-size="11.5" fill="#b91c1c" font-weight="700">번호가 5 → 4 → 3 → 1 → 2로 뒤엉켜 있다 = 인쇄 순서로 읽으면 이야기가 안 된다</text>
+
+    <!-- right: tree -->
+    <text x="616" y="60" font-size="12.5" fill="#15803d" font-weight="700">같은 계획을 트리로 — 실행은 아래에서 위로</text>
+
+    <rect x="772" y="70" width="150" height="32" rx="8" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="847" y="91" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700" class="mono">Limit</text>
+    <circle cx="940" cy="86" r="11" fill="#94a3b8"/><text x="940" y="90" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">5</text>
+    <text x="962" y="90" font-size="11" fill="#475569">앞 20건만 남기고 멈춘다</text>
+
+    <rect x="772" y="122" width="150" height="32" rx="8" fill="#fffbeb" stroke="#d97706"/>
+    <text x="847" y="143" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700" class="mono">Sort</text>
+    <circle cx="940" cy="138" r="11" fill="#94a3b8"/><text x="940" y="142" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">4</text>
+    <text x="962" y="142" font-size="11" fill="#475569">4,800행을 역순 정렬</text>
+
+    <rect x="772" y="174" width="150" height="32" rx="8" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="847" y="195" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700" class="mono">Nested Loop</text>
+    <circle cx="940" cy="190" r="11" fill="#94a3b8"/><text x="940" y="194" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+    <text x="962" y="194" font-size="11" fill="#475569">두 자식을 조인</text>
+
+    <rect x="612" y="248" width="196" height="54" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="710" y="268" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700" class="mono">Index Scan on orders</text>
+    <text x="710" y="288" font-size="11" fill="#15803d" text-anchor="middle" font-weight="700">outer = 조인의 첫 자식</text>
+    <circle cx="626" cy="240" r="11" fill="#16a34a"/><text x="626" y="244" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+
+    <rect x="878" y="248" width="196" height="54" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="976" y="268" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700" class="mono">Index Scan on products</text>
+    <text x="976" y="288" font-size="11" fill="#15803d" text-anchor="middle" font-weight="700">inner = outer 행마다 1회씩</text>
+    <circle cx="892" cy="240" r="11" fill="#16a34a"/><text x="892" y="244" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+
+    <path d="M710 248 L710 226 L800 226 L800 210" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#mt1)"/>
+    <path d="M976 248 L976 226 L894 226 L894 210" fill="none" stroke="#16a34a" stroke-width="1.8" marker-end="url(#mt1)"/>
+    <line x1="847" y1="174" x2="847" y2="158" stroke="#16a34a" stroke-width="1.8" marker-end="url(#mt1)"/>
+    <line x1="847" y1="122" x2="847" y2="106" stroke="#16a34a" stroke-width="1.8" marker-end="url(#mt1)"/>
+
+    <line x1="598" y1="300" x2="598" y2="76" stroke="#94a3b8" stroke-width="2" marker-end="url(#mt2)" stroke-dasharray="6 4"/>
+    <text x="592" y="200" font-size="11.5" fill="#64748b" text-anchor="middle" font-weight="700" transform="rotate(-90 592 200)">실행 순서</text>
+
+    <!-- bottom band -->
+    <rect x="26" y="320" width="1068" height="88" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="48" y="346" font-size="13.5" fill="#1d4ed8" font-weight="700">읽으면 이런 이야기가 된다</text>
+    <text x="48" y="372" font-size="12.5" fill="#1e40af">[1] <tspan class="mono">orders</tspan>에서 <tspan class="mono">user_id = 100</tspan>인 행을 인덱스로 찾아 꺼내고 → [2] 꺼낸 행마다 <tspan class="mono">products</tspan>를 PK로 한 건씩 찾아 붙이고 → [3] 둘을 조인해 4,720행을 올리고</text>
+    <text x="48" y="394" font-size="12.5" fill="#1e40af">→ [4] <tspan class="mono">created_at</tspan> 역순으로 정렬한 뒤 → [5] 앞 20건만 반환한다. <tspan font-weight="700" fill="#b91c1c">이 문장을 만들 수 있으면 계획을 "읽은" 것이고, 못 만들면 아직 "본" 것이다.</tspan></text>
+  </svg>
+  <figcaption>같은 계획을 <b>왼쪽은 인쇄된 대로, 오른쪽은 실행되는 대로</b> 놓은 것이다. 인쇄 순서 번호가 <b>5 → 4 → 3 → 1 → 2</b>로 뒤엉키는 것이 바로 "위에서 아래로 읽으면 이야기가 안 되는" 이유다. <b>조인 노드의 첫 자식이 outer</b>라는 규칙이 3절 이후의 모든 진단에서 반복해 쓰인다 — <code>loops</code>가 붙는 쪽이 항상 inner이기 때문이다.</figcaption>
+</figure>
+
+<h3>2-1. 노드 한 줄 해부 — <code>cost</code> · <code>rows</code> · <code>width</code>, 그리고 그 옆의 실측</h3>
+
+<p>노드 줄의 괄호 안 숫자를 하나씩 뜯는다. <code>ANALYZE</code>를 켜면 <b>괄호가 두 개</b>가 되고, 두 번째가 실측이다.</p>
+
+<div class="codehead plain"><span class="tag">읽기</span> 한 노드에 붙는 모든 숫자</div>
+<pre><code> Index Scan using idx_orders_user on orders o
+<span class="ln-good">        (cost=0.56..61893.40 rows=4800 width=32)          <span class="cm">&lt;- 견적서 (EXPLAIN이 늘 주는 것)</span></span>
+<span class="ln-good">        (actual time=0.071..283.917 rows=4720 loops=1)    <span class="cm">&lt;- 청구서 (ANALYZE를 켰을 때만)</span></span>
+   Index Cond: (user_id = 100)                            <span class="cm">&lt;- 인덱스 안에서 걸러진 조건</span>
+<span class="ln-bad">   Filter: (status = 'ACTIVE'::text)                      <span class="cm">&lt;- 힙에서 행을 가져온 "뒤에" 검사한 조건</span></span>
+<span class="ln-bad">   Rows Removed by Filter: 42495                          <span class="cm">&lt;- 힙 I/O를 이미 낸 뒤에 버린 행 수 (ANALYZE일 때만)</span></span>
+   Buffers: shared hit=5412 read=41856                    <span class="cm">&lt;- 읽은 페이지 수 (BUFFERS일 때만)</span></code></pre>
+
+<div class="grid g2">
+  <div class="tile"><div class="k">cost=시작..전체</div><div class="d">앞이 <b>시작 비용</b>(첫 행을 내보내기 전까지), 뒤가 <b>전체 비용</b>(끝까지). 둘을 나눠 놓은 이유는 <b><code>LIMIT</code></b> 때문이다 — <code>Sort</code>는 입력을 전부 읽어야 첫 행이 나오므로 시작 비용이 크고, <code>Index Scan</code>은 거의 0이다. <b>"앞 20건만 필요한" 쿼리에서는 시작 비용이 작은 계획이 이긴다.</b></div></div>
+  <div class="tile"><div class="k">rows=</div><div class="d">이 노드가 <b>내보낼 것으로 추정한</b> 행 수. 헷갈리기 쉬운 지점 — 이 수는 노드의 조건(<code>Index Cond</code>·<code>Filter</code>)을 <b>모두 적용한 뒤</b>의 수다. <b>"인덱스에서 몇 개를 꺼냈나"가 아니라 "부모에게 몇 개를 올려보내나"</b>다.</div></div>
+  <div class="tile"><div class="k">width=</div><div class="d">그 행 하나의 <b>평균 바이트</b>. <code>SELECT *</code>로 큰 <code>text</code>·<code>jsonb</code> 컬럼을 끌고 다니면 여기가 커진다. <b><code>rows × width</code>가 대략의 메모리 요구량</b>이라 <code>Sort</code> 노드 아래에서 특히 의미가 있다.</div></div>
+  <div class="tile ok"><div class="k">actual time=첫행..마지막행</div><div class="d"><b>밀리초 단위 실측.</b> 앞이 첫 행이 나온 시각, 뒤가 마지막 행이 나온 시각이며, 둘 다 <b>이 노드가 시작된 뒤로 경과한 시간</b>이다.</div></div>
+  <div class="tile ok"><div class="k">actual rows= / loops=</div><div class="d">실제로 내보낸 행 수 / 이 노드가 <b>몇 번 반복 실행됐나</b>. <b>여기에 큰 함정이 있다</b> — 아래 함정 카드.</div></div>
+  <div class="tile red"><div class="k">Rows Removed by Filter</div><div class="d"><code>Filter</code>에 걸려 버려진 행은 <b>이미 힙 랜덤 I/O 비용을 지불한 뒤에</b> 버려진 행이다. 그 수가 이것이고, <b>"많이 읽고 대부분 버린다"의 계산서</b>다.</div></div>
+</div>
+
+<div class="memo red">
+  <h4><code>actual time</code>과 <code>actual rows</code>는 <b>loops당 평균값</b>이다 — 총량을 보려면 <code>× loops</code></h4>
+  <div class="split" style="margin:10px 0">
+    <div class="pane r"><h4>오독</h4><pre style="margin:0"><code>Index Scan using products_pkey
+  (actual time=0.003..0.003
+   rows=1 loops=4720)
+
+<span class="cm">"조인은 0.003ms밖에 안 걸리네?"</span></code></pre></div>
+    <div class="pane g"><h4>제대로</h4><pre style="margin:0"><code><span class="cm">한 번에 0.003ms, 이걸 4,720번.</span>
+0.003 × 4720 <span class="fn">≈ 14ms</span>
+<span class="cm">읽은 페이지도 이미 누적돼 있다:</span>
+Buffers: shared hit=18880
+<span class="cm">(한 번에 4페이지 × 4,720번)</span></code></pre></div>
+  </div>
+  <p style="margin-bottom:0"><b>병렬 계획도 같은 규칙이다</b> — <code>Parallel Seq Scan</code>의 <code>loops</code>는 리더 + 워커 수이고 <code>rows</code>는 프로세스당 평균이다. 5절의 41초짜리 쿼리에서 <b>39초가 이 곱셈에 숨어 있다.</b></p>
+</div>
+
+<div class="memo red">
+  <h4><code>cost=64273</code>은 <b>64초라는 뜻이 아니다</b> — 단위는 밀리초가 아니라 상대값</h4>
+  <p><code>seq_page_cost = 1.0</code>(순차로 읽은 페이지 <b>한 장</b>)을 1로 잡은 <b>상대값</b>이다. 그래서 <code>cost=64273</code>은 <b>"대략 순차 페이지 6만 4천 장어치 일"</b>이라는 뜻이다.</p>
+  <p style="margin-bottom:0">같이 보는 파라미터가 <b><code>random_page_cost</code>(기본 4.0)</b>로 <b>"랜덤하게 흩어진 페이지 한 장은 순차 네 장 값"</b>이라는 선언이다 — <b>회전 디스크 시절의 값</b>이라 SSD면 <b>1.1 근처로 낮춰야</b> 플래너가 인덱스를 제값에 평가한다.</p>
+</div>
+
+<h3>2-2. <code>Index Cond</code> vs <code>Filter</code> — 낭비의 층이 다르다</h3>
+
+<div class="split">
+  <div class="pane b"><h4><code>Index Cond</code> — 인덱스 안에서 걸린 조건</h4>
+    <p style="margin:0;font-size:.94rem">인덱스 컬럼에 대한 조건. <b>구간을 좁히는 조건(액세스 조건)과, 구간은 못 좁히고 인덱스 안에서 걸러내기만 하는 조건이 여기 함께 찍힌다.</b></p>
+    <p style="margin:8px 0 0;font-size:.92rem;color:#1d4ed8"><b>낭비의 층</b> — 인덱스 안에서 훑고 버린 양. 흔적은 <b><code>Buffers</code>의 과다</b>.</p>
+  </div>
+  <div class="pane r"><h4><code>Filter</code> — 힙에서 읽은 "뒤에" 걸린 조건</h4>
+    <p style="margin:0;font-size:.94rem">인덱스에 없는 컬럼의 조건. 힙에서 행을 읽은 <b>뒤에</b> 검사한다 — <b>버릴 행에 힙 랜덤 I/O를 이미 지불한 상태.</b></p>
+    <p style="margin:8px 0 0;font-size:.92rem;color:#b91c1c"><b>낭비의 층</b> — 힙까지 읽고 버린 양. 흔적은 <b><code>Rows Removed by Filter</code></b>.</p>
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">PostgreSQL 고유의 함정 — "몇 번째 컬럼까지 썼나"를 알려주는 칸이 없다 <span class="badge trap">함정</span></span>
+  복합 인덱스 <code>(user_id, status, created_at)</code>에서 가운데 <code>status</code> 조건이 빠지면 <code>created_at</code>은 구간을 못 좁히고 인덱스 안에서 하나씩 걸러지는데, <b>계획 텍스트는 완전히 좁힌 경우와 똑같이 보인다.</b> MySQL의 <code>key_len</code>에 해당하는 칸이 PostgreSQL에는 <b>없다.</b>
+</div>
+
+<div class="codehead bad"><span class="tag">함정</span> <code>Index Cond</code>에 찍혀 있지만 구간은 못 좁혔다</div>
+<pre><code><span class="kw">CREATE INDEX</span> idx_orders_user_status_created <span class="kw">ON</span> orders (user_id, status, created_at);
+
+<span class="kw">EXPLAIN</span> (<span class="kw">ANALYZE</span>, BUFFERS)
+<span class="kw">SELECT</span> * <span class="kw">FROM</span> orders <span class="kw">WHERE</span> user_id = 100 <span class="kw">AND</span> created_at &gt; <span class="st">'2026-08-01'</span>;
+<span class="cm">--  Index Scan using idx_orders_user_status_created on orders</span>
+<span class="ln-bad"><span class="cm">--    Index Cond: ((user_id = 100) AND (created_at &gt; '2026-08-01 00:00:00+09'::timestamptz))</span></span>
+<span class="cm">--    (actual rows=2104 loops=1)</span>
+<span class="ln-bad"><span class="cm">--    Buffers: shared hit=2318        &lt;- user 100의 엔트리 전부(4만 7천)를 훑은 흔적</span></span>
+<span class="cm">-- created_at이 Index Cond에 찍혀 있지만 구간을 좁히진 못했다(leftmost prefix).</span>
+<span class="cm">-- "인덱스 탔다"고 안심하면 안 되는 경우 — 판별은 계획 텍스트가 아니라 Buffers다.</span>
+<span class="ln-good"><span class="cm">-- (user_id, created_at) 인덱스였다면 같은 결과에 Buffers: shared hit=61 수준.</span></span></code></pre>
+
+<div class="rule red">"인덱스를 얼마나 깊이 탔는가"는 PostgreSQL에서 <b>계획 텍스트로 판별되지 않는다</b><br><span style="font-size:.92rem;font-weight:600">① <b>인덱스 정의의 컬럼 순서</b>와 조건의 등호/범위를 대조하고 ② <b><code>BUFFERS</code>의 읽은 페이지 수</b>로 판별한다</span></div>
+
+<p>트리 맨 아래에는 <b><code>Planning Time</code></b>과 <b><code>Execution Time</code></b>(ANALYZE일 때만)이 따로 찍힌다. 짧은 쿼리가 수백 번 도는데 <code>Planning Time</code>이 실행보다 크면 <b>준비문(prepared statement)으로 계획을 재사용</b>할 후보다. 큰 쿼리에는 <b><code>JIT:</code></b> 블록이 붙을 수 있다 — 추정 비용이 <code>jit_above_cost</code>를 넘으면 표현식을 기계어로 컴파일하는데, <b>추정이 틀려 짧은 쿼리에 붙으면 컴파일 시간이 실행보다 길어지는 역효과</b>가 난다(그때는 <code>jit = off</code>).</p>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 읽는 순서 5단계 — 모 · 이 · 행 · 버 · 경</h2>
+
+<p>긴장하면 목록은 두 개에서 끊긴다. 그래서 이 절은 <b>읽는 순서 그대로 외우는 카드</b>로 만든다. <b>순서가 곧 진단 순서다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 352" role="img" aria-label="실행 계획을 읽는 다섯 단계를 왼쪽에서 오른쪽으로 늘어놓은 파이프라인. 1단계 모양, 2단계 노드 이름, 3단계 행 수 추정 대 실측, 4단계 버퍼, 5단계 경고등이며 3단계가 1순위 진단으로 강조되어 있다">
+    <defs>
+      <marker id="mf1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">계획을 여는 순간 눈이 가야 할 곳 — 다섯 번, 이 순서로</text>
+
+    <!-- 1 -->
+    <rect x="26" y="46" width="196" height="212" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <rect x="26" y="46" width="196" height="34" rx="11" fill="#2563eb"/>
+    <text x="124" y="69" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">① 모양</text>
+    <text x="124" y="102" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">무엇이 먼저 실행됐나?</text>
+    <text x="42" y="128" font-size="11" fill="#1d4ed8">· 안쪽(깊은 들여쓰기)</text>
+    <text x="42" y="146" font-size="11" fill="#1d4ed8">&nbsp;&nbsp;· 아래부터 실행</text>
+    <text x="42" y="170" font-size="11" fill="#1d4ed8">· 조인 노드의</text>
+    <text x="42" y="188" font-size="11" fill="#1d4ed8" font-weight="700">&nbsp;&nbsp;첫 자식 = outer</text>
+    <rect x="40" y="206" width="168" height="38" rx="8" fill="#dbeafe"/>
+    <text x="124" y="222" font-size="10.5" fill="#1e40af" text-anchor="middle">실행 순서 이야기를</text>
+    <text x="124" y="238" font-size="10.5" fill="#1e40af" text-anchor="middle" font-weight="700">문장으로 만들 수 있어야</text>
+
+    <!-- 2 -->
+    <rect x="242" y="46" width="196" height="212" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <rect x="242" y="46" width="196" height="34" rx="11" fill="#2563eb"/>
+    <text x="340" y="69" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">② 노드 이름</text>
+    <text x="340" y="102" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">전부 읽었나, 좁혔나?</text>
+    <text x="258" y="128" font-size="10.5" fill="#b91c1c" class="mono">Seq Scan</text>
+    <text x="330" y="128" font-size="10.5" fill="#7f1d1d">= 전부 읽음</text>
+    <text x="258" y="150" font-size="10.5" fill="#166534" class="mono">Index / Index Only</text>
+    <text x="258" y="168" font-size="10.5" fill="#166534" class="mono">Bitmap</text>
+    <text x="330" y="168" font-size="10.5" fill="#15803d">= 좁힘</text>
+    <rect x="256" y="186" width="168" height="58" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="340" y="204" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">단, Index Cond 없는</text>
+    <text x="340" y="220" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">Index Scan은 전수 조사</text>
+    <text x="340" y="236" font-size="10" fill="#7f1d1d" text-anchor="middle">정렬 순서만 빌린 것</text>
+
+    <!-- 3 (highlight) -->
+    <rect x="458" y="38" width="196" height="228" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="3"/>
+    <rect x="458" y="38" width="196" height="34" rx="11" fill="#dc2626"/>
+    <text x="556" y="61" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">③ 행 수 &nbsp;— 1순위</text>
+    <text x="556" y="94" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">추정과 실측이 맞나?</text>
+    <text x="474" y="120" font-size="10.5" fill="#7f1d1d" class="mono">rows=4800</text>
+    <text x="474" y="138" font-size="10.5" fill="#7f1d1d" class="mono">actual rows=4720</text>
+    <text x="556" y="160" font-size="11" fill="#16a34a" text-anchor="middle" font-weight="700">거의 일치 → 통계 정상</text>
+    <line x1="474" y1="172" x2="638" y2="172" stroke="#fecaca" stroke-width="1.5"/>
+    <text x="474" y="192" font-size="10.5" fill="#7f1d1d" class="mono">rows=1000</text>
+    <text x="474" y="210" font-size="10.5" fill="#7f1d1d" class="mono">actual rows=500000</text>
+    <rect x="472" y="220" width="168" height="38" rx="8" fill="#dc2626"/>
+    <text x="556" y="236" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">자릿수가 다르면</text>
+    <text x="556" y="252" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">튜닝 말고 통계 교정 먼저</text>
+
+    <!-- 4 -->
+    <rect x="674" y="46" width="196" height="212" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <rect x="674" y="46" width="196" height="34" rx="11" fill="#d97706"/>
+    <text x="772" y="69" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">④ Buffers</text>
+    <text x="772" y="102" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">I/O로 느린가, CPU로 느린가?</text>
+    <text x="690" y="128" font-size="10.5" fill="#92400e" class="mono">shared hit=  read=</text>
+    <text x="690" y="148" font-size="10.5" fill="#92400e" class="mono">temp read/written</text>
+    <text x="690" y="172" font-size="10.5" fill="#92400e">· 자식 수치를 포함한</text>
+    <text x="690" y="188" font-size="10.5" fill="#92400e" font-weight="700">&nbsp;&nbsp;누적값</text>
+    <rect x="688" y="200" width="168" height="44" rx="8" fill="#fde68a"/>
+    <text x="772" y="218" font-size="10.5" fill="#92400e" text-anchor="middle">어느 노드에서 갑자기 커지는지</text>
+    <text x="772" y="234" font-size="10.5" fill="#92400e" text-anchor="middle" font-weight="700">아래에서 위로 올라가며 본다</text>
+
+    <!-- 5 -->
+    <rect x="890" y="46" width="204" height="212" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <rect x="890" y="46" width="204" height="34" rx="11" fill="#dc2626"/>
+    <text x="992" y="69" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">⑤ 경고등</text>
+    <text x="992" y="102" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">눈이 멈춰야 할 문자열</text>
+    <text x="906" y="128" font-size="10" fill="#7f1d1d" class="mono">Rows Removed by Filter</text>
+    <text x="906" y="148" font-size="10" fill="#7f1d1d" class="mono">Sort Method: external</text>
+    <text x="906" y="168" font-size="10" fill="#7f1d1d" class="mono">Batches: 8</text>
+    <text x="906" y="188" font-size="10" fill="#7f1d1d" class="mono">Heap Fetches: 38211</text>
+    <text x="906" y="208" font-size="10" fill="#7f1d1d" class="mono">loops=500000</text>
+    <rect x="904" y="218" width="176" height="26" rx="8" fill="#fee2e2"/>
+    <text x="992" y="236" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">암기: 필 · 머 · 배 · 힙 · 룹</text>
+
+    <line x1="224" y1="152" x2="240" y2="152" stroke="#94a3b8" stroke-width="2" marker-end="url(#mf1)"/>
+    <line x1="440" y1="152" x2="456" y2="152" stroke="#94a3b8" stroke-width="2" marker-end="url(#mf1)"/>
+    <line x1="656" y1="152" x2="672" y2="152" stroke="#94a3b8" stroke-width="2" marker-end="url(#mf1)"/>
+    <line x1="872" y1="152" x2="888" y2="152" stroke="#94a3b8" stroke-width="2" marker-end="url(#mf1)"/>
+
+    <rect x="26" y="282" width="1068" height="52" rx="11" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="560" y="304" font-size="14" fill="#1d4ed8" text-anchor="middle" font-weight="700">모 · 이 · 행 · 버 · 경 &nbsp;— &nbsp;모양 → 이름 → 행 수 → 버퍼 → 경고등</text>
+    <text x="560" y="324" font-size="11.5" fill="#1e40af" text-anchor="middle">③에서 걸리면 ④·⑤를 볼 필요가 없다 — <tspan font-weight="700">추정이 틀리면 그 위의 모든 결정이 함께 틀리기 때문이다 (5절)</tspan></text>
+  </svg>
+  <figcaption>이 다섯을 <b>순서대로</b> 밟는 것이 핵심이다. 초심자는 대개 <b>②에서 멈춘다</b> — "<code>Index Scan</code>이 찍혔으니 됐다". 하지만 <b>③이 1순위</b>이고, ②의 판별조차 실제로는 <b>④의 <code>Buffers</code></b>가 해준다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>다섯 단계 인출 카드 — 텍스트로 통째 외운다</h4>
+  <pre style="margin:6px 0 0"><code>① 모양      : 안쪽(깊은 들여쓰기)·아래부터 실행. 조인 노드의 첫 자식 = outer(드라이빙)
+② 노드 이름  : 스캔 방식(Seq / Index / Index Only / Bitmap) — "전부 읽었나, 좁혔나"
+<span class="ln-bad">③ rows      : 추정 rows  vs  actual rows — 자릿수가 다르면 통계 문제. 1순위 진단</span>
+④ Buffers   : shared hit / read — 어느 노드가 페이지를 얼마나 읽었나 (자식 포함 누적)
+⑤ 경고등     : Rows Removed by Filter / Sort Method: external / Batches &gt; 1
+              / Heap Fetches / 안쪽 노드의 loops</code></pre>
+</div>
+
+<h3>3-1. 스캔 노드 사전 — 트리의 가장 안쪽, 테이블에서 행을 처음 꺼내는 노드</h3>
+
+<div class="scroll">
+<table class="wide">
+  <thead><tr><th>노드</th><th>하는 일</th><th>같이 보는 것</th></tr></thead>
+  <tbody>
+    <tr><td><code>Seq Scan</code></td><td>힙을 처음부터 끝까지 <b>순차로</b> 읽는다</td><td><code>Filter</code> + <code>Rows Removed by Filter</code>가 크면 <b>"많이 읽고 대부분 버림"</b></td></tr>
+    <tr><td><code>Index Scan</code></td><td>B-tree에서 시작점을 찾아 인덱스 순서로 읽고, 엔트리마다 <b>TID로 힙을 찾아간다</b>(랜덤 I/O)</td><td><code>Index Cond</code>(인덱스에서 거른 조건)·<code>Filter</code>(힙에서 거른 조건). <b><code>Index Cond</code>가 없으면 인덱스 전체 순회</b> — 정렬 순서만 빌린 전수 조사</td></tr>
+    <tr class="hl"><td><code>Index Only Scan</code></td><td>인덱스만 읽고 힙에 안 간다(커버링). 단 <b>visibility map</b>이 "전부 가시"라고 보증하는 페이지만 생략</td><td><code>Heap Fetches: N</code> — 크면 <b>커버링이 무력화된 상태</b>(VACUUM 부족, 갱신 잦은 테이블)</td></tr>
+    <tr><td><code>Bitmap Index Scan</code> → <code>Bitmap Heap Scan</code></td><td>인덱스에서 TID를 모아 <b>블록 번호순으로 정렬한 비트맵</b>을 만든 뒤 힙을 순차에 가깝게 읽는다. 여러 인덱스를 <code>BitmapOr</code>/<code>BitmapAnd</code>로 합칠 수 있다</td><td><code>Recheck Cond</code>, <code>Heap Blocks: exact= lossy=</code> — <code>lossy</code>가 있으면 <code>work_mem</code> 부족으로 비트맵이 페이지 단위로 뭉개져 힙에서 재검사(<code>Rows Removed by Index Recheck</code>)</td></tr>
+    <tr><td><code>Parallel Seq Scan</code> + <code>Gather</code></td><td>워커 여럿이 힙을 나눠 읽고 리더가 모은다</td><td><code>Workers Planned/Launched</code>. 대량 스캔의 <b>정상 선택</b>일 수 있다 — "인덱스가 없어서"라고 단정하지 않는다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>여기서 <b>TID</b>(tuple identifier)는 <b>"행 하나의 물리적 주소"</b>다. <code>(블록 번호, 블록 안 몇 번째 슬롯)</code> 쌍이고, 인덱스 엔트리에는 <b>키 값과 이 TID만</b> 들어 있다. 그래서 인덱스만으로 답이 안 나오면 TID를 들고 힙 페이지를 찾아가야 하는데, TID들이 힙 여기저기에 흩어져 있으므로 <b>이 접근이 랜덤 I/O가 된다.</b></p>
+
+<div class="rule red">경계선은 노드 이름이 아니다 — <b>읽은 행 대비 남긴 행(<code>Rows Removed by Filter</code>)</b>과 <b>읽은 페이지 수(<code>Buffers</code>)</b>다<br><span style="font-size:.92rem;font-weight:600"><code>Index Scan</code>인데 <code>Rows Removed by Filter</code>가 <code>actual rows</code>의 열 배면, <b>이름만 인덱스지 비용은 풀스캔에 가깝다.</b><br>"인덱스는 탔는데요"라는 말은 <b>이 두 숫자를 보기 전까지 아무것도 보장하지 않는다.</b></span></div>
+
+<div class="callout ok"><span class="t"><code>Bitmap Heap Scan</code>은 "랜덤 vs 순차 I/O"라는 비용 모델이 스캔 방식으로 구현된 사례다 <span class="badge bonus">가산점</span></span>
+  인덱스에서 얻은 TID 목록은 힙 위치가 뒤죽박죽이라 그대로 읽으면 페이지를 여기저기 찌른다(<b>랜덤</b>). 비트맵은 그 TID를 <b>블록 번호순으로 정렬한 뒤</b> 읽어 <b>인접 페이지를 연달아 읽게</b> 만들고(순차에 가깝게), 그래서 플래너는 <b>"좁혀지긴 하는데 수천~수만 행"인 중간 선택도</b>에서 <code>Index Scan</code> 대신 이걸 고른다. <b>"DB가 랜덤 I/O를 얼마나 싫어하면 스캔 방식 하나를 따로 만들었겠는가"</b>로 기억하면 비용 모델이 같이 굳는다. 그리고 <b>이것도 인덱스를 쓴 계획이다</b> — 이름에 <code>Index Scan</code>이 없다고 풀스캔으로 오해하지 않는다.
+</div>
+
+<h3>3-2. 그 밖의 노드 사전 — 자식이 올려 준 행을 받아 가공하는 노드들</h3>
+
+<div class="scroll">
+<table class="wide">
+  <thead><tr><th>노드</th><th>뜻</th><th>경고등</th></tr></thead>
+  <tbody>
+    <tr><td><code>Nested Loop</code> / <code>Hash Join</code> + <code>Hash</code> / <code>Merge Join</code></td><td>조인 3방식</td><td>inner의 <code>loops</code>(바깥 행 수만큼 반복), inner가 <code>Seq Scan</code>이면 <b>조인 키 인덱스 부재</b>. <code>Hash</code>의 <code>Batches &gt; 1</code> = 디스크 스필. <code>Merge</code> 아래 <code>Sort</code>가 붙었는지</td></tr>
+    <tr class="hl"><td><code>Sort</code></td><td>정렬</td><td><code>Sort Method: quicksort Memory:</code>(메모리) / <code>top-N heapsort</code>(LIMIT 병용 — 메모리는 N건 몫이지만 <b>입력은 전부 읽는다</b>) / <code>external merge Disk:</code>(<code>work_mem</code> 초과 → 디스크)</td></tr>
+    <tr><td><code>Incremental Sort</code> (PG 13+)</td><td>앞 컬럼이 이미 정렬돼 있을 때 뒤 컬럼만 그룹별로 정렬</td><td><code>Presorted Key</code></td></tr>
+    <tr><td><code>HashAggregate</code> / <code>GroupAggregate</code></td><td><code>GROUP BY</code>·<code>DISTINCT</code>. 해시로 모으거나, 정렬된 입력을 순서대로 묶거나</td><td><code>Batches &gt; 1</code>, <code>Disk Usage:</code>, <code>temp read/written</code> = 스필</td></tr>
+    <tr><td><code>Limit</code></td><td>자식에게서 N행만 받고 <b>멈춘다</b></td><td>자식의 <code>actual rows</code>가 N보다 훨씬 크면 <b>LIMIT을 못 살린 것</b>(아래에 <code>Sort</code>가 있을 때 전형)</td></tr>
+    <tr><td><code>Materialize</code> / <code>Memoize</code> (PG 14+)</td><td>안쪽 결과를 메모리에 받아 두고 반복 스캔 / NL 안쪽 탐색 결과를 조인 키별로 캐시</td><td><code>Memoize</code>의 <code>Hits/Misses/Evictions</code> — <b>Hits가 크면 공짜로 빨라진 상태</b></td></tr>
+    <tr><td><code>Gather</code> / <code>Gather Merge</code></td><td>병렬 워커 결과 수집(Merge는 정렬 유지)</td><td><code>Workers Launched</code>가 <code>Planned</code>보다 적으면 워커 풀 부족</td></tr>
+    <tr><td><code>CTE Scan</code> / <code>Subquery Scan</code></td><td><code>WITH … AS MATERIALIZED</code> 결과 스캔(PG 12+는 한 번만 쓰는 단순 CTE를 인라인) / FROM 절 서브쿼리</td><td><code>Subquery Scan</code>이 남아 있으면 인라인이 막힌 이유(집계·LIMIT 등)를 본다</td></tr>
+    <tr class="hl"><td><code>SubPlan</code> / <code>hashed SubPlan</code></td><td>WHERE 절의 서브쿼리. <b>상관 서브쿼리는 바깥 행마다 재실행</b></td><td><code>SubPlan 1</code> 아래 노드의 <code>loops</code> = 바깥 행 수. 바깥이 10만 행이면 <b>10만 번</b> — 조인으로 푼다. <code>hashed</code>는 한 번 실행해 해시로 들고 있는 것이라 안전</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>3-3. 경고등 표 — 그대로 진단 체크리스트로 쓴다</h3>
+
+<div class="scroll">
+<table class="wide">
+  <thead><tr><th>신호</th><th>뜻</th><th>판정</th></tr></thead>
+  <tbody>
+    <tr><td><code>Rows Removed by Filter: 42495</code> (actual rows=4720)</td><td>힙까지 읽고 <b>90%를 버렸다</b> — 인덱스가 조건을 절반만 덮는다</td><td class="bad">위험 — 인덱스에 컬럼을 넣으면 읽는 양 자체가 준다</td></tr>
+    <tr><td><code>Sort Method: external merge  Disk: 21544kB</code></td><td><code>work_mem</code>을 넘겨 <b>디스크 정렬</b></td><td class="bad">위험 — 정렬을 인덱스로 없애거나, 세션 <code>work_mem</code></td></tr>
+    <tr><td><code>Batches: 8</code> (<code>Hash</code>·<code>HashAggregate</code>)</td><td>해시가 메모리를 넘쳐 디스크로 쪼개짐</td><td class="bad">위험 — 빌드 사이드를 줄이거나 <code>work_mem</code></td></tr>
+    <tr><td><code>Heap Fetches: 38211</code> (<code>Index Only Scan</code>)</td><td>visibility map이 낡아 <b>힙을 방문</b></td><td class="bad">위험 — VACUUM 상태 확인</td></tr>
+    <tr><td>inner <code>Seq Scan</code> + <code>loops=4720</code></td><td>안쪽 테이블을 <b>4,720번 통순회</b></td><td class="bad">위험 — 조인 키 인덱스</td></tr>
+    <tr class="hl"><td>추정 <code>rows=1000</code> vs <code>actual rows=500000</code></td><td>통계가 현실과 어긋남</td><td class="bad"><b>위험, 그리고 1순위</b> — 튜닝 전에 통계 교정 (5절)</td></tr>
+    <tr><td><code>Index Only Scan</code> + <code>Heap Fetches: 0</code></td><td>힙 방문 0회</td><td class="good">최고의 신호</td></tr>
+    <tr><td><code>Index Scan Backward</code> + <code>Limit</code>, <code>Sort</code> 없음</td><td>정렬을 인덱스 순서로 해결, 앞 N건만 읽고 종료</td><td class="good">좋음</td></tr>
+    <tr><td><code>Memoize  Hits: 4719 Misses: 1</code></td><td>반복 탐색을 캐시로 흡수</td><td class="good">좋음</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4><code>ORDER BY</code>가 인덱스를 타는 조건 — 계획에서 <code>Sort</code> 노드가 <b>사라지는</b> 경우</h4>
+  <p>관련 질문 <b>"<code>ORDER BY</code>가 인덱스를 타는 조건은?"</b>의 PostgreSQL 답이다. B-tree 리프는 <b>이미 정렬되어 저장</b>돼 있으므로, 정렬 요구가 <b>그 리프 순서와 일치하면 정렬 작업 자체가 필요 없다.</b></p>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k" style="font-family:inherit">Sort가 사라지는 조건</div><div class="d">① <code>ORDER BY</code> 컬럼이 <b>인덱스의 컬럼 순서와 일치</b>하고 ② <b>앞 컬럼들이 등호로 고정</b>돼 있으며 ③ 정렬 <b>방향이 일관</b>될 것. 역순이면 <code>Index Scan Backward</code>로 처리된다. → <code>LIMIT</code>이 붙으면 <b>리프 앞 N건만 읽고 종료</b>.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">Sort가 남는 경우</div><div class="d">정렬 컬럼 앞에 <b>범위 조건</b>이 끼거나, 인덱스에 없는 컬럼으로 정렬하거나, <b>여러 컬럼의 방향이 엇갈릴</b> 때. 이때는 <b>대상 전부</b>를 읽어 정렬해야 한다.</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0"><code>Sort Method: external merge Disk:</code>가 최악인 이유<br><span style="font-size:.92rem;font-weight:600"><code>work_mem</code>을 넘겨 <b>디스크 임시 파일에 청크를 쓰고 다시 병합</b>한다 — 읽기·쓰기·다시 읽기가 추가되고, <b><code>LIMIT 20</code>이 붙어 있어도 정렬은 입력 전체를 봐야</b> 하므로 조기 종료가 안 된다.</span></div>
+</div>
+
+<div class="callout info"><span class="t">MySQL 대조 — 표를 순서대로 읽는 기술 vs 트리를 안쪽부터 읽는 기술 <span class="badge senior">경험 대조</span></span>
+  MySQL의 <code>EXPLAIN</code>은 트리가 아니라 <b>테이블 접근 하나당 한 행인 표</b>다: 위에서 아래가 실행 순서(맨 위가 드라이빙), <code>type</code>(접근 등급 — <code>const &gt; eq_ref &gt; ref &gt; range &gt; index &gt; ALL</code>, 경계선은 <code>range</code>와 <code>index</code> 사이), <code>key</code>/<code>key_len</code>(어느 인덱스를 <b>몇 바이트까지</b> 썼나 — 복합 인덱스의 깊이를 알려주는 유일한 칸), <code>rows × filtered</code>, <code>Extra</code>(위험 3: <code>Using filesort</code>·<code>Using temporary</code>·<code>Using join buffer</code> / 좋은 3: <code>Using index</code>·<code>Using index condition</code>·<code>Using MRR</code>).<br>
+  <b>PostgreSQL 대응</b> — <code>type: ALL</code> = <code>Seq Scan</code>, <code>type: index</code> = <code>Index Cond</code> 없는 <code>Index Scan</code>, <code>key_len</code>은 <b>대응물이 없고(Buffers로 판별)</b>, <code>filtered</code> = <code>Rows Removed by Filter</code>, <code>Using filesort</code> = <code>Sort</code> 노드, <code>Using temporary</code> = <code>HashAggregate</code>/<code>Materialize</code>, <code>Using index</code> = <code>Index Only Scan</code>, <code>Using index condition</code>(ICP) = <code>Index Cond</code>의 인덱스 내 검사(PostgreSQL은 기본 동작이라 이름이 없다), <code>Using MRR</code> = <code>Bitmap Heap Scan</code>, <code>DEPENDENT SUBQUERY</code> = <code>SubPlan</code>(loops 큰 것).
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. <code>Buffers</code>가 기준선인 이유 — 느린 이유가 I/O인가 CPU인가</h2>
+
+<p><code>Execution Time</code>이 있는데 왜 <code>Buffers</code>를 굳이 보는가. <b>두 가지 이유</b>가 있다.</p>
+
+<h3>4-1. 첫째 — 시간은 캐시 상태에 따라 매번 달라져서 판단이 흔들린다</h3>
+
+<p>같은 쿼리, <b>같은 계획</b>을 두 번 돌린 결과다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">1회차</span> 캐시가 비어 있는 상태</div>
+<pre><code>-&gt;  Bitmap Heap Scan on orders o
+      (actual time=12.402..3801.118 rows=47215 loops=1)
+<span class="ln-bad">      Buffers: shared hit=12 read=48110</span>
+      I/O Timings: shared read=3612.441
+
+<span class="ln-bad">Execution Time: 3842.907 ms</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">2회차</span> 방금 읽어서 <code>shared_buffers</code>에 다 올라온 상태</div>
+<pre><code>-&gt;  Bitmap Heap Scan on orders o
+      (actual time=8.117..271.884 rows=47215 loops=1)
+<span class="ln-good">      Buffers: shared hit=48122 read=0</span>
+      I/O Timings: <span class="cm">(없음 — 디스크를 안 갔다)</span>
+
+<span class="ln-good">Execution Time: 289.331 ms</span></code></pre>
+  </div>
+</div>
+
+<div class="grid g3">
+  <div class="tile big red"><div class="k">13배</div><div class="s">시간 차이 (3,842ms → 289ms)</div></div>
+  <div class="tile big ok"><div class="k">48,122장</div><div class="s">읽은 페이지 — <b>두 번 다 똑같다</b></div></div>
+  <div class="tile big"><div class="k">계획 동일</div><div class="s">계획이 같으면 <b>읽는 페이지 수는 거의 변하지 않는다</b></div></div>
+</div>
+
+<div class="rule">개선 전후를 비교할 때 기준으로 삼아야 할 숫자는 <b>시간이 아니라 <code>Buffers</code></b>다<br><span style="font-size:.92rem;font-weight:600">"빨라진 것 같다"를 <b>"읽는 페이지가 66,148장에서 103장으로 줄었다"</b>로 바꿔 말할 수 있어야 한다</span></div>
+
+<h3>4-2. 둘째 — <code>hit</code>과 <code>read</code>의 구성비가 병목의 성격을 알려준다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 352" role="img" aria-label="느린 쿼리를 만났을 때 Buffers 값의 구성비로 병목의 성격을 가르는 분기도. read가 크고 I/O Timings가 크면 I/O 병목, hit이 압도적으로 큰데 느리면 CPU 병목, 둘 다 작은데 느리면 읽기 밖의 병목, temp가 크면 work_mem 스필로 갈린다">
+    <defs>
+      <marker id="mb1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 "느리다"도 원인이 다르다 — Buffers의 구성비가 갈라준다</text>
+
+    <text x="640" y="48" font-size="11.5" fill="#64748b" font-weight="700">계획에서 보이는 것 → 해석</text>
+    <text x="962" y="48" font-size="11.5" fill="#64748b" font-weight="700" text-anchor="middle">다음 행동</text>
+
+    <rect x="26" y="140" width="164" height="72" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+    <text x="108" y="170" font-size="13" fill="#334155" text-anchor="middle" font-weight="700">이 쿼리가 느리다</text>
+    <text x="108" y="192" font-size="11" fill="#64748b" text-anchor="middle">시간부터 보지 않는다</text>
+    <line x1="192" y1="176" x2="216" y2="176" stroke="#94a3b8" stroke-width="2" marker-end="url(#mb1)"/>
+
+    <rect x="220" y="132" width="180" height="88" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="310" y="160" font-size="13" fill="#b45309" text-anchor="middle" font-weight="700">Buffers를 본다</text>
+    <text x="310" y="182" font-size="11" fill="#92400e" text-anchor="middle" class="mono">shared hit / read</text>
+    <text x="310" y="202" font-size="11" fill="#92400e" text-anchor="middle" class="mono">temp read / written</text>
+
+    <!-- branches -->
+    <rect x="440" y="60" width="400" height="58" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="456" y="82" font-size="11.5" fill="#b91c1c" font-weight="700" class="mono">read가 크고 I/O Timings가 실행 시간의 대부분</text>
+    <text x="456" y="104" font-size="11.5" fill="#7f1d1d">→ <tspan font-weight="700">I/O 병목</tspan> — 실제로 디스크에서 읽어 오느라 느리다</text>
+    <rect x="856" y="60" width="238" height="58" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="870" y="82" font-size="11" fill="#b91c1c" font-weight="700">읽는 페이지 수 자체를 줄인다</text>
+    <text x="870" y="102" font-size="10.5" fill="#7f1d1d">인덱스로 좁히기 · 커버링 · 파티션 프루닝</text>
+
+    <rect x="440" y="128" width="400" height="58" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="456" y="150" font-size="11.5" fill="#b91c1c" font-weight="700" class="mono">hit이 압도적으로 크고 시간도 오래 걸림</text>
+    <text x="456" y="172" font-size="11.5" fill="#7f1d1d">→ <tspan font-weight="700">CPU 병목</tspan> — 캐시엔 다 있는데 읽고 판정하고 버리는 일이 많다</text>
+    <rect x="856" y="128" width="238" height="58" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="870" y="150" font-size="11" fill="#b91c1c" font-weight="700">반복 횟수·비교 횟수를 줄인다</text>
+    <text x="870" y="170" font-size="10.5" fill="#7f1d1d">5절의 inner <tspan class="mono">loops=500000</tspan>이 전형</text>
+
+    <rect x="440" y="196" width="400" height="58" rx="9" fill="#fffbeb" stroke="#d97706"/>
+    <text x="456" y="218" font-size="11.5" fill="#b45309" font-weight="700" class="mono">hit도 read도 작은데 느림</text>
+    <text x="456" y="240" font-size="11.5" fill="#92400e">→ <tspan font-weight="700">읽기 밖의 병목</tspan> — 계획 문제가 아닐 수 있다</text>
+    <rect x="856" y="196" width="238" height="58" rx="9" fill="#fff" stroke="#fde68a"/>
+    <text x="870" y="216" font-size="11" fill="#b45309" font-weight="700">락 대기 · 함수 호출 · 네트워크 전송량</text>
+    <text x="870" y="236" font-size="10.5" fill="#92400e"><tspan class="mono">pg_stat_activity.wait_event_type</tspan> (6절)</text>
+
+    <rect x="440" y="264" width="400" height="58" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="456" y="286" font-size="11.5" fill="#b91c1c" font-weight="700" class="mono">temp read/written이 큼</text>
+    <text x="456" y="308" font-size="11.5" fill="#7f1d1d">→ <tspan font-weight="700"><tspan class="mono">work_mem</tspan>을 넘겨 임시 파일로 넘쳤다</tspan></text>
+    <rect x="856" y="264" width="238" height="58" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="870" y="284" font-size="11" fill="#b91c1c" font-weight="700">정렬·해시를 없애거나 메모리를 늘린다</text>
+    <text x="870" y="304" font-size="10" fill="#7f1d1d">함께: <tspan class="mono">external merge</tspan> · <tspan class="mono">Batches&gt;1</tspan></text>
+
+    <path d="M404 176 L422 176 L422 89 L438 89" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#mb1)"/>
+    <path d="M404 176 L422 176 L422 157 L438 157" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#mb1)"/>
+    <path d="M404 176 L422 176 L422 225 L438 225" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#mb1)"/>
+    <path d="M404 176 L422 176 L422 293 L438 293" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#mb1)"/>
+    <line x1="842" y1="89" x2="854" y2="89" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#mb1)"/>
+    <line x1="842" y1="157" x2="854" y2="157" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#mb1)"/>
+    <line x1="842" y1="225" x2="854" y2="225" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#mb1)"/>
+    <line x1="842" y1="293" x2="854" y2="293" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#mb1)"/>
+  </svg>
+  <figcaption><b>이 분기를 못 하면 처방이 엇나간다</b> — CPU 병목에 인덱스를 더 만들거나, I/O 병목에 <code>work_mem</code>을 올리는 식이다. <code>hit</code>은 <code>shared_buffers</code>(PostgreSQL의 공유 캐시)에서 찾은 페이지 수, <code>read</code>는 그 밖에서 읽어 온 수다.</figcaption>
+</figure>
+
+<div class="callout warn"><span class="t"><code>read</code>가 곧 디스크 접근은 아니다 — 이중 캐시 구조</span>
+  PostgreSQL은 <code>shared_buffers</code>와 <b>OS 페이지 캐시</b>의 <b>이중 캐시</b> 구조라, <code>read</code>로 잡힌 페이지가 실은 OS 캐시에서 왔을 수도 있다. 그래서 <b>I/O 병목을 단정하려면</b> <code>track_io_timing = on</code>을 켜 <b><code>I/O Timings: shared read=…</code></b>가 붙게 해야 한다 — "그 <code>read</code> 중 <b>진짜 디스크에서 온 것이 몇 밀리초였나</b>"까지 갈린다.
+</div>
+
+<div class="memo red">
+  <h4>노드의 <code>Buffers</code>는 <b>자식 수치를 포함한 누적값</b>이다 — 더하면 이중 계산</h4>
+  <p>맨 위 <code>Limit</code>의 <code>Buffers: shared hit=24292 read=41856</code>은 <b>트리 전체의 합</b>이고, 그 아래 자식들의 수치가 이미 그 안에 들어 있다. 그래서 <b>노드별 Buffers를 전부 더하면 실제보다 훨씬 큰 수가 나온다.</b></p>
+  <p style="margin-bottom:0">읽는 법은 뺄셈이 아니라 <b>"어느 노드에서 갑자기 커지는가"를 아래에서 위로 올라가며 보는 것</b>이다. 급증한 지점 바로 그 노드가 <b>페이지를 실제로 읽은 범인</b>이다.</p>
+</div>
+
+<div class="rule ok">한 줄로 정리하면 — <b>시간은 "얼마나 걸렸나"이고 <code>Buffers</code>는 "얼마나 일했나"다</b><br><span style="font-size:.92rem;font-weight:600">환경이 달라져도 변하지 않는 쪽은 후자이므로, <b>가설을 세우고 검증하는 기준선은 <code>Buffers</code>로 잡는다</b></span></div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. ③이 1순위인 이유 — 오추정 하나가 계획을 통째로 틀리게 한다</h2>
+
+<p>암기 카드 ③이 왜 1순위인지를 <b>실제 계획 두 벌</b>로 본다. <b>추정이 틀리면 그 위의 모든 결정이 함께 틀리기</b> 때문이다.</p>
+
+<div class="card">
+  <p style="margin:0"><b>상황</b> — 어제 새벽 배치가 <b>8월치 주문 55만 건</b>을 <code>orders</code>(총 500만 건)에 적재했다. 그런데 autovacuum의 analyze 임계(<b>기본은 행의 10% 변경</b>)에 걸리지 않아 <b>통계는 적재 이전 상태 그대로</b>다. 통계상 <code>created_at &gt;= '2026-08-01'</code>인 행은 <b>1,000건 남짓</b>으로 보인다.</p>
+</div>
+
+<div class="codehead plain"><span class="tag">쿼리</span> 사용자 이름을 붙여 8월 주문을 조회한다</div>
+<pre><code><span class="kw">EXPLAIN</span> (<span class="kw">ANALYZE</span>, BUFFERS)
+<span class="kw">SELECT</span> u.name, o.id, o.amount
+<span class="kw">FROM</span> orders o
+<span class="kw">JOIN</span> users u <span class="kw">ON</span> u.id = o.user_id
+<span class="kw">WHERE</span> o.created_at &gt;= <span class="st">'2026-08-01'</span> <span class="kw">AND</span> o.status = <span class="st">'ACTIVE'</span>;</code></pre>
+
+<div class="codehead bad"><span class="tag">before</span> 통계가 낡은 상태의 계획 — 41.4초</div>
+<pre><code> Nested Loop  (cost=0.99..9424.55 <span class="ln-bad">rows=1000</span> width=48) (actual time=0.061..41288.402 <span class="ln-bad">rows=500000</span> loops=1)
+   Buffers: shared hit=1503244 read=48122
+   -&gt;  Index Scan using idx_orders_created on orders o  (cost=0.43..1404.55 rows=1000 width=24)
+         (actual time=0.028..1284.117 rows=500000 loops=1)
+         Index Cond: (created_at &gt;= '2026-08-01 00:00:00+09'::timestamptz)
+         Filter: (status = 'ACTIVE'::text)
+         Rows Removed by Filter: 51230
+         Buffers: shared hit=53122 read=48122
+   -&gt;  Index Scan using users_pkey on users u  (cost=0.56..8.01 rows=1 width=32)
+<span class="ln-bad">         (actual time=0.078..0.078 rows=1 loops=500000)   <span class="cm">&lt;- 0.078ms × 50만 번 = 39,000ms</span></span>
+         Index Cond: (id = o.user_id)
+<span class="ln-bad">         Buffers: shared hit=1450122                       <span class="cm">&lt;- 같은 users 페이지를 50만 번 되짚었다</span></span>
+ Planning Time: 0.331 ms
+<span class="ln-bad"> Execution Time: 41402.118 ms</span></code></pre>
+
+<p><b>③에서 즉시 걸린다.</b> 맨 위 <code>Nested Loop</code>가 <code>rows=1000</code> 추정인데 <code>actual rows=500000</code>이다. <b>500배</b>다. <b>자릿수가 다르면 그다음은 볼 것도 없이 통계 문제다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="위쪽 붉은 띠는 통계가 낡아 추정 행 수가 1000으로 나오고 그 결과 Nested Loop이 선택되어 inner가 50만 번 반복되며 41.4초가 걸린 연쇄를 보여주고, 아래쪽 초록 띠는 ANALYZE로 통계를 갱신하자 추정이 498320이 되어 Hash Join이 선택되고 양쪽을 한 번씩만 읽어 2.3초가 된 연쇄를 보여준다">
+    <defs>
+      <marker id="mc1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="mc2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="mc3" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">오추정은 그 노드에서 끝나지 않는다 — 위쪽 결정이 통째로 딸려 틀린다</text>
+
+    <text x="30" y="48" font-size="12" fill="#b91c1c" font-weight="700">before — 통계가 낡음</text>
+    <g>
+      <rect x="30" y="56" width="155" height="76" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+      <text x="107" y="80" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">통계가 낡음</text>
+      <text x="107" y="99" font-size="10.5" fill="#7f1d1d" text-anchor="middle">55만 건 적재 후</text>
+      <text x="107" y="116" font-size="10.5" fill="#7f1d1d" text-anchor="middle">analyze 임계 미달</text>
+
+      <rect x="205" y="56" width="155" height="76" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+      <text x="282" y="80" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">추정 행 수</text>
+      <text x="282" y="103" font-size="14" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">rows=1,000</text>
+      <text x="282" y="120" font-size="10.5" fill="#7f1d1d" text-anchor="middle">실제는 500,000</text>
+
+      <rect x="380" y="56" width="155" height="76" rx="9" fill="#fff" stroke="#fecaca" stroke-width="2"/>
+      <text x="457" y="78" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">플래너의 계산</text>
+      <text x="457" y="98" font-size="10.5" fill="#7f1d1d" text-anchor="middle">"1,000행이면</text>
+      <text x="457" y="115" font-size="10.5" fill="#7f1d1d" text-anchor="middle">NL이 9,424로 가장 싸다"</text>
+
+      <rect x="555" y="56" width="155" height="76" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+      <text x="632" y="80" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">Nested Loop 선택</text>
+      <text x="632" y="100" font-size="10.5" fill="#7f1d1d" text-anchor="middle">바깥 행 하나마다</text>
+      <text x="632" y="117" font-size="10.5" fill="#7f1d1d" text-anchor="middle">안쪽을 한 번씩 탐색</text>
+
+      <rect x="730" y="56" width="155" height="76" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+      <text x="807" y="78" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">실제로는 50만 행</text>
+      <text x="807" y="99" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">loops=500000</text>
+      <text x="807" y="117" font-size="10.5" fill="#7f1d1d" text-anchor="middle">0.078ms × 50만 = 39초</text>
+
+      <rect x="905" y="56" width="189" height="76" rx="9" fill="#dc2626"/>
+      <text x="999" y="82" font-size="17" fill="#fff" text-anchor="middle" font-weight="700">41.4초</text>
+      <text x="999" y="103" font-size="11" fill="#fecaca" text-anchor="middle">Buffers 1,551,366</text>
+      <text x="999" y="121" font-size="10.5" fill="#fecaca" text-anchor="middle">캐시엔 다 있었지만 CPU가 나갔다</text>
+
+      <line x1="187" y1="94" x2="203" y2="94" stroke="#dc2626" stroke-width="2" marker-end="url(#mc1)"/>
+      <line x1="362" y1="94" x2="378" y2="94" stroke="#dc2626" stroke-width="2" marker-end="url(#mc1)"/>
+      <line x1="537" y1="94" x2="553" y2="94" stroke="#dc2626" stroke-width="2" marker-end="url(#mc1)"/>
+      <line x1="712" y1="94" x2="728" y2="94" stroke="#dc2626" stroke-width="2" marker-end="url(#mc1)"/>
+      <line x1="887" y1="94" x2="903" y2="94" stroke="#dc2626" stroke-width="2" marker-end="url(#mc1)"/>
+    </g>
+
+    <rect x="30" y="144" width="1064" height="36" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <line x1="107" y1="132" x2="107" y2="142" stroke="#2563eb" stroke-width="2" marker-end="url(#mc3)"/>
+    <text x="48" y="167" font-size="12.5" fill="#1d4ed8" font-weight="700" class="mono">ANALYZE orders;</text>
+    <text x="196" y="167" font-size="12.5" fill="#1e40af">표본을 다시 뽑아 <tspan class="mono">pg_statistic</tspan>을 갱신. 수 초면 끝난다. <tspan font-weight="700" fill="#b91c1c">인덱스도, 쿼리도 건드리지 않는다.</tspan></text>
+
+    <text x="30" y="204" font-size="12" fill="#15803d" font-weight="700">after — ANALYZE 후, 같은 쿼리</text>
+    <g>
+      <rect x="30" y="212" width="155" height="76" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+      <text x="107" y="238" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">통계 갱신됨</text>
+      <text x="107" y="258" font-size="10.5" fill="#15803d" text-anchor="middle">MCV·히스토그램이</text>
+      <text x="107" y="275" font-size="10.5" fill="#15803d" text-anchor="middle">현실을 반영</text>
+
+      <rect x="205" y="212" width="155" height="76" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+      <text x="282" y="236" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">추정 행 수</text>
+      <text x="282" y="259" font-size="14" fill="#166534" text-anchor="middle" font-weight="700" class="mono">rows=498,320</text>
+      <text x="282" y="276" font-size="10.5" fill="#15803d" text-anchor="middle">실제 500,000과 거의 일치</text>
+
+      <rect x="380" y="212" width="155" height="76" rx="9" fill="#fff" stroke="#bbf7d0" stroke-width="2"/>
+      <text x="457" y="234" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">플래너의 계산</text>
+      <text x="457" y="254" font-size="10.5" fill="#15803d" text-anchor="middle">"50만 행이면 NL은 400만,</text>
+      <text x="457" y="271" font-size="10.5" fill="#15803d" text-anchor="middle">Hash가 185,786으로 싸다"</text>
+
+      <rect x="555" y="212" width="155" height="76" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+      <text x="632" y="236" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">Hash Join 선택</text>
+      <text x="632" y="256" font-size="10.5" fill="#15803d" text-anchor="middle">users로 해시를 만들고</text>
+      <text x="632" y="273" font-size="10.5" fill="#15803d" text-anchor="middle">orders를 한 번 흘려보낸다</text>
+
+      <rect x="730" y="212" width="155" height="76" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+      <text x="807" y="234" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">반복이 사라졌다</text>
+      <text x="807" y="255" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700" class="mono">양쪽 각 1회 스캔</text>
+      <text x="807" y="273" font-size="10.5" fill="#15803d" text-anchor="middle">Batches: 1 (스필 없음)</text>
+
+      <rect x="905" y="212" width="189" height="76" rx="9" fill="#16a34a"/>
+      <text x="999" y="238" font-size="17" fill="#fff" text-anchor="middle" font-weight="700">2.3초</text>
+      <text x="999" y="259" font-size="11" fill="#dcfce7" text-anchor="middle">Buffers 103,057</text>
+      <text x="999" y="277" font-size="10.5" fill="#dcfce7" text-anchor="middle">18배 · 바뀐 것은 통계뿐</text>
+
+      <line x1="187" y1="250" x2="203" y2="250" stroke="#16a34a" stroke-width="2" marker-end="url(#mc2)"/>
+      <line x1="362" y1="250" x2="378" y2="250" stroke="#16a34a" stroke-width="2" marker-end="url(#mc2)"/>
+      <line x1="537" y1="250" x2="553" y2="250" stroke="#16a34a" stroke-width="2" marker-end="url(#mc2)"/>
+      <line x1="712" y1="250" x2="728" y2="250" stroke="#16a34a" stroke-width="2" marker-end="url(#mc2)"/>
+      <line x1="887" y1="250" x2="903" y2="250" stroke="#16a34a" stroke-width="2" marker-end="url(#mc2)"/>
+    </g>
+
+    <text x="560" y="316" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">연쇄의 방향이 중요하다 — 잘못된 것은 "조인 방식"이 아니라 "행 수 추정"이었고, 조인 방식은 그 추정을 성실하게 따른 결과다</text>
+  </svg>
+  <figcaption><code>Nested Loop</code>은 <b>바깥 행 하나마다 안쪽을 한 번씩 탐색</b>하는 방식이라 <b>바깥 행이 1,000개일 때는 최고의 선택이고 50만 개가 되면 최악의 선택</b>이 된다. 실측이 그대로 보여 준다 — inner <code>Index Scan using users_pkey</code>가 <code>loops=500000</code>, 한 번에 0.078ms이므로 총 <b>39,000ms</b>. <b>41초짜리 쿼리의 39초가 이 반복이다.</b></figcaption>
+</figure>
+
+<div class="codehead plain"><span class="tag">비용</span> 플래너가 실제로 비교한 두 후보</div>
+<pre><code>플래너가 비교한 두 후보 (추정 1,000행 기준)
+
+  Nested Loop : orders 인덱스 스캔        1,404.55
+              + 1,000행 × inner 탐색 8.01    8,010.00
+              + 행당 처리 비용                  10.00   =     9,424.55   <span class="ln-bad">&lt;- 이겼다</span>
+  Hash Join   : users 해시 빌드           2,435.00
+              + orders 순차 스캔        177,122.00
+              + 조인 처리 비용             6,229.19   =   185,786.19
+
+실제(50만 행)로 다시 계산하면 순위가 뒤집힌다
+
+  Nested Loop : 1,404.55 + 500,000행 × 8.01        ≈ 4,006,405   <span class="ln-bad">&lt;- 21배 비싸다</span>
+  Hash Join   : 테이블을 한 번씩만 읽으므로 그대로     185,786</code></pre>
+
+<div class="codehead good"><span class="tag">after</span> <code>ANALYZE orders;</code> 후, 같은 쿼리 — 2.3초</div>
+<pre><code> Hash Join  (cost=2435.00..185786.19 <span class="ln-good">rows=498320</span> width=48) (actual time=42.109..2184.663 <span class="ln-good">rows=500000</span> loops=1)
+   Hash Cond: (o.user_id = u.id)
+   Buffers: shared hit=54935 read=48122
+   -&gt;  Seq Scan on orders o  (cost=0.00..177122.00 rows=498320 width=24) (actual time=0.021..1189.442 rows=500000 loops=1)
+         Filter: ((created_at &gt;= '2026-08-01 00:00:00+09'::timestamptz) AND (status = 'ACTIVE'::text))
+         Rows Removed by Filter: 4500000
+         Buffers: shared hit=54000 read=48122
+   -&gt;  Hash  (cost=2135.00..2135.00 rows=120000 width=32) (actual time=41.802..41.803 rows=120000 loops=1)
+<span class="ln-good">         Buckets: 131072  Batches: 1  Memory Usage: 8266kB   <span class="cm">&lt;- Batches: 1 = 스필 없음</span></span>
+         -&gt;  Seq Scan on users u  (cost=0.00..2135.00 rows=120000 width=32) (actual time=0.011..13.402 rows=120000 loops=1)
+ Planning Time: 0.402 ms
+<span class="ln-good"> Execution Time: 2298.117 ms</span></code></pre>
+
+<div class="scroll">
+<table>
+  <caption>두 계획을 나란히 놓고 보면 무엇이 어떻게 연쇄했는지가 보인다.</caption>
+  <thead><tr><th></th><th>before (통계 낡음)</th><th>after (<code>ANALYZE</code> 후)</th></tr></thead>
+  <tbody>
+    <tr><th>추정 rows / 실제 rows</th><td class="bad">1,000 / 500,000 (<b>500배 어긋남</b>)</td><td class="good">498,320 / 500,000 (거의 일치)</td></tr>
+    <tr><th>조인 방식</th><td class="bad"><code>Nested Loop</code> — inner를 50만 번 반복</td><td class="good"><code>Hash Join</code> — 양쪽을 한 번씩만 읽는다</td></tr>
+    <tr><th>inner의 <code>loops</code></th><td class="bad">500,000</td><td class="good">(해시 조인에는 반복이 없다)</td></tr>
+    <tr><th>Buffers 합계</th><td class="bad">1,551,366</td><td class="good">103,057</td></tr>
+    <tr><th>Execution Time</th><td class="bad">41,402ms</td><td class="good">2,298ms</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout trap"><span class="t">그래서 <code>SET enable_nestloop = off</code>로 조인 방식만 눌러서는 안 된다 <span class="badge trap">함정</span></span>
+  근본 원인이 그대로 남기 때문이다. <b>같은 오추정 위에서 다른 쿼리의 조인 순서, 인덱스 선택, 정렬 방식이 계속 틀린다.</b> 조인 방식은 <b>증상</b>이지 원인이 아니다. <code>enable_*</code> 스위치는 <b>"이 계획이 정말 더 빠른가"를 확인하는 가설 검증 도구</b>이지 운영 설정이 아니다.
+</div>
+
+<div class="memo">
+  <h4>추정이 어긋나는 원인은 크게 셋 — <b>낡음 · 표본 · 상관</b>, 그리고 처방도 셋</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">① 통계가 낡았다</div><div class="d">대량 적재·삭제 직후, 또는 <b>큰 테이블이라 autovacuum의 analyze 임계(행의 10%)에 좀처럼 안 닿는</b> 경우.<br><b>처방</b> — <code>ANALYZE 테이블</code>, 그리고 테이블 단위로 임계 낮추기.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 표본이 부족하다</div><div class="d">기본 <code>default_statistics_target</code>은 100이라 히스토그램 구간과 MCV 목록이 각각 100개다. <b>값이 아주 다양하거나 희귀 값이 중요한 컬럼</b>에서 어긋난다.<br><b>처방</b> — <code>ALTER TABLE … ALTER COLUMN status SET STATISTICS 1000</code>.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">③ 컬럼 사이의 상관을 못 잡았다</div><div class="d">플래너는 조건들을 <b>독립으로 가정해 선택도를 곱한다.</b> <code>city = '서울' AND zipcode = '06236'</code>처럼 <b>한쪽이 다른 쪽을 사실상 결정</b>하면 심하게 과소추정된다.<br><b>처방</b> — <code>CREATE STATISTICS … (dependencies, ndistinct, mcv) ON city, zipcode FROM addresses</code>.</div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0">"추정이 틀렸다"를 확인하는 것 자체가 <code>EXPLAIN</code>만으로는 <b>불가능</b>하다<br><span style="font-size:.92rem;font-weight:600">추정만 있는 견적서에는 <b>비교 대상이 없기 때문</b>이다. <code>rows</code> 두 개를 나란히 보려면 반드시 <code>ANALYZE</code>를 켜야 한다 — <b>이것이 <code>EXPLAIN (ANALYZE, BUFFERS)</code>가 사실상 기본 조합인 이유</b>다.</span></div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 사이클 개관 + ① 측정 — "느리다"를 숫자와 재현 조건으로</h2>
+
+<p>"인덱스 추가해봄 → 빨라짐"이 <b>왜 프로세스가 아닌지</b>부터 분명히 한다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="위쪽은 제보를 받고 쿼리를 눈으로 보고 인덱스를 추가해 빨라진 것 같으면 끝내는 직선 흐름으로 막다른 길로 표시되어 있고, 아래쪽은 측정 가설 검증 고정 네 단계가 이어지며 고정에서 다시 측정으로 돌아오는 닫힌 사이클로 그려져 있다">
+    <defs>
+      <marker id="my1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="my2" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <rect x="26" y="36" width="1068" height="140" rx="12" fill="#fef2f2" stroke="#fecaca" stroke-width="2"/>
+    <text x="46" y="60" font-size="13" fill="#b91c1c" font-weight="700">흔한 흐름 — 이것은 프로세스가 아니다</text>
+    <g>
+      <rect x="46" y="72" width="176" height="40" rx="8" fill="#fff" stroke="#fecaca"/>
+      <text x="134" y="97" font-size="11.5" fill="#7f1d1d" text-anchor="middle">느리다는 제보</text>
+      <rect x="242" y="72" width="176" height="40" rx="8" fill="#fff" stroke="#fecaca"/>
+      <text x="330" y="97" font-size="11.5" fill="#7f1d1d" text-anchor="middle">쿼리를 눈으로 봄</text>
+      <rect x="438" y="72" width="196" height="40" rx="8" fill="#fff" stroke="#fecaca"/>
+      <text x="536" y="97" font-size="11.5" fill="#7f1d1d" text-anchor="middle">WHERE 컬럼에 인덱스 추가</text>
+      <rect x="654" y="72" width="176" height="40" rx="8" fill="#fff" stroke="#fecaca"/>
+      <text x="742" y="97" font-size="11.5" fill="#7f1d1d" text-anchor="middle">빨라진 것 같음</text>
+      <rect x="850" y="72" width="110" height="40" rx="8" fill="#dc2626"/>
+      <text x="905" y="97" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">끝</text>
+      <line x1="224" y1="92" x2="240" y2="92" stroke="#dc2626" stroke-width="1.8" marker-end="url(#my1)"/>
+      <line x1="420" y1="92" x2="436" y2="92" stroke="#dc2626" stroke-width="1.8" marker-end="url(#my1)"/>
+      <line x1="636" y1="92" x2="652" y2="92" stroke="#dc2626" stroke-width="1.8" marker-end="url(#my1)"/>
+      <line x1="832" y1="92" x2="848" y2="92" stroke="#dc2626" stroke-width="1.8" marker-end="url(#my1)"/>
+      <line x1="976" y1="78" x2="976" y2="106" stroke="#b91c1c" stroke-width="3"/>
+      <text x="1032" y="90" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">막다른 길</text>
+      <text x="1032" y="106" font-size="10.5" fill="#7f1d1d" text-anchor="middle">다음이 없다</text>
+    </g>
+    <text x="46" y="136" font-size="11.5" fill="#b91c1c" font-weight="700">남는 문제 넷 —</text>
+    <text x="160" y="136" font-size="11.5" fill="#7f1d1d">① 무엇이 얼마나 느렸는지 <tspan font-weight="700">숫자가 없다</tspan> &nbsp;&nbsp;② <tspan font-weight="700">왜 빨라졌는지 모른다</tspan> &nbsp;&nbsp;③ 다른 쿼리가 느려졌는지 모른다</text>
+    <text x="160" y="158" font-size="11.5" fill="#7f1d1d">④ 3개월 뒤 <tspan font-weight="700">같은 패턴이 재발해도 아무도 모른다</tspan> — 고친 사람도 그때는 기억하지 못한다</text>
+
+    <text x="46" y="204" font-size="13" fill="#1d4ed8" font-weight="700">사이클 — 이것이 프로세스다</text>
+    <g>
+      <rect x="26" y="214" width="250" height="112" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+      <rect x="26" y="214" width="250" height="30" rx="11" fill="#2563eb"/>
+      <text x="151" y="235" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">① 측정 (측)</text>
+      <text x="151" y="264" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">무엇이, 얼마나, 몇 번, 언제</text>
+      <text x="151" y="284" font-size="11" fill="#1d4ed8" text-anchor="middle">숫자와 재현 조건</text>
+      <text x="151" y="304" font-size="10.5" fill="#3b82f6" text-anchor="middle" class="mono">pg_stat_statements · 로그</text>
+
+      <rect x="296" y="214" width="250" height="112" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+      <rect x="296" y="214" width="250" height="30" rx="11" fill="#2563eb"/>
+      <text x="421" y="235" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">② 가설 (가)</text>
+      <text x="421" y="264" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">비용이 새는 지점을</text>
+      <text x="421" y="284" font-size="11" fill="#1d4ed8" text-anchor="middle">메커니즘 사슬로 특정</text>
+      <text x="421" y="304" font-size="10.5" fill="#3b82f6" text-anchor="middle">예상 효과를 <tspan font-weight="700">숫자로</tspan></text>
+
+      <rect x="566" y="214" width="250" height="112" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+      <rect x="566" y="214" width="250" height="30" rx="11" fill="#2563eb"/>
+      <text x="691" y="235" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">③ 검증 (검)</text>
+      <text x="691" y="264" font-size="11.5" fill="#1e40af" text-anchor="middle" font-weight="700">같은 파라미터로 전후 실측</text>
+      <text x="691" y="284" font-size="11" fill="#1d4ed8" text-anchor="middle">+ 부작용까지 <tspan font-weight="700">양면으로</tspan></text>
+      <text x="691" y="304" font-size="10.5" fill="#3b82f6" text-anchor="middle">쓰기 비용 · 다른 쿼리 · DDL 리스크</text>
+
+      <rect x="836" y="214" width="258" height="112" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="3"/>
+      <rect x="836" y="214" width="258" height="30" rx="11" fill="#16a34a"/>
+      <text x="965" y="235" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">④ 고정 (고) — 여기까지가 한 사이클</text>
+      <text x="965" y="264" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">재발을 사람이 아니라</text>
+      <text x="965" y="284" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">설정·테스트·파이프라인이 잡게</text>
+      <text x="965" y="304" font-size="10.5" fill="#22c55e" text-anchor="middle">"TODO 주석"은 고정이 아니다</text>
+
+      <line x1="278" y1="270" x2="294" y2="270" stroke="#2563eb" stroke-width="2" marker-end="url(#my2)"/>
+      <line x1="548" y1="270" x2="564" y2="270" stroke="#2563eb" stroke-width="2" marker-end="url(#my2)"/>
+      <line x1="818" y1="270" x2="834" y2="270" stroke="#2563eb" stroke-width="2" marker-end="url(#my2)"/>
+    </g>
+
+    <path d="M965 326 L965 358 L151 358 L151 330" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-dasharray="7 4" marker-end="url(#my2)"/>
+    <rect x="380" y="342" width="356" height="32" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="558" y="363" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">다음 느린 쿼리는 사용자 항의가 아니라 알람으로 도착한다</text>
+  </svg>
+  <figcaption>위와 아래의 차이는 <b>"고쳤다"로 끝나는가, "다음에도 잡힌다"로 끝나는가</b>다. 면접에서 이 문항이 겨냥하는 것은 <b>사이클의 마지막 칸(④ 고정)</b>이다 — 앞의 세 칸은 대부분 말하지만, <b>네 번째를 말하는 사람은 드물다.</b></figcaption>
+</figure>
+
+<h3>6-1. 입력은 사람의 제보가 아니라 로그와 지표여야 한다 — 네 개의 창구</h3>
+
+<div class="grid g2">
+  <div class="tile"><div class="k">log_min_duration_statement</div><div class="d">이 값(ms)을 넘긴 문장을 서버 로그에 남긴다. <b>기본값 <code>-1</code>은 "아무것도 안 남김"</b>이다. <b>파라미터가 실제 값으로 찍히므로</b> "느렸던 <b>그 파라미터</b>"를 여기서 가져온다.</div></div>
+  <div class="tile"><div class="k">auto_explain</div><div class="d">같은 임계를 넘긴 문장의 <b>실제 실행 계획</b>을 로그에 남기는 확장. <code>log_analyze</code>·<code>log_buffers</code>를 켜면 청구서까지 남는다 — <b>"그때 그 계획"을 사후에 알 수 있는 유일한 길</b>이다.</div></div>
+  <div class="tile"><div class="k">pg_stat_statements</div><div class="d">파라미터를 정규화한 <b>쿼리 패턴별</b>로 <b>호출 횟수, 총·평균 실행 시간, 반환 행 수, 읽은 페이지 수</b>를 누적하는 확장. <b>"어느 쿼리가 비싼가"의 대시보드.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">APM (Pinpoint, Datadog 등)</div><div class="d">어느 API에서 어느 쿼리가 <b>몇 번</b> 호출되는지를 본다. <b>N+1은 쿼리 하나는 빠른데 요청당 수백 번 호출되는 문제</b>라 느린 쿼리 로그에는 <b>안 잡히고</b> 여기서만 보인다.</div></div>
+</div>
+
+<div class="codehead good"><span class="tag">측정</span> 우선순위는 "가장 느린 쿼리"가 아니라 "가장 비싼 쿼리"</div>
+<pre><code><span class="cm">-- 총 비용 = 평균 시간 × 호출 횟수 순으로 정렬</span>
+<span class="kw">SELECT</span> queryid,
+       <span class="fn">left</span>(query, 80)                                   <span class="kw">AS</span> query,
+       calls,
+       <span class="fn">round</span>((total_exec_time / 1000)::numeric, 1)       <span class="kw">AS</span> total_sec,
+       <span class="fn">round</span>(mean_exec_time::numeric, 2)                 <span class="kw">AS</span> mean_ms,
+       rows / calls                                      <span class="kw">AS</span> avg_rows,
+<span class="ln-good">       (shared_blks_hit + shared_blks_read) / calls      <span class="kw">AS</span> blks_per_call</span>
+<span class="kw">FROM</span> pg_stat_statements
+<span class="kw">ORDER BY</span> total_exec_time <span class="kw">DESC</span>
+<span class="kw">LIMIT</span> 10;
+<span class="cm">-- 1초짜리 하루 1회(총 1초)보다 50ms짜리 하루 10만 회(총 5,000초)가 병목이다.</span>
+<span class="cm">-- blks_per_call(호출당 읽은 페이지)이 avg_rows(호출당 반환 행)의 수천 배면</span>
+<span class="cm">-- 그것만으로 "많이 읽고 대부분 버린다"는 진단이 선다.</span></code></pre>
+
+<div class="rule red">1초짜리 하루 1회(총 1초) &lt; <b>50ms짜리 하루 10만 회(총 5,000초)</b><br><span style="font-size:.92rem;font-weight:600">눈에 띄는 것은 앞이지만 서비스를 잡아먹는 것은 뒤다</span></div>
+
+<h3>6-2. 재현 조건 — 이게 없으면 "내 로컬에선 빠른데요"로 끝난다</h3>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">어떤 파라미터에서 느린가</div><div class="d">같은 쿼리도 <code>user_id</code>에 따라 <b>대상 행 수가 100배 차이</b> 난다. <code>pg_stat_statements</code>의 <code>query</code>는 파라미터가 <code>$1</code>로 지워져 있으니 <b>실제 값은 <code>log_min_duration_statement</code> 로그</b>에서 가져온다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">어느 시간대인가</div><div class="d"><b>배치 · autovacuum · 리포트</b>와 겹치는가. 겹친다면 쿼리가 아니라 <b>동시에 도는 무언가</b>가 원인일 수 있다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">실행이 느린 건가, 기다린 건가</div><div class="d">계획이 완벽해도 <b>앞 트랜잭션의 락을 기다리면</b> 느리다. <code>wait_event_type</code>이 <code>Lock</code>이면 <b>실행 계획 문제가 아니라 동시성 문제</b>이므로 <b><code>EXPLAIN</code>을 아무리 봐도 답이 안 나온다.</b></div></div>
+</div>
+
+<div class="codehead plain"><span class="tag">배제</span> "느린 게 아니라 기다린 것"부터 걷어낸다</div>
+<pre><code><span class="kw">SELECT</span> pid, state, wait_event_type, wait_event,
+       <span class="fn">now</span>() - xact_start        <span class="kw">AS</span> xact_age,
+       <span class="fn">pg_blocking_pids</span>(pid)     <span class="kw">AS</span> blocked_by,
+       <span class="fn">left</span>(query, 60)           <span class="kw">AS</span> query
+<span class="kw">FROM</span> pg_stat_activity
+<span class="kw">WHERE</span> state &lt;&gt; <span class="st">'idle'</span> <span class="kw">AND</span> pid &lt;&gt; <span class="fn">pg_backend_pid</span>()
+<span class="kw">ORDER BY</span> xact_start;
+<span class="cm">-- wait_event_type = 'Lock' + blocked_by가 차 있으면 락 문제(범인은 그 pid).</span>
+<span class="cm">-- 'IO'면 디스크, NULL이면 CPU에서 실행 중 → 계획 문제 쪽.</span></code></pre>
+
+<div class="memo red">
+  <h4>재현 조건의 PostgreSQL 고유 함정 — <b>"psql에선 빠른데 앱에선 느리다"의 정체는 제네릭 계획</b> <span class="badge senior">시니어 변별</span></h4>
+  <div class="split" style="margin:10px 0">
+    <div class="pane b"><h4>psql에서 본 것 — 커스텀 계획</h4><p style="margin:0;font-size:.93rem">리터럴 값으로 뜬 <code>EXPLAIN</code>은 <b>그 값의 통계로 세운 계획</b>이다. <code>user_id = 100</code>이 4만 건이라는 사실을 <b>알고</b> 세운 계획.</p></div>
+    <div class="pane r"><h4>앱에서 도는 것 — 제네릭 계획일 수 있다</h4><p style="margin:0;font-size:.93rem">pgjdbc가 같은 문장을 <b>5회 실행한 뒤 서버 준비문으로</b> 바꾸고, 서버는 <b>커스텀 계획 5회 뒤</b> 제네릭 계획(<b>파라미터 값을 모른 채 평균 선택도로</b> 세운 계획)이 더 싸다고 판단하면 그쪽으로 전환한다.</p></div>
+  </div>
+  <p style="margin-bottom:0"><b>편중 데이터에서 특히 갈린다.</b> 확인은 <code>PREPARE</code> 후 <code>EXPLAIN EXECUTE</code>를 <b>6회 이상 반복</b>하거나 <code>auto_explain</code> 로그를 보는 것이고, 통제는 <code>plan_cache_mode = force_custom_plan</code>이다.</p>
+</div>
+
+<div class="callout trap"><span class="t">그리고 측정은 <b>운영 규모 데이터에서, <code>ANALYZE</code>를 돌린 뒤</b> 해야 한다 <span class="badge trap">함정</span></span>
+  로컬 100건짜리 테이블에서는 어떤 쿼리든 빠르고, 심지어 <b>실행 계획 자체가 다르다.</b> 플래너는 <b>작은 테이블에서 인덱스 대신 <code>Seq Scan</code>을 고르는 게 정상</b>이라(페이지 몇 장이면 다 읽히는데 인덱스를 거칠 이유가 없다), <b>로컬 <code>EXPLAIN</code>에 <code>Seq Scan</code>이 떠도 운영에선 <code>Index Scan</code>일 수 있고 그 반대도 있다.</b>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. ② 가설 — 비용이 "어디서 새는지"를 사슬로 말한다</h2>
+
+<p>계획을 3절의 순서대로 읽으면서, <b>"느리다"를 메커니즘 사슬로 번역</b>하는 단계다. <b>"성능 저하", "메모리 부하", "왔다갔다" 같은 뭉뚱그린 말에서 끝내지 않고 이름 붙은 단계로 끝까지 잇는다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 316" role="img" aria-label="위쪽 붉은 띠는 user_id 단독 인덱스로 TID 4만 7천 개를 모아 힙을 랜덤 접근한 뒤 90퍼센트를 필터로 버리고 남은 행을 정렬해 20건을 반환하는 비용 사슬을, 아래쪽 초록 띠는 복합 인덱스로 구간을 확정하고 이미 정렬된 리프를 역방향으로 20건만 읽어 정렬 노드 자체가 사라진 사슬을 보여준다">
+    <defs>
+      <marker id="mh1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="mh2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"인덱스는 타는데 느려요"를 사슬로 번역하면 — 비용이 어느 칸에서 새는지가 보인다</text>
+
+    <text x="30" y="46" font-size="12" fill="#b91c1c" font-weight="700">before — <tspan class="mono">idx_orders_user (user_id)</tspan> 단독 인덱스</text>
+    <g>
+      <rect x="26" y="54" width="204" height="88" rx="9" fill="#fff" stroke="#fecaca" stroke-width="2"/>
+      <text x="128" y="76" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">① 인덱스에서 TID 수집</text>
+      <text x="128" y="98" font-size="11" fill="#7f1d1d" text-anchor="middle"><tspan class="mono">user_id = 100</tspan> 엔트리</text>
+      <text x="128" y="116" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">47,215개</text>
+      <text x="128" y="133" font-size="10" fill="#16a34a" text-anchor="middle">리프 순차 훑기 — 여긴 싸다</text>
+
+      <rect x="242" y="54" width="204" height="88" rx="9" fill="#dc2626"/>
+      <text x="344" y="76" font-size="11.5" fill="#fff" text-anchor="middle" font-weight="700">② TID마다 힙 랜덤 접근</text>
+      <text x="344" y="98" font-size="11" fill="#fecaca" text-anchor="middle">흩어진 페이지를 하나씩 찌른다</text>
+      <text x="344" y="116" font-size="12" fill="#fff" text-anchor="middle" font-weight="700" class="mono">47,215번</text>
+      <text x="344" y="133" font-size="10" fill="#fecaca" text-anchor="middle">여기가 비용의 대부분</text>
+
+      <rect x="458" y="54" width="204" height="88" rx="9" fill="#fff" stroke="#fecaca" stroke-width="2"/>
+      <text x="560" y="76" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">③ status 필터로 폐기</text>
+      <text x="560" y="98" font-size="11" fill="#7f1d1d" text-anchor="middle" class="mono">Rows Removed: 42,495</text>
+      <text x="560" y="116" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">90%를 버렸다</text>
+      <text x="560" y="133" font-size="10" fill="#7f1d1d" text-anchor="middle">이미 힙 I/O를 낸 뒤에</text>
+
+      <rect x="674" y="54" width="204" height="88" rx="9" fill="#fff" stroke="#fecaca" stroke-width="2"/>
+      <text x="776" y="76" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">④ 남은 4,720행 정렬</text>
+      <text x="776" y="98" font-size="11" fill="#7f1d1d" text-anchor="middle" class="mono">top-N heapsort</text>
+      <text x="776" y="118" font-size="10.5" fill="#7f1d1d" text-anchor="middle">LIMIT 20이 있어도</text>
+      <text x="776" y="134" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">입력은 전부 읽어야 한다</text>
+
+      <rect x="890" y="54" width="204" height="88" rx="9" fill="#7f1d1d"/>
+      <text x="992" y="80" font-size="16" fill="#fff" text-anchor="middle" font-weight="700">291 ms</text>
+      <text x="992" y="104" font-size="12" fill="#fecaca" text-anchor="middle" class="mono">Buffers 66,148</text>
+      <text x="992" y="126" font-size="10.5" fill="#fecaca" text-anchor="middle">페이지 3,300장을 읽어 행 하나를 준 셈</text>
+
+      <line x1="232" y1="98" x2="240" y2="98" stroke="#dc2626" stroke-width="2" marker-end="url(#mh1)"/>
+      <line x1="448" y1="98" x2="456" y2="98" stroke="#dc2626" stroke-width="2" marker-end="url(#mh1)"/>
+      <line x1="664" y1="98" x2="672" y2="98" stroke="#dc2626" stroke-width="2" marker-end="url(#mh1)"/>
+      <line x1="880" y1="98" x2="888" y2="98" stroke="#dc2626" stroke-width="2" marker-end="url(#mh1)"/>
+    </g>
+
+    <text x="30" y="176" font-size="12" fill="#15803d" font-weight="700">after — <tspan class="mono">(user_id, status, created_at)</tspan> 복합 인덱스: 등호 → 등호 → 정렬 순서</text>
+    <g>
+      <rect x="26" y="184" width="204" height="88" rx="9" fill="#fff" stroke="#bbf7d0" stroke-width="2"/>
+      <text x="128" y="206" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">① 등호 두 개로 구간 확정</text>
+      <text x="128" y="228" font-size="11" fill="#15803d" text-anchor="middle" class="mono">user_id=100 AND</text>
+      <text x="128" y="245" font-size="11" fill="#15803d" text-anchor="middle" class="mono">status='ACTIVE'</text>
+      <text x="128" y="263" font-size="10" fill="#15803d" text-anchor="middle">둘 다 <tspan class="mono">Index Cond</tspan></text>
+
+      <rect x="242" y="184" width="204" height="88" rx="9" fill="#fff" stroke="#bbf7d0" stroke-width="2"/>
+      <text x="344" y="206" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">② 그 구간은 이미 정렬돼 있다</text>
+      <text x="344" y="230" font-size="11" fill="#15803d" text-anchor="middle" class="mono">created_at 순</text>
+      <text x="344" y="252" font-size="10.5" fill="#15803d" text-anchor="middle">B-tree 리프의 저장 순서를</text>
+      <text x="344" y="266" font-size="10.5" fill="#15803d" text-anchor="middle">그대로 빌려 쓴다</text>
+
+      <rect x="458" y="184" width="204" height="88" rx="9" fill="#16a34a"/>
+      <text x="560" y="206" font-size="11.5" fill="#fff" text-anchor="middle" font-weight="700">③ Backward로 20건만</text>
+      <text x="560" y="228" font-size="11" fill="#dcfce7" text-anchor="middle" class="mono">Index Scan Backward</text>
+      <text x="560" y="248" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">읽고 즉시 종료</text>
+      <text x="560" y="265" font-size="10" fill="#dcfce7" text-anchor="middle">시작 비용이 작은 계획이 이긴다</text>
+
+      <rect x="674" y="184" width="204" height="88" rx="9" fill="#fff" stroke="#bbf7d0" stroke-width="2"/>
+      <text x="776" y="206" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">④ 사라진 것 둘</text>
+      <text x="776" y="228" font-size="11" fill="#15803d" text-anchor="middle"><tspan class="mono">Sort</tspan> 노드 자체가 없다</text>
+      <text x="776" y="248" font-size="11" fill="#15803d" text-anchor="middle"><tspan class="mono">Rows Removed by Filter</tspan> 0</text>
+      <text x="776" y="265" font-size="10" fill="#15803d" text-anchor="middle">버릴 행을 힙에서 읽지 않는다</text>
+
+      <rect x="890" y="184" width="204" height="88" rx="9" fill="#166534"/>
+      <text x="992" y="210" font-size="16" fill="#fff" text-anchor="middle" font-weight="700">0.209 ms</text>
+      <text x="992" y="234" font-size="12" fill="#dcfce7" text-anchor="middle" class="mono">Buffers 103</text>
+      <text x="992" y="256" font-size="10.5" fill="#dcfce7" text-anchor="middle">Buffers 기준 642배 · 시간 기준 1,394배</text>
+
+      <line x1="232" y1="228" x2="240" y2="228" stroke="#16a34a" stroke-width="2" marker-end="url(#mh2)"/>
+      <line x1="448" y1="228" x2="456" y2="228" stroke="#16a34a" stroke-width="2" marker-end="url(#mh2)"/>
+      <line x1="664" y1="228" x2="672" y2="228" stroke="#16a34a" stroke-width="2" marker-end="url(#mh2)"/>
+      <line x1="880" y1="228" x2="888" y2="228" stroke="#16a34a" stroke-width="2" marker-end="url(#mh2)"/>
+    </g>
+
+    <text x="560" y="302" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">가설의 문장은 이것이다 — "비용 = 버릴 행에 쓴 힙 랜덤 I/O + 정렬" &nbsp;→&nbsp; "복합 인덱스가 그 둘을 동시에 없앤다"</text>
+  </svg>
+  <figcaption>사슬로 말할 수 있으면 <b>처방이 자동으로 따라 나온다.</b> 여기서는 <b>②의 랜덤 I/O와 ④의 정렬</b>이 비용이고, <code>(user_id, status, created_at)</code> 인덱스 하나가 <b>등호로 구간을 좁혀 ②·③을 없애고, 그 구간의 리프 정렬 순서를 빌려 ④를 없앤다.</b> 하나의 인덱스가 두 비용을 동시에 지우는 구조다.</figcaption>
+</figure>
+
+<h3>7-1. 뭉뚱그린 말 → 사슬로 말하기 — 계획에서 본 것별 번역표</h3>
+
+<div class="scroll">
+<table class="wide">
+  <thead><tr><th style="width:26%">계획에서 본 것</th><th style="width:15%">뭉뚱그린 말</th><th>사슬로 말하기</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><code>Index Scan</code> + <code>Filter: (status = …)</code> + <code>Rows Removed by Filter: 42495</code> + <code>Buffers: read=41856</code>, 위에 <code>Sort</code></td><td class="bad">"인덱스는 타는데 느려요"</td><td>인덱스로 TID 4만 7천 개 수집(순차, 쌈) → <b>TID마다 힙 페이지 랜덤 접근 4만 7천 번(비쌈)</b> → 그중 90%를 <code>status</code> 필터에서 버림 → 남은 4,720건을 정렬 → 20건 반환. <b>비용 = 버릴 행에 쓴 힙 랜덤 I/O + 정렬</b></td></tr>
+    <tr><td>inner가 <code>Seq Scan</code> + <code>loops=4720</code>, 또는 <code>Hash Join</code> + <code>Batches: 8</code></td><td class="bad">"조인이 느려요"</td><td>조인 키 인덱스가 없어 NL이면 안쪽을 4,720번 <b>통순회</b>, 플래너가 해시로 갈아탔으면 안쪽 전체를 해시로 만들다 <code>work_mem</code>을 넘쳐 <b>디스크 스필</b> → 조인 키 인덱스 하나로 <b>"행당 트리 탐색 1회"</b>로 바뀜</td></tr>
+    <tr><td><code>Sort</code> + <code>Sort Method: external merge Disk:</code> + <code>LIMIT 20</code></td><td class="bad">"정렬이 느려요"</td><td>정렬 컬럼이 인덱스 순서와 안 맞음 → <b>대상 전부</b>를 읽어 정렬 → <code>work_mem</code>을 넘겨 디스크 임시 파일에 청크 저장 후 병합 → 그제야 앞 20건. 인덱스 순서와 맞추면 <b><code>Index Scan Backward</code>로 리프 앞 20건 읽고 끝</b>(<code>Sort</code> 노드 자체가 사라짐)</td></tr>
+    <tr><td><code>Seq Scan</code> + <code>rows=1000000</code> + <code>Buffers: read=…</code> 대량</td><td class="bad">"풀스캔이라 느려요"</td><td>순차 I/O라 <b>페이지당은 싸지만</b> 총량이 100만 → 읽은 페이지가 <code>shared_buffers</code>를 채우며 <b>다른 쿼리의 캐시를 밀어냄(캐시 오염)</b> → 이 쿼리만이 아니라 <b>옆 쿼리까지 <code>read</code>로 떨어짐</b></td></tr>
+    <tr><td><code>Index Only Scan</code> + <code>Heap Fetches: 38211</code></td><td class="bad">"커버링인데 안 빨라요"</td><td>visibility map이 "전부 가시"로 표시 못 한 페이지가 많음(갱신이 잦거나 VACUUM이 밀림) → 인덱스만 읽으려다 <b>힙을 3만 8천 번 방문</b> → <code>VACUUM</code>으로 VM을 갱신하거나 autovacuum 임계를 낮춤</td></tr>
+    <tr><td><code>SubPlan 1</code> 아래 노드 <code>loops=100000</code></td><td class="bad">"서브쿼리가 느려요"</td><td>상관 서브쿼리가 <b>바깥 행마다 재실행</b> → 바깥 10만 행이면 10만 번 → <b>조인 또는 <code>EXISTS</code>(세미 조인)</b>로 한 번만 실행되게</td></tr>
+    <tr><td>추정 <code>rows=1000</code> vs <code>actual rows=500000</code></td><td class="bad">"계획이 이상해요"</td><td>통계가 낡았거나 <b>상관 컬럼을 독립으로 가정해 곱함</b> → 잘못된 추정 위에 세운 조인 순서·방식이 전부 틀어짐 → <code>ANALYZE</code>, <code>SET STATISTICS</code>, <code>CREATE STATISTICS</code> (5절)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>가설에는 반드시 <b>예상 효과를 숫자로</b> 붙인다</h4>
+  <div class="split" style="margin:10px 0">
+    <div class="pane r"><h4>검증할 수 없는 가설</h4><p style="margin:0;font-size:.94rem">"인덱스 추가하면 <b>빨라질 것 같다</b>"</p><p style="margin:8px 0 0;font-size:.9rem;color:#b91c1c">맞았는지 틀렸는지 <b>판정할 방법이 없다.</b> 그래서 "빨라진 것 같음 → 끝"으로 끝난다.</p></div>
+    <div class="pane g"><h4>검증할 수 있는 가설</h4><p style="margin:0;font-size:.94rem">"<code>(user_id, status, created_at)</code> 인덱스를 만들면 <b><code>Rows Removed by Filter</code>가 0</b>이 되고, <b><code>Sort</code> 노드가 사라지며</b>, <b><code>Buffers</code>가 4만 7천 페이지에서 수십 페이지로</b> 준다"</p><p style="margin:8px 0 0;font-size:.9rem;color:#166534">세 항목 모두 <b>다음 단계에서 눈으로 확인할 수 있다.</b></p></div>
+  </div>
+  <div class="rule" style="margin-bottom:0"><b>숫자 없는 가설은 검증이 불가능하다</b></div>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. ③ 검증 — 이득과 대가를 한 호흡에</h2>
+
+<p>가설대로 고친 뒤 <b>같은 파라미터, 운영 규모 데이터</b>에서 <code>EXPLAIN (ANALYZE, BUFFERS)</code>를 전후로 비교한다.</p>
+
+<div class="codehead good"><span class="tag">처방</span> 등호 → 등호 → 정렬 순서로 컬럼을 배치한다</div>
+<pre><code><span class="cm">-- before (2절의 계획): Sort(top-N heapsort) 아래 Index Scan using idx_orders_user</span>
+<span class="cm">--    Filter: (status = 'ACTIVE'::text)   Rows Removed by Filter: 42495</span>
+<span class="cm">--    Buffers: shared hit=24292 read=41856   Execution Time: 291.487 ms</span>
+
+<span class="ln-good"><span class="kw">CREATE INDEX CONCURRENTLY</span> idx_orders_user_status_created</span>
+<span class="ln-good">  <span class="kw">ON</span> orders (user_id, status, created_at);</span>
+<span class="cm">--   등호(user_id) → 등호(status) → 정렬(created_at) 순: 두 등호로 좁힌 구간이</span>
+<span class="cm">--   created_at 순으로 이미 정렬돼 있으므로 역방향으로 20건만 읽으면 끝난다.</span>
+<span class="cm">--   CONCURRENTLY: 쓰기를 막지 않고 만든다 (트랜잭션 블록 안에서는 불가 — 9절 층 3)</span></code></pre>
+
+<div class="codehead good"><span class="tag">after</span> 291ms → 0.209ms, Buffers 66,148 → 103</div>
+<pre><code> Limit  (cost=0.99..36.17 rows=20 width=52) (actual time=0.062..0.171 rows=20 loops=1)
+<span class="ln-good">   Buffers: shared hit=103</span>
+   -&gt;  Nested Loop  (cost=0.99..8443.19 rows=4800 width=52) (actual time=0.061..0.166 rows=20 loops=1)
+<span class="ln-good">         -&gt;  Index Scan Backward using idx_orders_user_status_created on orders o</span>
+               (cost=0.56..6187.06 rows=4800 width=32) (actual time=0.041..0.083 rows=20 loops=1)
+<span class="ln-good">               Index Cond: ((user_id = 100) AND (status = 'ACTIVE'::text))</span>
+               Buffers: shared hit=23
+         -&gt;  Index Scan using products_pkey on products p  (actual time=0.003..0.004 rows=1 loops=20)
+               Index Cond: (id = o.product_id)
+               Buffers: shared hit=80
+ Execution Time: 0.209 ms
+
+<span class="cm"> Sort 노드가 사라졌고, Rows Removed by Filter 줄이 없어졌고, Buffers 66,148 -&gt; 103.</span>
+<span class="cm"> Index Scan Backward의 추정 rows=4800인데 actual rows=20인 것은 오추정이 아니라</span>
+<span class="cm"> Limit이 20건 받고 멈춘 "조기 종료"다 — cost의 시작 비용이 작은 계획이 이긴 이유(2-1).</span></code></pre>
+
+<div class="callout warn"><span class="t">여기서 멈추면 반쪽이다 — <b>이득만 말하고 대가를 안 붙이는 것</b>이 가장 흔한 감점 지점</span>
+  인덱스 추가의 대가는 정해져 있고, <b>PostgreSQL에서는 한 겹 더 무겁다.</b> 그 한 겹의 이름이 <b>HOT 업데이트 탈락</b>이다.
+</div>
+
+<h3>8-1. PostgreSQL만의 한 겹 — HOT 업데이트에서 탈락하면 <b>모든</b> 인덱스를 건드린다</h3>
+
+<p>PostgreSQL의 UPDATE는 행을 제자리에서 고치는 게 아니라 <b>새 버전을 만드는</b> 방식인데, <b>바뀐 컬럼이 어떤 인덱스에도 들어 있지 않으면</b> 인덱스를 하나도 건드리지 않고 힙 안에서만 처리한다(<b>Heap-Only Tuple</b>, 줄여서 <b>HOT</b>).</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 286" role="img" aria-label="왼쪽은 바뀐 컬럼이 어떤 인덱스에도 없어서 힙 페이지 안에서만 새 버전을 만들고 인덱스는 하나도 건드리지 않는 HOT 업데이트를, 오른쪽은 바뀐 컬럼이 인덱스에 들어 있어서 HOT에서 탈락해 테이블의 모든 인덱스에 새 엔트리를 꽂는 상황을 보여준다">
+    <defs>
+      <marker id="mo1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="mo2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">인덱스에 컬럼을 하나 넣는 순간, 그 컬럼을 바꾸는 UPDATE의 비용이 테이블 전체로 번진다</text>
+
+    <rect x="26" y="38" width="524" height="230" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="46" y="62" font-size="12.5" fill="#166534" font-weight="700">HOT 업데이트 — 바뀐 컬럼이 어떤 인덱스에도 없다</text>
+    <text x="46" y="80" font-size="11" fill="#15803d" class="mono">UPDATE orders SET memo = '...' WHERE id = 7;</text>
+
+    <rect x="46" y="94" width="146" height="36" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="119" y="117" font-size="11" fill="#166534" text-anchor="middle" class="mono">idx (user_id)</text>
+    <rect x="216" y="94" width="146" height="36" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="289" y="117" font-size="11" fill="#166534" text-anchor="middle" class="mono">idx (created_at)</text>
+    <rect x="386" y="94" width="146" height="36" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="459" y="117" font-size="11" fill="#166534" text-anchor="middle" class="mono">idx (product_id)</text>
+    <text x="289" y="150" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">↑ 셋 다 그대로 — 하나도 건드리지 않는다</text>
+
+    <rect x="46" y="164" width="486" height="86" rx="9" fill="#fff" stroke="#16a34a" stroke-width="2"/>
+    <text x="62" y="186" font-size="11.5" fill="#166534" font-weight="700">힙 페이지 하나 안에서</text>
+    <rect x="62" y="196" width="180" height="42" rx="7" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="152" y="213" font-size="10.5" fill="#64748b" text-anchor="middle">구 버전 (id=7)</text>
+    <text x="152" y="230" font-size="10" fill="#94a3b8" text-anchor="middle">나중에 VACUUM이 정리</text>
+    <line x1="248" y1="217" x2="272" y2="217" stroke="#16a34a" stroke-width="2" marker-end="url(#mo2)"/>
+    <rect x="278" y="196" width="180" height="42" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="368" y="213" font-size="10.5" fill="#166534" text-anchor="middle" font-weight="700">신 버전 (id=7)</text>
+    <text x="368" y="230" font-size="10" fill="#15803d" text-anchor="middle">같은 페이지 안에 체인으로</text>
+    <text x="496" y="220" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">쓰기</text>
+    <text x="496" y="234" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">1곳</text>
+
+    <rect x="570" y="38" width="524" height="230" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="590" y="62" font-size="12.5" fill="#b91c1c" font-weight="700">HOT 탈락 — 바뀐 컬럼이 인덱스에 들어 있다</text>
+    <text x="590" y="80" font-size="11" fill="#7f1d1d" class="mono">UPDATE orders SET status = 'DONE' WHERE id = 7;</text>
+
+    <rect x="590" y="94" width="146" height="36" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="663" y="112" font-size="10.5" fill="#b91c1c" text-anchor="middle" class="mono">idx (user_id, status,</text>
+    <text x="663" y="125" font-size="10.5" fill="#b91c1c" text-anchor="middle" class="mono">created_at)</text>
+    <rect x="760" y="94" width="146" height="36" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="833" y="117" font-size="11" fill="#b91c1c" text-anchor="middle" class="mono">idx (created_at)</text>
+    <rect x="930" y="94" width="146" height="36" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="1003" y="117" font-size="11" fill="#b91c1c" text-anchor="middle" class="mono">idx (product_id)</text>
+    <text x="833" y="150" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">↑ status가 없는 인덱스까지 <tspan text-decoration="underline">전부</tspan> 새 엔트리</text>
+
+    <line x1="663" y1="164" x2="663" y2="134" stroke="#dc2626" stroke-width="2" marker-end="url(#mo1)"/>
+    <line x1="833" y1="164" x2="833" y2="134" stroke="#dc2626" stroke-width="2" marker-end="url(#mo1)"/>
+    <line x1="1003" y1="164" x2="1003" y2="134" stroke="#dc2626" stroke-width="2" marker-end="url(#mo1)"/>
+
+    <rect x="590" y="164" width="486" height="86" rx="9" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+    <text x="606" y="186" font-size="11.5" fill="#b91c1c" font-weight="700">힙에 새 버전을 만들고 — 새 TID가 생긴다</text>
+    <rect x="606" y="196" width="200" height="42" rx="7" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="706" y="213" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">신 버전 = 새 TID</text>
+    <text x="706" y="230" font-size="10" fill="#7f1d1d" text-anchor="middle">인덱스들이 가리키던 주소가 아니다</text>
+    <text x="830" y="212" font-size="11.5" fill="#b91c1c" font-weight="700">→ 그래서 모든 인덱스가</text>
+    <text x="830" y="230" font-size="11.5" fill="#b91c1c" font-weight="700">&nbsp;&nbsp;&nbsp;새 주소를 가리켜야 한다</text>
+    <text x="1010" y="220" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">쓰기 3곳+</text>
+  </svg>
+  <figcaption>그래서 <b>"자주 바뀌는 컬럼을 인덱스에 넣는다"</b>는 결정은 그 인덱스 하나의 비용이 아니라 <b>테이블의 인덱스 개수만큼 곱해진 쓰기 비용</b>을 부른다. 배포 후 확인 지표가 <code>pg_stat_user_tables</code>의 <code>n_tup_upd</code> 대비 <b><code>n_tup_hot_upd</code> 비율</b>이다.</figcaption>
+</figure>
+
+<div class="callout ok"><span class="t">한 호흡 템플릿 — 이득 / 대가 / 판단을 한 번에 말한다 <span class="badge senior">시니어 변별</span></span>
+  "이 인덱스는 <b>[이득]</b> 이 쿼리의 힙 랜덤 I/O 4만 7천 번을 20번으로 만들고 <code>Sort</code>를 없앤다(Buffers 66,148에서 103으로). <b>[대가]</b> 대신 <code>orders</code>에 INSERT가 일어날 때마다 B-tree 하나를 더 갱신하고, <b><code>status</code>가 인덱스에 들어갔으므로 status를 바꾸는 UPDATE가 HOT 업데이트에서 탈락해 이 인덱스만이 아니라 테이블의 모든 인덱스에 새 엔트리를 꽂게 되며</b>, 인덱스 크기만큼 디스크와 <code>shared_buffers</code>를 더 쓰고, <code>user_id</code>를 선두로 쓰는 다른 쿼리들의 계획이 바뀔 수 있고, 수억 건 테이블이면 인덱스 생성 자체가 <b>테이블 2회 스캔짜리 운영 작업</b>이다. <b>[판단]</b> 그래서 기존 <code>(user_id)</code> 단독 인덱스는 <b>새 인덱스의 선두 컬럼에 흡수되므로 삭제</b>해 쓰기 대가를 상쇄하고, 생성은 <code>CREATE INDEX CONCURRENTLY</code>로 트래픽이 적은 시간에 하며, 배포 후 <code>n_tup_hot_upd</code> 비율이 얼마나 떨어지는지 확인한다."
+</div>
+
+<h3>8-2. 검증 체크리스트 — 네 줄</h3>
+
+<div class="step"><span class="n">1</span><div class="body"><b>대상 쿼리의 실측이 가설대로 개선됐는가</b> — <code>actual rows</code>, <code>actual time</code>, 그리고 <b><code>Buffers</code></b>. 4절에서 봤듯 시간은 캐시 상태에 따라 흔들리지만 <b>읽은 페이지 수는 같은 계획이면 같으므로, 전후 비교의 기준 숫자는 <code>Buffers</code></b>다.</div></div>
+<div class="step"><span class="n">2</span><div class="body"><b>같은 테이블을 쓰는 상위 쿼리들의 계획이 나빠지지 않았는가</b> — 새 인덱스가 생기면 <b>플래너의 선택지가 늘고</b>, 선택도 낮은 컬럼이 선두인 인덱스는 플래너를 <b>오히려 잘못된 길로 유인</b>할 수 있다. <code>pg_stat_statements</code> 상위 목록에서 같은 테이블 쿼리를 골라 다시 <code>EXPLAIN</code>한다.</div></div>
+<div class="step"><span class="n">3</span><div class="body"><b>쓰기 처리량이 허용 범위인가</b> — 쓰기 비중이 높은 테이블이면 인덱스 하나가 INSERT p95를 눈에 띄게 올리고, <b>인덱스에 들어간 컬럼을 갱신하는 UPDATE는 HOT 탈락으로 모든 인덱스를 건드린다.</b> <code>pg_stat_user_tables</code>의 <code>n_tup_upd</code> 대비 <code>n_tup_hot_upd</code> 비율을 전후로 본다.</div></div>
+<div class="step"><span class="n">4</span><div class="body"><b>DDL 실행 방식</b> — <code>CREATE INDEX CONCURRENTLY</code>로 쓰기를 막지 않고 만들되, <b>실패하면 <code>INVALID</code> 인덱스가 남으므로</b>(<code>pg_index.indisvalid</code>) 확인 후 DROP하고 재시도한다. <b>일반 <code>CREATE INDEX</code>는 테이블에 쓰기 잠금을 건다.</b></div></div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. ④ 고정 — 설정 · 테스트 · 파이프라인 3층</h2>
+
+<p>여기가 이 문서에서 <b>가장 힘을 주는 절</b>이다. 성능 개선은 <b>한 번 고치는 것보다 재발을 잡는 구조를 남기는 것</b>이 더 가치 있다 — 같은 팀의 다른 개발자가 <b>석 달 뒤 같은 패턴의 쿼리를 또 쓸 것</b>이고, 그때 이 사이클을 기억하고 있을 사람은 아무도 없기 때문이다.</p>
+
+<div class="rule red">"TODO 주석을 남겼습니다"는 <b>고정이 아니다</b><br><span style="font-size:.92rem;font-weight:600">주석은 <b>읽는 사람이 있을 때만</b> 작동하고, <b>빌드를 깨지도 알람을 울리지도 않는다</b></span></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="고정을 세 층으로 나눈 도식. 1층 설정은 측정이 자동으로 계속되게 하고, 2층 테스트는 회귀가 CI에서 터지게 하며, 3층 파이프라인과 템플릿은 절차가 사람 기억 밖에 있게 한다">
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">고정은 세 층으로 한다 — 각 층이 잡는 회귀의 종류가 다르다</text>
+
+    <!-- layer 1 -->
+    <rect x="26" y="40" width="190" height="84" rx="10" fill="#2563eb"/>
+    <text x="121" y="70" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">층 1 — 설정</text>
+    <text x="121" y="92" font-size="11" fill="#dbeafe" text-anchor="middle">측정이 자동으로</text>
+    <text x="121" y="108" font-size="11" fill="#dbeafe" text-anchor="middle">계속되게</text>
+    <rect x="224" y="40" width="470" height="84" rx="10" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="240" y="60" font-size="11" fill="#1d4ed8" font-weight="700">코드·설정으로 남기는 것 (IaC로 형상 관리)</text>
+    <text x="240" y="80" font-size="10.5" fill="#1e40af" class="mono">shared_preload_libraries = 'pg_stat_statements,auto_explain'</text>
+    <text x="240" y="98" font-size="10.5" fill="#1e40af" class="mono">log_min_duration_statement = 500 · auto_explain.log_analyze = on</text>
+    <text x="240" y="116" font-size="10.5" fill="#1e40af" class="mono">track_io_timing = on · log_lock_waits = on</text>
+    <rect x="702" y="40" width="392" height="84" rx="10" fill="#fff" stroke="#bfdbfe" stroke-width="2"/>
+    <text x="718" y="60" font-size="11" fill="#1d4ed8" font-weight="700">이것이 잡는 것</text>
+    <text x="718" y="80" font-size="11.5" fill="#1e40af">"어느 쿼리가 비싼가"와 <tspan font-weight="700">"그때 계획이 무엇이었나"</tspan></text>
+    <text x="718" y="100" font-size="11.5" fill="#b91c1c" font-weight="700">사고 후에 켜면 그 사고의 계획은 영영 알 수 없다</text>
+    <text x="718" y="118" font-size="10.5" fill="#64748b">언제 터지나 — <tspan font-weight="700">상시</tspan> (일일 리포트 · 분당 느린 쿼리 건수 알람)</text>
+
+    <!-- layer 2 -->
+    <rect x="26" y="132" width="190" height="84" rx="10" fill="#16a34a"/>
+    <text x="121" y="162" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">층 2 — 테스트</text>
+    <text x="121" y="184" font-size="11" fill="#dcfce7" text-anchor="middle">회귀가 CI에서</text>
+    <text x="121" y="200" font-size="11" fill="#dcfce7" text-anchor="middle">터지게</text>
+    <rect x="224" y="132" width="470" height="84" rx="10" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="2"/>
+    <text x="240" y="152" font-size="11" fill="#15803d" font-weight="700">코드로 남기는 것</text>
+    <text x="240" y="174" font-size="11.5" fill="#166534"><tspan font-weight="700">쿼리 수 단정 테스트</tspan> — datasource-proxy로 실행 쿼리 수를 센다</text>
+    <text x="240" y="194" font-size="11.5" fill="#166534"><tspan font-weight="700">EXPLAIN 단정 테스트</tspan> — Testcontainers + 대량 시드 + ANALYZE 후</text>
+    <text x="240" y="210" font-size="10.5" fill="#15803d" class="mono">EXPLAIN (FORMAT JSON)의 노드를 단정</text>
+    <rect x="702" y="132" width="392" height="84" rx="10" fill="#fff" stroke="#bbf7d0" stroke-width="2"/>
+    <text x="718" y="152" font-size="11" fill="#15803d" font-weight="700">이것이 잡는 것</text>
+    <text x="718" y="172" font-size="11.5" fill="#166534"><tspan font-weight="700">N+1 재발</tspan> — 쿼리 하나하나가 빨라서 로그엔 안 잡힌다</text>
+    <text x="718" y="192" font-size="11.5" fill="#166534"><tspan font-weight="700">인덱스 삭제 · 컬럼 순서 변경</tspan> — "안 쓰는 것 같은데" 정리</text>
+    <text x="718" y="210" font-size="10.5" fill="#64748b">언제 터지나 — <tspan font-weight="700">CI에서 빨간불</tspan> (머지 전)</text>
+
+    <!-- layer 3 -->
+    <rect x="26" y="224" width="190" height="84" rx="10" fill="#d97706"/>
+    <text x="121" y="250" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">층 3 — 파이프라인</text>
+    <text x="121" y="270" font-size="12" fill="#fef3c7" text-anchor="middle" font-weight="700">· 템플릿</text>
+    <text x="121" y="292" font-size="11" fill="#fef3c7" text-anchor="middle">절차가 사람 기억 밖에</text>
+    <rect x="224" y="224" width="470" height="84" rx="10" fill="#fffbeb" stroke="#fde68a" stroke-width="2"/>
+    <text x="240" y="244" font-size="11" fill="#b45309" font-weight="700">파일로 남기는 것</text>
+    <text x="240" y="264" font-size="11.5" fill="#92400e"><tspan font-weight="700">인덱스 DDL은 마이그레이션 파일로</tspan> (Flyway/Liquibase)</text>
+    <text x="240" y="284" font-size="11.5" fill="#92400e"><tspan font-weight="700">PR 템플릿에 DB 변경 체크 항목</tspan></text>
+    <text x="240" y="302" font-size="11" fill="#92400e">죽은 인덱스 주기 점검 · 플래너 강제에는 만료일</text>
+    <rect x="702" y="224" width="392" height="84" rx="10" fill="#fff" stroke="#fde68a" stroke-width="2"/>
+    <text x="718" y="244" font-size="11" fill="#b45309" font-weight="700">이것이 잡는 것</text>
+    <text x="718" y="264" font-size="11.5" fill="#92400e"><tspan font-weight="700">절차 이탈</tspan> — 운영 콘솔에서 손으로 만든 인덱스</text>
+    <text x="718" y="284" font-size="11.5" fill="#92400e">(스테이징에 없고, <tspan font-weight="700">다음 사람은 그 존재를 모른다</tspan>)</text>
+    <text x="718" y="302" font-size="10.5" fill="#64748b">언제 터지나 — <tspan font-weight="700">코드 리뷰 · 배포 시점</tspan></text>
+
+    <rect x="26" y="322" width="1068" height="40" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="347" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">설정이 측정하고, 테스트가 회귀를 잡고, 템플릿이 절차를 강제한다 — 세 층을 다 갖추면 사이클이 닫힌다</text>
+  </svg>
+  <figcaption>세 층은 <b>대체재가 아니라 보완재</b>다. 층 1만 있으면 <b>N+1은 영원히 안 잡히고</b>(쿼리 하나하나가 빨라 임계를 넘지 않는다), 층 2만 있으면 <b>테스트에 없는 쿼리는 무방비</b>이며, 층 3만 있으면 <b>규칙을 지켰는지 확인할 숫자가 없다.</b></figcaption>
+</figure>
+
+<h3>9-1. 층 1 — 설정: 느린 쿼리 임계치 · 계획 로그 · 통계 뷰를 코드로</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 기본값 — 9초짜리 쿼리도 영영 로그에 안 남는다</div>
+<pre><code><span class="ln-bad">log_min_duration_statement = -1   <span class="cm"># 기본값</span></span>
+<span class="cm"># pg_stat_statements 미설치</span>
+<span class="cm"># auto_explain 미등록</span>
+<span class="cm"># track_io_timing = off</span>
+
+<span class="cm"># → "어제 느렸다는데 뭐가 느렸죠?"</span>
+<span class="cm">#   "모르겠습니다. 로그가 없어요."</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> postgresql.conf / RDS 파라미터 그룹 (Terraform으로 형상 관리)</div>
+<pre><code><span class="ln-good">shared_preload_libraries = 'pg_stat_statements,auto_explain'</span>
+<span class="cm">   # 재시작 필요. 이후 CREATE EXTENSION pg_stat_statements</span>
+log_min_duration_statement = 500      <span class="cm"># API p95 목표에서 역산</span>
+auto_explain.log_min_duration = 500   <span class="cm"># "실제 실행 계획"까지 로그에</span>
+auto_explain.log_analyze = on         <span class="cm"># actual 수치 포함 — 부하를 재고 켠다</span>
+auto_explain.log_buffers = on         <span class="cm"># 계측 부담이면 log_timing = off</span>
+<span class="ln-good">track_io_timing = on                  <span class="cm"># I/O Timings — I/O vs CPU 판별(4절)</span></span>
+log_lock_waits = on                   <span class="cm"># "느린 게 아니라 기다린 것" 판별</span></code></pre>
+  </div>
+</div>
+
+<div class="callout info"><span class="t"><code>auto_explain</code>이 이 목록에서 특히 중요한 이유</span>
+  <b>PostgreSQL에는 지나간 쿼리의 계획을 사후에 조회하는 방법이 없다.</b> 사고가 난 다음에 켜면 그 사고의 계획은 <b>영원히 알 수 없고</b>, <b>"다시 재현되기를 기다린다"</b>는 대응밖에 남지 않는다. 그리고 로그는 쌓이기만 하면 아무도 안 본다 — <b><code>pg_stat_statements</code> 상위 10개를 일일 리포트</b>로 채널에 보내거나, 로그 수집기에서 <b>"분당 느린 쿼리 로그 건수" 알람</b>을 건다. <b>알람 임계치 자체도 IaC 파일에 들어간다.</b>
+</div>
+
+<div class="codehead good"><span class="tag">기준선</span> 개선 직후, 그 쿼리의 숫자를 남긴다 — 없으면 석 달 뒤 비교할 대상이 없다</div>
+<pre><code><span class="kw">SELECT</span> queryid,
+       calls,
+       <span class="fn">round</span>(mean_exec_time::numeric, 2)              <span class="kw">AS</span> mean_ms,
+<span class="ln-good">       (shared_blks_hit + shared_blks_read) / calls   <span class="kw">AS</span> blks_per_call</span>
+<span class="kw">FROM</span> pg_stat_statements
+<span class="kw">WHERE</span> queryid = 4029571332094836421;
+<span class="cm">--  queryid  | calls  | mean_ms | blks_per_call</span>
+<span class="cm">--  40295... | 121043 |    0.31 |           103</span>
+<span class="cm">-- 이 세 숫자가 다음 비교의 기준이다. 통계는 pg_stat_reset() 이후 누적이므로</span>
+<span class="cm">-- "언제부터의 누적인가"(stats_reset)도 함께 적어 둔다.</span>
+<span class="cm">--</span>
+<span class="cm">-- 그리고 mean_ms보다 blks_per_call을 먼저 본다 — mean_ms가 오르는 건 캐시나</span>
+<span class="cm">-- 서버 부하로도 일어나지만, blks_per_call이 103에서 6만으로 튀면 그건</span>
+<span class="cm">-- "데이터가 늘어서"가 아니라 "계획이 바뀌어서"라는 뜻이다 (4절).</span></code></pre>
+
+<h3>9-2. 층 2 — 테스트: 쿼리 수 단정과 EXPLAIN 단정을 CI에</h3>
+
+<p><b>쿼리 수 단정 테스트</b>는 N+1 회귀를 잡는 <b>가장 싼 안전망</b>이다. N+1은 쿼리 하나하나가 빨라서 <b>느린 쿼리 로그에 절대 안 잡히므로, 로그 설정으로는 막을 수 없는 부류</b>다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> fetch join으로 고친 뒤 남긴 것이 주석뿐</div>
+<pre><code><span class="ln-bad"><span class="cm">// TODO: 이 메서드는 N+1 주의.</span></span>
+<span class="ln-bad"><span class="cm">//       연관 로딩 바꿀 때 쿼리 수 확인할 것</span></span>
+<span class="kw">public</span> Page&lt;OrderSummary&gt; <span class="fn">getOrders</span>(
+        Long userId, Pageable pageable) { ... }
+
+<span class="cm">// 석 달 뒤 누군가 fetch join을 지운다.</span>
+<span class="cm">// 빌드는 초록불. 아무도 모른다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 쿼리 수를 테스트가 단정한다</div>
+<pre><code><span class="kw">@SpringBootTest</span>
+<span class="kw">class</span> OrderQueryCountTest {
+
+    <span class="kw">@Autowired</span> OrderService orderService;
+
+    <span class="kw">@BeforeEach</span>
+    <span class="kw">void</span> <span class="fn">resetCounter</span>() {
+        QueryCountHolder.<span class="fn">clear</span>();   <span class="cm">// datasource-proxy</span>
+    }
+
+    <span class="kw">@Test</span>
+    <span class="kw">void</span> <span class="fn">주문_목록_조회는_쿼리_2번으로_끝난다</span>() {
+        orderService.<span class="fn">getOrders</span>(100L, PageRequest.<span class="fn">of</span>(0, 20));
+
+        QueryCount count = QueryCountHolder.<span class="fn">getGrandTotal</span>();
+<span class="ln-good">        assertThat(count.<span class="fn">getSelect</span>())</span>
+            .<span class="fn">as</span>(<span class="st">"목록 1회 + count 1회. N+1이 재발하면 22회가 되어 실패"</span>)
+<span class="ln-good">            .<span class="fn">isEqualTo</span>(2);</span>
+    }
+}</code></pre>
+  </div>
+</div>
+
+<p><b>EXPLAIN 단정 테스트</b>는 한 단계 더 나간다. Testcontainers로 띄운 PostgreSQL에 <b>운영과 비슷한 규모</b>의 데이터를 적재하고 <code>ANALYZE</code>한 뒤(6-2에서 짚었듯 <b>작은 테이블에선 플래너가 <code>Seq Scan</code>을 고르는 게 정상</b>이므로 <b>규모와 통계가 결정적</b>이다), 핵심 쿼리의 실행 계획을 <code>FORMAT JSON</code>으로 받아 단정한다.</p>
+
+<div class="codehead good"><span class="tag">good</span> "인덱스를 지우거나 컬럼 순서를 바꾸면 빌드가 깨진다"</div>
+<pre><code><span class="kw">@Test</span>
+<span class="kw">void</span> <span class="fn">주문_목록_쿼리는_orders를_풀스캔하지_않고_정렬도_인덱스로_처리한다</span>() <span class="kw">throws</span> Exception {
+    <span class="cm">// given: 마이그레이션 적용 + 대량 시드 데이터 (예: orders 50만 건) + 통계 갱신</span>
+<span class="ln-good">    <span class="fn">seedOrders</span>(500_000);</span>
+<span class="ln-good">    jdbcTemplate.<span class="fn">execute</span>(<span class="st">"ANALYZE orders"</span>);</span>
+
+    String json = jdbcTemplate.<span class="fn">queryForObject</span>(<span class="st">"""
+        EXPLAIN (FORMAT JSON)
+        SELECT o.id, o.amount FROM orders o
+        WHERE o.user_id = ? AND o.status = 'ACTIVE'
+        ORDER BY o.created_at DESC LIMIT 20
+        """</span>, String.class, 100L);
+    List&lt;JsonNode&gt; nodes = <span class="fn">flatten</span>(objectMapper.<span class="fn">readTree</span>(json).<span class="fn">at</span>(<span class="st">"/0/Plan"</span>));  <span class="cm">// "Plans" 배열을 재귀로 펼친다</span>
+
+<span class="ln-good">    assertThat(nodes)</span>
+        .<span class="fn">as</span>(<span class="st">"orders 풀스캔 금지"</span>)
+        .<span class="fn">noneMatch</span>(n -&gt; n.<span class="fn">path</span>(<span class="st">"Node Type"</span>).<span class="fn">asText</span>().<span class="fn">equals</span>(<span class="st">"Seq Scan"</span>)
+                     &amp;&amp; n.<span class="fn">path</span>(<span class="st">"Relation Name"</span>).<span class="fn">asText</span>().<span class="fn">equals</span>(<span class="st">"orders"</span>));
+<span class="ln-good">    assertThat(nodes)</span>
+        .<span class="fn">as</span>(<span class="st">"정렬은 인덱스로 — Sort 노드가 있으면 인덱스가 빠졌거나 컬럼 순서가 바뀐 것"</span>)
+        .<span class="fn">noneMatch</span>(n -&gt; n.<span class="fn">path</span>(<span class="st">"Node Type"</span>).<span class="fn">asText</span>().<span class="fn">equals</span>(<span class="st">"Sort"</span>));
+<span class="ln-good">    assertThat(nodes)</span>
+        .<span class="fn">extracting</span>(n -&gt; n.<span class="fn">path</span>(<span class="st">"Index Name"</span>).<span class="fn">asText</span>())
+        .<span class="fn">contains</span>(<span class="st">"idx_orders_user_status_created"</span>);
+}</code></pre>
+
+<div class="rule ok">석 달 뒤 누군가 <b>"안 쓰는 것 같은데"</b>라며 인덱스를 정리해도, <b>리뷰어가 못 잡아도, CI가 잡는다</b></div>
+
+<h3>9-3. 층 3 — 파이프라인 · 템플릿: 절차를 사람 밖으로</h3>
+
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">인덱스 DDL은 반드시 마이그레이션 파일로</div><div class="d">Flyway <code>V12__add_idx_orders_user_status_created.sql</code>처럼. <b>운영 콘솔에서 손으로 만든 인덱스는 스테이징에 없고, 다음 사람은 그 존재를 모른다.</b><br>단 <b><code>CREATE INDEX CONCURRENTLY</code>는 트랜잭션 블록 안에서 실행할 수 없으므로</b> 마이그레이션 도구가 그 스크립트를 트랜잭션으로 감싸지 않게 설정한다(Flyway <code>executeInTransaction=false</code>, Liquibase <code>runInTransaction="false"</code>).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">플래너를 강제했다면 만료일을 붙인다</div><div class="d">PostgreSQL에는 <b>힌트 문법이 없어서</b> 강제 수단은 확장 <code>pg_hint_plan</code>이나 세션의 <code>enable_*</code> 스위치뿐인데, 어느 쪽이든 <b>지금의 데이터 분포를 코드에 박제</b>하는 것이라 <b>만료일이 있는 부채</b>다. 주석에 <b>"왜, 어떤 측정 근거로, 언제 재검토"</b>를 남기고 티켓을 건다.<br><code>SET LOCAL enable_seqscan = off</code>는 <b>가설 검증 도구지 운영 설정이 아니다.</b></div></div>
+</div>
+
+<div class="codehead plain"><span class="tag">PR 템플릿</span> 리뷰어의 기억이 아니라 <b>파일이 묻게</b> 한다</div>
+<pre><code>## DB 변경 체크 (해당 없으면 N/A)
+- [ ] 새로 추가/변경한 쿼리의 EXPLAIN (ANALYZE, BUFFERS) 결과를 첨부했다
+      (운영 규모 데이터·ANALYZE 후 기준)
+- [ ] 인덱스 추가/삭제는 마이그레이션 파일로 했고, CONCURRENTLY + 트랜잭션 밖 실행을 확인했다
+- [ ] 같은 테이블을 쓰는 기존 상위 쿼리(pg_stat_statements)의 계획 변화를 확인했다</code></pre>
+
+<div class="codehead plain"><span class="tag">가산점</span> 만든 인덱스가 실제로 쓰이는지 주기적으로 확인 — 죽은 인덱스는 쓰기 비용만 낸다</div>
+<pre><code><span class="kw">SELECT</span> s.indexrelname, s.idx_scan,
+       <span class="fn">pg_size_pretty</span>(<span class="fn">pg_relation_size</span>(s.indexrelid)) <span class="kw">AS</span> size
+<span class="kw">FROM</span> pg_stat_user_indexes s
+<span class="kw">JOIN</span> pg_index i <span class="kw">ON</span> i.indexrelid = s.indexrelid
+<span class="kw">WHERE</span> s.idx_scan = 0 <span class="kw">AND NOT</span> i.indisunique      <span class="cm">-- 유니크는 제약 역할이라 제외</span>
+<span class="kw">ORDER BY</span> <span class="fn">pg_relation_size</span>(s.indexrelid) <span class="kw">DESC</span>;
+<span class="cm">-- 통계 리셋(pg_stat_reset) 이후 기준. 레플리카에서만 쓰이는 인덱스는</span>
+<span class="cm">-- 프라이머리 카운트가 0일 수 있으니 양쪽에서 확인.</span></code></pre>
+
+<div class="memo green">
+  <h4>팀에 정착시킬 때의 <b>우선순위</b> — 비용 대비 효과 순으로 넷 <span class="badge senior">시니어 변별</span></h4>
+  <div class="chain">
+    <span class="chip b">① 설정 (pg_stat_statements · log_min_duration_statement · auto_explain)</span><span class="arrow">→</span>
+    <span class="chip g">② 쿼리 수 단정 테스트</span><span class="arrow">→</span>
+    <span class="chip w">③ DDL 마이그레이션 강제 + PR 템플릿</span><span class="arrow">→</span>
+    <span class="chip r">④ EXPLAIN 단정 테스트</span>
+  </div>
+  <p><b>①이 첫째인 이유</b> — <b>측정이 없으면 나머지 전부가 시작을 못 한다.</b> 설정 몇 줄이라 가장 싸고, 이것만으로 "어디가 비싼지"와 "그때 계획이 무엇이었는지"가 매일 보인다. 특히 <code>auto_explain</code>은 <b>미리 켜 두지 않으면 지나간 사고의 계획을 되살릴 방법이 없다</b>는 점에서 다른 것들과 급이 다르다.</p>
+  <p><b>②가 둘째인 이유</b> — <b>가장 흔한 성능 회귀는 인덱스 누락이 아니라 N+1</b>이고, N+1은 쿼리 하나하나가 빨라서 느린 쿼리 로그에 안 잡힌다. datasource-proxy 하나 붙이고 핵심 조회 메서드에 단정 3~4개면 된다.</p>
+  <p><b>④가 마지막인 이유</b> — <b>운영 규모 시드와 <code>ANALYZE</code>가 필요해 비용이 가장 크다.</b> 장애를 겪은 핵심 쿼리부터 하나씩 늘린다.</p>
+  <div class="rule" style="margin-bottom:0"><b>뒤집어 ④부터 하면 시드 관리에 지쳐 중단되고, ①을 빼면 무엇을 테스트할지조차 모른다</b><br><span style="font-size:.92rem;font-weight:600">순서는 "측정 → 가장 흔한 회귀 → 절차의 파일화 → 정밀 회귀 방지"</span></div>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 한 사이클을 처음부터 끝까지 — 주문 목록 API</h2>
+
+<p>"주문 목록 API가 느리다"는 제보를 사이클로 처리한 기록이다. <b>숫자는 예시</b>이지만, <b>말하는 순서와 붙이는 근거의 형태</b>가 그대로 면접 답변의 뼈대가 된다.</p>
+
+<div class="step"><span class="n">측</span><div class="body">
+  <b>측정.</b> APM에서 <code>GET /orders</code> p95가 <b>2.4초</b>였다. <code>pg_stat_statements</code> 총 시간 1위는 <code>SELECT … FROM orders o JOIN products p … WHERE o.user_id = $1 AND o.status = $2 ORDER BY o.created_at DESC LIMIT 20</code> — <code>mean_exec_time</code> <b>1.8초</b>, 하루 <b>12만 회</b>, <code>blks_per_call</code> 약 <b>6만 6천</b>, <code>avg_rows</code> <b>20</b>. <b>페이지 3,300장을 읽어 행 하나를 돌려주는 셈이다</b>(66,000 ÷ 20).<br>
+  <code>pg_stat_activity</code>의 <code>wait_event_type</code>은 비어 있고 <code>log_lock_waits</code> 로그도 없어 <b>락 문제는 아니다.</b> 느린 파라미터는 <code>log_min_duration_statement</code> 로그에서 확인했다 — 주문이 많은 <b>헤비 유저</b>들로 <code>user_id</code>별 편차가 크다.
+</div></div>
+
+<div class="step"><span class="n">가</span><div class="body">
+  <b>가설.</b> 그 파라미터로 <code>EXPLAIN (ANALYZE, BUFFERS)</code>를 떴다: <code>Index Scan using idx_orders_user</code>, <code>Filter: (status = 'ACTIVE')</code>, <code>Rows Removed by Filter: 42495</code>, 이 노드 <code>Buffers: shared hit=5412 read=41856</code>, 위에 <code>Sort (top-N heapsort)</code>.<br>
+  <b>추정 4,800 대 실측 4,720으로 통계는 멀쩡하니 통계 교정 건은 아니다.</b> 사슬로 번역하면 — <code>user_id</code> 인덱스로 TID 4만 7천 개를 모아 → <b>4만 7천 번 힙 랜덤 접근</b> → <code>status</code> 필터로 <b>90% 폐기</b> → 4,720건 정렬 → 20건 반환. <b>비용의 대부분이 "버릴 행의 힙 랜덤 I/O"와 "정렬"이다.</b><br>
+  처방 가설은 <code>(user_id, status, created_at)</code> 복합 인덱스, <b>예상 효과는 숫자로</b> — <code>Rows Removed by Filter</code> 0, <code>Sort</code> 노드 제거(<code>Index Scan Backward</code> + <code>Limit</code>), Buffers 6만 6천에서 수십으로.
+</div></div>
+
+<div class="step"><span class="n">검</span><div class="body">
+  <b>검증.</b> 스테이징(운영 마스킹 덤프 + <code>ANALYZE</code>)에서 전후를 실측했다: <b>291ms → 0.2ms, Buffers 66,148 → 103.</b><br>
+  <code>pg_stat_statements</code> 상위 5개를 재확인 — <b>3개는 새 인덱스로 자연 이동</b>(<code>user_id</code> 선두가 같다), 2개는 무관했다. <b>기존 <code>idx_orders_user</code>는 새 인덱스에 흡수되므로 삭제</b>해 인덱스 개수를 유지하고 쓰기 비용 증가분을 상쇄했다. <code>orders</code>가 3억 건이라 <code>CREATE INDEX CONCURRENTLY</code>로 새벽에 생성했다(테이블 2회 스캔 동안 I/O와 레플리카 지연을 모니터링).<br>
+  <b>대가</b>는 인덱스 크기 약 <b>12GB 증가</b>와 <b><code>status</code>를 바꾸는 UPDATE의 HOT 탈락</b> — 배포 후 <code>n_tup_hot_upd / n_tup_upd</code>가 <b>71%에서 58%로</b> 내려간 것을 확인하고 <b>허용 범위로 기록</b>했다.
+</div></div>
+
+<div class="step ok"><span class="n">고</span><div class="body">
+  <b>고정.</b> Flyway 마이그레이션 <b>2건</b>(생성·삭제, 트랜잭션 밖 실행) / <b>EXPLAIN 단정 테스트 1건</b> 추가 / <code>log_min_duration_statement</code>를 1000에서 <b>500으로 내리고</b> <code>auto_explain</code> 활성화 + 알람 연결 / 개선된 쿼리의 <code>queryid</code>·<code>mean_ms</code>·<code>blks_per_call</code>을 <b>기준선으로 PR에 기록</b> / PR 템플릿에 DB 체크 항목 추가.
+</div></div>
+
+<div class="callout ok"><span class="t">그리고 그다음 주 — 이것이 "고정"의 효과다</span>
+  <b>같은 팀원이 <code>orders</code>에 <code>WHERE user_id = $1 AND payment_method = $2</code> 쿼리를 올렸을 때, PR 템플릿이 EXPLAIN을 요구했고 <code>Rows Removed by Filter: 44100</code>이 리뷰에서 잡혔다.</b> 아무도 이 사이클을 기억하고 있지 않았지만, <b>파일이 기억하고 있었다.</b>
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>11-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">두 도구 한 문장 정의?</div><div class="d"><code>EXPLAIN</code> = <b>통계로 쓴 견적서</b>(추정, 실행 안 함), <code>EXPLAIN (ANALYZE, BUFFERS)</code> = <b>실제로 실행해 받은 청구서</b>(실측). <b>첫 진단은 견적서, 괴리 확인과 전후 비교는 청구서.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">읽는 순서 5단계?</div><div class="d"><b>모 · 이 · 행 · 버 · 경</b> — 모양(안쪽부터, 첫 자식=outer) → 노드 이름 → 행 수(추정 vs 실측) → Buffers → 경고등.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">1순위 진단은?</div><div class="d">추정 <code>rows</code> vs <code>actual rows</code>. <b>자릿수가 다르면 튜닝이 아니라 통계 교정이 먼저.</b> 오추정 하나가 <b>조인 방식 선택을 통째로</b> 틀리게 만든다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">실행 순서 규칙?</div><div class="d"><b>안쪽(들여쓰기 깊은 쪽)·아래부터 위로.</b> 조인 노드의 <b>첫 자식이 outer</b>, 두 번째가 inner. <b><code>loops</code>가 붙는 쪽이 항상 inner.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>loops</code>의 함정?</div><div class="d"><code>actual time</code>과 <code>actual rows</code>는 <b>loops당 평균값</b>. 총량은 <b>× loops</b>. <code>0.003ms × 4720</code>을 못 하면 <b>"조인은 0.003ms인데?"</b>라는 오독이 나온다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">왜 시간 대신 <code>Buffers</code>?</div><div class="d">시간은 <b>캐시 상태로 13배 흔들리지만</b>(3,842ms vs 289ms), <b>계획이 같으면 읽는 페이지 수는 같다</b>(둘 다 48,122장). <b>기준선은 Buffers.</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit"><code>Buffers</code>로 무엇을 가르나?</div><div class="d"><code>read</code> 큼 + <code>I/O Timings</code> 큼 = <b>I/O 병목</b>(읽는 페이지를 줄여라) / <code>hit</code> 압도적인데 느림 = <b>CPU 병목</b>(반복 횟수를 줄여라) / <code>temp</code> 큼 = <b><code>work_mem</code> 스필</b>.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">사이클 4단계?</div><div class="d"><b>측 · 가 · 검 · 고</b> — 측정(숫자와 재현 조건) → 가설(사슬 + 예상 효과 숫자) → 검증(실측 + <b>대가</b>) → 고정. <b>고정까지 가야 한 사이클.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">고정 3층?</div><div class="d"><b>설정</b>(측정이 상시 돌게) / <b>테스트</b>(회귀가 CI에서 터지게) / <b>파이프라인·템플릿</b>(절차가 사람 기억 밖에). 우선순위는 <b>설정 → 쿼리 수 단정 → DDL·PR → EXPLAIN 단정</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">경고등 5종?</div><div class="d"><b>필 · 머 · 배 · 힙 · 룹</b> — <code>Rows Removed by Filter</code> / <code>external merge</code> / <code>Batches &gt; 1</code> / <code>Heap Fetches</code> / 안쪽 <code>loops</code>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">오추정 원인 3종과 처방?</div><div class="d"><b>낡음</b> → <code>ANALYZE 테이블</code> / <b>표본 부족</b> → <code>SET STATISTICS 1000</code> / <b>컬럼 간 상관</b> → <code>CREATE STATISTICS</code>. (플래너는 조건을 <b>독립으로 가정해 곱한다</b>.)</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>ROLLBACK</code>이 안 되돌리는 것?</div><div class="d"><b>락 · 시퀀스 · 트리거 · WAL</b> — 행 락은 ROLLBACK까지 유지, <code>nextval()</code>은 소모, 트리거는 발화, WAL은 이미 쌓인다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">"인덱스 탔다"의 판별 기준?</div><div class="d"><b>노드 이름이 아니다.</b> <code>Rows Removed by Filter</code>(힙까지 읽고 버린 양)와 <code>Buffers</code>(인덱스 안에서 훑고 버린 양). PostgreSQL엔 <b><code>key_len</code>에 해당하는 칸이 없다.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit"><code>Sort</code> 노드를 없애는 조건?</div><div class="d"><b>정렬 컬럼이 인덱스 순서와 일치</b> + <b>앞 컬럼이 등호로 고정</b> + 방향 일관. 그러면 <code>Index Scan Backward</code> + <code>Limit</code>으로 <b>앞 N건만 읽고 종료</b>.</div></div>
+</div>
+
+<h3>11-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary><span><code>rows</code> 추정이 실제와 크게 다르면 무엇을 의심하고, 어떻게 확인·수정하나요?</span> <span class="badge core">필수</span><span class="hint">힌트: 의심 → 확인 → 수정 넷을 "순서대로". 마지막에 힌트 확장은 맨 끝에 둔다</span></summary><div class="a">
+  <p><b>통계 정보가 현실과 어긋난 것</b>을 첫째로 의심한다. 플래너는 통계로 추정하고, 통계는 <code>ANALYZE</code>의 <b>표본</b>으로 만들어지며, <b>대량 적재·삭제 직후</b>나 <b>컬럼 간 상관관계가 강한 조건</b>에서 잘 틀린다. 확인은 <code>EXPLAIN ANALYZE</code>의 추정 <code>rows</code>와 <code>actual rows</code> 비교 — <b>자릿수가 다르면 확정</b>이다.</p>
+  <p><b>수정은 순서대로 넷이다.</b></p>
+  <div class="grid g2">
+    <div class="tile"><div class="k">⑴ ANALYZE 테이블</div><div class="d">즉시 재수집. autovacuum의 analyze 임계(<b>기본은 행의 10% 변경</b>)가 <b>큰 테이블에서 너무 둔하면</b> 테이블 단위로 낮춘다.</div></div>
+    <div class="tile"><div class="k">⑵ SET STATISTICS</div><div class="d">표본을 키운다 — <code>ALTER TABLE … ALTER COLUMN status SET STATISTICS 1000</code>(기본 <code>default_statistics_target</code> 100). PostgreSQL은 MCV와 히스토그램을 <b>기본으로</b> 들고 있어 <b>"90%가 <code>ACTIVE</code>인 <code>status</code>"</b> 같은 편중은 대체로 잡아내지만, <b>표본이 모자라면 희귀 값이 MCV에서 빠진다.</b></div></div>
+    <div class="tile"><div class="k">⑶ CREATE STATISTICS</div><div class="d">컬럼 간 상관이면 <code>CREATE STATISTICS … (dependencies, ndistinct, mcv) ON city, zipcode FROM addresses</code>. 플래너는 조건들을 <b>독립으로 가정해 선택도를 곱하므로</b>, "서울 AND 06236"처럼 <b>한쪽이 다른 쪽을 결정</b>하는 조건은 심하게 과소추정된다.</div></div>
+    <div class="tile"><div class="k">⑷ plan_cache_mode</div><div class="d">추정이 아니라 <b>파라미터를 모르는 것</b>일 수도 있다 — <b>제네릭 계획</b>이면 <code>plan_cache_mode = force_custom_plan</code>.</div></div>
+  </div>
+  <p style="margin-bottom:0"><b>이 넷을 다 밟은 뒤에야</b> <code>pg_hint_plan</code>을 검토한다. 그리고 <b>"코드도 쿼리도 안 바꿨는데 느려졌다"의 정체가 대개 이 중 하나</b>라는 말까지 붙이면 답변이 닫힌다.</p>
+</div></details>
+
+<details class="q"><summary><span>EXPLAIN 결과는 좋은데(<code>Index Scan</code>, <code>rows</code> 작음) 운영에서 느립니다. 어디를 보나요?</span> <span class="badge core">필수</span><span class="hint">힌트: 전제 한 문장으로 시작한다 — "EXPLAIN은 쿼리 하나의 계획이지 요청 하나의 비용이 아니다"</span></summary><div class="a">
+  <p><b>"EXPLAIN은 '쿼리 하나의 계획'이지 '요청 하나의 비용'이 아니다"</b>라는 전제에서 출발한다. 순서대로 여섯을 본다.</p>
+  <p><b>⑴ EXPLAIN에 넣은 파라미터가 "느린 그 파라미터"인가.</b> <code>user_id = 1</code>(주문 3건)과 <code>user_id = 100</code>(4만 건)은 <b>같은 쿼리, 다른 비용</b>이다. <code>log_min_duration_statement</code> 로그에서 실제 느렸던 값을 가져와 다시 보고, <b>앱은 준비문의 제네릭 계획을 타고 있을 수 있다</b>는 PostgreSQL 고유 함정도 배제한다.</p>
+  <p><b>⑵ 실행이 아니라 대기인가.</b> <code>pg_stat_activity.wait_event_type = 'Lock'</code>, <code>pg_blocking_pids()</code>. <b>계획이 완벽해도 앞 트랜잭션의 락을 기다리면 느리다.</b></p>
+  <p><b>⑶ 호출 횟수.</b> <b>3ms짜리 쿼리가 요청당 500번 돌면 1.5초</b>다 — <b>N+1은 EXPLAIN에 절대 안 보이고</b> APM·<code>calls</code>·쿼리 수 단정 테스트에만 보인다.</p>
+  <p><b>⑷ 캐시 미스.</b> 계획은 같아도 <code>Buffers</code>가 <code>shared hit</code>이냐 <code>read</code>냐로 <b>열 배 넘게 차이</b> 난다(3,842ms 대 289ms). <b>새벽 첫 호출, 배치 직후(캐시 오염)</b>가 전형이고, <code>I/O Timings</code>로 진짜 디스크였는지 가른다.</p>
+  <p><b>⑸ 같은 계획인데 읽는 페이지가 늘었다.</b> <b>죽은 튜플이 쌓여(bloat)</b> 같은 행을 얻는 데 페이지를 더 읽거나, VACUUM이 밀려 <code>Index Only Scan</code>의 <code>Heap Fetches</code>가 늘어난 경우 — <code>n_dead_tup</code>, <code>last_autovacuum</code>, 그리고 <b>VACUUM을 막는 롱 트랜잭션</b>을 본다.</p>
+  <p style="margin-bottom:0"><b>⑹ 결과셋 크기와 네트워크.</b> <code>SELECT *</code>로 큰 <code>text</code>·<code>jsonb</code>(TOAST) 컬럼 수천 건을 끌어오면 <b>DB는 빠른데 전송이 느리다.</b> — <code>EXPLAIN (ANALYZE, BUFFERS)</code>가 이 중 <b>⑴·⑷·⑸를 실측으로 갈라준다.</b></p>
+</div></details>
+
+<details class="q"><summary><span>인덱스를 추가하면 다른 쿼리가 느려질 수도 있나요? 그걸 어떻게 미리 아나요?</span> <span class="badge senior">시니어 변별</span><span class="hint">힌트: "있다"로 시작하고 경로 넷을 든 뒤, 마지막에 "미리 아는 방법"을 붙인다</span></summary><div class="a">
+  <p><b>있다. 네 경로다.</b></p>
+  <p><b>⑴ 쓰기 경로.</b> 모든 INSERT가 B-tree 하나를 더 갱신하고, PostgreSQL에서는 한 겹 더 — <b>인덱스에 들어간 컬럼을 바꾸는 UPDATE는 HOT 업데이트에서 탈락</b>해 그 인덱스만이 아니라 <b>테이블의 모든 인덱스</b>에 새 엔트리를 꽂는다. <b>자주 바뀌는 컬럼(<code>status</code>, <code>updated_at</code>)을 인덱스에 넣는 순간 쓰기 증폭이 테이블 전체로 번진다.</b></p>
+  <p><b>⑵ 플래너 오유인.</b> 선택지가 늘면 플래너가 <b>새 인덱스를 잘못 고를 수 있다</b> — 특히 <b>선두 컬럼의 선택도가 낮은 인덱스</b>는 "일단 이걸 타볼까"로 유인해 <b>힙 랜덤 접근 폭탄</b>을 만든다.</p>
+  <p><b>⑶ <code>shared_buffers</code> 경쟁.</b> 큰 인덱스 하나가 <b>다른 테이블의 핫 페이지를 밀어낸다.</b> <b>⑷ VACUUM 비용.</b> 인덱스도 VACUUM 대상이라 <b>autovacuum 한 사이클이 길어진다.</b></p>
+  <div class="rule">미리 아는 방법 — <b>같은 테이블을 쓰는 <code>pg_stat_statements</code> 상위 쿼리를 새 인덱스 생성 후 다시 EXPLAIN하고, <code>n_tup_hot_upd</code> 비율을 전후로 본다</b></div>
+  <p>진짜로 만들기 전에 <b>"만들면 플래너가 쓸까"만 보고 싶다면 가상 인덱스 확장(HypoPG)</b>이 있다. 이 재확인은 <b>PR 템플릿에 항목으로 박고</b> 핵심 쿼리는 <b>EXPLAIN 단정 테스트로 고정</b>한다.</p>
+  <p style="margin-bottom:0"><b>한 호흡으로</b> — "이 인덱스는 조회 쿼리 A의 힙 랜덤 I/O를 없애는 대신 <b>쓰기 비용(HOT 탈락 포함)·메모리·플래너 선택지</b>라는 대가를 내고, 그 대가가 허용 범위인지는 <b>상위 쿼리 재확인과 HOT 비율·쓰기 p95로 검증</b>한다."</p>
+</div></details>
+
+<details class="q"><summary><span><code>EXPLAIN ANALYZE</code>를 운영 DB에서 그냥 돌려도 되나요?</span> <span class="badge core">필수</span><span class="hint">힌트: "조건부"로 시작하고, ROLLBACK의 한계까지 말해야 완결된다</span></summary><div class="a">
+  <p><b>조건부다.</b> 실제로 실행하므로 ⑴ <b>무거운 SELECT는 그 자체가 부하</b>고 <code>shared_buffers</code>를 오염시킨다, ⑵ <b>UPDATE/DELETE에 붙이면 데이터가 실제로 바뀐다.</b></p>
+  <p>그래서 원칙은 <b>읽기 레플리카나 운영 규모 스테이징에서</b> 돌리는 것이고, 운영 프라이머리에서 꼭 해야 한다면 <b>SELECT만, 트래픽 낮은 시간에, <code>statement_timeout</code>을 걸고</b> 한다. 변경문은 <code>BEGIN; EXPLAIN (ANALYZE) UPDATE …; ROLLBACK;</code>으로 감싼다.</p>
+  <p><b>다만 롤백이 전부를 되돌리지는 않는다는 것까지 말해야 완결된다</b> — 롤백 자체는 O(1)이지만 그동안 잡은 <b>행 락은 ROLLBACK 시점까지 유지</b>되고, <b>시퀀스 값은 소모</b>되며, <b>트리거는 실제로 발화</b>하고, <b>WAL은 이미 쌓인다.</b> 노드별 시간 계측이 수치를 부풀리면 <code>TIMING off</code>로 rows·Buffers만 본다.</p>
+  <p style="margin-bottom:0">대신 <b>일반 <code>EXPLAIN</code>은 실행하지 않으므로 운영에서 언제든 안전</b>하다 — <b>첫 진단은 EXPLAIN, 괴리 확인은 EXPLAIN ANALYZE</b>, 이 분업을 말하면 된다.</p>
+</div></details>
+
+<details class="q"><summary><span>이 프로세스를 팀에 정착시키려면 무엇부터 코드로 고정하나요? 우선순위와 이유를 말해주세요.</span> <span class="badge senior">시니어 변별</span><span class="hint">힌트: 넷을 순서대로 + "뒤집으면 왜 실패하는가"까지</span></summary><div class="a">
+  <p><b>비용 대비 효과 순으로 네 단계다.</b></p>
+  <p><b>⑴ <code>pg_stat_statements</code> + <code>log_min_duration_statement</code> + <code>auto_explain</code></b> — <b>측정이 없으면 나머지 전부가 시작을 못 한다.</b> 설정 몇 줄이라 가장 싸고, 이것만으로 "어디가 비싼지"와 "그때 계획이 무엇이었는지"가 매일 보인다. 특히 <code>auto_explain</code>은 <b>미리 켜 두지 않으면 지나간 사고의 계획을 되살릴 방법이 없다</b>는 점에서 다른 것들과 <b>급이 다르다.</b></p>
+  <p><b>⑵ 쿼리 수 단정 테스트</b> — <b>가장 흔한 성능 회귀는 인덱스 누락이 아니라 N+1</b>이고, N+1은 쿼리 하나하나가 빨라서 <b>느린 쿼리 로그에 안 잡힌다.</b> datasource-proxy 하나 붙이고 핵심 조회 메서드에 단정 3~4개면 된다.</p>
+  <p><b>⑶ 인덱스 DDL의 마이그레이션 강제(CONCURRENTLY, 트랜잭션 밖) + PR 템플릿</b> — 규칙이지만 <b>파일로 박으면 리뷰어 기억에서 독립</b>한다.</p>
+  <p><b>⑷ EXPLAIN 단정 테스트</b> — <b>운영 규모 시드와 <code>ANALYZE</code>가 필요해 비용이 가장 크므로 마지막</b>이고, 장애를 겪은 핵심 쿼리부터 하나씩 늘린다.</p>
+  <p style="margin-bottom:0"><b>뒤집어 ⑷부터 하면 시드 관리에 지쳐 중단되고, ⑴을 빼면 무엇을 테스트할지조차 모른다.</b> 순서는 <b>"측정 → 가장 흔한 회귀 → 절차의 파일화 → 정밀 회귀 방지"</b>다.</p>
+</div></details>
+
+<details class="q"><summary><span>MySQL로 물어보면 답이 달라지는 부분은?</span> <span class="badge senior">경험 대조</span><span class="hint">힌트: 다섯 지점 — 출력 형태 · 인덱스 깊이 · 측정 도구 · 통계 교정 · 랜덤 I/O 완화</span></summary><div class="a">
+  <p><b>① 출력의 형태.</b> MySQL은 <b>테이블당 한 행인 표</b>(<code>type</code>·<code>key</code>·<code>rows</code>·<code>Extra</code>)라 <b>"칸을 순서대로 읽는" 기술</b>이고, PostgreSQL은 <b>노드 트리</b>라 <b>"안쪽부터 올라오며 추정과 실측을 나란히 읽는" 기술</b>이다. 실측 쪽인 <code>EXPLAIN ANALYZE</code>도 MySQL은 <b>8.0.18에서야 추가</b>됐고 <b><code>BUFFERS</code>에 해당하는 노드별 페이지 수는 없다.</b></p>
+  <p><b>② 복합 인덱스를 얼마나 깊이 탔나.</b> MySQL은 <code>key_len</code>과 <code>Extra: Using index condition</code>으로 <b>텍스트에 드러나지만</b>, PostgreSQL은 <b>강등된 조건도 <code>Index Cond</code>에 찍혀</b> <b><code>Buffers</code>로 판별</b>해야 한다.</p>
+  <p><b>③ 측정 도구.</b> MySQL의 slow query log(<code>long_query_time</code>, <code>Rows_examined</code>)와 <code>performance_schema</code>의 digest 테이블·<code>sys</code> 뷰 대신 PostgreSQL에서는 <code>log_min_duration_statement</code>·<code>pg_stat_statements</code>·<code>auto_explain</code>을 쓴다. <b>실행 중 쿼리의 계획을 보는 MySQL의 <code>EXPLAIN FOR CONNECTION</code>은 PostgreSQL에 대응물이 없어 <code>auto_explain</code>을 미리 켜 둔다.</b></p>
+  <p><b>④ 통계 교정과 강제 수단.</b> MySQL은 <code>ANALYZE TABLE</code>에 <b>히스토그램을 따로 만들어야 하고</b> <code>FORCE INDEX</code>·옵티마이저 힌트가 <b>문법으로 있지만</b>, PostgreSQL은 <b>MCV·히스토그램이 기본</b>이고 상관관계는 <code>CREATE STATISTICS</code>로 잡으며, <b>힌트 문법이 없어 통계 교정이 곧 튜닝</b>이다(강제는 확장 <code>pg_hint_plan</code>). 대신 <b>준비문의 제네릭 계획 전환</b>이라는 PostgreSQL 고유 함정이 있다.</p>
+  <p style="margin-bottom:0"><b>⑤ 랜덤 I/O의 정체와 완화.</b> MySQL의 InnoDB는 <b>세컨더리 인덱스에서 PK를 얻어 클러스터드 인덱스를 재탐색</b>하고 <code>Using MRR</code>이 그 PK를 정렬해 완화하지만, PostgreSQL은 <b>힙 테이블</b>이라 모든 인덱스가 <b>TID로 힙을 찌르고</b> <code>Bitmap Heap Scan</code>이 TID를 블록순으로 정렬해 완화한다 — 그래서 PostgreSQL에는 <b>커버링의 <code>Index Only Scan</code>과 visibility map, 그리고 HOT 탈락이라는 쓰기 대가</b>가 따라온다. <b>이 다섯을 짚어 말하면 "한쪽만 써봤다"가 아니라 "차이를 원리로 이해했다"로 들린다.</b></p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary><span>잘 돌던 쿼리의 실행 계획이 어느 날 갑자기 바뀌어 느려졌습니다. 가능한 원인과 대응은?</span> <span class="badge core">필수</span><span class="hint">힌트: "계획을 바꾸는 입력이 무엇인가"를 먼저 정리하면 원인 목록이 저절로 나온다</span></summary><div class="a">
+  <p><b>먼저 전제를 세운다</b> — 플래너의 출력(계획)은 <b>세 가지 입력</b>의 함수다: <b>① 통계 ② 데이터의 양과 분포 ③ 설정과 사용 가능한 인덱스.</b> 쿼리도 코드도 안 바뀌었는데 계획이 바뀌었다면 <b>이 셋 중 하나가 바뀐 것</b>이다.</p>
+  <p><b>⑴ 통계가 갱신됐다 / 낡았다.</b> autovacuum이 <code>ANALYZE</code>를 돌리는 순간 계획이 갈아탈 수 있고, 반대로 <b>대량 적재 뒤 통계가 안 따라와</b> 5절의 500배 오추정이 날 수도 있다. 방향이 어느 쪽이든 확인은 <b>추정 <code>rows</code> vs <code>actual rows</code></b>다.</p>
+  <p><b>⑵ 데이터가 임계를 넘었다.</b> 같은 쿼리도 <b>선택도가 변하면 계획이 정당하게 바뀐다</b> — 어제까지는 인덱스가 유리한 비율이었는데 오늘 데이터가 늘어 <code>Seq Scan</code>이 더 싸진 경우다. <b>이건 버그가 아니라 플래너가 제 일을 한 것</b>이고, 그렇다면 손봐야 할 것은 쿼리가 아니라 <b>접근 패턴이나 인덱스 설계</b>다.</p>
+  <p><b>⑶ 제네릭 계획으로 전환됐다.</b> 앱이 같은 문장을 반복 실행하다 <b>준비문 + 제네릭 계획</b>으로 갈아탄 경우. <b>"배포도 안 했는데 어느 순간부터"</b>의 전형적인 정체다. 통제는 <code>plan_cache_mode = force_custom_plan</code>.</p>
+  <p><b>⑷ 인덱스·설정이 바뀌었다.</b> 누군가 인덱스를 추가/삭제했거나(플래너의 <b>선택지가 늘어 오유인</b>), <code>work_mem</code>·<code>random_page_cost</code>·<code>effective_cache_size</code> 같은 파라미터가 바뀌었거나, <b>인덱스가 <code>INVALID</code> 상태로 남아</b> 못 쓰이고 있을 수도 있다(<code>pg_index.indisvalid</code>).</p>
+  <div class="rule red">대응의 첫 걸음은 <b>"그때 계획이 무엇이었는지"를 아는 것</b>인데, PostgreSQL에는 <b>사후 조회 수단이 없다</b><br><span style="font-size:.92rem;font-weight:600">그래서 <code>auto_explain</code>을 <b>미리</b> 켜 두는 것이 이 질문의 진짜 답이다</span></div>
+  <p style="margin-bottom:0"><b>대응 순서</b>는 ① <code>auto_explain</code>·<code>pg_stat_statements</code>로 전후 계획과 <code>blks_per_call</code> 변화를 확인 → ② 오추정이면 통계 교정(<code>ANALYZE</code> → <code>SET STATISTICS</code> → <code>CREATE STATISTICS</code>) → ③ 제네릭 계획이면 <code>plan_cache_mode</code> → ④ 그래도 안 되면 <b>인덱스 설계나 쿼리 형태</b>를 바꾼다. <b><code>enable_*</code> 스위치나 <code>pg_hint_plan</code>은 맨 마지막이고, 만료일을 붙인다.</b></p>
+</div></details>
+
+<details class="q"><summary><span><code>ORDER BY</code>가 인덱스를 타는 조건은? 계획에 <code>Sort</code> 노드가 남는 건 언제이고, <code>Sort Method: external merge</code>는 왜 문제인가요?</span> <span class="badge core">필수</span><span class="hint">힌트: "B-tree 리프는 이미 정렬돼 있다"에서 시작한다</span></summary><div class="a">
+  <p><b>출발점은 하나다 — B-tree의 리프는 이미 정렬된 순서로 저장돼 있다.</b> 그래서 정렬 요구가 <b>그 리프 순서와 일치하면 정렬이라는 작업 자체가 필요 없어지고, 계획에서 <code>Sort</code> 노드가 통째로 사라진다.</b></p>
+  <p><b>타는 조건 셋</b> — ① <code>ORDER BY</code> 컬럼이 <b>인덱스의 컬럼 순서와 일치</b>하고, ② <b>정렬 컬럼 앞의 컬럼들이 등호로 고정</b>돼 있고(그래야 그 구간 안이 정렬 상태다), ③ 정렬 <b>방향이 일관</b>될 것. 역순 전체는 <code>Index Scan Backward</code>로 처리된다.</p>
+  <p><b><code>Sort</code>가 남는 경우</b> — 정렬 컬럼 앞에 <b>범위 조건</b>이 끼거나(구간이 여러 개가 되어 전체 순서가 깨진다), <b>인덱스에 없는 컬럼</b>으로 정렬하거나, 여러 컬럼의 <b>정렬 방향이 엇갈릴</b> 때다.</p>
+  <p><b><code>external merge</code>가 왜 문제인가</b> — <code>work_mem</code>을 넘겨 <b>디스크 임시 파일에 청크를 쓰고 다시 읽어 병합</b>하기 때문이다. <code>Buffers</code>의 <code>temp read/written</code>에 그 양이 찍힌다. 게다가 <b><code>LIMIT 20</code>이 붙어 있어도 소용이 없다</b> — <b>정렬은 입력 전체를 봐야 첫 행이 나오므로</b> 조기 종료가 불가능하다. <code>top-N heapsort</code>도 마찬가지로 <b>메모리는 N건 몫만 쓰지만 입력은 전부 읽는다.</b></p>
+  <p style="margin-bottom:0"><b>처방의 순서</b>는 ① <b>인덱스 순서를 정렬에 맞춰</b> <code>Sort</code>를 없애는 것이 먼저이고(<code>Buffers</code>가 수만에서 수십으로 떨어진다), ② 그게 불가능할 때만 세션 <code>work_mem</code>을 올려 <b>디스크 정렬을 메모리 정렬로 되돌린다.</b> <b>②만 하면 "덜 느린 전수 정렬"이 될 뿐</b>이고 데이터가 늘면 다시 넘친다. — MySQL에서 같은 신호가 <code>Extra: Using filesort</code>다.</p>
+</div></details>
+
+<details class="q"><summary><span><code>actual time=0.003..0.003</code>이면 눈 깜짝할 새인데, 왜 이 노드가 병목이라는 거죠?</span> <span class="badge trap">함정</span><span class="hint">힌트: 그 줄에 같이 찍힌 다른 숫자 하나를 놓쳤다</span></summary><div class="a">
+  <p><b><code>loops</code>를 놓쳤기 때문이다.</b> <code>actual time</code>과 <code>actual rows</code>는 <b>이 노드가 한 번 실행될 때의 평균값</b>이고, 총량은 <b><code>× loops</code></b>다.</p>
+  <p>5절의 계획에서 <code>Index Scan using users_pkey … (actual time=0.078..0.078 rows=1 loops=500000)</code>이 정확히 이 경우다. 한 번에 0.078ms라 <b>아무 문제 없어 보이지만</b>, <code>0.078 × 500,000 = 39,000ms</code> — <b>41초짜리 쿼리의 39초</b>가 여기 있다.</p>
+  <p><b>같은 줄의 <code>Buffers</code>가 결정적인 방증이다.</b> 그 노드 혼자 <code>shared hit=1450122</code> — <b>같은 <code>users</code> 페이지들을 50만 번 되짚느라 145만 페이지 읽기</b>를 기록했다. <b>캐시에 다 있어서 디스크는 안 갔지만(<code>hit</code>), 페이지를 찾고 락을 잡고 튜플을 꺼내는 CPU 비용은 그대로 나갔다</b> — 4절에서 말한 <b>"<code>hit</code>이 압도적인데 느린 CPU 병목"</b>의 교과서적 모습이다.</p>
+  <p style="margin-bottom:0"><b>병렬 계획에서도 같은 규칙이 적용된다</b> — <code>Parallel Seq Scan</code>의 <code>loops</code>는 리더 + 워커 수이고 <code>rows</code>는 <b>프로세스당 평균</b>이라, 전체 처리 행 수를 알려면 역시 곱해야 한다.</p>
+</div></details>
+
+<details class="q"><summary><span><code>cost=64273</code>이면 64초쯤 걸린다는 뜻인가요?</span> <span class="badge trap">함정</span><span class="hint">힌트: 단위가 무엇을 1로 잡은 값인지 떠올린다</span></summary><div class="a">
+  <p><b>아니다. <code>cost</code>의 단위는 시간이 아니다.</b> <code>seq_page_cost = 1.0</code>, 즉 <b>"순차로 읽은 페이지 한 장"을 1로 잡은 상대값</b>이다. 그래서 <code>cost=64273</code>은 <b>"대략 순차 페이지 6만 4천 장어치의 일"</b>이라는 뜻이지 64초가 아니다.</p>
+  <p><b>이 값은 계획 후보들끼리 비교하라고 있는 것</b>이지 절대 시간을 예측하라고 있는 것이 아니다. 그래서 실제 시간을 알고 싶으면 <b><code>ANALYZE</code>를 켜서 <code>actual time</code>과 <code>Execution Time</code>을 봐야</b> 한다.</p>
+  <p><b>같이 알아야 할 파라미터가 <code>random_page_cost</code>(기본 4.0)</b>다 — <b>"랜덤하게 흩어진 페이지 한 장은 순차 네 장 값"</b>이라는 선언이고, <b>회전 디스크 시절의 값</b>이다. SSD에서는 랜덤과 순차의 실제 격차가 훨씬 작으므로 이 값을 그대로 두면 <b>플래너가 인덱스 스캔을 실제보다 비싸게 평가해 불필요하게 <code>Seq Scan</code>을 고른다.</b> SSD면 <b>1.1 근처</b>로 낮추는 것이 일반적이다.</p>
+  <p style="margin-bottom:0"><b>그리고 <code>cost</code>의 앞뒤 두 숫자(<code>시작..전체</code>)를 구분하는 것이 <code>LIMIT</code> 쿼리에서 결정적이다</b> — <code>Sort</code>는 <b>입력을 전부 읽어야 첫 행이 나오므로 시작 비용이 크고</b>, <code>Index Scan</code>은 거의 0이다. 그래서 <b>앞 20건만 필요한 쿼리에서는 전체 비용이 커도 시작 비용이 작은 계획이 이긴다.</b></p>
+</div></details>
+
+<details class="q"><summary><span>계획에 <code>Seq Scan</code>이 떴습니다. 무조건 나쁜 건가요?</span> <span class="badge trap">함정</span><span class="hint">힌트: "정상 선택인 경우"를 세 가지 들 수 있어야 한다</span></summary><div class="a">
+  <p><b>아니다. <code>Seq Scan</code>이 정당한 선택인 경우가 셋 있다.</b></p>
+  <p><b>⑴ 테이블이 작을 때.</b> 페이지 몇 장이면 다 읽히는데 <b>인덱스를 거쳐 힙을 랜덤 접근할 이유가 없다.</b> 로컬 100건짜리 테이블에서 <code>Seq Scan</code>이 뜨는 것은 <b>정상</b>이고, 그래서 <b>로컬 <code>EXPLAIN</code>으로 운영 계획을 판단하면 안 된다.</b></p>
+  <p><b>⑵ 대상 행의 비율이 클 때.</b> 테이블의 상당 비율을 읽어야 한다면 <b>순차 I/O로 통째로 읽는 편이 랜덤 접근보다 싸다.</b> 5절의 <code>after</code> 계획이 정확히 이 경우다 — 500만 행 중 50만 행을 읽어야 하니 플래너가 <code>Seq Scan</code> + <code>Hash Join</code>을 골랐고, <b>그게 옳았다.</b></p>
+  <p><b>⑶ <code>Parallel Seq Scan</code> + <code>Gather</code>.</b> 워커 여럿이 힙을 나눠 읽는 <b>대량 스캔의 정상 선택</b>일 수 있다.</p>
+  <div class="rule">판별은 노드 이름이 아니라 <b>"읽은 양 대비 남긴 양"</b>이다<br><span style="font-size:.92rem;font-weight:600"><code>Rows Removed by Filter</code>가 <code>actual rows</code>에 비해 압도적으로 크면 그때가 진짜 문제다</span></div>
+  <p style="margin-bottom:0"><b>뒤집으면 더 중요한 이야기가 된다</b> — <code>Index Scan</code>이 찍혔다고 안심할 수도 없다. <code>Index Cond</code> 없는 <code>Index Scan</code>은 <b>정렬 순서만 빌린 전수 조사</b>이고, <code>Rows Removed by Filter</code>가 큰 <code>Index Scan</code>은 <b>이름만 인덱스지 비용은 풀스캔에 가깝다.</b> <b>노드 이름은 "무엇을 시도했나"이지 "얼마나 일했나"가 아니다.</b></p>
+</div></details>
+
+<details class="q"><summary><span>노드별 <code>Buffers</code>를 다 더했더니 맨 위 <code>Limit</code>의 값보다 훨씬 큽니다. 왜 그렇죠?</span> <span class="badge bonus">가산점</span><span class="hint">힌트: 그 값이 "그 노드만의 값"이 아니다</span></summary><div class="a">
+  <p><b>노드의 <code>Buffers</code>는 자식 수치를 포함한 누적값</b>이기 때문이다. 맨 위 <code>Limit</code>의 <code>Buffers</code>가 <b>트리 전체의 합</b>이고, 그 아래 자식들의 수치가 이미 그 안에 들어 있다. <b>그래서 전부 더하면 같은 페이지를 여러 번 세게 된다.</b></p>
+  <p><b>제대로 읽는 법은 뺄셈이 아니라 "어느 노드에서 갑자기 커지는가"를 아래에서 위로 훑는 것</b>이다. 2절의 계획을 보면 <code>Index Scan on orders</code>가 <code>hit=5412 read=41856</code>이고 부모인 <code>Nested Loop</code>이 <code>hit=24292 read=41856</code>이다 — <code>read</code>는 그대로인데 <code>hit</code>이 크게 늘었다. <b>차이가 생긴 그 지점이 페이지를 실제로 읽은 범인</b>이고, 여기서는 inner의 <code>products_pkey</code> 반복 탐색(<code>hit=18880</code>)이 그 정체다.</p>
+  <p style="margin-bottom:0"><b>같은 사고를 <code>actual time</code>에서도 한다</b> — 부모의 <code>actual time</code>에는 자식이 걸린 시간이 포함돼 있으므로, <b>"이 노드가 자기 몫으로 쓴 시간"</b>은 부모 시간에서 자식 시간을 빼야 나온다. 계획 시각화 도구(explain.depesz.com 등)가 <b>색으로 보여주는 것이 정확히 이 "자기 몫"</b>이다.</p>
+</div></details>
+
+<details class="q"><summary><span>계획에 <code>Index Scan</code>이 찍혔고 조건도 전부 <code>Index Cond</code>에 들어가 있는데, <code>Buffers</code>가 수천 장입니다. 무슨 일인가요?</span> <span class="badge trap">함정</span><span class="hint">힌트: <code>Index Cond</code>에 찍혔다는 것과 "구간을 좁혔다"는 것은 다른 말이다</span></summary><div class="a">
+  <p><b>복합 인덱스의 leftmost prefix가 끊긴 경우다.</b> <code>(user_id, status, created_at)</code> 인덱스에서 <b>가운데 <code>status</code> 조건이 빠지면</b>, <code>created_at</code>은 <b>구간을 좁히지 못하고 인덱스 안에서 하나씩 걸러지기만 한다.</b> 그런데 <b>PostgreSQL의 계획 텍스트는 이 경우에도 완전히 좁힌 경우와 똑같이 <code>Index Cond</code>에 두 조건을 다 적어 준다.</b></p>
+  <p><b>MySQL이라면 <code>key_len</code>으로 "몇 바이트까지 썼나"가 드러나지만, PostgreSQL에는 그 칸이 없다.</b> 그래서 판별은 두 가지로 한다 — ① <b>인덱스 정의의 컬럼 순서와 조건의 등호/범위를 직접 대조</b>하고, ② <b><code>BUFFERS</code>의 읽은 페이지 수</b>를 본다.</p>
+  <p><code>actual rows=2104</code>인데 <code>Buffers: shared hit=2318</code>이면 <b>결과 2천 건을 위해 페이지 2천 장을 읽은 것</b>이고, 이는 <code>user_id = 100</code>의 엔트리 <b>전부(4만 7천)를 훑은 흔적</b>이다. <code>(user_id, created_at)</code> 인덱스였다면 같은 결과에 <code>Buffers: shared hit=61</code> 수준이 나온다.</p>
+  <p style="margin-bottom:0"><b>낭비의 층이 두 가지라는 점을 구분해 말하면 답이 정확해진다</b> — <code>Rows Removed by Filter</code>는 <b>"인덱스에 없는 컬럼 때문에 힙까지 읽고 버린 양"</b>이고, <code>Buffers</code>의 과다는 <b>"인덱스 안에서 훑고 버린 양"</b>이다. 앞의 것은 힙 랜덤 I/O를 지불했고, 뒤의 것은 인덱스 리프를 헛돌았다.</p>
+</div></details>
+
+<details class="q"><summary><span>"성능을 개선했습니다"를 보고할 때, 무슨 숫자를 근거로 대야 하나요?</span> <span class="badge senior">시니어 변별</span><span class="hint">힌트: "몇 초 → 몇 초"는 반박당하기 쉬운 숫자다. 그 이유부터</span></summary><div class="a">
+  <p><b>"2.4초에서 0.3초가 됐습니다"만 말하면 약하다.</b> 시간은 <b>캐시 상태·서버 부하·동시 트래픽에 따라 흔들리는 숫자</b>여서, 다음 주에 다시 재면 다른 값이 나오고 <b>"원래 그날 서버가 한가했던 거 아니냐"</b>는 반박을 막을 수 없다. 4절의 예시가 그대로 그 증거다 — <b>같은 계획, 같은 쿼리가 캐시 상태만으로 3,842ms와 289ms 사이를 오갔다.</b></p>
+  <p><b>흔들리지 않는 숫자는 세 가지다.</b></p>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k">Buffers</div><div class="d">"읽는 페이지가 <b>66,148장에서 103장으로</b>". 계획이 같으면 캐시 상태와 무관하게 같은 값이 나온다 — <b>"얼마나 일했나"의 숫자.</b></div></div>
+    <div class="tile ok"><div class="k">blks_per_call</div><div class="d"><code>pg_stat_statements</code>에서 <b>호출당 읽은 페이지</b>. 운영에서 <b>누적으로</b> 확인되는 값이라 "스테이징에서만 그렇겠지"를 막는다.</div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">사라진 노드·줄</div><div class="d">"<code>Sort</code> 노드가 없어졌고 <code>Rows Removed by Filter</code> 줄이 사라졌다" — <b>메커니즘이 바뀌었다는 증거</b>라 숫자보다 강하다.</div></div>
+  </div>
+  <p><b>그리고 이득 옆에 대가를 같이 적어야 보고가 완결된다</b> — 인덱스 크기 증가분, <code>n_tup_hot_upd / n_tup_upd</code> 비율 변화(HOT 탈락), 쓰기 p95, 흡수되어 삭제한 기존 인덱스. <b>대가를 적지 않은 보고는 "재봤더니 빨라졌다"와 구분되지 않는다.</b></p>
+  <p style="margin-bottom:0"><b>마지막으로 기준선을 남긴다</b> — <code>queryid</code>, <code>calls</code>, <code>mean_ms</code>, <code>blks_per_call</code>, 그리고 <b><code>stats_reset</code>(언제부터의 누적인가)</b>. <b>이 다섯 줄이 석 달 뒤 "느려진 것 같은데요"에 답할 유일한 근거</b>가 된다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  <code>EXPLAIN</code>은 <b>통계로 쓴 견적서</b>, <code>EXPLAIN (ANALYZE, BUFFERS)</code>는 <b>실제로 실행해 받은 청구서</b>다 — PostgreSQL의 계획 트리는 <b>안쪽(들여쓰기가 깊은 쪽)부터 실행돼 바깥으로 올라오며</b>, <b>모양</b>(첫 자식이 outer) → <b>노드 이름</b>(<code>Seq Scan</code>과 <code>Index Cond</code> 없는 <code>Index Scan</code>은 전수, 나머지는 좁힌 것) → <b>추정 <code>rows</code> vs 실제 <code>rows</code></b>(자릿수가 다르면 튜닝이 아니라 통계 교정이 먼저 — <b>오추정 하나가 상위 노드의 조인 방식 선택을 통째로 틀리게 만든다</b>) → <b><code>Buffers</code></b>(<code>shared hit</code>/<code>read</code>로 I/O 병목인지 CPU 병목인지를 가르고, <b>캐시 상태에 흔들리는 시간 대신 전후 비교의 기준선</b>이 된다) → <b>경고등</b>(<code>Rows Removed by Filter</code>·<code>external merge</code>·<code>Batches &gt; 1</code>·<code>Heap Fetches</code>·안쪽 <code>loops</code>) 순으로 읽는다. <code>ANALYZE</code>는 <b>진짜로 실행하므로 변경문에 쓰면 데이터가 실제로 바뀐다</b> — <code>BEGIN … ROLLBACK</code>으로 감싸되 <b>행 락·시퀀스·트리거·WAL은 되돌아오지 않는다</b>는 것까지 안다. 느린 쿼리 개선은 <b>측정</b>(<code>pg_stat_statements</code>로 가장 비싼 쿼리를 숫자로, 락 대기와 제네릭 계획을 배제하고) → <b>가설</b>(비용이 새는 지점을 힙 랜덤 I/O 사슬로, 예상 효과를 숫자로) → <b>검증</b>(같은 파라미터의 실측 + 쓰기 비용·HOT 탈락·다른 쿼리·DDL 리스크까지 한 호흡에) → <b>고정</b>(<code>auto_explain</code>·쿼리 수 단정·EXPLAIN 단정·<code>pg_stat_statements</code> 기준선·PR 템플릿을 설정과 코드로)의 사이클이며, <b>고정까지 가야 다음 느린 쿼리가 사용자 항의가 아니라 알람으로 도착한다.</b>
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/04-rdb-sql/10-explain-and-slow-query-process.md</code> · 앞 문서: 인덱스가 있는데 풀스캔(<code>02-index-not-used-full-scan.md</code>) · JOIN 종류와 실행 방식(<code>06-join-types-and-execution.md</code>) · 복합 인덱스 컬럼 순서(<code>08-composite-index-column-order.md</code>) · 커버링 인덱스(<code>09-covering-index.md</code>) · 이어서 볼 문서: MVCC와 VACUUM(<code>11-mvcc-postgresql.md</code>) · 온라인 DDL(<code>14-online-ddl-zero-downtime-schema-change.md</code>) · 롱 트랜잭션의 해악(<code>16-long-transaction-harm-and-shortening.md</code>) · <code>ORDER BY</code>와 정렬 비용(<code>29-order-by-index-and-filesort.md</code>) · 실행 계획 급변(<code>31-execution-plan-sudden-change.md</code>)</p>
+</main>
+</body>
+</html>
