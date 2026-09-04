@@ -1,0 +1,1577 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>영속성 컨텍스트와 변경 감지 — 네 개의 저장소, flush의 정량 비용, "내가 안 시킨 UPDATE"</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">03 JPA · ORM &nbsp;|&nbsp; 기본⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>영속성 컨텍스트와 변경 감지<br><span class="sub">네 개의 저장소, flush의 정량 비용, 그리고 "내가 안 시킨 UPDATE"</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"영속성 컨텍스트란 무엇인가요? 1차 캐시, 쓰기 지연, 변경 감지(dirty checking)를 설명해주세요."</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 영속성 컨텍스트는 "엔티티를 담아두는 메모리"가 아니라 <b>네 개의 저장소</b>다: ① <b>1차 캐시</b>(<code>@Id</code> → 엔티티 인스턴스 맵) ② <b>스냅샷 저장소</b>(로드 시점 필드값 복사본) ③ <b>쓰기 지연 SQL 저장소</b> ④ 그 결과로 얻는 <b>동일성 보장</b>(같은 트랜잭션·같은 id는 <code>==</code>가 참). <b>1차 캐시는 성능 캐시가 아니라 동일성·정합성 장치</b>다 — 범위가 트랜잭션이라 히트율을 기대하는 설계는 애초에 성립하지 않는다. 변경 감지의 구조는 "바뀐 값을 따로 모아둔다"가 아니라 <b>엔티티 인스턴스 자체가 바뀌고 스냅샷은 로드 시점의 사진으로 남는 것</b>이라, 무엇이 바뀌었는지는 flush 때 대조해봐야 알 수 있다 → 그래서 <b>flush마다 <code>O(관리 엔티티 수 × 필드 수)</code> 비교가 불가피하고 메모리는 엔티티마다 스냅샷 한 벌씩 늘어난다</b>. 회피는 <code>@Transactional(readOnly = true)</code>(flush 억제)보다 <b>DTO 프로젝션</b>(애초에 컨텍스트에 안 올림)이 더 근본적이다. flush가 만드는 SQL은 두 가지가 반직관적이다 — 실행 순서는 코드 순서가 아니라 <b>INSERT → UPDATE → DELETE 고정</b>이고, UPDATE는 <b>전 컬럼</b>이 기본이다. "안 시킨 UPDATE"는 setter 전수 조사로 끝나지 않는다 — <b>컬렉션 재할당, 컨버터 왕복, 시간 정밀도, OSIV+setter</b>가 단골이고, 비교는 엔티티의 <code>equals</code>가 아니라 <b>Hibernate의 타입별 비교기</b>가 한다. 진단은 감이 아니라 3단 — <b>바인딩 SQL 로그 → Statistics 카운트 → flush 리스너 스택트레이스</b>.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>저장소가 하나가 아니라 넷이다</b> — <b>1차 캐시</b>(<code>@Id</code>→인스턴스 맵), <b>스냅샷 저장소</b>(로드 시점 필드값 복사본), <b>쓰기 지연 SQL 저장소</b>, 그리고 그 결과인 <b>동일성 보장</b>. 이 넷으로 JPA의 미스터리 대부분("save 안 했는데 UPDATE가 나감", "조회했는데 쿼리가 안 나감", "DB는 바뀌었는데 조회 결과는 옛 값")이 전부 설명된다.</div></li>
+    <li><span class="n">2</span><div><b>변경 감지는 "변경분을 모아두는" 것이 아니라 "사진과 대조하는" 것이다</b> — 바뀌는 쪽이 엔티티 인스턴스이고 따로 보관하는 쪽이 <b>안 바뀐 원본(스냅샷)</b>이다. 자바에는 "이 객체가 바뀌었다"를 알려주는 장치가 없어서 <b>대조 말고는 방법이 없고</b>, 그래서 <b>수정하지 않은 엔티티까지 flush마다 전건 × 전 필드 비교</b>한다.</div></li>
+    <li><span class="n">3</span><div><b>그래서 비용과 사고가 여기서 나온다</b> — 메모리는 엔티티마다 <b>스냅샷 한 벌</b>, CPU는 <b>flush마다 <code>O(엔티티 수 × 필드 수)</code></b>(JPQL 실행마다 자동 flush라 횟수도 늘어난다). 조회 전용은 <b>DTO 프로젝션</b>으로 애초에 안 올리는 게 근본이고, "안 시킨 UPDATE"는 <b>컬렉션 재할당 · 컨버터 왕복 · 시간 정밀도 · OSIV+setter</b>를 순서대로 짚은 뒤 <b>SQL 로그 → Statistics → flush 리스너</b> 3단으로 좁힌다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">단어부터 — flush와 commit은 다른 일이다</a></li>
+    <li><a href="#s2">영속성 컨텍스트 = 네 개의 저장소</a></li>
+    <li><a href="#s3">조회 한 줄이 만드는 두 개 — 그리고 대조표</a></li>
+    <li><a href="#s4">1차 캐시는 성능 캐시가 아니다</a></li>
+    <li><a href="#s5">쓰기 지연 — 모아두는 진짜 이유</a></li>
+    <li><a href="#s6">flush의 정량 비용 — 메모리와 CPU</a></li>
+    <li><a href="#s7">회피 두 가지 — readOnly vs DTO 프로젝션</a></li>
+    <li><a href="#s8">flush가 만드는 SQL의 두 반직관</a></li>
+    <li><a href="#s9">"안 시킨 UPDATE" 단골 4종</a></li>
+    <li><a href="#s10">진단 3단 — 감이 아니라 도구로</a></li>
+    <li><a href="#s11">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "영속성 컨텍스트란 무엇인가요? 1차 캐시, 쓰기 지연, 변경 감지(dirty checking)를 설명해주세요."</p>
+  <p><b>출제 의도</b>: JPA의 거의 모든 미스터리가 이 개념 하나로 설명된다. 이걸 모르고 JPA를 쓰는 건 <b>자동변속기 원리를 모르고 견인차를 모는 것</b>과 같다 — 평소엔 되지만 <b>이상 동작 시 속수무책</b>이다. 그래서 실제 채점 지점은 정의 암기가 아니라 <b>"이상 동작이 났을 때 원인을 좁혀 들어갈 수 있는가"</b>다.</p>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 두 가지 — 정의는 맞혀도 여기서 갈린다</span>
+    ① <b>비용을 정량으로 못 말한다</b> — "메모리와 GC" 정도에서 멈추고 <b>flush마다 전건 비교</b>라는 CPU 비용에 도달하지 못한다. → 6절에서 <b>숫자로</b> 계산하고, 배치에서 왜 <b>진행될수록 느려지는지</b>까지 그린다.<br>
+    ② <b>역방향 추론을 못 한다</b> — "왜 UPDATE가 나가는가"는 설명하는데 <b>"코드가 값을 바꾸지 않았는데 왜 UPDATE가 나가는가"</b>는 설명하지 못한다. → 9절에서 <b>단골 4종</b>을, 10절에서 <b>역추적 도구</b>를 다룬다.
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">이 문서는 3장 전체가 딛고 서는 바닥이다</span>
+  N+1도, <code>LazyInitializationException</code>도, 벌크 연산의 함정도, 낙관적 락의 버전 증가도 전부 <b>"영속성 컨텍스트가 지금 무엇을 들고 있고 flush 때 무엇을 하는가"</b>로 환원된다. 그래서 여기서는 개념을 정의하고 넘어가는 대신 <b>엔티티를 처음 조회하는 순간부터 커밋까지</b>를 단계별로 따라간다.
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 단어부터 못 박기 — flush와 commit은 다른 일이다</h2>
+
+<p>이 문서에서 가장 자주 나오는 단어부터 정리하고 시작하자. 둘을 뭉뚱그리면 뒤의 설명이 전부 흐릿해진다.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>flush(플러시) — 내보낸다</h4>
+    <p style="margin:0;font-size:.95rem">영속성 컨텍스트가 들고 있던 변경을 <b>SQL로 만들어 DB로 내보내는</b> 동작. <b>"내보낸다"까지가 전부</b>다. 이 SQL은 아직 <b>같은 트랜잭션 안에서만</b> 유효하다.</p>
+  </div>
+  <div class="pane g">
+    <h4>commit(커밋) — 확정한다</h4>
+    <p style="margin:0;font-size:.95rem">내보낸 것을 <b>트랜잭션 차원에서 확정하는</b> 동작. 커밋 전까지 그 변경은 <b>언제든 롤백으로 사라질 수 있다.</b></p>
+  </div>
+</div>
+
+<figure>
+  <svg viewBox="0 0 900 300" role="img" aria-label="시간축 위에 세 사건이 놓인 도식. 첫째 필드 수정은 메모리만 바꾸고 SQL이 없다. 둘째 flush는 UPDATE를 DB로 내보내지만 다른 트랜잭션에는 보이지 않는다. 셋째 commit이 그 UPDATE를 확정한다. flush와 commit 사이 구간에서 롤백되면 내보낸 UPDATE는 없던 일이 된다.">
+    <defs>
+      <marker id="f1arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+      <marker id="f1back" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="450" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">flush는 "내보냄", commit은 "확정" — 사이 구간이 존재한다</text>
+
+    <!-- box 1 -->
+    <rect x="46" y="46" width="230" height="90" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="62" y="70" font-size="12.5" font-weight="700" fill="#334155" class="mono">order.cancel()</text>
+    <text x="62" y="92" font-size="11.5" fill="#475569">메모리의 필드만 바뀐다</text>
+    <text x="62" y="112" font-size="11.5" fill="#475569">스냅샷은 그대로 "PAID"</text>
+    <text x="62" y="130" font-size="11.5" fill="#b45309" font-weight="700">SQL 은 아직 만들어지지 않았다</text>
+
+    <!-- box 2 -->
+    <rect x="326" y="46" width="230" height="90" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="342" y="70" font-size="12.5" font-weight="700" fill="#b45309" class="mono">em.flush()</text>
+    <text x="342" y="92" font-size="11.5" fill="#92400e">UPDATE 가 DB 로 나갔다</text>
+    <text x="342" y="112" font-size="11.5" fill="#92400e">다른 트랜잭션에는 아직 안 보인다</text>
+    <text x="342" y="130" font-size="11.5" fill="#b45309" font-weight="700">아직 확정이 아니다</text>
+
+    <!-- box 3 -->
+    <rect x="606" y="46" width="230" height="90" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="622" y="70" font-size="12.5" font-weight="700" fill="#166534" class="mono">tx.commit()</text>
+    <text x="622" y="92" font-size="11.5" fill="#166534">그 UPDATE 가 확정됐다</text>
+    <text x="622" y="112" font-size="11.5" fill="#166534">다른 트랜잭션에 보이기 시작한다</text>
+    <text x="622" y="130" font-size="11.5" fill="#15803d" font-weight="700">이제 되돌릴 수 없다</text>
+
+    <!-- timeline -->
+    <line x1="40" y1="168" x2="866" y2="168" stroke="#64748b" stroke-width="2" marker-end="url(#f1arrow)"/>
+    <text x="866" y="190" font-size="11" fill="#64748b" text-anchor="end">시간</text>
+    <circle cx="161" cy="168" r="7" fill="#94a3b8"/>
+    <circle cx="441" cy="168" r="7" fill="#d97706"/>
+    <circle cx="721" cy="168" r="7" fill="#16a34a"/>
+    <line x1="161" y1="136" x2="161" y2="161" stroke="#94a3b8" stroke-width="1.5"/>
+    <line x1="441" y1="136" x2="441" y2="161" stroke="#d97706" stroke-width="1.5"/>
+    <line x1="721" y1="136" x2="721" y2="161" stroke="#16a34a" stroke-width="1.5"/>
+
+    <!-- danger window -->
+    <rect x="441" y="196" width="280" height="34" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="581" y="218" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">이 구간에서 롤백되면 나갔던 UPDATE 는 없던 일이 된다</text>
+    <path d="M441 188 L441 196" stroke="#dc2626" stroke-width="1.5"/>
+    <path d="M721 188 L721 196" stroke="#dc2626" stroke-width="1.5"/>
+    <path d="M700 244 L452 244" stroke="#dc2626" stroke-width="1.6" marker-end="url(#f1back)"/>
+    <text x="730" y="248" font-size="11.5" fill="#b91c1c" font-weight="700">rollback</text>
+
+    <!-- bottom band -->
+    <rect x="40" y="262" width="826" height="30" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="453" y="282" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">커밋은 flush 를 포함한다 — 커밋할 때 JPA 는 먼저 flush 로 남은 변경을 내보내고, 그다음 확정한다</text>
+  </svg>
+  <figcaption>그래서 <b>"커밋 시점에 UPDATE가 나간다"</b>는 표현은 정확히는 <b>"커밋 직전의 자동 flush에서 UPDATE가 만들어져 나간다"</b>는 뜻이다. 그리고 flush는 커밋 직전에만 일어나지 않는다 — 그 <b>횟수가 곧 6절의 비용</b>이 된다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>이 한 문장을 틀리면 뒤가 전부 흐려진다</h4>
+  <div class="rule red" style="margin-bottom:6px">"flush 했으니 저장됐다"는 <b>틀린 문장</b>이다 — flush는 <b>커밋이 아니다</b></div>
+  <div class="chain">
+    <span class="chip b">flush = SQL 을 DB 로 <b>내보냄</b></span><span class="arrow">≠</span><span class="chip g">commit = 그것을 <b>확정</b></span><span class="arrow">·</span><span class="chip w">commit ⊃ flush (커밋이 flush를 포함)</span>
+  </div>
+  <p class="sub" style="margin-bottom:0">11절의 <b>"<code>flush()</code>를 직접 호출해도 되나"</b> 꼬리질문에서 이 구분이 다시 결정적으로 쓰인다.</p>
+</div>
+
+<div class="memo">
+  <h4>flush가 일어나는 시점은 셋 — 커밋 때 한 번이 아니다</h4>
+  <div class="chain">
+    <span class="chip g">① 커밋 직전 (자동)</span>
+    <span class="chip w">② JPQL · QueryDSL 실행 직전 (자동, 기본 <code>FlushMode.AUTO</code>)</span>
+    <span class="chip b">③ <code>em.flush()</code> 직접 호출</span>
+  </div>
+  <p style="margin-bottom:0">②가 있는 이유는 명확하다 — 방금 <code>persist()</code>한 데이터가 <b>조회 결과에서 빠지면 안 되기 때문</b>이다. 그런데 이 자동 flush가 <b>비용을 여러 번 발생시키는 원인</b>이기도 하다(6-2절). <b>"조회 메서드 안에서 JPQL을 3번 부르면 flush는 4번 돈다"</b>가 이 카드의 결론이다.</p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 영속성 컨텍스트 = 네 개의 저장소</h2>
+
+<p>"트랜잭션 범위에서 엔티티를 메모리에 보관하는 것"은 맞지만, <b>보관소가 하나가 아니라 넷</b>이라는 점까지 말해야 이후 모든 동작이 설명된다. 첫 답변을 이 구조로 시작하면 뒤의 모든 질문에 <b>같은 그림을 가리키며</b> 답할 수 있다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 420" role="img" aria-label="왼쪽 애플리케이션 코드, 가운데 영속성 컨텍스트, 오른쪽 데이터베이스로 이루어진 구조도. 영속성 컨텍스트 안에는 1차 캐시, 스냅샷 저장소, 쓰기 지연 SQL 저장소 세 개의 저장소와 그 결과인 동일성 보장이 들어 있다.">
+    <defs>
+      <marker id="f2a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+      <marker id="f2b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">영속성 컨텍스트의 해부도 — 저장소 셋 + 그 결과 하나</text>
+
+    <!-- app -->
+    <rect x="20" y="110" width="150" height="150" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="95" y="138" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">애플리케이션 코드</text>
+    <text x="95" y="166" font-size="11" fill="#475569" text-anchor="middle" class="mono">findById(1L)</text>
+    <text x="95" y="188" font-size="11" fill="#475569" text-anchor="middle" class="mono">order.cancel()</text>
+    <text x="95" y="216" font-size="10.5" fill="#64748b" text-anchor="middle">엔티티를 "그냥 자바 객체"</text>
+    <text x="95" y="232" font-size="10.5" fill="#64748b" text-anchor="middle">처럼 다루면 된다</text>
+
+    <!-- PC -->
+    <rect x="230" y="56" width="560" height="312" rx="14" fill="#f8fbff" stroke="#2563eb" stroke-width="2"/>
+    <text x="510" y="80" font-size="13.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">영속성 컨텍스트 — 범위는 트랜잭션, 끝나면 통째로 사라진다</text>
+
+    <!-- 1 -->
+    <rect x="248" y="96" width="256" height="112" rx="10" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="262" y="118" font-size="12.5" font-weight="700" fill="#1d4ed8">① 1차 캐시</text>
+    <text x="262" y="137" font-size="10.5" fill="#64748b" class="mono">Map&lt;@Id, 엔티티 인스턴스&gt;</text>
+    <rect x="262" y="146" width="228" height="24" rx="6" fill="#eff6ff"/>
+    <text x="272" y="162" font-size="11" fill="#1e40af" class="mono">{ 1L → Order@a1b2 }</text>
+    <text x="262" y="186" font-size="10.5" fill="#475569">같은 id 를 다시 find 하면</text>
+    <text x="262" y="200" font-size="10.5" fill="#475569">SELECT 없이 이 인스턴스를 돌려준다</text>
+
+    <!-- 2 -->
+    <rect x="516" y="96" width="256" height="112" rx="10" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="530" y="118" font-size="12.5" font-weight="700" fill="#1d4ed8">② 스냅샷 저장소</text>
+    <text x="530" y="137" font-size="10.5" fill="#64748b" class="mono">Map&lt;@Id, Object[]&gt;</text>
+    <rect x="530" y="146" width="228" height="24" rx="6" fill="#eff6ff"/>
+    <text x="540" y="162" font-size="11" fill="#1e40af" class="mono">{ 1L → ["PAID",10000,null] }</text>
+    <text x="530" y="186" font-size="10.5" fill="#475569">로드 시점의 사진. 아무도 안 건드린다</text>
+    <text x="530" y="200" font-size="10.5" fill="#475569">우리 코드에서는 접근할 수 없다</text>
+
+    <!-- 3 -->
+    <rect x="248" y="222" width="256" height="126" rx="10" fill="#ffffff" stroke="#93c5fd"/>
+    <text x="262" y="244" font-size="12.5" font-weight="700" fill="#1d4ed8">③ 쓰기 지연 SQL 저장소</text>
+    <text x="262" y="263" font-size="10.5" fill="#64748b">키는 "등록 순서"</text>
+    <rect x="262" y="272" width="228" height="42" rx="6" fill="#eff6ff"/>
+    <text x="272" y="288" font-size="10.5" fill="#1e40af" class="mono">insert into order_item ...</text>
+    <text x="272" y="304" font-size="10.5" fill="#1e40af" class="mono">update orders set ...</text>
+    <text x="262" y="332" font-size="10.5" fill="#475569">flush 전까지 DB 로 나가지 않는다</text>
+
+    <!-- 4 -->
+    <rect x="516" y="222" width="256" height="126" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-dasharray="6 4"/>
+    <text x="530" y="244" font-size="12.5" font-weight="700" fill="#166534">④ 동일성 보장</text>
+    <text x="530" y="263" font-size="10.5" fill="#15803d">별도 자료구조가 아니라 ① 의 <tspan font-weight="700">결과</tspan></text>
+    <rect x="530" y="272" width="228" height="42" rx="6" fill="#ffffff"/>
+    <text x="540" y="288" font-size="10.5" fill="#166534" class="mono">Order a = em.find(Order,1L);</text>
+    <text x="540" y="304" font-size="10.5" fill="#166534" class="mono">a == em.find(Order,1L) // true</text>
+    <text x="530" y="332" font-size="10.5" fill="#15803d">같은 트랜잭션 · 같은 id 일 때만</text>
+
+    <!-- DB -->
+    <rect x="910" y="110" width="190" height="150" rx="10" fill="#0f172a" stroke="#334155"/>
+    <text x="1005" y="138" font-size="12.5" fill="#e2e8f0" text-anchor="middle" font-weight="700">데이터베이스</text>
+    <text x="1005" y="168" font-size="10.5" fill="#94a3b8" text-anchor="middle" class="mono">orders</text>
+    <text x="1005" y="190" font-size="10.5" fill="#e2e8f0" text-anchor="middle" class="mono">1 | PAID | 10000</text>
+    <text x="1005" y="222" font-size="10.5" fill="#fbbf24" text-anchor="middle">여기까지 나가야</text>
+    <text x="1005" y="238" font-size="10.5" fill="#fbbf24" text-anchor="middle">비로소 "SQL 이 실행됐다"</text>
+
+    <!-- arrows -->
+    <text x="200" y="146" font-size="10" fill="#64748b" text-anchor="middle" class="mono">find(1L)</text>
+    <line x1="172" y1="160" x2="226" y2="160" stroke="#64748b" stroke-width="1.8" marker-end="url(#f2a)"/>
+    <text x="200" y="204" font-size="10" fill="#64748b" text-anchor="middle" class="mono">cancel()</text>
+    <line x1="172" y1="218" x2="226" y2="218" stroke="#64748b" stroke-width="1.8" marker-end="url(#f2a)"/>
+
+    <text x="850" y="126" font-size="10" fill="#64748b" text-anchor="middle">SELECT — ① 에 없을 때만</text>
+    <line x1="792" y1="140" x2="906" y2="140" stroke="#64748b" stroke-width="1.8" marker-end="url(#f2a)"/>
+    <text x="850" y="222" font-size="10" fill="#2563eb" text-anchor="middle" font-weight="700">flush — ③ 을 순서대로</text>
+    <line x1="792" y1="236" x2="906" y2="236" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f2b)"/>
+
+    <!-- bottom -->
+    <rect x="20" y="380" width="1080" height="32" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="401" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">①②③ 은 실제 자료구조이고 ④ 는 그 결과다 — "저장소 넷"이라 말하되 "마지막 하나는 결과"라고 덧붙이면 정확하다</text>
+  </svg>
+  <figcaption>애플리케이션은 <b>엔티티를 평범한 자바 객체처럼</b> 다루고, 그 사이에서 <b>①②③이 조용히 일한다.</b> 이 그림 한 장이면 "조회했는데 쿼리가 안 나감"(①), "save 안 했는데 UPDATE"(②), "쿼리가 커밋 때 몰아서 나감"(③)이 <b>같은 그림의 다른 지점</b>으로 설명된다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <caption>저장소 넷 — <b>"없다면 무슨 일이 벌어지는가"</b>로 읽으면 존재 이유가 선명해진다</caption>
+  <thead><tr><th>저장소</th><th>담는 것</th><th>키</th><th>없다면</th></tr></thead>
+  <tbody>
+    <tr><td><b>① 1차 캐시</b></td><td>엔티티 인스턴스</td><td><code>@Id</code> 값</td><td>같은 id를 두 번 조회하면 <b>서로 다른 객체 2개</b></td></tr>
+    <tr><td><b>② 스냅샷 저장소</b></td><td>로드 시점 필드값 <b>복사본</b></td><td><code>@Id</code> 값</td><td>무엇이 바뀌었는지 알 방법이 없음 → <b><code>save()</code> 수동 호출</b></td></tr>
+    <tr><td><b>③ 쓰기 지연 SQL 저장소</b></td><td>아직 안 보낸 INSERT/UPDATE/DELETE</td><td>등록 순서</td><td>필드 수정마다 <b>쿼리 1건 즉시 전송</b></td></tr>
+    <tr class="hl"><td><b>④ 동일성 보장</b></td><td>(위 셋의 <b>결과</b>)</td><td class="dash">—</td><td>같은 트랜잭션 안에서 <b>앱 스스로 lost update를 만듦</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo">
+  <h4>네 저장소 3초 인출 — <b>캐 · 스 · 쓰 · 동</b></h4>
+  <div class="chain">
+    <span class="chip b"><b>캐</b> 1차 캐시</span><span class="arrow">→</span>
+    <span class="chip b"><b>스</b> 스냅샷</span><span class="arrow">→</span>
+    <span class="chip b"><b>쓰</b> 쓰기 지연</span><span class="arrow">→</span>
+    <span class="chip g"><b>동</b> 동일성(= 캐의 결과)</span>
+  </div>
+  <p style="margin-bottom:0">순서에도 의미가 있다. <b>캐 → 스</b>는 <b>조회 한 번에 동시에 만들어지는 짝</b>(3절)이고, <b>쓰</b>는 <b>수정이 모이는 곳</b>(5절), <b>동</b>은 <b>캐에서 저절로 따라오는 성질</b>(4절)이다. 네 글자를 이 순서로 읊으면 문서 전체의 목차가 그대로 따라 나온다.</p>
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 조회 한 줄이 만드는 "두 개" — 그리고 커밋 직전의 대조표</h2>
+
+<p><code>orderRepository.findById(1L)</code> 한 줄이 실제로 무슨 일을 하는지부터 봐야 한다. <b>여기서 만들어지는 것이 뒤의 모든 동작을 결정한다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 900 300" role="img" aria-label="em.find 한 줄이 하는 일. 먼저 SELECT를 실행하고, 읽은 행으로 엔티티 인스턴스를 만든 다음, 그 결과가 두 갈래로 나뉘어 1차 캐시에 인스턴스가 등록되고 스냅샷 저장소에 필드값 복사본이 저장된다.">
+    <defs>
+      <marker id="f3a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+      <marker id="f3b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="450" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle" class="mono">em.find(Order.class, 1L) — 한 줄이 실제로 하는 일</text>
+
+    <rect x="30" y="70" width="190" height="64" rx="10" fill="#0f172a" stroke="#334155"/>
+    <text x="44" y="94" font-size="12" fill="#e2e8f0" font-weight="700">① SELECT 실행</text>
+    <text x="44" y="114" font-size="9.5" fill="#94a3b8" class="mono">select ... from orders where id=1</text>
+    <text x="44" y="128" font-size="10" fill="#94a3b8">DB 에서 행 하나를 읽는다</text>
+
+    <line x1="222" y1="102" x2="254" y2="102" stroke="#64748b" stroke-width="1.8" marker-end="url(#f3a)"/>
+
+    <rect x="258" y="70" width="190" height="64" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="272" y="94" font-size="12" fill="#334155" font-weight="700">② 인스턴스 생성</text>
+    <text x="272" y="114" font-size="10.5" fill="#475569">읽은 행을 자바 객체로 옮기고</text>
+    <text x="272" y="128" font-size="10.5" fill="#b45309" font-weight="700">여기서 두 갈래로 갈린다</text>
+
+    <path d="M450 96 C 492 96, 492 76, 524 76" stroke="#2563eb" stroke-width="1.8" fill="none" marker-end="url(#f3b)"/>
+    <path d="M450 110 C 492 110, 492 190, 524 190" stroke="#2563eb" stroke-width="1.8" fill="none" marker-end="url(#f3b)"/>
+
+    <rect x="528" y="44" width="344" height="64" rx="10" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="542" y="66" font-size="12" fill="#1d4ed8" font-weight="700">① 1차 캐시 &nbsp;<tspan class="mono" font-weight="400">{ 1L → order }</tspan></text>
+    <text x="542" y="85" font-size="10.5" fill="#1e40af">"이 트랜잭션에서 id 1L 은 이 인스턴스다"라고 등록한다</text>
+    <text x="542" y="100" font-size="10.5" fill="#1e40af">다음에 같은 id 를 find 하면 SELECT 없이 이걸 돌려준다</text>
+
+    <rect x="528" y="150" width="344" height="80" rx="10" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="542" y="172" font-size="12" fill="#1d4ed8" font-weight="700">② 스냅샷 저장소</text>
+    <text x="542" y="190" font-size="10.5" fill="#1e40af" class="mono">{ 1L → ["PAID", 10000, null, 2026-01-02] }</text>
+    <text x="542" y="207" font-size="10.5" fill="#1e40af">지금 채운 그 값들을 한 벌 더 복사해 따로 보관한다</text>
+    <text x="542" y="222" font-size="10.5" fill="#b45309" font-weight="700">이 사본은 앞으로 아무도 건드리지 않는다 — 로드 시점의 사진</text>
+
+    <rect x="30" y="252" width="842" height="34" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="451" y="274" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">놓치면 안 되는 것 — ② 에서 두 개가 만들어진다: 우리가 만질 인스턴스 하나, 아무도 안 건드릴 사진 하나</text>
+  </svg>
+  <figcaption>스냅샷은 우리 코드에서 접근할 수 없는 곳(Hibernate 내부의 <code>EntityEntry.loadedState</code>)에 조용히 놓인다. <b>"조회했을 뿐인데 메모리가 두 배"</b>라는 6절의 이야기가 바로 이 두 번째 갈래에서 시작된다.</figcaption>
+</figure>
+
+<h3>3-1. 커밋 직전 — 두 벌을 필드 단위로 맞춰본다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="커밋 직전 대조표. 현재 인스턴스의 네 필드와 스냅샷의 네 필드를 하나씩 비교해 status만 다르다고 판정하고, 그 결과 UPDATE 한 건이 쓰기 지연 저장소에 등록되며 실제 SQL은 전 컬럼을 담는다.">
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">커밋 직전, 관리 중인 Order(id=1) 하나에 벌어지는 대조</text>
+
+    <text x="250" y="56" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">현재 인스턴스의 필드</text>
+    <text x="730" y="56" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">스냅샷 (로드 시점의 사진)</text>
+    <text x="1032" y="56" font-size="12.5" font-weight="700" fill="#1d4ed8" text-anchor="middle">판정</text>
+
+    <!-- row 1 -->
+    <rect x="30" y="68" width="440" height="32" rx="7" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="46" y="89" font-size="12" fill="#b91c1c" class="mono">status      = "CANCELED"</text>
+    <text x="490" y="89" font-size="13" fill="#64748b" text-anchor="middle">↔</text>
+    <rect x="510" y="68" width="440" height="32" rx="7" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="526" y="89" font-size="12" fill="#b91c1c" class="mono">status      = "PAID"</text>
+    <rect x="970" y="68" width="125" height="32" rx="7" fill="#dc2626"/>
+    <text x="1032" y="89" font-size="12.5" fill="#ffffff" text-anchor="middle" font-weight="700">다름</text>
+
+    <!-- row 2 -->
+    <rect x="30" y="106" width="440" height="32" rx="7" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="46" y="127" font-size="12" fill="#475569" class="mono">totalAmount = 10000</text>
+    <text x="490" y="127" font-size="13" fill="#64748b" text-anchor="middle">↔</text>
+    <rect x="510" y="106" width="440" height="32" rx="7" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="526" y="127" font-size="12" fill="#475569" class="mono">totalAmount = 10000</text>
+    <rect x="970" y="106" width="125" height="32" rx="7" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="1032" y="127" font-size="12.5" fill="#64748b" text-anchor="middle">같음</text>
+
+    <!-- row 3 -->
+    <rect x="30" y="144" width="440" height="32" rx="7" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="46" y="165" font-size="12" fill="#475569" class="mono">memo        = null</text>
+    <text x="490" y="165" font-size="13" fill="#64748b" text-anchor="middle">↔</text>
+    <rect x="510" y="144" width="440" height="32" rx="7" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="526" y="165" font-size="12" fill="#475569" class="mono">memo        = null</text>
+    <rect x="970" y="144" width="125" height="32" rx="7" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="1032" y="165" font-size="12.5" fill="#64748b" text-anchor="middle">같음</text>
+
+    <!-- row 4 -->
+    <rect x="30" y="182" width="440" height="32" rx="7" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="46" y="203" font-size="12" fill="#475569" class="mono">orderedAt   = 2026-01-02</text>
+    <text x="490" y="203" font-size="13" fill="#64748b" text-anchor="middle">↔</text>
+    <rect x="510" y="182" width="440" height="32" rx="7" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="526" y="203" font-size="12" fill="#475569" class="mono">orderedAt   = 2026-01-02</text>
+    <rect x="970" y="182" width="125" height="32" rx="7" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="1032" y="203" font-size="12.5" fill="#64748b" text-anchor="middle">같음</text>
+
+    <!-- verdict -->
+    <rect x="30" y="226" width="1065" height="32" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="562" y="247" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">다른 필드가 하나라도 있으므로 이 엔티티는 "dirty(더러워졌다)"로 판정 → 쓰기 지연 저장소에 UPDATE 1건 등록</text>
+
+    <!-- sql -->
+    <rect x="30" y="266" width="1065" height="52" rx="8" fill="#0f172a" stroke="#334155"/>
+    <text x="46" y="288" font-size="11.5" fill="#e2e8f0" class="mono">update orders set status=?, total_amount=?, memo=?, ordered_at=? where id=?</text>
+    <text x="46" y="308" font-size="11" fill="#fbbf24">단, 그 UPDATE 에 status 만 담기는 것이 아니다 — 기본은 전 컬럼 UPDATE (8-2절)</text>
+  </svg>
+  <figcaption><b>"변경 감지(dirty checking)"라는 이름은 여기서 나온다.</b> 개발자가 "이거 바뀌었으니 저장해줘"라고 말하지 않아도 JPA가 스스로 <b>감지(detect)</b>해서 UPDATE를 만든다는 뜻이다. <b>감지의 정체는 마법이 아니라 이 대조표 한 장</b>이다.</figcaption>
+</figure>
+
+<h3>3-2. 왜 굳이 사본을 두는가 — 자바에 "나 바뀌었다"를 알리는 장치가 없어서</h3>
+
+<p>자연스럽게 나오는 질문이 있다. <b>메모리를 두 배로 쓰면서까지 사본을 보관하는 이유가 무엇인가.</b> 그냥 바뀔 때마다 표시해두면 되지 않나.</p>
+
+<p>답은 자바 언어 자체에 있다. <b>자바에는 "이 객체의 필드가 방금 바뀌었다"를 밖에 알려주는 표준 장치가 없다.</b> <code>order.status = CANCELED</code>라는 대입은 그냥 <b>메모리 한 칸을 덮어쓸 뿐</b>이고, 그 사실을 <b>어디에도 통보하지 않는다.</b> JPA가 <code>order</code> 인스턴스를 아무리 들여다봐도 <b>"지금 이 값이 원래 값인지 누가 바꾼 값인지"</b>는 알 수 없다.</p>
+
+<div class="scroll">
+<table>
+  <caption>그래서 남는 선택지는 원리적으로 셋뿐이다 — Hibernate가 <b>첫 번째</b>를 고른 이유가 핵심</caption>
+  <thead><tr><th>방식</th><th>어떻게 감지하나</th><th>대가</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>스냅샷 대조</b><br><span class="sub">Hibernate 기본</span></td><td>로드 시점 사본을 들고 있다가 <b>flush 때 맞춰본다</b></td><td>메모리(사본 한 벌) + CPU(전건 비교)</td></tr>
+    <tr><td>변경 통보<br><span class="sub">setter에 코드 삽입</span></td><td>값을 바꾸는 <b>모든 통로에 "바뀌었다" 신호</b>를 심는다</td><td>엔티티가 프레임워크 코드에 오염된다. <b>필드 직접 대입은 못 잡는다</b></td></tr>
+    <tr><td>바이트코드 강화</td><td>빌드/로딩 시점에 <b>엔티티 클래스를 변형</b>해 필드 쓰기를 가로챈다</td><td>별도 빌드 설정이 필요하고 <b>디버깅이 어려워진다</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout info">
+  <span class="t">첫 번째를 고른 이유 — 엔티티를 순수 자바 객체(POJO)로 남기기 위해</span>
+  우리가 <code>order.cancel()</code>이라고만 써도 되는 것, 엔티티가 <b>아무것도 상속하지 않고 JPA 인터페이스를 구현하지 않아도 되는 것</b>이 전부 이 선택의 결과다. <b>그 편의의 청구서가 6절의 비용</b>이다. 답변에서 이 인과("편의 ↔ 비용은 같은 선택의 앞뒷면")를 붙이면 <b>외운 사람과 이해한 사람이 갈린다.</b>
+</div>
+
+<div class="memo">
+  <h4>비유 — 스냅샷 대조는 "방 사진 찍고 나갔다가 돌아와 비교하기"다</h4>
+  <p>집을 나서기 전에 <b>방 사진을 한 장 찍어두고</b>, 돌아와서 <b>사진과 지금 방을 비교해</b> 무엇이 달라졌는지 찾는 방식이다. 방 안의 <b>모든 물건에 센서를 다는 방식</b>(변경 통보)보다 <b>물건 쪽이 깨끗</b>하지만, <b>돌아올 때마다 방 전체를 훑어야 한다.</b></p>
+  <div class="rule" style="margin-bottom:0">그래서 <b>"수정하지 않은 엔티티도 비교 대상"</b>이다 — <b>수정 여부는 대조가 끝나야 알 수 있으므로</b></div>
+</div>
+
+<h3>3-3. 뒤집어 말하면 — setter를 부른 것과 UPDATE가 나가는 것은 다른 사건이다</h3>
+
+<p>"변경된 데이터를 분리해서 갖고 있다"는 설명은 <b>구조를 거꾸로 본 것</b>이다. 실제로는 <b>바뀌는 것이 엔티티 인스턴스 자체이고, 따로 갖는 쪽이 안 바뀐 원본(스냅샷)</b>이다. 이 구조 차이가 실무에서 두 가지 결론을 만든다.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>결론 ① 무엇이 바뀌었는지 flush 전까지 아무도 모른다</h4>
+    <p style="margin:0;font-size:.94rem">그래서 <b>전건 비교를 피할 수 없다</b>. 6절 비용이 <b>"최적화가 덜 됐다"가 아니라 "구조상 불가피하다"</b>는 것이 여기서 나온다.</p>
+  </div>
+  <div class="pane r">
+    <h4>결론 ② setter 호출 ≠ UPDATE 예약</h4>
+    <p style="margin:0;font-size:.94rem">값을 넣었어도 <b>스냅샷과 같으면 UPDATE는 나가지 않는다.</b> 반대로 <b>setter를 안 불러도 대조 결과가 다르면 UPDATE가 나간다</b> — <b>9절 전체가 이 문장에서 나온다.</b></p>
+  </div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 1차 캐시는 성능 캐시가 아니다 — 동일성·정합성 장치다</h2>
+
+<p><code>@Id</code> → 엔티티 인스턴스를 담은 <code>Map</code> 하나가 1차 캐시의 전부다. 같은 트랜잭션에서 같은 id를 다시 <code>find</code> 하면 SELECT가 생략되는 건 맞다. <b>그러나 이걸 성능 장치로 설계에 쓰면 안 된다.</b></p>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k" style="font-family:inherit">범위가 트랜잭션이다</div><div class="d">트랜잭션이 끝나면 <b>통째로 사라진다.</b> 히트율을 설계 변수로 쓰려면 <b>범위가 트랜잭션보다 길어야</b> 한다(2차 캐시, Redis).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">JPQL은 조회 경로로 안 쓴다</div><div class="d"><b>조회 방식만 바꿔도 효과가 사라지는 것</b>은 성능 장치라 부를 수 없다(4-2절).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">애초에 설계 문제다</div><div class="d">같은 트랜잭션에서 <b>같은 엔티티를 여러 번 조회하는 코드</b> 자체가 리팩터링 대상인 경우가 많다.</div></div>
+</div>
+
+<div class="rule">그러면 1차 캐시의 진짜 값은 무엇인가 — <b>동일성(identity)과 정합성</b>이다</div>
+
+<h3>4-1. 1차 캐시가 없다면, 우리 코드가 스스로 lost update를 만든다</h3>
+
+<div class="callout info">
+  <span class="t">전제 지식 — lost update(갱신 손실)</span>
+  두 개의 수정이 같은 데이터를 두고 경쟁할 때 <b>나중 것이 앞선 것을 덮어써서 앞선 변경이 사라지는</b> 현상. 보통은 <b>서로 다른 트랜잭션 사이</b>의 문제로 배우지만, 1차 캐시가 없다면 <b>한 트랜잭션 안에서 우리 코드가 스스로</b> 이 현상을 만들 수 있다.
+</div>
+
+<div class="codehead plain"><span class="tag">Java</span> 두 번 조회해 각자 수정하는, 실무에서 흔한 모양</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">applyCoupon</span>(Long orderId) {
+    Order a = orderRepository.findById(orderId).orElseThrow();
+    Order b = orderRepository.findById(orderId).orElseThrow();   <span class="cm">// SELECT 는 나가지 않는다</span>
+
+    a.discount(<span class="st">1000</span>);
+    b.discount(<span class="st">2000</span>);
+<span class="ln-good">    <span class="cm">// a == b 가 참이다. 즉 하나의 인스턴스에 두 변경이 누적되고</span></span>
+<span class="ln-good">    <span class="cm">// flush 시점에 UPDATE 1건(할인 3000)이 나간다.</span></span>
+    <span class="cm">// 만약 서로 다른 객체 2개였다면 나중 UPDATE 가 앞선 변경을 덮어써서</span>
+    <span class="cm">// 트랜잭션 하나 안에서 우리 코드가 스스로 lost update 를 만든다.</span>
+}</code></pre>
+
+<p><b>두 서비스 메서드가 각자 조회해 각자 수정하는 실무 코드가 조용히 잘 동작하는 이유</b>가 이것이다. 즉 1차 캐시는 <b>"쿼리를 아껴주는 캐시"가 아니라 "같은 것을 같은 것으로 다루게 해주는 장치"</b>다. <b>첫 답변에서 이렇게 말하면 급이 달라진다.</b></p>
+
+<div class="memo green">
+  <h4>동일성 보장 — 성립 조건을 빠뜨리지 말 것</h4>
+<pre style="margin:10px 0"><code>Order a = em.find(Order.class, <span class="st">1L</span>);
+Order b = em.find(Order.class, <span class="st">1L</span>);
+a == b;                 <span class="cm">// true — 같은 트랜잭션, 같은 id</span>
+<span class="cm">// 다른 트랜잭션이라면 false. 그래서 엔티티 비교는 id 기준 equals 로 해야 한다.</span></code></pre>
+  <p style="margin-bottom:0">트랜잭션 경계를 넘어 엔티티를 <b>비교하거나 <code>Set</code>·<code>Map</code>에 담아야 한다면</b> <code>==</code>나 기본 <code>equals</code>가 아니라 <b>id 기반 <code>equals</code>/<code>hashCode</code></b>가 필요하다.</p>
+</div>
+
+<h3>4-2. JPQL은 1차 캐시를 우회한다 — 단, "조회 경로에서만"</h3>
+
+<p>두 가지를 <b>함께</b> 알아야 한다. 하나만 알면 오히려 틀린 결론에 도달한다.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>① JPQL/QueryDSL 조회는 <b>항상 DB로 나간다</b></h4>
+    <p style="margin:0;font-size:.94rem">1차 캐시를 먼저 뒤지는 것은 <b><code>find(id)</code> 같은 id 기반 조회뿐</b>이다. 1차 캐시를 성능 장치로 볼 수 없는 이유가 이것이다.</p>
+  </div>
+  <div class="pane r">
+    <h4>② 그런데 <b>읽어온 행이 기존 인스턴스를 덮지 않는다</b></h4>
+    <p style="margin:0;font-size:.94rem">결과 행의 id가 1차 캐시에 이미 있으면 <b>기존 인스턴스가 반환되고, 방금 읽은 행의 값은 버려진다.</b></p>
+  </div>
+</div>
+
+<figure>
+  <svg viewBox="0 0 900 340" role="img" aria-label="위쪽은 영속성 컨텍스트, 아래쪽은 데이터베이스를 나타내는 두 레인. 시점 1에 조회로 PAID 인스턴스가 캐시에 올라가고, 시점 2에 JPQL 벌크 업데이트가 컨텍스트를 우회해 DB만 CANCELED로 바꾸며, 시점 3에 JPQL 조회가 DB에서 CANCELED 행을 읽어오지만 캐시에 같은 id가 이미 있어 읽은 값이 버려지고 옛 PAID 인스턴스가 반환된다.">
+    <defs>
+      <marker id="f4a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+      <marker id="f4r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="450" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"DB는 바뀌었는데 조회 결과는 옛 값" 미스터리의 정체</text>
+
+    <text x="34" y="52" font-size="11.5" font-weight="700" fill="#1d4ed8">영속성 컨텍스트 (1차 캐시)</text>
+    <rect x="30" y="58" width="840" height="86" rx="10" fill="#f8fbff" stroke="#bfdbfe"/>
+    <text x="34" y="196" font-size="11.5" font-weight="700" fill="#334155">DB</text>
+    <rect x="30" y="202" width="840" height="66" rx="10" fill="#0f172a" stroke="#334155"/>
+
+    <!-- col headers -->
+    <text x="160" y="292" font-size="11.5" fill="#64748b" text-anchor="middle" class="mono">① findById(1L)</text>
+    <text x="450" y="292" font-size="11.5" fill="#64748b" text-anchor="middle" class="mono">② bulkCancelAll() — JPQL UPDATE</text>
+    <text x="740" y="292" font-size="11.5" fill="#64748b" text-anchor="middle" class="mono">③ findAllByStatusJpql()</text>
+
+    <!-- PC boxes -->
+    <rect x="60" y="72" width="200" height="58" rx="8" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="160" y="94" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">{ 1L → order(PAID) }</text>
+    <text x="160" y="114" font-size="10.5" fill="#1e40af" text-anchor="middle">인스턴스 + 스냅샷 등록</text>
+
+    <rect x="350" y="72" width="200" height="58" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="450" y="94" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">{ 1L → order(PAID) }</text>
+    <text x="450" y="114" font-size="10.5" fill="#92400e" text-anchor="middle">그대로 — 벌크는 여기를 우회</text>
+
+    <rect x="640" y="72" width="200" height="58" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="740" y="94" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">여전히 order(PAID) 반환</text>
+    <text x="740" y="114" font-size="10.5" fill="#7f1d1d" text-anchor="middle">읽어온 CANCELED 는 버려진다</text>
+
+    <!-- DB boxes -->
+    <rect x="60" y="216" width="200" height="38" rx="8" fill="#1e293b" stroke="#475569"/>
+    <text x="160" y="240" font-size="11.5" fill="#e2e8f0" text-anchor="middle" class="mono">1 | PAID</text>
+    <rect x="350" y="216" width="200" height="38" rx="8" fill="#1e293b" stroke="#16a34a"/>
+    <text x="450" y="240" font-size="11.5" fill="#86efac" text-anchor="middle" class="mono">1 | CANCELED</text>
+    <rect x="640" y="216" width="200" height="38" rx="8" fill="#1e293b" stroke="#475569"/>
+    <text x="740" y="240" font-size="11.5" fill="#e2e8f0" text-anchor="middle" class="mono">1 | CANCELED 행 반환</text>
+
+    <!-- arrows -->
+    <line x1="160" y1="214" x2="160" y2="136" stroke="#64748b" stroke-width="1.6" marker-end="url(#f4a)"/>
+    <text x="176" y="180" font-size="10" fill="#64748b">SELECT 결과로 적재</text>
+
+    <line x1="450" y1="140" x2="450" y2="212" stroke="#d97706" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#f4a)"/>
+    <text x="466" y="180" font-size="10" fill="#b45309" font-weight="700">UPDATE 는 컨텍스트를 건너뛰고 DB 로 직행</text>
+
+    <line x1="740" y1="214" x2="740" y2="136" stroke="#dc2626" stroke-width="1.6" marker-end="url(#f4r)"/>
+    <text x="756" y="172" font-size="10" fill="#b91c1c" font-weight="700">id 1L 이 이미 캐시에 있으므로</text>
+    <text x="756" y="186" font-size="10" fill="#b91c1c" font-weight="700">읽은 값은 폐기 ✕</text>
+
+    <rect x="30" y="304" width="840" height="30" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="450" y="324" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">버그가 아니라 의도된 동작 — 한 트랜잭션 안에서 같은 엔티티의 값이 도중에 바뀌지 않게 한다(repeatable read)</text>
+  </svg>
+  <figcaption>대응은 벌크 연산 뒤에 <b><code>em.clear()</code></b>(또는 <code>@Modifying(clearAutomatically = true)</code>)로 <b>1차 캐시를 비우는 것</b>이고, 더 나은 설계는 <b>벌크 연산을 엔티티 조회보다 앞에 배치</b>하는 것이다.</figcaption>
+</figure>
+
+<div class="codehead bad"><span class="tag">함정</span> 이 순서로 쓰면 반드시 걸린다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">demo</span>(Long id) {
+    Order order = orderRepository.findById(id).orElseThrow();   <span class="cm">// status = PAID, 1차 캐시 등록</span>
+<span class="ln-bad">    orderRepository.bulkCancelAll();                            <span class="cm">// JPQL UPDATE ... (DB 는 CANCELED)</span></span>
+
+    List&lt;Order&gt; list = orderRepository.findAllByStatusJpql();    <span class="cm">// SELECT 는 DB 로 나간다</span>
+<span class="ln-bad">    <span class="cm">// list 안의 그 엔티티는 방금 읽은 CANCELED 가 아니라 1차 캐시의 PAID 인스턴스다.</span></span>
+}</code></pre>
+
+<div class="callout warn">
+  <span class="t">반대 방향도 있다 — JPQL 실행 "직전"에는 flush가 먼저 일어난다</span>
+  기본 <code>FlushMode.AUTO</code>에서 JPQL을 실행하면 <b>그 앞에서 flush가 돈다.</b> 안 그러면 방금 <code>persist()</code>한 데이터가 <b>조회 결과에서 빠지기 때문</b>이다. 정리하면 — <b>JPQL은 "쓰기 방향으로는 flush를 유발하고, 읽기 방향으로는 1차 캐시를 우회한다."</b> 그리고 이 자동 flush가 <b>6-2절 비용을 여러 번 발생시키는 원인</b>이다.
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 쓰기 지연 — 모아두는 진짜 이유는 "빠르다"가 아니다</h2>
+
+<p><code>persist()</code>나 필드 수정 즉시 SQL을 보내지 않고 <b>flush 시점까지 모아둔다.</b> 이득을 <b>"쿼리를 한 번에 보내서 빠르다"</b>로 답하면 두루뭉술하다. 셋으로 쪼개면 구체적이 된다.</p>
+
+<div class="grid g3">
+  <div class="tile ok"><div class="k" style="font-family:inherit">① JDBC 배치가 가능해진다</div><div class="d">같은 종류의 INSERT/UPDATE를 <b>묶어서 왕복 횟수를 줄인다</b>(<code>hibernate.jdbc.batch_size</code>). 모아두지 않으면 <b>묶을 대상 자체가 없다.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">② 쓰기 락 보유 구간이 짧아진다 <span class="badge bonus">가산점</span></div><div class="d">UPDATE를 쏜 순간부터 <b>커밋까지 그 행의 락을 쥔다.</b> 쓰기를 <b>커밋 직전으로 미루면 락 보유 시간이 줄어 경합이 감소</b>한다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">③ 여러 번 수정해도 UPDATE는 1건</div><div class="d">4-1절의 <code>discount(1000)</code> + <code>discount(2000)</code>이 <b>UPDATE 1건(3000)</b>으로 나가는 것이 그것이다.</div></div>
+</div>
+
+<div class="memo">
+  <h4>비유 — 물건 하나 떠오를 때마다 마트에 가지 않는다</h4>
+  <p>필요한 것이 생각날 때마다 <b>마트를 왕복하는 대신</b> 메모지에 적어두었다가 <b>나갈 때 한 번에</b> 산다. 왕복이 줄고(<b>배치</b>), 카트를 붙잡고 서 있는 시간도 줄며(<b>락 보유</b>), <b>"우유"를 두 번 적었으면 한 번만 사면 된다</b>(<b>UPDATE 1건</b>). 쓰기 지연의 이득 셋이 그대로 대응된다.</p>
+  <div class="rule red" style="margin-bottom:0">그래서 <b>트랜잭션 앞쪽에서 <code>flush()</code>를 부르고 뒤에서 외부 API를 호출하는 코드</b>는<br><span style="font-size:.92rem;font-weight:600">쓰기 지연의 이득을 <b>스스로 버리면서 락만 오래 쥐는</b> 최악의 조합이다 (11절 꼬리질문)</span></div>
+</div>
+
+<div class="callout trap">
+  <span class="t">예외 하나 — <code>IDENTITY</code> 전략에서는 "쓰기 지연"이 성립하지 않는다</span>
+  <code>@GeneratedValue(strategy = IDENTITY)</code>는 <b>INSERT를 보내야 id를 알 수 있으므로</b> <code>persist()</code> 시점에 <b>INSERT가 즉시 나간다.</b> 1차 캐시의 키가 <code>@Id</code>인데 그 id를 DB만 알고 있으니 <b>미룰 수가 없다.</b> 그 결과 <b>이 전략에서는 INSERT 배치가 무력화된다.</b> <b>"쓰기 지연에 예외가 있다"</b>까지 말하면 원리를 이해한 답변이 된다.
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. flush의 정량 비용 — 메모리 반, CPU 반</h2>
+
+<p>"조회만 했는데 커밋 시점에 애플리케이션이 하는 일이 있나?"에 <b>"메모리와 GC"만 답하면 절반</b>이다. <b>나머지 절반이 CPU</b>이고, <b>이 질문의 변별 지점은 그쪽</b>이다.</p>
+
+<h3>6-1. 메모리 — 엔티티마다 스냅샷 한 벌</h3>
+
+<p>엔티티 1,000건을 읽으면 <b>인스턴스 1,000개 + 스냅샷 1,000벌</b>이다. <b>엔티티 하나당 한 벌씩 늘어난다</b>는 성질이 핵심이고, 조회 건수가 커질수록 <b>선형으로</b> 따라온다. 스냅샷은 엔티티 인스턴스의 사본이 아니라 <b>필드값을 순서대로 담은 <code>Object[]</code> 배열 하나</b>다.</p>
+
+<div class="codehead plain"><span class="tag">계산</span> 스냅샷 한 벌의 대략적인 크기 — 숫자를 들고 있으면 답변이 구체적이 된다</div>
+<pre><code><span class="cm">필드 20개짜리 엔티티, 64비트 JVM · 압축 oop(힙 32GB 미만) 기준</span>
+
+  Object[20] 한 벌
+    객체 헤더 12바이트 + 배열 길이 4바이트          = 16바이트
+    참조 20개 × 4바이트                             = 80바이트
+                                                    ──────────
+<span class="ln-good">                                                      96바이트  <span class="cm">(8바이트 정렬에 이미 맞음)</span></span>
+
+  1,000건이면 96 × 1,000 = 96,000바이트 ≈ <span class="st">94KB</span>  <span class="cm">(배열 자체만 계산했을 때)</span></code></pre>
+
+<div class="callout warn">
+  <span class="t">"메모리가 2배"는 상한에 가까운 어림이다 — 정확히 말하면</span>
+  스냅샷 배열에 들어가는 값은 타입별 <b>MutabilityPlan</b>(그 타입을 복사할 때 어떻게 복사할지 정해둔 규칙)에 따라 다르게 담긴다.<br>
+  · <b>불변 타입</b>(<code>String</code>, <code>Integer</code>, <code>enum</code>, <code>LocalDate</code> 등)은 <b>같은 인스턴스를 그대로 가리킨다.</b> 문자열 본체가 두 벌 생기지 않고 <b>참조 하나(4~8바이트)만</b> 늘어난다.<br>
+  · <b>가변 타입</b>(<code>java.util.Date</code>, 배열, 그리고 9-3절의 컨버터 매핑 값)은 <b>깊은 복사본이 새로 만들어진다.</b> 이쪽은 실제로 객체가 하나 더 생긴다.
+  <div class="rule" style="margin:10px 0 0">정확한 문장 — <b>"관리 엔티티 하나마다 스냅샷 배열 한 벌이 반드시 추가되고, 가변 타입 필드는 그 값까지 한 벌 더 복사된다"</b></div>
+</div>
+
+<h3>6-2. CPU — flush마다 <code>O(관리 엔티티 수 × 필드 수)</code></h3>
+
+<div class="grid g3">
+  <div class="tile big"><div class="k" style="color:var(--accent)">20,000</div><div class="s">필드 20개 × 엔티티 1,000건</div><div class="d">= <b>flush 1회</b>의 필드 비교 횟수</div></div>
+  <div class="tile big"><div class="k" style="color:var(--danger)">80,000</div><div class="s">조회 메서드 안에서 JPQL 3번</div><div class="d">flush는 <b>3 + 커밋 1 = 4회</b> → 20,000 × 4</div></div>
+  <div class="tile big"><div class="k" style="color:var(--danger)">100%</div><div class="s">조회 전용 화면이라면</div><div class="d">그 비교 결과는 <b>전부 "변경 없음"</b> — <b>헛수고인 CPU</b></div></div>
+</div>
+
+<p><b>이 세 칸을 순서대로 말하면 정량 감각이 있는 답변</b>이 된다. 특히 가운데 칸 — <b>flush는 커밋 때 한 번만 일어나지 않는다</b>(1절 카드) — 을 빠뜨리면 비용을 4분의 1로 과소평가하게 된다.</p>
+
+<h3>6-3. 배치에서는 성질이 더 고약해진다 — 진행될수록 느려지는 곡선</h3>
+
+<p><code>clear()</code>를 빼먹으면 <b>관리 엔티티가 계속 쌓이므로, flush 한 번의 비용 자체가 회를 거듭할수록 커진다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 900 360" role="img" aria-label="가로축은 flush 회차, 세로축은 그 회차에서 비교해야 하는 관리 엔티티 수를 나타내는 그래프. clear를 하지 않으면 회차마다 1000건씩 늘어나 50회차에 5만 건까지 우상향하고, clear를 하면 회차마다 1000건으로 수평을 유지한다.">
+    <defs>
+      <marker id="f6a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#64748b"/></marker>
+    </defs>
+
+    <text x="450" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">5만 건 순회 수정 — 1,000건마다 flush() 는 하고 clear() 는 안 했을 때</text>
+
+    <!-- axes -->
+    <line x1="70" y1="300" x2="856" y2="300" stroke="#64748b" stroke-width="1.6" marker-end="url(#f6a)"/>
+    <line x1="70" y1="300" x2="70" y2="48" stroke="#64748b" stroke-width="1.6" marker-end="url(#f6a)"/>
+    <text x="856" y="322" font-size="11" fill="#64748b" text-anchor="end">flush 회차</text>
+    <text x="70" y="40" font-size="11" fill="#64748b" text-anchor="middle">그 회차의 비교 대상 건수</text>
+
+    <!-- gridlines -->
+    <line x1="70" y1="60" x2="840" y2="60" stroke="#e5e7eb"/><text x="64" y="64" font-size="10" fill="#94a3b8" text-anchor="end">50,000</text>
+    <line x1="70" y1="180" x2="840" y2="180" stroke="#e5e7eb"/><text x="64" y="184" font-size="10" fill="#94a3b8" text-anchor="end">25,000</text>
+    <line x1="70" y1="252" x2="840" y2="252" stroke="#e5e7eb"/><text x="64" y="256" font-size="10" fill="#94a3b8" text-anchor="end">10,000</text>
+    <text x="64" y="304" font-size="10" fill="#94a3b8" text-anchor="end">0</text>
+    <text x="75" y="318" font-size="10" fill="#94a3b8" text-anchor="middle">1</text>
+    <text x="229" y="318" font-size="10" fill="#94a3b8" text-anchor="middle">10</text>
+    <text x="452" y="318" font-size="10" fill="#94a3b8" text-anchor="middle">25</text>
+    <text x="830" y="318" font-size="10" fill="#94a3b8" text-anchor="middle">50</text>
+
+    <!-- area under red -->
+    <polygon points="75,295 830,60 830,300 75,300" fill="#fecaca" fill-opacity="0.45"/>
+    <line x1="75" y1="295" x2="830" y2="60" stroke="#dc2626" stroke-width="2.4"/>
+    <circle cx="75" cy="295" r="4" fill="#dc2626"/>
+    <circle cx="452" cy="177" r="4" fill="#dc2626"/>
+    <circle cx="830" cy="60" r="4" fill="#dc2626"/>
+
+    <!-- green line -->
+    <line x1="75" y1="295" x2="830" y2="295" stroke="#16a34a" stroke-width="2.4"/>
+    <circle cx="830" cy="295" r="4" fill="#16a34a"/>
+
+    <!-- labels -->
+    <rect x="330" y="92" width="300" height="46" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="344" y="112" font-size="11.5" fill="#b91c1c" font-weight="700">clear() 없음 — 앞의 1,000건이 그대로 남는다</text>
+    <text x="344" y="130" font-size="11" fill="#7f1d1d">회차마다 비교 대상이 1,000건씩 늘어난다</text>
+    <text x="468" y="172" font-size="10.5" fill="#b91c1c" font-weight="700">25회차 = 25,000건 비교</text>
+
+    <rect x="330" y="240" width="300" height="42" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="344" y="258" font-size="11.5" fill="#166534" font-weight="700">clear() 있음 — 회차마다 1,000건 고정</text>
+    <text x="344" y="275" font-size="11" fill="#15803d">flush 후 컨텍스트를 비우면 수평선이 된다</text>
+
+    <!-- bottom band -->
+    <rect x="70" y="330" width="786" height="26" rx="7" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="463" y="348" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700" class="mono">누적 = 1,000 + 2,000 + ... + 50,000 = 1,000 × (50×51/2) = 1,275,000건   vs   clear() 시 50,000건 → 25배</text>
+  </svg>
+  <figcaption>붉은 선의 <b>면적</b>이 누적 비교량이다. <b>"처음엔 빨랐는데 갈수록 느려진다"</b>는 배치 장애 리포트를 보면 <b>이 패턴부터 의심</b>하면 된다 — 관리 엔티티 수에 대해 사실상 <code>O(n²)</code>인 곡선이다. 대응은 <b>chunk마다 <code>flush()</code> 다음에 반드시 <code>clear()</code></b>.</figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>면접에서 이 숫자 하나만 들고 가도 된다</h4>
+  <div class="chain">
+    <span class="chip r"><code>flush()</code>만 = <b>127만 5천</b>건 비교</span><span class="arrow">vs</span><span class="chip g"><code>flush()</code>+<code>clear()</code> = <b>5만</b>건</span><span class="arrow">=</span><span class="chip w"><b>25배</b></span>
+  </div>
+  <p style="margin-bottom:0"><code>clear()</code>는 <b>"메모리 정리"가 아니라 "비교 대상 축소"</b>다. 이렇게 이해하고 있어야 <b>왜 flush만으로는 부족한지</b>를 설명할 수 있다.</p>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 회피 두 가지 — 같은 문제를 다른 층에서 푼다</h2>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 306" role="img" aria-label="조회 한 번에 비용이 발생하는 다섯 단계를 왼쪽에서 오른쪽으로 늘어놓고, readOnly는 마지막 flush 비교 단계만 확실히 없애며 스냅샷 생략은 조건부인 반면, DTO 프로젝션은 다섯 단계 전부를 없앤다는 것을 보여주는 도식.">
+    <defs>
+      <marker id="f7a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">조회 한 번이 지불하는 다섯 단계 — 어느 단계를 없애는가</text>
+
+    <rect x="30" y="52" width="196" height="66" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="128" y="76" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">① 전 컬럼 SELECT</text>
+    <text x="128" y="96" font-size="10.5" fill="#64748b" text-anchor="middle">목록에 안 쓰는 LOB 까지</text>
+    <text x="128" y="110" font-size="10.5" fill="#64748b" text-anchor="middle">전부 읽어온다</text>
+
+    <rect x="246" y="52" width="196" height="66" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="344" y="76" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">② 엔티티 인스턴스화</text>
+    <text x="344" y="96" font-size="10.5" fill="#64748b" text-anchor="middle">행마다 객체 생성 · 매핑</text>
+
+    <rect x="462" y="52" width="196" height="66" rx="10" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="560" y="76" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">③ 1차 캐시 등록</text>
+    <text x="560" y="96" font-size="10.5" fill="#64748b" text-anchor="middle">Map 에 id → 인스턴스</text>
+
+    <rect x="678" y="52" width="196" height="66" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="776" y="76" font-size="12" fill="#b45309" text-anchor="middle" font-weight="700">④ 스냅샷 복사</text>
+    <text x="776" y="96" font-size="10.5" fill="#92400e" text-anchor="middle">엔티티마다 Object[] 한 벌</text>
+    <text x="776" y="110" font-size="10.5" fill="#92400e" text-anchor="middle">= 메모리 비용</text>
+
+    <rect x="894" y="52" width="196" height="66" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="992" y="76" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">⑤ flush 때 전건 비교</text>
+    <text x="992" y="96" font-size="10.5" fill="#7f1d1d" text-anchor="middle">엔티티 수 × 필드 수</text>
+    <text x="992" y="110" font-size="10.5" fill="#7f1d1d" text-anchor="middle">= CPU 비용</text>
+
+    <line x1="228" y1="85" x2="242" y2="85" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#f7a)"/>
+    <line x1="444" y1="85" x2="458" y2="85" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#f7a)"/>
+    <line x1="660" y1="85" x2="674" y2="85" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#f7a)"/>
+    <line x1="876" y1="85" x2="890" y2="85" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#f7a)"/>
+
+    <!-- readOnly row -->
+    <text x="40" y="172" font-size="12.5" fill="#1d4ed8" font-weight="700" class="mono">@Transactional(readOnly = true)</text>
+    <text x="40" y="190" font-size="11" fill="#64748b">이미 지불한 비용의 <tspan font-weight="700">뒷단만</tspan> 깎는 사후 최적화</text>
+    <rect x="678" y="150" width="196" height="46" rx="9" fill="#eff6ff" stroke="#93c5fd" stroke-dasharray="6 4"/>
+    <text x="776" y="170" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">스냅샷 생략 — 조건부</text>
+    <text x="776" y="187" font-size="10" fill="#1e40af" text-anchor="middle">트랜잭션-로컬 EntityManager 일 때만</text>
+    <rect x="894" y="150" width="196" height="46" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="992" y="170" font-size="11" fill="#1d4ed8" text-anchor="middle" font-weight="700">flush 억제 → 비교 실행 안 함</text>
+    <text x="992" y="187" font-size="10" fill="#1e40af" text-anchor="middle">확실한 이득은 여기 하나</text>
+
+    <!-- DTO row -->
+    <rect x="30" y="216" width="1060" height="46" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="46" y="236" font-size="12.5" fill="#166534" font-weight="700">DTO 프로젝션 — 비용 구조 자체를 만들지 않는다</text>
+    <text x="46" y="254" font-size="11" fill="#15803d">① 필요한 컬럼만 SELECT · ② ③ ④ ⑤ 는 <tspan font-weight="700">존재 자체가 없음</tspan> (엔티티를 안 만드니 캐시도 스냅샷도 flush 대상도 없다)</text>
+
+    <rect x="30" y="272" width="1060" height="28" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="291" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">readOnly 는 뒷단을 깎고, DTO 는 앞단부터 없앤다 — 같은 문제를 다른 층에서 푼다</text>
+  </svg>
+  <figcaption><b>용어</b> — <b>DTO 프로젝션</b>이란 조회 결과를 엔티티가 아니라 <b>그 화면에 필요한 필드만 담은 전용 객체(DTO)로 직접 받아오는 것</b>이다. "프로젝션(projection, 사영)"은 관계형 대수에서 <b>필요한 컬럼만 골라내는 연산</b>의 이름이고, 여기서도 뜻이 같다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table>
+  <thead><tr><th></th><th><code>@Transactional(readOnly = true)</code></th><th><b>DTO 프로젝션</b></th></tr></thead>
+  <tbody>
+    <tr><td><b>무엇을 하나</b></td><td>flush 자체를 억제(<code>FlushMode.MANUAL</code>) + 세션을 read-only로</td><td class="good">애초에 엔티티를 안 만든다</td></tr>
+    <tr><td><b>1차 캐시</b></td><td class="bad">여전히 올라간다</td><td class="good">올라가지 않는다</td></tr>
+    <tr><td><b>스냅샷</b></td><td>생략(조건 있음 — 아래 확인 범위)</td><td class="good">존재 자체가 없음</td></tr>
+    <tr><td><b>SELECT 컬럼</b></td><td class="bad">엔티티 전 컬럼</td><td class="good">필요한 컬럼만</td></tr>
+    <tr class="hl"><td><b>성질</b></td><td>이미 지불한 비용의 <b>뒷단을 깎는 사후 최적화</b></td><td><b>비용 구조를 만들지 않는 설계</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="codehead bad"><span class="tag">before</span> 목록 조회인데 엔티티를 그대로 올린다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public</span> List&lt;OrderResponse&gt; <span class="fn">list</span>(SearchCond cond) {
+<span class="ln-bad">    List&lt;Order&gt; orders = orderRepository.search(cond);   <span class="cm">// 1,000건: 인스턴스 + 스냅샷</span></span>
+    <span class="kw">return</span> orders.stream().map(OrderResponse::from).toList();
+}
+<span class="cm">// flush 때 20,000번 비교 → 결과는 전부 "변경 없음".</span>
+<span class="cm">// 게다가 목록에 안 쓰는 LOB/설명 컬럼까지 전부 SELECT 된다.</span></code></pre>
+
+<div class="cmp wide">
+<div>
+<div class="codehead good"><span class="tag">after ①</span> readOnly — 비교를 실행하지 않게 한다</div>
+<pre><code><span class="ln-good"><span class="kw">@Transactional</span>(readOnly = <span class="kw">true</span>)</span>
+<span class="kw">public</span> List&lt;OrderResponse&gt; <span class="fn">list</span>(SearchCond cond) {
+    ...
+}
+<span class="cm">// flush 억제 → 20,000번 비교가 사라진다.</span>
+<span class="cm">// 다만 SELECT · 인스턴스화 · 1차 캐시는 그대로.</span></code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">after ②</span> DTO 프로젝션 — 비용이 발생하지 않는다</div>
+<pre><code><span class="kw">@Query</span>(<span class="st">"""</span>
+<span class="st">    select new com.example.order.OrderResponse(</span>
+<span class="st">        o.id, o.status, o.totalAmount, o.orderedAt)</span>
+<span class="st">    from Order o where o.status = :status</span>
+<span class="st">    """</span>)
+List&lt;OrderResponse&gt; <span class="fn">findResponses</span>(<span class="kw">@Param</span>(<span class="st">"status"</span>) OrderStatus status);
+<span class="ln-good"><span class="cm">// 1차 캐시 X, 스냅샷 X, 쓰기 지연 X, 필요한 4개 컬럼만 SELECT</span></span></code></pre>
+</div>
+</div>
+
+<div class="memo green">
+  <h4>DTO 프로젝션이 더 근본적인 이유 세 가지 — 이 순서로 말한다</h4>
+  <div class="step ok"><span class="n">1</span><div class="body"><b><code>readOnly</code>는 뒷단만 깎는다</b> — 엔티티 인스턴스화, 전 컬럼 SELECT, 1차 캐시 등록 비용은 <b>그대로 남는다.</b> DTO는 <b>그 앞단부터</b> 없앤다.</div></div>
+  <div class="step ok"><span class="n">2</span><div class="body"><b><code>readOnly</code>는 실수에 취약하다</b> — 쓰기 로직이 섞여 들어가면 <b>예외 없이 조용히 증발한다.</b> <b>막아주는 안전장치가 아니다.</b> 반면 DTO는 <b>반환값이 엔티티가 아니므로 "실수로 수정" 자체가 불가능</b>하고, 컨트롤러에서 지연 로딩을 건드릴 여지도 없다(<code>LazyInitializationException</code> 원천 차단).</div></div>
+  <div class="step ok"><span class="n">3</span><div class="body"><b><code>readOnly</code>의 효과는 구성에 따라 흔들린다</b>(아래 확인 범위). <b>DTO는 구성과 무관하게 성립한다.</b></div></div>
+</div>
+
+<div class="callout warn">
+  <span class="t">확인 범위 노트 — "readOnly면 스냅샷을 만들지 않는다"에는 조건이 붙는다</span>
+  Spring Framework 6.2.x / 현재 main의 <code>HibernateJpaDialect.beginTransaction</code>은 read-only 트랜잭션에서 <code>FlushMode.MANUAL</code>은 <b>항상</b> 걸지만, 스냅샷 생략의 실제 스위치인 <code>Session.setDefaultReadOnly(true)</code>는 <b>트랜잭션-로컬 EntityManager일 때만</b> 호출한다(<code>JpaTransactionManager</code>가 이 트랜잭션에서 EntityManager를 새로 만든 경우). 즉 <b>이미 열려 있는 EntityManager에 참여하는 경로(OSIV 등)에서는 flush 억제는 되어도 스냅샷 생략은 보장되지 않는다.</b>
+  <div class="rule" style="margin:10px 0 0">확실한 이득은 <b>"flush가 없으니 비교가 실행되지 않는다"(CPU)</b>이고, <b>메모리 절감은 구성에 따라 달라질 수 있다</b></div>
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. flush가 만드는 SQL의 두 가지 반직관</h2>
+
+<p>대조가 끝나 UPDATE가 만들어졌다고 끝이 아니다. <b>그렇게 만들어진 SQL 자체에 반직관적인 성질이 둘</b> 있고, 각각 <b>유니크 제약 위반</b>과 <b>조용한 데이터 변조</b>를 낳는다.</p>
+
+<h3>8-1. 반직관 ① — 실행 순서는 코드 순서가 아니다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 360" role="img" aria-label="왼쪽에는 코드가 DELETE 먼저 INSERT 나중으로 예약한 순서가 있고, 오른쪽에는 Hibernate가 flush 때 따르는 고정 실행 순서가 고아 제거, 엔티티 INSERT, 엔티티 UPDATE, 컬렉션 연산, 엔티티 DELETE 순으로 나열되어 있어, 실제로는 INSERT가 DELETE보다 먼저 실행되어 유니크 제약 위반이 발생한다는 것을 보여주는 도식.">
+    <defs>
+      <marker id="f8a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+      <marker id="f8r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"분명 지우고 넣었는데 중복 오류" — 코드 순서와 실행 순서는 다르다</text>
+
+    <!-- left: code order -->
+    <rect x="30" y="50" width="330" height="180" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="46" y="74" font-size="12.5" fill="#334155" font-weight="700">내 코드가 쓴 순서 (= 쓰기 지연 저장소 등록 순서)</text>
+    <rect x="46" y="88" width="298" height="52" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="60" y="108" font-size="11.5" fill="#334155" font-weight="700">① tagRepository.deleteByPostId(postId)</text>
+    <text x="60" y="127" font-size="10.5" fill="#64748b">DELETE 예약</text>
+    <rect x="46" y="150" width="298" height="52" rx="8" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="60" y="170" font-size="11.5" fill="#334155" font-weight="700">② names.forEach(... save(new Tag(...)))</text>
+    <text x="60" y="189" font-size="10.5" fill="#64748b">INSERT 예약</text>
+    <text x="46" y="220" font-size="11" fill="#b45309" font-weight="700">사람의 머릿속: "지우고 → 넣는다"</text>
+
+    <!-- arrow -->
+    <line x1="366" y1="140" x2="404" y2="140" stroke="#2563eb" stroke-width="2.4" marker-end="url(#f8a)"/>
+    <text x="386" y="128" font-size="11" fill="#2563eb" text-anchor="middle" font-weight="700">flush</text>
+
+    <!-- right: fixed order -->
+    <rect x="412" y="50" width="380" height="252" rx="12" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="428" y="74" font-size="12.5" fill="#1d4ed8" font-weight="700">Hibernate ActionQueue 의 고정 실행 순서</text>
+
+    <rect x="428" y="86" width="348" height="30" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="442" y="106" font-size="11.5" fill="#475569">1. 고아 객체 제거 (orphan removal)</text>
+
+    <rect x="428" y="122" width="348" height="30" rx="7" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="442" y="142" font-size="11.5" fill="#166534" font-weight="700">2. 엔티티 INSERT &nbsp;&nbsp;← 내 코드의 ② 가 여기서 먼저 실행된다</text>
+
+    <rect x="428" y="158" width="348" height="30" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="442" y="178" font-size="11.5" fill="#1d4ed8" font-weight="700">3. 엔티티 UPDATE</text>
+
+    <rect x="428" y="194" width="348" height="30" rx="7" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="442" y="214" font-size="11.5" fill="#475569">4. 컬렉션 대기 → 삭제 → 수정 → 재생성</text>
+
+    <rect x="428" y="230" width="348" height="30" rx="7" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="442" y="250" font-size="11.5" fill="#b91c1c" font-weight="700">5. 엔티티 DELETE &nbsp;&nbsp;← 내 코드의 ① 이 여기까지 밀린다</text>
+
+    <text x="428" y="284" font-size="11" fill="#1e40af">종류별로 정해진 순서다 — 등록 순서를 따르지 않는다</text>
+
+    <!-- right result -->
+    <rect x="812" y="50" width="278" height="252" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="828" y="74" font-size="12.5" fill="#b91c1c" font-weight="700">실제로 DB 가 받는 순서</text>
+    <rect x="828" y="88" width="246" height="34" rx="7" fill="#ffffff" stroke="#fecaca"/>
+    <text x="840" y="110" font-size="11" fill="#334155" class="mono">insert into tag (post_id,name)</text>
+    <line x1="951" y1="126" x2="951" y2="140" stroke="#dc2626" stroke-width="1.6" marker-end="url(#f8r)"/>
+    <rect x="828" y="144" width="246" height="52" rx="7" fill="#dc2626"/>
+    <text x="951" y="166" font-size="11.5" fill="#ffffff" text-anchor="middle" font-weight="700">✕ 유니크 제약 위반</text>
+    <text x="951" y="184" font-size="10.5" fill="#fecaca" text-anchor="middle">(post_id, name) 이 아직 남아 있다</text>
+    <rect x="828" y="206" width="246" height="34" rx="7" fill="#ffffff" stroke="#fecaca" stroke-dasharray="5 4"/>
+    <text x="840" y="228" font-size="11" fill="#94a3b8" class="mono">delete from tag ...  (도달 못 함)</text>
+    <text x="828" y="264" font-size="11" fill="#7f1d1d">예외가 터지므로 DELETE 는</text>
+    <text x="828" y="280" font-size="11" fill="#7f1d1d">실행되지도 못한다</text>
+
+    <rect x="30" y="316" width="1060" height="32" rx="9" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="560" y="337" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">순서가 고정된 이유는 FK 제약 위반 회피와 JDBC 배치 묶음 때문이다 — 종류별로 모아야 배치가 성립한다</text>
+  </svg>
+  <figcaption>이 순서는 <b>Hibernate 5.6과 현재 main의 <code>ActionQueue</code>에서 확인한 것</b>이다. 면접에서는 <b>"함정이 존재하고 그 원리가 고정 실행 순서다"</b>까지 말하면 충분하고, 전체 순서 규칙·데드락 축·배포 전에 잡는 방법은 별도 문항(<code>15-flush-timing-and-sql-ordering.md</code>)에서 다룬다.</figcaption>
+</figure>
+
+<div class="cmp wide">
+<div>
+<div class="codehead bad"><span class="tag">before</span> 코드는 "지우고 넣기", SQL은 "넣고 지우기"</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">replaceTags</span>(Long postId, List&lt;String&gt; names) {
+<span class="ln-bad">    tagRepository.deleteByPostId(postId);          <span class="cm">// DELETE 예약</span></span>
+<span class="ln-bad">    names.forEach(n -&gt; tagRepository.save(<span class="kw">new</span> Tag(postId, n)));</span>
+}
+<span class="cm">// flush 시: INSERT 가 먼저, DELETE 가 나중 →</span>
+<span class="cm">// (post_id, name) 유니크 제약이 있으면 여기서 위반 예외.</span></code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">after</span> 순서를 코드로 강제한다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">replaceTags</span>(Long postId, List&lt;String&gt; names) {
+    tagRepository.deleteByPostId(postId);
+<span class="ln-good">    tagRepository.flush();       <span class="cm">// DELETE 를 먼저 내보낸다</span></span>
+    names.forEach(n -&gt; tagRepository.save(<span class="kw">new</span> Tag(postId, n)));
+}
+<span class="cm">// flush() 가 유일한 답은 아니다 — 기존 행을 지우지 않고</span>
+<span class="cm">// 재사용하는 설계, 컬렉션 clear()+addAll() 등도 있다.</span></code></pre>
+</div>
+</div>
+
+<h3>8-2. 반직관 ② — 기본 UPDATE는 "전 컬럼" UPDATE다</h3>
+
+<p><b>"변경된 컬럼만 UPDATE 된다"는 흔한 오해</b>다. Hibernate는 기본적으로 엔티티별 UPDATE 문을 <b>부팅 시점에 전 컬럼 기준으로 한 번 만들어두고 재사용</b>한다.</p>
+
+<div class="codehead plain"><span class="tag">SQL</span> status 하나만 바꿨는데 실제로 나가는 SQL</div>
+<pre><code><span class="kw">update</span> orders
+   <span class="kw">set</span> status=?, <span class="cm">/* 내가 바꾼 것 */</span>
+<span class="ln-bad">       total_amount=?, memo=?, ordered_at=?, updated_at=?   <span class="cm">-- 안 바꾼 컬럼도 전부 다시 쓴다</span></span>
+ <span class="kw">where</span> id=?</code></pre>
+
+<p><b>이유는 성능이다</b> — SQL 문자열이 고정이라 <b>매 flush마다 새로 만들 필요가 없고</b>, DB의 구문(파싱) 캐시와 <code>PreparedStatement</code> 재사용 이점을 그대로 얻는다. <b>합리적인 선택이지만 부작용이 셋</b> 있다.</p>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k" style="font-family:inherit">안 바꾼 컬럼도 덮어쓴다</div><div class="d"><b>로드 시점 값이 그대로 다시 쓰인다.</b> 9-3절의 <b>"NULL이 조용히 'N'으로 바뀌는"</b> 사고가 여기서 나온다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">큰 컬럼도 매번 전송</div><div class="d">LOB·긴 텍스트 컬럼이 있으면 <b>트래픽이 낭비</b>된다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">감사 트리거가 부풀어 보인다</div><div class="d">컬럼 단위로 이력을 남기는 트리거가 <b>전 컬럼 변경으로 기록</b>한다.</div></div>
+</div>
+
+<div class="memo red">
+  <h4>비유 — 이력서의 한 줄을 고치려고 이력서 전체를 새로 출력해 제출하는 것</h4>
+  <p>바꾼 줄은 <b>주소 한 줄</b>인데, 제출되는 것은 <b>모든 줄이 다시 인쇄된 새 이력서</b>다. 대부분은 문제가 없다 — 나머지 줄은 <b>내가 받아 온 그대로</b>니까. 문제는 <b>내가 받아온 값 자체가 원본과 미묘하게 다를 때</b>(컨버터 왕복, 시간 정밀도, NULL→기본값 변환)다. 그 순간 <b>아무도 건드리지 않은 컬럼이 조용히 바뀐다.</b></p>
+  <div class="rule red" style="margin-bottom:0"><code>@DynamicUpdate</code>는 <b>바뀐 컬럼만으로 SQL을 매 flush마다 생성</b>한다 — 대가는 <b>정적 SQL과 구문 캐시 이점 상실</b><br><span style="font-size:.92rem;font-weight:600">그래서 <b>전역 적용보다 컬럼이 매우 많거나 LOB이 있는 특정 엔티티에 한정</b>하는 것이 일반적 판단이다</span></div>
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. "안 시킨 UPDATE" — setter 전수 조사로는 안 끝난다</h2>
+
+<p>조회성 API인데 <code>updated_at</code>이 갱신되고 감사 로그에 UPDATE가 남는다. <b>"엔티티를 수정하는 메서드를 쓰는지 확인한다"는 1단계로는 타당하다.</b> 문제는 <b>전수 조사에서 정말 없었을 때 답이 끊기는 것</b>이다. 남은 것들이 실무 단골이다.</p>
+
+<h3>9-1. 먼저 비교의 주체를 바로잡자 — 엔티티의 <code>equals</code>가 아니다</h3>
+
+<p>기본 필드의 dirty checking은 <b>엔티티의 <code>equals</code>/<code>hashCode</code>를 쓰지 않는다.</b> Hibernate가 <b>필드 타입별 비교기</b>(<code>JavaType#areEqual</code>)로 스냅샷과 현재 값을 하나씩 대조한다. 그래서 엔티티에 Lombok <code>@EqualsAndHashCode</code>를 <b>어떻게 붙였든 기본 필드 dirty 판정에는 영향이 없다.</b></p>
+
+<div class="callout trap">
+  <span class="t">이 사실이 널리 퍼진 통설 하나를 정리해준다 — "BigDecimal scale 불일치로 dirty가 된다"</span>
+  자바의 <code>BigDecimal.equals</code>는 <b>scale까지 봐서</b> <code>1.10</code>과 <code>1.1</code>을 다르다고 판단하는 것이 <b>맞다.</b> 그런데 <b>Hibernate는 이 필드를 <code>equals</code>로 비교하지 않는다.</b>
+</div>
+
+<div class="codehead plain"><span class="tag">Hibernate 소스</span> 5.6의 <code>BigDecimalTypeDescriptor</code> / main의 <code>BigDecimalJavaType</code> — 동일</div>
+<pre><code><span class="cm">// equals 가 아니라 compareTo 다</span>
+<span class="ln-good"><span class="kw">return</span> one == another
+    || ( one != <span class="kw">null</span> &amp;&amp; another != <span class="kw">null</span> &amp;&amp; one.compareTo( another ) == <span class="st">0</span> );</span></code></pre>
+
+<p><code>compareTo</code>는 <b>값만 보고 scale은 무시</b>하므로 <code>1.10</code>과 <code>1.1</code>을 <b>같다고 판정</b>한다. 즉 <b>기본 매핑에서는 scale 차이만으로 dirty가 되지 않는다</b>(확인 범위: 위 두 버전의 소스. 아주 오래된 버전이나 커스텀 <code>UserType</code>은 별도 확인이 필요하다). scale이 여전히 사고를 내는 자리는 <b>JPA 밖</b>이다 — 자바 컬렉션(<code>Set</code>, <code>contains</code>), 직접 구현한 <code>equals</code>, 금액 일치 검증, 그리고 <b>BigDecimal을 문자열로 저장하는 컨버터</b>(문자열이 되면 <code>"1.10" != "1.1"</code>이므로 9-3절 문제로 바뀐다).</p>
+
+<div class="rule">9절 전체를 관통하는 교훈 — <b>"자바에서 다른 값인가"가 아니라 "Hibernate의 그 타입 비교기가 다르다고 보는가"</b>를 물어야 한다</div>
+
+<div class="scroll">
+<table>
+  <caption>단골 원인 — <b>빈도순</b>으로 짚어 들어가면 대개 여기서 잡힌다</caption>
+  <thead><tr><th>원인</th><th>판정 이유</th><th>빈도</th><th>구조적 예방</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>컬렉션 재할당</b></td><td>관리 컬렉션 인스턴스가 <b>교체됨</b></td><td class="bad">매우 높음(파괴적)</td><td>컬렉션 필드 <code>final</code> + setter 금지</td></tr>
+    <tr><td><b><code>AttributeConverter</code></b></td><td>스냅샷이 <b>컨버터 왕복 복사본</b>이라 원본과 어긋남</td><td class="bad">높음</td><td>도메인 타입을 <code>record</code>로 · <code>@Immutable</code></td></tr>
+    <tr><td><b>시간 타입 정밀도</b></td><td>로드된 값(초 단위)과 코드가 넣은 값(나노초)이 다름</td><td class="bad">높음</td><td>컬럼 정밀도 일치 · 전 필드 매퍼 금지</td></tr>
+    <tr><td><b>OSIV + setter</b></td><td>트랜잭션 밖 setter가 컨텍스트에 남아 <b>다음 커밋에 실림</b></td><td class="bad">높음(추적 최난도)</td><td><code>open-in-view: false</code></td></tr>
+    <tr><td>BigDecimal scale</td><td>(통설 — 위 검증 결과 <b>기본 매핑에서는 해당 없음</b>)</td><td class="dash">—</td><td class="dash">—</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo">
+  <h4>setter 전수 조사 다음에 볼 것 — <b>컬 · 컨 · 시 · 오</b></h4>
+  <div class="chain">
+    <span class="chip r"><b>컬</b> 컬렉션 재할당</span><span class="arrow">→</span>
+    <span class="chip r"><b>컨</b> 컨버터 왕복</span><span class="arrow">→</span>
+    <span class="chip r"><b>시</b> 시간 정밀도</span><span class="arrow">→</span>
+    <span class="chip r"><b>오</b> OSIV + setter</span>
+  </div>
+  <p style="margin-bottom:0">네 글자를 <b>빈도순</b>으로 외워두면 장애 대응 때 <b>확인 순서가 그대로 나온다.</b> 앞의 셋은 <b>같은 트랜잭션 안</b>에서 원인을 찾을 수 있고, 마지막 <b>오(OSIV)</b>만 <b>원인과 증상이 서로 다른 트랜잭션에 있다</b> — 그래서 맨 뒤에 둔다.</p>
+</div>
+
+<h3>9-2. 컬렉션 재할당 — 가장 파괴적</h3>
+
+<div class="codehead bad"><span class="tag">before</span> DTO를 엔티티에 반영하며 컬렉션을 통째로 갈아끼운다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">update</span>(Long orderId, OrderUpdateRequest req) {
+    Order order = orderRepository.findById(orderId).orElseThrow();
+<span class="ln-bad">    order.setItems(<span class="kw">new</span> ArrayList&lt;&gt;(req.toItems()));   <span class="cm">// 문제의 한 줄</span></span>
+}
+<span class="cm">// Hibernate 는 관리 중이던 컬렉션(PersistentCollection)이 "버려졌다"고 보고</span>
+<span class="cm">// 기존 자식 전체 DELETE + 새 컬렉션 전체 INSERT 를 만든다.</span>
+<span class="cm">// 내용이 완전히 동일해도 마찬가지다 — 인스턴스가 바뀌었기 때문.</span>
+<span class="cm">// orphanRemoval = true 라면 예외로 터진다:</span>
+<span class="cm">//   "A collection with cascade=all-delete-orphan was no longer referenced..."</span></code></pre>
+
+<p><b>왜 이런 일이 벌어지는지 한 줄 더 들어가면 이해가 굳는다.</b> 엔티티를 로드할 때 Hibernate는 컬렉션 필드에 우리가 넣어둔 <code>ArrayList</code>를 그대로 두지 않고, <b>자기가 관리할 수 있는 래퍼</b>(<code>PersistentBag</code> 등, 통칭 <code>PersistentCollection</code>)<b>로 바꿔 끼운다.</b> 그 래퍼가 <b>추가·삭제를 추적</b>한다. 그런데 <code>setItems(new ArrayList&lt;&gt;(...))</code>는 <b>그 래퍼를 통째로 버리고 생판 다른 <code>ArrayList</code>를 꽂아버리는 행위</b>다. Hibernate 입장에서는 <b>"관리하던 컬렉션이 사라졌다"</b>이므로, 안전한 해석은 하나뿐이다 — <b>옛것은 전부 지우고 새것을 전부 넣는다.</b></p>
+
+<div class="memo red">
+  <h4>비유 — 관리인이 지켜보던 서랍을 통째로 바꿔치기한 것</h4>
+  <p>Hibernate는 <b>지정된 서랍 하나</b>를 지켜보며 "무엇이 들어오고 나갔는지"를 적는다. 그런데 어느 날 <b>서랍 자체가 다른 서랍으로 교체</b>되어 있다면, 관리인이 할 수 있는 판단은 하나다 — <b>"내가 알던 서랍의 내용물은 전부 없어졌고, 이 새 내용물은 전부 처음 보는 것"</b>. <b>내용물이 똑같아도</b> 관리인은 알 길이 없다. <b>그가 세던 것은 내용이 아니라 서랍이었기 때문</b>이다.</p>
+</div>
+
+<div class="codehead good"><span class="tag">after</span> 관리 컬렉션 인스턴스를 유지하고 내용만 바꾼다</div>
+<pre><code><span class="kw">@Entity</span>
+<span class="kw">public class</span> Order {
+    <span class="kw">@OneToMany</span>(mappedBy = <span class="st">"order"</span>, cascade = ALL, orphanRemoval = <span class="kw">true</span>)
+<span class="ln-good">    <span class="kw">private final</span> List&lt;OrderItem&gt; items = <span class="kw">new</span> ArrayList&lt;&gt;();   <span class="cm">// 교체 불가로 못 박는다</span></span>
+
+    <span class="kw">public void</span> <span class="fn">replaceItems</span>(List&lt;OrderItem&gt; newItems) {
+<span class="ln-good">        <span class="kw">this</span>.items.clear();                 <span class="cm">// 같은 인스턴스를 비우고</span></span>
+<span class="ln-good">        newItems.forEach(<span class="kw">this</span>::addItem);    <span class="cm">// 다시 채운다</span></span>
+    }
+
+    <span class="kw">private void</span> <span class="fn">addItem</span>(OrderItem item) {
+        items.add(item);
+        item.setOrder(<span class="kw">this</span>);                <span class="cm">// 양방향 동기화</span>
+    }
+}</code></pre>
+
+<div class="callout ok">
+  <span class="t">핵심은 "컬렉션 필드에 setter를 만들지 않는 것"</span>
+  <code>final</code> + 초기화로 두면 <b>이 사고가 구조적으로 불가능</b>해진다. 다만 <code>clear()</code> + <code>addAll()</code>도 <b>자식 전체 DELETE + INSERT로 나갈 수 있어</b> 대량 자식에는 부담이 있다 — 그때는 <b>자식을 개별 식별해 차분만 반영하는 설계</b>로 간다.
+</div>
+
+<h3>9-3. <code>AttributeConverter</code> — 스냅샷 자체가 "컨버터 왕복 복사본"이다</h3>
+
+<div class="callout info">
+  <span class="t">전제 지식 — <code>AttributeConverter</code></span>
+  <b>"자바 필드 타입 ↔ DB 컬럼 타입"</b>을 상호 변환하는 규칙을 담은 클래스다. <code>Boolean</code> 필드를 <code>'Y'</code>/<code>'N'</code> 문자로 저장하거나, POJO를 JSON 문자열 컬럼에 넣을 때 쓴다.
+</div>
+
+<p>이 원인은 <b>메커니즘을 알면 예측 가능</b>해진다. 6-1절에서 스냅샷은 <b>타입별 MutabilityPlan</b>에 따라 복사된다고 했는데, <b>컨버터가 걸린 필드의 복사 규칙이 특이하다.</b></p>
+
+<div class="codehead plain"><span class="tag">Hibernate 소스</span> main의 <code>AttributeConverterMutabilityPlan</code> — 스냅샷용 깊은 복사</div>
+<pre><code><span class="kw">protected</span> T <span class="fn">deepCopyNotNull</span>(T value) {
+<span class="ln-bad">    <span class="kw">return</span> converter.toDomainValue( converter.toRelationalValue( value ) );</span>
+}
+<span class="cm">// 스냅샷에 들어가는 값은 원본 필드값이 아니라, 컨버터를 한 바퀴 돌려 나온 값이다.</span></code></pre>
+
+<p>그리고 컨버터로 매핑한 값은 <b>기본적으로 mutable(가변)로 간주</b>된다(원시 타입과 enum은 immutable로 추론). 여기서 <b>두 가지 사고</b>가 나온다.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>① 왕복이 값을 바꾸면 <b>로드 직후부터 dirty</b></h4>
+    <p style="margin:0;font-size:.94rem">정규화, 자릿수 보정, <b>JSON 키 순서 변경</b> 등 <b>왕복이 값을 손대는 컨버터</b>라면 스냅샷과 필드가 <b>처음부터 다르다.</b></p>
+  </div>
+  <div class="pane r">
+    <h4>② 도메인 타입에 <code>equals</code>가 없으면 <b>항상 dirty</b></h4>
+    <p style="margin:0;font-size:.94rem">왕복 복사본은 <b>새 인스턴스</b>라, <code>equals</code>가 없으면 <b>동일성 비교</b>가 되어 <b>매 flush마다 "다르다"</b>가 된다.</p>
+  </div>
+</div>
+
+<div class="codehead bad"><span class="tag">before</span> JSON 컬럼을 POJO로 매핑, <code>equals</code> 없음</div>
+<pre><code><span class="ln-bad"><span class="kw">public class</span> ShippingMeta {        <span class="cm">// equals/hashCode 가 없는 것이 문제의 시작</span></span>
+    <span class="kw">private</span> String courier;
+    <span class="kw">private</span> String trackingNo;
+}
+
+<span class="kw">@Converter</span>
+<span class="kw">public class</span> ShippingMetaConverter <span class="kw">implements</span> AttributeConverter&lt;ShippingMeta, String&gt; {
+    <span class="kw">public</span> String <span class="fn">convertToDatabaseColumn</span>(ShippingMeta m) { <span class="kw">return</span> toJson(m); }
+    <span class="kw">public</span> ShippingMeta <span class="fn">convertToEntityAttribute</span>(String s) { <span class="kw">return</span> fromJson(s); }
+}
+<span class="cm">// 스냅샷 = fromJson(toJson(meta)) → 값은 같지만 다른 인스턴스</span>
+<span class="cm">// → equals 가 없으니 매번 "변경됨" → 조회만 해도 flush 마다 UPDATE</span></code></pre>
+
+<div class="cmp wide">
+<div>
+<div class="codehead good"><span class="tag">after ①</span> 도메인 타입을 값 객체로</div>
+<pre><code><span class="ln-good"><span class="kw">public record</span> ShippingMeta(String courier, String trackingNo) {}</span>
+<span class="cm">// record 는 equals 를 자동 생성 → 값이 같으면 같다고 판정</span></code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">after ②</span> 왕복 비용도 아깝다면 불변 선언</div>
+<pre><code><span class="kw">@Convert</span>(converter = ShippingMetaConverter.class)
+<span class="ln-good"><span class="kw">@Immutable</span>            <span class="cm">// 또는 @Mutability(...) 로 복사·비교 전략 지정</span></span>
+<span class="kw">private</span> ShippingMeta shippingMeta;</code></pre>
+</div>
+</div>
+
+<div class="callout warn">
+  <span class="t"><code>Y</code>/<code>N</code> ↔ <code>Boolean</code> 컨버터의 <code>null</code>↔<code>false</code>는 성질이 조금 다르다</span>
+  DB의 NULL을 <code>false</code>로 읽는 컨버터라면 <b>스냅샷도 <code>false</code></b>이므로 <b>이것만으로 dirty가 되지는 않는다.</b> 대신 <b>다른 필드 하나가 dirty가 된 순간</b> 8-2절의 <b>전 컬럼 UPDATE가 NULL이던 컬럼에 <code>'N'</code>을 써버린다</b> — <b>"아무도 안 바꿨는데 NULL이 N이 되어 있다"</b>는 데이터 변조로 나타난다.
+  <div class="rule red" style="margin:10px 0 0">즉 유령 UPDATE의 <b>원인이 아니라 "피해가 커지는 경로"</b>다 — 이 구분을 정확히 하면 좋다</div>
+</div>
+
+<h3>9-4. 시간 타입 정밀도 — "같은 시각"인데 다르다고 판정된다</h3>
+
+<p>DB 컬럼이 <b>초 단위</b>(<code>TIMESTAMP(0)</code>, MySQL <code>DATETIME</code>)인데 자바 <code>LocalDateTime</code>은 <b>나노초까지</b> 갖는다. 확인해보면 <code>LocalDateTimeJavaType</code>은 <code>areEqual</code>을 재정의하지 않고 <b><code>Object.equals</code>를 쓴다</b>(= 나노초까지 비교). 반면 <code>java.sql.Timestamp</code> 경로(<code>JdbcTimestampJavaType</code>)는 밀리초 + 밀리초 미만 나노 잔여값을 비교한다. <b>어느 쪽이든 정밀도가 다른 값이 들어오면 "다르다"로 판정된다.</b></p>
+
+<div class="codehead plain"><span class="tag">판정</span> 사람 눈에는 같은 시각인데</div>
+<pre><code>  DB 컬럼 TIMESTAMP(0) 에서 읽은 값   →  2026-01-02T10:00:00
+  DTO 를 거쳐 다시 세팅된 값          →  2026-01-02T10:00:00.<span class="st">123456789</span>
+<span class="ln-bad">                                          └─ 초 미만이 살아 있다</span>
+
+  areEqual(스냅샷, 현재) = <span class="st">false</span>  →  dirty  →  UPDATE</code></pre>
+
+<div class="cmp wide">
+<div>
+<div class="codehead bad"><span class="tag">before</span> 전 필드를 다시 세팅한다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">sync</span>(Long id, OrderDto dto) {
+    Order order = orderRepository.findById(id).orElseThrow();
+<span class="ln-bad">    BeanUtils.copyProperties(dto, order);</span>
+    <span class="cm">// orderedAt, createdAt 까지 전부 다시 세팅된다.</span>
+    <span class="cm">// dto 가 JSON/외부 API 를 거쳐 나노초를 잃었거나</span>
+    <span class="cm">// DB 가 초 단위로 잘라 저장했다면</span>
+    <span class="cm">// "같은 시각"인데도 값이 달라 매번 dirty → 유령 UPDATE</span>
+}</code></pre>
+</div>
+<div>
+<div class="codehead good"><span class="tag">after</span> 바꿔야 하는 것만, 도메인 메서드로</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">sync</span>(Long id, OrderDto dto) {
+    Order order = orderRepository.findById(id).orElseThrow();
+<span class="ln-good">    order.changeShippingAddress(dto.address());   <span class="cm">// 변경 대상만 명시</span></span>
+}</code></pre>
+</div>
+</div>
+
+<div class="callout ok">
+  <span class="t">구조적 예방 — 자바 타입과 DB 컬럼의 정밀도를 맞춘다</span>
+  컬럼을 <code>TIMESTAMP(6)</code>로 두거나, 애플리케이션에서 저장 전 <code>truncatedTo(ChronoUnit.MICROS)</code> 같은 <b>정규화를 일관되게</b> 적용한다. 그리고 <b><code>BeanUtils.copyProperties</code>/전 필드 매퍼를 엔티티에 쓰지 않는다</b> — <b>이것 하나가 9-2와 9-4를 동시에 막는다.</b>
+</div>
+
+<h3>9-5. OSIV + setter — 추적이 가장 어려운 유형</h3>
+
+<div class="callout info">
+  <span class="t">전제 지식 — OSIV(Open Session In View)</span>
+  <b>"뷰(응답 생성)까지 영속성 컨텍스트를 열어둔다"</b>는 뜻의 설정. Spring Boot는 <code>spring.jpa.open-in-view</code>가 <b>기본 true</b>다(부팅 로그에 경고가 찍힌다). 이 경우 영속성 컨텍스트가 <b>트랜잭션이 끝난 뒤에도 요청이 끝날 때까지 열려 있다.</b> 그래서 컨트롤러나 DTO 변환 코드에서 엔티티를 만지면 <b>그 변경이 컨텍스트에 남는다.</b>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 320" role="img" aria-label="한 HTTP 요청의 시간축. 첫 트랜잭션에서 조회하고 커밋한 뒤에도 영속성 컨텍스트가 열려 있어, 컨트롤러에서 호출한 setter의 변경이 컨텍스트에 남아 있다가, 같은 요청의 다른 트랜잭션이 커밋할 때 그 flush에 실려 UPDATE로 나간다.">
+    <defs>
+      <marker id="f9a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+      <marker id="f9r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">OSIV — 트랜잭션은 끝났는데 컨텍스트는 살아 있다</text>
+
+    <rect x="30" y="42" width="1060" height="26" rx="8" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="560" y="60" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">영속성 컨텍스트 — open-in-view: true 이면 HTTP 요청이 끝날 때까지 열려 있다</text>
+
+    <!-- tx1 -->
+    <rect x="30" y="84" width="290" height="96" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="46" y="106" font-size="12" fill="#166534" font-weight="700">① @Transactional 조회</text>
+    <text x="46" y="126" font-size="10.5" fill="#15803d" class="mono">orderService.findById(id)</text>
+    <text x="46" y="145" font-size="10.5" fill="#15803d">1차 캐시 + 스냅샷 등록</text>
+    <text x="46" y="166" font-size="10.5" fill="#166534" font-weight="700">여기서 트랜잭션은 이미 끝났다 (커밋)</text>
+
+    <line x1="322" y1="132" x2="344" y2="132" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#f9a)"/>
+
+    <!-- controller -->
+    <rect x="348" y="84" width="330" height="96" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="364" y="106" font-size="12" fill="#b45309" font-weight="700">② 컨트롤러 · DTO 변환</text>
+    <text x="364" y="126" font-size="10.5" fill="#92400e" class="mono">order.setStatusLabel(labelOf(order))</text>
+    <text x="364" y="145" font-size="10.5" fill="#92400e">order 는 <tspan font-weight="700">여전히 관리 상태</tspan> → 변경이 남는다</text>
+    <text x="364" y="166" font-size="10.5" fill="#b45309" font-weight="700">UPDATE 는 여기서 안 나간다 → 아무도 못 알아챈다</text>
+
+    <line x1="680" y1="132" x2="702" y2="132" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#f9a)"/>
+
+    <!-- tx2 -->
+    <rect x="706" y="84" width="290" height="96" rx="10" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="722" y="106" font-size="12" fill="#b91c1c" font-weight="700">③ 같은 요청의 다른 @Transactional</text>
+    <text x="722" y="126" font-size="10.5" fill="#7f1d1d">이 컨텍스트에 <tspan font-weight="700">참여</tspan>한다</text>
+    <text x="722" y="145" font-size="10.5" fill="#7f1d1d">커밋 직전 flush 에서 ② 의 변경이 대조된다</text>
+    <text x="722" y="166" font-size="10.5" fill="#b91c1c" font-weight="700">그 flush 에 실려 UPDATE 가 나간다</text>
+
+    <line x1="998" y1="132" x2="1020" y2="132" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#f9a)"/>
+    <rect x="1024" y="104" width="66" height="56" rx="9" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="1057" y="128" font-size="10.5" fill="#334155" text-anchor="middle" font-weight="700">응답</text>
+    <text x="1057" y="146" font-size="10" fill="#64748b" text-anchor="middle">컨텍스트</text>
+    <text x="1057" y="158" font-size="10" fill="#64748b" text-anchor="middle">닫힘</text>
+
+    <!-- sql out -->
+    <line x1="851" y1="184" x2="851" y2="212" stroke="#dc2626" stroke-width="1.8" marker-end="url(#f9r)"/>
+    <rect x="640" y="216" width="424" height="34" rx="8" fill="#0f172a" stroke="#334155"/>
+    <text x="656" y="238" font-size="11" fill="#e2e8f0" class="mono">update orders set ..., status_label=?, updated_at=? where id=?</text>
+
+    <!-- bottom -->
+    <rect x="30" y="272" width="1060" height="34" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="560" y="294" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">최난도인 이유 — 원인 코드(②)와 증상(③의 UPDATE)이 서로 다른 트랜잭션에 있다. UPDATE 를 낸 트랜잭션을 아무리 뒤져도 그 안에는 수정 코드가 없다.</text>
+  </svg>
+  <figcaption>비유하면 <b>계산(트랜잭션)은 끝났는데 가게 문(컨텍스트)은 손님이 나갈 때까지 열려 있는 상태</b>다. 손님이 계산 후에 물건을 만져 놓으면, <b>그 흔적이 다음 손님을 계산할 때 함께 계산된다.</b></figcaption>
+</figure>
+
+<div class="codehead bad"><span class="tag">before</span> 조회 컨트롤러인데 UPDATE가 나간다</div>
+<pre><code><span class="kw">@GetMapping</span>(<span class="st">"/orders/{id}"</span>)
+<span class="kw">public</span> OrderResponse <span class="fn">get</span>(<span class="kw">@PathVariable</span> Long id) {
+    Order order = orderService.findById(id);      <span class="cm">// 트랜잭션은 여기서 이미 끝났다</span>
+<span class="ln-bad">    order.setStatusLabel(labelOf(order));         <span class="cm">// 표시용 가공. 하지만 order 는 여전히 관리 상태</span></span>
+<span class="ln-bad">    log.info(<span class="st">"{}"</span>, order.getItems().size());      <span class="cm">// 지연 로딩도 여기서 조용히 돈다</span></span>
+    <span class="kw">return</span> OrderResponse.from(order);
+}</code></pre>
+
+<div class="codehead good"><span class="tag">after</span> 세 겹으로 막는다</div>
+<pre><code><span class="cm">// ① 표시용 가공은 엔티티가 아니라 DTO 에서 — 트랜잭션 안에서 변환해 반환</span>
+<span class="kw">@GetMapping</span>(<span class="st">"/orders/{id}"</span>)
+<span class="kw">public</span> OrderResponse <span class="fn">get</span>(<span class="kw">@PathVariable</span> Long id) {
+<span class="ln-good">    <span class="kw">return</span> orderService.getResponse(id);</span>
+}</code></pre>
+<pre><code><span class="cm"># ② OSIV 를 끈다 — 트랜잭션 종료와 함께 컨텍스트가 닫혀 이 사고가 불가능해진다</span>
+<span class="cm">#    (끄면 컨트롤러 지연 로딩이 LazyInitializationException 으로 드러난다 —</span>
+<span class="cm">#     숨어 있던 문제가 표면화되는 것이므로 전환은 단계적으로)</span>
+<span class="ln-good">spring.jpa.open-in-view: <span class="st">false</span></span>
+
+<span class="cm"># ③ 엔티티에서 표시용 setter 를 없애고, 변경은 도메인 메서드로만 열어둔다</span></code></pre>
+
+<h3>9-6. <code>updated_at</code>은 원인이 아니라 결과다</h3>
+
+<p>운영 문의는 보통 <b>"<code>updated_at</code>이 왜 바뀌었나"</b>로 들어온다. 그런데 JPA Auditing(<code>@LastModifiedDate</code>)이나 <code>@UpdateTimestamp</code>는 <b>엔티티가 dirty로 판정돼 UPDATE가 만들어질 때 그 UPDATE에 얹혀 갱신된다.</b></p>
+
+<div class="rule red"><code>updated_at</code>이 바뀌었다 = <b>이미 dirty였다는 "증거"</b> — 조사 방향을 뒤집어야 한다</div>
+
+<div class="split">
+  <div class="pane r">
+    <h4>잘못된 질문</h4>
+    <p style="margin:0;font-size:.94rem">"Auditing 설정이 잘못됐나?"<br><span class="sub">여기서 시작하면 며칠을 버린다</span></p>
+  </div>
+  <div class="pane g">
+    <h4>맞는 질문</h4>
+    <p style="margin:0;font-size:.94rem"><b>"어느 필드가 dirty로 판정됐나?"</b><br><span class="sub">그게 10절의 진단 3단이다</span></p>
+  </div>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 진단 3단 — 감이 아니라 도구로 좁힌다</h2>
+
+<p><b>"수정 메서드를 찾아본다"에서 끝나지 않으려면 도구가 있어야 한다.</b> 좁혀 들어가는 순서가 있고, <b>단계마다 "얻는 것"과 "한계"가 정해져 있다.</b></p>
+
+<figure>
+  <svg viewBox="0 0 900 306" role="img" aria-label="진단 3단계를 위에서 아래로 좁아지는 깔때기 모양으로 표현한 도식. 1단은 바인딩 SQL 로그로 어느 테이블 어느 id가 어떤 값으로 바뀌는지 보고, 2단은 Statistics로 몇 건인지 세고 테스트로 못 박으며, 3단은 flush 이벤트 리스너로 어느 필드가 무엇에서 무엇으로 바뀌었는지와 호출 스택을 얻는다.">
+    <defs>
+      <marker id="f10a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="450" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">위에서 아래로 갈수록 좁혀진다 — 마지막이 결정적 한 방</text>
+
+    <rect x="30" y="44" width="840" height="66" rx="10" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="46" y="66" font-size="12.5" fill="#1d4ed8" font-weight="700">1단 · 바인딩 SQL 로그 — 눈으로 본다</text>
+    <text x="46" y="86" font-size="11" fill="#166534"><tspan font-weight="700">얻는 것</tspan> · 어느 테이블 · 어느 id 가 UPDATE 되는지, 그리고 어떤 값으로 바뀌는지</text>
+    <text x="46" y="103" font-size="11" fill="#b91c1c"><tspan font-weight="700">한계</tspan> · 전 컬럼 UPDATE(8-2절)라서 "무엇이 바뀌어서 dirty 인지"는 아직 안 보인다</text>
+
+    <line x1="450" y1="112" x2="450" y2="128" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f10a)"/>
+
+    <rect x="100" y="132" width="700" height="66" rx="10" fill="#eff6ff" stroke="#60a5fa"/>
+    <text x="116" y="154" font-size="12.5" fill="#1d4ed8" font-weight="700">2단 · Hibernate Statistics — 센다, 그리고 테스트로 못 박는다</text>
+    <text x="116" y="174" font-size="11" fill="#166534"><tspan font-weight="700">얻는 것</tspan> · <tspan class="mono">entityUpdateCount</tspan> 로 몇 건인지 · 조회 API 테스트에 회귀 방지선</text>
+    <text x="116" y="191" font-size="11" fill="#b91c1c"><tspan font-weight="700">한계</tspan> · "몇 건"은 알아도 "어느 코드가 만들었나"는 여전히 모른다</text>
+
+    <line x1="450" y1="200" x2="450" y2="216" stroke="#2563eb" stroke-width="1.8" marker-end="url(#f10a)"/>
+
+    <rect x="170" y="220" width="560" height="66" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+    <text x="186" y="242" font-size="12.5" fill="#1d4ed8" font-weight="700">3단 · flush 이벤트 리스너 — 역추적한다</text>
+    <text x="186" y="262" font-size="11" fill="#166534"><tspan font-weight="700">얻는 것</tspan> · 어느 엔티티의 <tspan font-weight="700">어느 필드</tspan>가 <tspan class="mono">스냅샷값 → 현재값</tspan> 으로</text>
+    <text x="186" y="279" font-size="11" fill="#166534">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 판정됐는지 + <tspan font-weight="700">그 순간의 호출 스택</tspan> = "누가 바꿨는가"</text>
+  </svg>
+  <figcaption>3단을 말하면 <b>"개념을 아는 사람"이 아니라 "실제로 추적해 본 사람"</b>의 답변이 된다. 원리는 단순하다 — <b>Hibernate가 3-1절의 대조를 끝낸 직후에 끼어들어</b> 판정 결과와 스택트레이스를 함께 찍는 것이다.</figcaption>
+</figure>
+
+<h3>10-1. 1단 — 어떤 SQL이 어떤 값으로 나가는지 본다</h3>
+
+<pre><code><span class="kw">logging.level.org.hibernate.SQL</span>: DEBUG
+<span class="kw">logging.level.org.hibernate.orm.jdbc.bind</span>: TRACE   <span class="cm"># Hibernate 6 기준 바인딩 파라미터 카테고리</span>
+
+<span class="cm"># 실무에서는 p6spy / datasource-proxy 가 낫다 —</span>
+<span class="cm"># 값이 채워진 완성 SQL + 실행 시간이 한 줄로 나오고, 호출 스택 필터도 붙는다</span>
+<span class="kw">decorator.datasource.p6spy.enable-logging</span>: <span class="st">true</span></code></pre>
+
+<h3>10-2. 2단 — 몇 건인지 세고, 테스트로 못 박는다</h3>
+
+<pre><code><span class="kw">spring.jpa.properties.hibernate.generate_statistics</span>: <span class="st">true</span></code></pre>
+
+<div class="codehead good"><span class="tag">핵심</span> 사후 진단보다 이게 더 중요하다 — 조회 API 테스트에 회귀 방지선을 깐다</div>
+<pre><code><span class="kw">@Test</span>
+<span class="kw">void</span> <span class="fn">조회_API는_UPDATE를_만들지_않는다</span>() {
+    Statistics stats = entityManagerFactory
+            .unwrap(SessionFactoryImplementor.class).getStatistics();
+    stats.clear();
+
+    orderQueryService.list(cond);
+
+<span class="ln-good">    assertThat(stats.getEntityUpdateCount()).isZero();            <span class="cm">// 유령 UPDATE 즉시 실패</span></span>
+<span class="ln-good">    assertThat(stats.getPrepareStatementCount()).isLessThan(<span class="st">5</span>);   <span class="cm">// N+1 도 같이 잡힌다</span></span>
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">운영에서는 같은 <code>Statistics</code>를 지표로 노출한다</span>
+  Micrometer로 <code>entityUpdateCount</code>를 대시보드에 올려두면, <b>"조회 트래픽이 늘 때 UPDATE 카운트도 같이 오른다"</b>가 보이는 순간 <b>가설이 확정된다.</b>
+</div>
+
+<h3>10-3. 3단 — 결정적 한 방: flush 리스너에서 스택트레이스</h3>
+
+<div class="codehead plain"><span class="tag">개발/스테이징 전용</span> dirty로 판정된 엔티티·필드와 호출 스택을 함께 찍는다</div>
+<pre><code><span class="kw">public class</span> DirtyTraceListener <span class="kw">implements</span> FlushEntityEventListener {
+
+    <span class="kw">@Override</span>
+    <span class="kw">public void</span> <span class="fn">onFlushEntity</span>(FlushEntityEvent event) {
+<span class="ln-good">        <span class="kw">int</span>[] dirty = event.getDirtyProperties();</span>
+        <span class="kw">if</span> (dirty == <span class="kw">null</span> || dirty.length == <span class="st">0</span>) <span class="kw">return</span>;   <span class="cm">// 변경 없음이면 볼 것도 없다</span>
+
+        String[] names   = event.getEntityEntry().getPersister().getPropertyNames();
+        Object[] current = event.getPropertyValues();
+<span class="ln-good">        Object[] loaded  = event.getEntityEntry().getLoadedState();   <span class="cm">// 스냅샷</span></span>
+
+        StringBuilder sb = <span class="kw">new</span> StringBuilder();
+        <span class="kw">for</span> (<span class="kw">int</span> i : dirty) {
+            <span class="cm">// 스냅샷 값 -> 현재 값 형태로 남겨야 "무엇이 달라 dirty 인지"가 보인다</span>
+            sb.append(names[i]).append(<span class="st">": "</span>)
+              .append(loaded == <span class="kw">null</span> ? <span class="st">"?"</span> : loaded[i]).append(<span class="st">" -> "</span>).append(current[i])
+              .append(<span class="st">' '</span>);
+        }
+<span class="ln-good">        <span class="cm">// 예외를 던지지 않고 스택만 얻는다 — 여기서 "누가 바꿨는가"가 드러난다</span></span>
+<span class="ln-good">        log.warn(<span class="st">"DIRTY {}#{} [{}]"</span>,</span>
+                event.getEntityEntry().getEntityName(),
+                event.getEntityEntry().getId(), sb,
+<span class="ln-good">                <span class="kw">new</span> Throwable(<span class="st">"dirty origin"</span>));</span>
+    }
+}</code></pre>
+
+<pre><code><span class="kw">@Component</span>
+<span class="kw">@RequiredArgsConstructor</span>
+<span class="kw">public class</span> DirtyTraceRegistrar {
+    <span class="kw">private final</span> EntityManagerFactory emf;
+
+    <span class="kw">@PostConstruct</span>
+    <span class="kw">void</span> <span class="fn">register</span>() {
+        SessionFactoryImplementor sf = emf.unwrap(SessionFactoryImplementor.class);
+        EventListenerRegistry registry =
+                sf.getServiceRegistry().getService(EventListenerRegistry.class);
+<span class="ln-good">        <span class="cm">// append 로 붙여야 기본 리스너가 dirty 계산을 끝낸 뒤에 실행된다</span></span>
+        registry.appendListeners(EventType.FLUSH_ENTITY, <span class="kw">new</span> DirtyTraceListener());
+    }
+}</code></pre>
+
+<div class="callout warn">
+  <span class="t">확인 범위 노트</span>
+  <code>FlushEntityEvent</code>가 <code>getDirtyProperties()</code>, <code>getPropertyValues()</code>, <code>getDatabaseSnapshot()</code>을 제공하는 것은 <b>소스에서 확인했다.</b> 다만 <b>리스너 레지스트리를 얻는 경로</b>와 <code>getLoadedState()</code> 같은 세부 API는 <b>Hibernate 버전에 따라 이름·위치가 다를 수 있으니</b> 프로젝트 버전에서 <b>컴파일로 확인</b>해야 한다. 더 간단한 대안으로 <code>org.hibernate.Interceptor</code>의 <code>onFlushDirty</code>(<b>변경 전/후 값을 함께 받는다</b>)를 쓰는 방법도 있다.<br>
+  또한 <b>바이트코드 강화로 dirty tracking을 켠 프로젝트</b>라면 <b>비교 주체 자체가 달라진다</b>(3-2절의 세 번째 방식)는 점도 염두에 둘 것.
+</div>
+
+<!-- ===================== 11 ===================== -->
+<h2 id="s11">11. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>11-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">영속성 컨텍스트 한 문장?</div><div class="d">엔티티를 담는 메모리가 아니라 <b>네 개의 저장소</b> — <b>캐·스·쓰·동</b>(1차 캐시 · 스냅샷 · 쓰기 지연 · 동일성). 마지막 하나는 <b>자료구조가 아니라 결과</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">변경 감지의 실제 구조?</div><div class="d"><b>바뀌는 쪽이 인스턴스</b>, 따로 갖는 쪽이 <b>안 바뀐 원본(스냅샷)</b>. 자바에 "바뀌었다"를 알리는 장치가 없어서 <b>대조 말고 방법이 없다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">flush와 commit의 차이?</div><div class="d">flush = <b>SQL을 내보냄</b>, commit = <b>확정</b>. <b>커밋이 flush를 포함</b>한다. "flush 했으니 저장됐다"는 <b>틀린 문장</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">flush가 일어나는 시점 셋?</div><div class="d"><b>커밋 직전</b> · <b>JPQL/QueryDSL 실행 직전</b>(<code>AUTO</code>) · <b><code>em.flush()</code> 직접 호출</b>. 두 번째를 빠뜨리면 비용을 ¼로 과소평가한다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">비용을 정량으로?</div><div class="d">메모리 = <b>엔티티마다 스냅샷 <code>Object[]</code> 한 벌</b>. CPU = <b>flush마다 <code>O(엔티티 수 × 필드 수)</code></b> → 20필드 × 1,000건 = <b>20,000</b>회, JPQL 3번이면 <b>80,000</b>회.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">배치에서의 숫자 하나?</div><div class="d"><code>flush()</code>만 = <b>127만 5천</b>건 비교 vs <code>flush()+clear()</code> = <b>5만</b>건 → <b>25배</b>. <code>clear()</code>는 <b>"비교 대상 축소"</b>다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">1차 캐시의 진짜 값?</div><div class="d">성능이 아니라 <b>동일성·정합성</b>. 없으면 <b>한 트랜잭션 안에서 우리 코드가 스스로 lost update</b>를 만든다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">flush가 만드는 SQL의 반직관 둘?</div><div class="d">① 실행 순서는 코드 순서가 아니라 <b>INSERT → UPDATE → DELETE 고정</b> ② UPDATE는 <b>전 컬럼</b>이 기본.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">유령 UPDATE 단골 4종?</div><div class="d"><b>컬·컨·시·오</b> — 컬렉션 재할당 · 컨버터 왕복 · 시간 정밀도 · OSIV+setter. 비교 주체는 엔티티 <code>equals</code>가 아니라 <b>Hibernate 타입별 비교기</b>.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">진단 3단?</div><div class="d"><b>바인딩 SQL 로그 → Statistics <code>entityUpdateCount</code> → flush 리스너 스택트레이스.</b> 2단은 <b>테스트에 단정으로</b> 깔아 재발을 막는다.</div></div>
+</div>
+
+<h3>11-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>1차 캐시가 성능 캐시가 아니라면, 같은 트랜잭션에서 같은 엔티티를 100번 조회할 때 쿼리가 1번만 나가는 건 성능 이득 아닌가요? <span class="badge core">필수</span><span class="hint">힌트: "이득이 아니다"가 아니라 "부수 효과다"로 답한다. 이유 셋</span></summary><div class="a">
+  <p><b>이득이긴 하지만 부수 효과다.</b> 성능 장치라 부르지 못하는 이유가 셋이다.</p>
+  <p><b>① 범위가 트랜잭션이라 히트율을 설계 변수로 쓸 수 없다.</b> 캐시 설계는 <b>"몇 %가 맞는가"를 예측할 수 있어야</b> 하는데, 1차 캐시는 <b>트랜잭션마다 빈 상태로 시작</b>한다. <b>② JPQL은 1차 캐시를 조회 경로로 쓰지 않으므로</b> 조회 방식만 바꿔도 <b>효과가 사라진다.</b> <b>③ 애초에 같은 엔티티를 100번 조회하는 코드는 리팩터링 대상</b>이다.</p>
+  <p>트랜잭션보다 오래 사는 캐시가 필요하면 <b>2차 캐시나 Redis</b>로 가야 하고, 그건 <b>정합성 관리 책임이 따라오는 완전히 다른 결정</b>이다.</p>
+  <p style="margin-bottom:0"><b>마무리는 이렇게</b> — <b>"1차 캐시의 값은 성능이 아니라 동일성 보장이다.</b> 같은 트랜잭션에서 두 번 조회한 엔티티가 <b>같은 인스턴스</b>이기 때문에, 서로 다른 서비스 메서드가 각자 조회해 각자 수정해도 <b>변경이 덮이지 않는다.</b>"</p>
+</div></details>
+
+<details class="q"><summary>엔티티 5만 건을 순회 수정하는 배치에서 영속성 컨텍스트는 어떻게 되나요? <span class="badge core">필수</span><span class="hint">힌트: 정량으로 답해야 하는 질문이다. 누적 비교량까지 계산한다</span></summary><div class="a">
+  <p>5만 건이 컨텍스트에 쌓이면 <b>인스턴스 5만 개에 더해 스냅샷 배열이 5만 벌</b> 얹히고(6-1절), 그 상태에서 <b>flush가 돌 때마다 5만 건 × 필드 수</b>만큼 비교한다.</p>
+  <p>1,000건마다 <code>flush()</code>만 하고 <code>clear()</code>를 빼먹으면 <b>관리 엔티티가 계속 누적</b>되므로 <b>flush 회차마다 비교 대상이 1,000건씩 늘어난다.</b> 누적 비교량은 <b>1,000 + 2,000 + ... + 50,000 = 127만 5천 건</b>(flush 1회 평균 25,500건)이고, <b>진행될수록 느려지는(사실상 <code>O(n²)</code>인) 곡선</b>이 나온다. chunk마다 <code>clear()</code>까지 했다면 <b>누적 5만 건</b>으로 끝나므로 <b>25배 차이</b>다.</p>
+  <p style="margin-bottom:0">대응은 <b>chunk마다 <code>flush()</code> + <code>clear()</code></b>이고, <b>단순 값 갱신이면 애초에 벌크 UPDATE나 <code>JdbcTemplate</code> 배치</b>로 내려가는 게 맞다(단, 그러면 <b>1차 캐시·Auditing이 우회된다</b>). <b>Spring Batch의 chunk 단위가 트랜잭션 경계와 맞물려 이 문제를 구조적으로 해결하는 도구</b>라는 것까지 말하면 가산점이다.</p>
+</div></details>
+
+<details class="q"><summary><code>flush()</code>를 직접 호출해야 하는 상황은? 남용의 위험은? <span class="badge core">필수</span><span class="hint">힌트: 필요한 경우 셋, 위험 둘. 위험 중 하나는 1절의 정의로 돌아간다</span></summary><div class="a">
+  <p><b>필요한 경우 셋.</b> ① 8-1절처럼 <b>실행 순서를 강제</b>해야 할 때(DELETE를 INSERT보다 먼저) ② 생성된 키나 DB 계산값(트리거, 시퀀스)을 <b>트랜잭션 도중에 읽어야</b> 할 때 ③ 배치에서 <code>clear()</code>와 짝지어 <b>컨텍스트 비대를 막을 때</b>.</p>
+  <p><b>위험 둘.</b> 첫째, <b>락 보유 시간이 늘어난다</b> — flush로 UPDATE를 보내면 <b>그 순간부터 커밋까지 그 행의 쓰기 락을 쥔다.</b> 트랜잭션 앞쪽에서 flush하고 <b>뒤에서 외부 API를 호출</b>하는 코드는 경합·타임아웃을 만든다(쓰기 지연의 이득을 <b>스스로 버리는 것</b>).</p>
+  <p style="margin-bottom:0">둘째, <b>flush는 커밋이 아니다</b>(1절) — <b>롤백되면 다 사라지는데</b> "flush했으니 저장됐다"고 착각하는 코드가 생긴다. 결론은 <b>"순서나 생성값이 필요할 때만 최소로, 가능하면 커밋 직전으로 미룬다"</b>.</p>
+</div></details>
+
+<details class="q"><summary>조회 API의 유령 UPDATE를 팀 차원에서 구조적으로 막는다면 무엇을 넣겠나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 개별 버그를 잡는 답이 아니라 "재발이 불가능한 구조". 우선순위를 붙여 다섯 가지</span></summary><div class="a">
+  <div class="step ok"><span class="n">1</span><div class="body"><b>조회는 DTO 프로젝션이 기본</b>(7절) — <b>엔티티를 반환하지 않으면 이 사고 범주 자체가 사라진다.</b> 가장 근본적이라 1순위.</div></div>
+  <div class="step ok"><span class="n">2</span><div class="body"><b>엔티티에 public setter 금지, 컬렉션 필드는 <code>final</code></b> — 9-2·9-4의 원인 두 개를 <b>코드 구조로 봉쇄</b>한다. <code>BeanUtils.copyProperties</code>/전 필드 매퍼를 엔티티에 쓰지 않는 규칙도 함께.</div></div>
+  <div class="step ok"><span class="n">3</span><div class="body"><b><code>open-in-view: false</code></b> — 9-5를 원천 차단한다. 단, 끄는 순간 <b>숨어 있던 지연 로딩이 예외로 드러나므로</b> 단계적 전환과 테스트가 전제.</div></div>
+  <div class="step ok"><span class="n">4</span><div class="body"><b>테스트에서 <code>entityUpdateCount</code> 단정</b>(10-2절) — 조회 API 공통 테스트로 깔면 <b>유령 UPDATE가 PR 단계에서 실패로 잡힌다.</b> <b>사람의 주의력이 아니라 자동 장치</b>로 막는다는 점이 핵심.</div></div>
+  <div class="step"><span class="n">5</span><div class="body"><b><code>readOnly = true</code> 컨벤션</b> — 이득은 확실하지만 <b>안전장치가 아니고</b> 효과가 <b>구성에 따라 흔들리므로</b>(7절 확인 범위) <b>1~4의 보완재</b>로 둔다.</div></div>
+  <div class="rule red" style="margin-bottom:0">"코드 리뷰로 본다"만 답하면 약하다 — 채점 지점은 <b>"사람이 아니라 빌드가 잡게 만드는가"</b></div>
+</div></details>
+
+<details class="q"><summary><code>@DynamicUpdate</code>를 전역으로 켜는 건 어떤가요? <span class="badge senior">트레이드오프 판단</span><span class="hint">힌트: 얻는 것과 잃는 것을 저울에 올리고, 마지막에 "이것이 유령 UPDATE를 없애주지 않는다"까지</span></summary><div class="a">
+  <p><b>권하지 않는다.</b> 얻는 것은 <b>"안 바꾼 컬럼을 건드리지 않음"</b>인데, 잃는 것은 <b>정적 SQL과 구문 캐시 이점</b>이다 — 변경 컬럼 <b>조합마다 SQL이 달라지므로</b> 매 flush마다 SQL을 만들고, DB 쪽 파싱 캐시 히트율도 떨어진다. <b>쓰기가 많은 시스템에서 이건 측정 가능한 손실</b>이다.</p>
+  <p>그래서 판단은 <b>엔티티 단위</b>로 한다 — <b>컬럼이 아주 많은 테이블</b>, <b>LOB/긴 텍스트가 있어 전송량이 아까운 엔티티</b>, 또는 <b>감사 트리거가 컬럼 단위로 이력을 남겨 전 컬럼 UPDATE가 이력을 오염시키는 경우</b>에 한정한다.</p>
+  <div class="rule red" style="margin-bottom:6px"><code>@DynamicUpdate</code>는 <b>유령 UPDATE를 없애주지 않는다</b></div>
+  <p style="margin-bottom:0"><b>dirty 판정 자체는 그대로</b>라 UPDATE는 여전히 나가고, <b>나가는 컬럼 목록만 줄어든다.</b> 오히려 <b>증상을 옅게 만들어 원인 추적을 더 어렵게 하는 부작용</b>이 있다는 점까지 말하면 좋다.</p>
+</div></details>
+
+<details class="q"><summary>네이티브 쿼리로 UPDATE를 쐈는데 조회 결과가 안 바뀐다면? <span class="badge trap">함정</span><span class="hint">힌트: 4-2절의 정반대 방향. 그리고 "더 위험한 것"이 하나 더 있다</span></summary><div class="a">
+  <p>JPQL 벌크 연산이나 <code>JdbcTemplate</code>/native UPDATE는 <b>영속성 컨텍스트를 우회</b>하므로, <b>1차 캐시에 남은 인스턴스가 옛 값을 그대로 돌려준다.</b></p>
+  <p><b>더 위험한 건 그다음이다.</b> 그 옛 인스턴스가 dirty로 판정되면 <b>방금 벌크로 바꾼 값을 전 컬럼 UPDATE로 되돌려 놓는다</b>(8-2절). 조회 결과가 옛 값인 것은 <b>보이는 증상</b>일 뿐이고, <b>데이터가 되돌아가는 것이 진짜 사고</b>다.</p>
+  <p style="margin-bottom:0">대응은 벌크 직후 <code>em.clear()</code>(<code>@Modifying(clearAutomatically = true, flushAutomatically = true)</code>), 그리고 애초에 <b>벌크 연산을 엔티티 조회보다 앞에 배치</b>하는 설계다. <b>Auditing과 <code>@Version</code>도 우회된다</b>는 점을 덧붙이면 가산점이다.</p>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>flush로 UPDATE가 한 번 나간 뒤, 같은 트랜잭션에서 다시 flush하면 같은 UPDATE가 또 나가나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 스냅샷이 언제까지 "로드 시점의 사진"인지를 생각한다</span></summary><div class="a">
+  <p><b>또 나가지 않는다.</b> flush로 변경을 내보낸 뒤에는 <b>그 값이 새로운 비교 기준</b>이 된다. 그래서 이후 아무것도 바꾸지 않았다면 다음 flush의 대조 결과는 <b>"변경 없음"</b>이고 UPDATE는 만들어지지 않는다. <b>스냅샷이 "영원히 로드 시점"에 머무는 것은 아니다</b> — 정확히는 <b>"마지막으로 DB와 맞춰진 시점의 사진"</b>이다.</p>
+  <p><b>그런데 여기서 중요한 게 하나 있다.</b> UPDATE가 안 나간다고 해서 <b>비용이 없어지는 것이 아니다.</b> <b>대조(비교) 자체는 flush마다 그대로 실행된다</b> — 무엇이 바뀌었는지는 <b>비교해봐야 알 수 있기 때문</b>이다(3-3절).</p>
+  <p style="margin-bottom:0">이 구분이 6-2절과 정확히 이어진다 — <b>"조회 전용 화면이라 UPDATE는 0건인데도 CPU는 지불한다"</b>. <b>UPDATE 개수와 비교 비용은 다른 축</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>준영속(detached) 엔티티도 변경 감지가 되나요? <span class="badge core">필수</span><span class="hint">힌트: 스냅샷이 어디에 있었는지를 떠올린다. 그리고 merge의 반환값</span></summary><div class="a">
+  <p><b>되지 않는다.</b> 변경 감지는 <b>영속성 컨텍스트가 스냅샷을 들고 있을 때만</b> 성립한다. 트랜잭션이 끝나거나 <code>clear()</code>/<code>detach()</code>로 컨텍스트를 벗어난 인스턴스는 <b>비교할 사진이 없으므로</b>, 필드를 아무리 바꿔도 <b>UPDATE가 만들어지지 않는다.</b></p>
+  <p>그래서 준영속 인스턴스의 변경을 반영하려면 <code>merge</code>가 필요하다. 여기서 자주 틀리는 지점이 하나 있다 — <b><code>merge</code>는 넘긴 인스턴스를 관리 상태로 만들어 주는 것이 아니라, 그 값을 복사해 넣은 <b>관리 인스턴스를 반환</b>한다.</b> <b>반환값을 쓰지 않으면 변경이 반영되지 않는다.</b></p>
+  <p style="margin-bottom:0">그리고 <code>merge</code>는 <b>넘긴 객체의 전 필드로 덮어쓰므로</b>, 일부 필드만 채운 DTO성 객체를 merge하면 <b>나머지 필드가 null로 밀리는 사고</b>가 난다. <b>가능하면 "조회 → 도메인 메서드로 수정 → 변경 감지"가 기본</b>이고, merge는 <b>정말 준영속 상태를 다뤄야 할 때만</b> 쓴다(상세는 <code>05-merge-vs-dirty-checking.md</code>).</p>
+</div></details>
+
+<details class="q"><summary><code>readOnly = true</code> 트랜잭션 안에서 실수로 엔티티를 수정하면 어떻게 되나요? <span class="badge trap">함정</span><span class="hint">힌트: 예외가 날 것 같지만 나지 않는다. 그래서 무엇이라 부르면 안 되는가</span></summary><div class="a">
+  <p><b>예외가 나지 않는다. 변경이 조용히 증발한다.</b> read-only 트랜잭션에서는 <b>자동 flush가 억제</b>(<code>FlushMode.MANUAL</code>)되므로 <b>커밋 시점에 flush가 돌지 않고</b>, 만들어질 UPDATE도 없다. 개발자 입장에서는 <b>"코드는 수정했는데 DB는 그대로"</b>가 되고, <b>로그에도 아무 흔적이 없다.</b></p>
+  <div class="rule red">그래서 <code>readOnly</code>는 <b>"쓰기를 막아주는 안전장치"가 아니라 "쓰기를 안 할 것이라는 선언"</b>이다</div>
+  <p>선언과 실제가 어긋나면 <b>알려주지 않고 조용히 어긋난 채로 간다</b>는 것이 이 옵션의 성질이다. 여기에 7절의 <b>확인 범위</b>까지 얹으면 판단이 완성된다 — <b>스냅샷 생략은 구성에 따라 보장되지 않으므로</b>, 메모리 절감을 <code>readOnly</code>에 기대는 설계도 위험하다.</p>
+  <p style="margin-bottom:0"><b>정리하면</b> — <code>readOnly</code>는 <b>"확실히 얻는 것(자동 flush 억제 = CPU)"만 계산</b>에 넣고, <b>안전과 메모리는 DTO 프로젝션 쪽에서</b> 가져오는 것이 맞다.</p>
+</div></details>
+
+<details class="q"><summary>바이트코드 강화(bytecode enhancement)로 dirty tracking을 켜면 스냅샷 비용이 사라지나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 3-2절의 세 번째 선택지. "왜 기본이 아닌가"까지 답한다</span></summary><div class="a">
+  <p><b>감지 방식 자체가 달라진다.</b> 스냅샷과 대조하는 대신 <b>필드에 값을 쓰는 순간을 가로채 "바뀌었다"고 표시</b>하는 방식이므로, <b>"무엇이 바뀌었는지 flush 때 알아내야 한다"는 전제가 깨진다.</b> 원리적으로는 <b>3-2절 표의 세 번째 줄</b>이다.</p>
+  <p><b>그런데 이것이 기본이 아닌 이유</b>가 그 표의 <b>"대가" 칸</b>에 있다. <b>빌드나 클래스 로딩 시점에 엔티티 클래스를 변형</b>해야 하므로 <b>별도 빌드 설정이 필요하고</b>, 내가 쓴 코드와 실제 실행되는 바이트코드가 달라져 <b>디버깅이 어려워진다.</b> Hibernate가 스냅샷 대조를 기본으로 고른 이유는 <b>엔티티를 순수 자바 객체(POJO)로 남기기 위해서</b>이고, 그 편의가 곧 6절의 비용이다.</p>
+  <p style="margin-bottom:0"><b>면접에서의 안전한 답변</b>은 여기까지다 — <b>"선택지로 존재하고 트레이드오프는 빌드 복잡도와 디버깅"</b>. 세부 동작은 <b>버전과 설정에 따라 달라질 수 있으므로</b> "우리 프로젝트에서 켠다면 실제 동작을 측정해 확인하겠다"고 덧붙이는 편이 정확하다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  영속성 컨텍스트는 네 개의 저장소다 — <b>1차 캐시</b>(<code>@Id</code>→인스턴스 맵, 성능 캐시가 아니라 <b>동일성·정합성 장치</b>로서 앱이 스스로 lost update를 만들지 않게 해준다), <b>스냅샷 저장소</b>(조회하는 순간 그 시점 필드값을 통째로 복사해 두는 <b>로드 시점의 사진</b>이며, 자바에 "이 객체가 바뀌었다"를 알려주는 장치가 없어 <b>대조 말고는 방법이 없기 때문에</b> 존재한다), <b>쓰기 지연 SQL 저장소</b>(배치와 <b>락 보유 시간 단축</b>이 진짜 이득), 그리고 그 결과인 <b>동일성 보장</b>. 무엇이 바뀌었는지는 대조 후에만 알 수 있으므로 <b>flush마다 <code>O(관리 엔티티 수 × 필드 수)</code> 비교가 불가피</b>하고(JPQL 실행마다 자동 flush가 도니 <b>횟수도 늘어난다</b>) 메모리는 엔티티마다 스냅샷 배열 한 벌씩 늘어난다 — 그래서 조회 전용은 <code>readOnly</code>로 flush를 막거나, 더 근본적으로 <b>DTO 프로젝션으로 애초에 컨텍스트에 올리지 않는다</b>. flush는 <b>SQL을 내보내는 것이지 확정하는 것이 아니고</b>(확정은 커밋), 그렇게 만들어진 SQL은 코드 순서가 아니라 <b>INSERT → UPDATE → DELETE 고정</b>이며 <b>전 컬럼 UPDATE</b>가 기본이라 각각 <b>유니크 제약 위반</b>과 <b>조용한 데이터 변조</b>를 낳는다. "안 시킨 UPDATE"는 setter 전수 조사로 끝나지 않는다 — 비교 주체가 엔티티의 <code>equals</code>가 아니라 <b>Hibernate의 타입별 비교기</b>(BigDecimal은 <code>compareTo</code>를 쓰므로 scale 통설은 기본 매핑에서 성립하지 않는다)임을 알고 <b>컬렉션 재할당 / 컨버터 왕복 / 시간 정밀도 / OSIV+setter</b>를 순서대로 짚어야 하며, <code>updated_at</code>은 원인이 아니라 <b>dirty였다는 결과</b>다. 진단은 감이 아니라 3단 — <b>바인딩 SQL 로그 → Statistics <code>entityUpdateCount</code>(테스트에 단정으로 못 박기) → flush 이벤트 리스너에서 스택트레이스로 역추적.</b>
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/03-jpa-orm/02-persistence-context-dirty-checking.md</code> · 이어서 볼 문서: <code>05-merge-vs-dirty-checking.md</code> · <code>11-bulk-operation-persistence-context.md</code> · <code>15-flush-timing-and-sql-ordering.md</code> · <code>18-dto-projection-for-read-only.md</code> · <code>09-osiv-tradeoff-and-migration.md</code> · <code>25-entity-equals-and-hashcode.md</code> · <code>02-spring/13-transactional-readonly-optimization.md</code></p>
+</main>
+</body>
+</html>

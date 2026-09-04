@@ -1,0 +1,1329 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>컬렉션 fetch join + 페이징 — limit이 SQL에서 사라지고 힙에서 잘린다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">03 JPA · ORM &nbsp;|&nbsp; 중급⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>컬렉션 fetch join + 페이징<br><span class="sub"><code>limit</code>이 SQL에서 사라지고 힙에서 잘린다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"fetch join과 페이징을 함께 쓸 때의 문제(메모리에서 페이징)와 해결책은?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 문제는 <b>fetch join 전체가 아니라 컬렉션(ToMany) fetch join + 페이징이라는 조합 하나</b>다. 판별 축은 딱 하나 — <b>조인 결과의 행 수가 루트 엔티티 수와 같은가.</b> ToOne(<code>@ManyToOne</code>, <code>@OneToOne</code>)은 부모 1행 대 연관 1행이라 행이 안 늘고 <code>limit</code>이 SQL에 정상 부착되지만, 컬렉션은 부모 1행이 자식 수만큼 불어나 <code>limit 10</code>이 <b>"게시글 10건"이 아니라 "조인 결과 10행"</b>을 자른다. 그러면 마지막 게시글의 댓글이 잘린 채 들어와 <b>데이터가 틀린다.</b> 그래서 Hibernate는 정합성을 지키는 쪽을 택한다 — <b>SQL에서 <code>limit</code>/<code>offset</code>을 아예 빼고, 조건에 맞는 전체를 힙에 올린 뒤 자바에서 <code>subList</code>로 잘라낸다.</b> 그 결과가 이 문항의 본질이다: <b>예외도 안 나고 결과도 맞는데 데이터가 늘면 OOM으로 죽는다.</b> 사전 신호는 경고 로그 한 줄뿐이고, 개발 DB에서는 증상이 0이다. 그래서 해법 3종(ToOne은 fetch join / 컬렉션은 <code>default_batch_fetch_size</code> / 조회 전용은 DTO 프로젝션)만큼 중요한 것이 <b>배포 전에 잡는 장치</b>다 — <code>hibernate.query.fail_on_pagination_over_collection_fetch: true</code> 한 줄로 <b>경고를 예외로 승격시키는 것이 첫 방어선</b>이다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>범위를 먼저 좁힌다 — 문제는 조합 하나다</b> — "fetch join과 페이징은 같이 못 쓴다"는 <b>틀린 요약</b>이다. 판별 축은 <b>"조인해도 행 수가 루트 엔티티 수와 같은가"</b> 하나뿐이고, <b>ToOne은 몇 개를 겹쳐도 안전</b>하며 <b>컬렉션 하나가 끼는 순간</b> <code>limit</code>이 <b>"게시글 N건"이 아니라 "조인 결과 N행"</b>을 자르게 된다.</div></li>
+    <li><span class="n">2</span><div><b>Hibernate의 선택은 정확성이고, 청구서는 메모리다</b> — <code>limit</code>을 붙이면 <b>마지막 부모의 자식이 잘려 엔티티 상태가 거짓</b>이 되므로, Hibernate는 <b>SQL에서 <code>limit</code>을 떼고 조건에 맞는 전체를 힙에 올린 뒤 자바 <code>subList</code>로 자른다.</b> 그래서 <b>예외도 없고 결과도 맞는데</b>, 게시글 100만 건이면 <b>1,000만 행을 읽어 20건만 남기고 버린다.</b></div></li>
+    <li><span class="n">3</span><div><b>해법 3종보다 중요한 것은 배포 전에 실패시키는 장치다</b> — <b>토·컬·조</b>(ToOne은 fetch join / 컬렉션은 <code>default_batch_fetch_size</code> / 조회 전용은 DTO 프로젝션)로 고치되, <b>예외 없음 · 결과 정상 · 개발 환경 무증상</b>이라 사람 눈으로는 절대 안 잡힌다. <b><code>fail_on_pagination_over_collection_fetch: true</code></b> 한 줄이 <b>경고를 예외로 승격</b>시켜 데이터가 적어도 잡아준다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">판별 축은 하나 — ToOne이냐 컬렉션이냐</a></li>
+    <li><a href="#s2">행 뻥튀기를 눈으로 본다 — <code>limit</code>이 "틀리는" 이유</a></li>
+    <li><a href="#s3">Hibernate의 선택 — <code>limit</code>을 떼고 힙에 올린 뒤 <code>subList</code></a></li>
+    <li><a href="#s4">신호는 경고 한 줄 — 그리고 없는 신호 셋</a></li>
+    <li><a href="#s5">해법 3종 — 토 · 컬 · 조</a></li>
+    <li><a href="#s6">배포 전에 잡는 4층 방어선</a></li>
+    <li><a href="#s7">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "fetch join과 페이징을 함께 쓸 때의 문제(메모리에서 페이징)와 해결책은?"</p>
+  <p><b>출제 의도</b>: <code>limit</code>이 쿼리에 안 붙고 전체를 메모리에 올리는 이 함정은 <b>데이터가 적을 땐 멀쩡하다가 데이터 증가와 함께 OOM으로 터진다.</b> 즉 <b>"지금은 되는데 나중에 터지는" 코드를 미리 알아보는 눈</b>을 검사한다. 채점 지점은 <b>"fetch join과 페이징은 같이 못 쓴다"는 암기가 아니라</b> — <b>실패가 어떤 모습으로 드러나는지</b>(예외가 아니라 경고 한 줄)와 <b>그것을 운영 전에 어떻게 붙잡는지</b>다.</p>
+  <div class="callout trap"><span class="t">함정 — 해결책 나열로 끝내면 이 문항을 통과하지 못한다</span>
+    질문 형식이 "문제와 <b>해결책</b>"이라 <b>fetch join / <code>@EntityGraph</code> / batch size</b>를 읊고 끝내기 쉽다. 그런데 <b>해결책은 N+1 문항에서 이미 다루는 내용</b>이고, 이 문항이 <b>따로 존재하는 이유</b>는 <b>"쿼리는 성공하는데 나중에 죽는다"는 실패 양식 자체</b>에 있다. <b>해결책은 절반이고, 나머지 절반은 6절의 탐지 장치다.</b>
+  </div>
+  <div class="callout warn" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 약점 세 가지</span>
+    ① <b>"fetch join + 페이징은 금지"로 뭉뚱그리는 것</b> → 1절에서 <b>판별 축 하나</b>(조인 후 행 수)로 <b>ToOne/컬렉션의 경계</b>를 긋는다.<br>
+    ② <b>"메모리 페이징이 된다"는 결과만 아는 것</b> → 2·3절에서 <b>왜 <code>limit</code>을 못 붙이는지</b>를 조인 결과의 <b>행 단위</b>까지 내려가서 세우고, Hibernate가 <b>무엇과 무엇 중 무엇을 택했는지</b>로 잇는다.<br>
+    ③ <b>"리뷰에서 잘 보겠다"로 답하는 것</b> → 6절에서 <b>사람이 안 봐도 실패하는 4층 장치</b>와 <b>도입 순서</b>까지 간다.
+  </div>
+</div>
+
+<div class="callout info">
+  <span class="t">버전 기준</span>
+  버전에 의존하는 서술은 <b>Hibernate 6.x / Spring Boot 3.x 기준</b>이고, 소스 확인이 필요한 부분은 <code>hibernate-core:6.6.53.Final</code>에서 직접 대조한 것이다. <b>Hibernate 7.4부터는 동작 자체가 바뀌었다</b>(파생 테이블로 밀어넣어 DB에서 페이징) — 그래도 이 지식이 여전히 필요한 이유는 <b>7절 마지막 꼬리질문</b>에 있다.
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 판별 축은 하나 — ToOne이냐 컬렉션이냐</h2>
+
+<p>"fetch join과 페이징은 같이 못 쓴다"는 흔한 요약은 <b>틀렸다.</b> 정확히는 <b>컬렉션을 fetch join할 때만</b> 문제다. 그리고 그것을 가르는 축은 <b>연관의 이름표(<code>@OneToOne</code>이냐 <code>@OneToMany</code>냐)가 아니라 조인 결과의 행 수</b> 하나다.</p>
+
+<div class="callout info">
+  <span class="t">전제 — <code>join</code>과 <code>join fetch</code>는 다르다</span>
+  일반 <code>join</code>은 <b>SQL 조인만 만들고 select 목록에는 부모만 올린다.</b> 그래서 연관은 여전히 <b>프록시</b>이고 N+1이 그대로다. <code>join fetch</code>여야 <b>연관의 컬럼까지 함께 읽어 한 번에 채운다.</b> 이 문항의 주인공은 <b><code>join fetch</code>이고, 문제의 씨앗은 "연관 컬럼이 같은 결과 집합에 함께 실린다"는 바로 그 지점</b>에 있다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 470" role="img" aria-label="판별 축 결정 도식. 위쪽 질문 상자는 조인해도 행 수가 루트 엔티티 수와 같은가를 묻는다. 예 방향은 ToOne 단일 값 연관으로 Post 3행이 조인 후에도 3행이라 limit 3이 게시글 3건을 정확히 자른다. 아니오 방향은 ToMany 컬렉션 연관으로 Post 3행이 조인 후 9행으로 불어나 limit 4가 게시글 2건만 주고 그중 하나는 댓글이 잘린 채로 조립된다.">
+    <defs>
+      <marker id="ag" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="as" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">판별 축은 연관의 이름표가 아니라 "조인 결과의 행 수"다</text>
+
+    <rect x="290" y="40" width="540" height="56" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="64" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">이 fetch join은 조인한 뒤에도</text>
+    <text x="560" y="84" font-size="13.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">"결과 1행 = 루트 엔티티 1건"이 유지되는가?</text>
+
+    <path d="M560 96 L560 118 L290 118 L290 136" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#ag)"/>
+    <path d="M560 96 L560 118 L830 118 L830 136" stroke="#dc2626" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+    <rect x="330" y="106" width="118" height="22" rx="11" fill="#16a34a"/>
+    <text x="389" y="122" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">예 — 행이 그대로</text>
+    <rect x="668" y="106" width="130" height="22" rx="11" fill="#dc2626"/>
+    <text x="733" y="122" font-size="12" fill="#fff" text-anchor="middle" font-weight="700">아니오 — 행이 불어난다</text>
+
+    <!-- LEFT : ToOne -->
+    <rect x="40" y="140" width="500" height="300" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="60" y="166" font-size="13.5" fill="#166534" font-weight="700">ToOne — 단일 값 연관 (안전)</text>
+    <rect x="60" y="176" width="104" height="21" rx="10" fill="#dcfce7" stroke="#86efac"/>
+    <text x="112" y="191" font-size="11.5" fill="#166534" text-anchor="middle" class="mono">@ManyToOne</text>
+    <rect x="172" y="176" width="96" height="21" rx="10" fill="#dcfce7" stroke="#86efac"/>
+    <text x="220" y="191" font-size="11.5" fill="#166534" text-anchor="middle" class="mono">@OneToOne</text>
+
+    <text x="115" y="220" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">루트 (Post)</text>
+    <text x="348" y="220" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">join fetch p.author 결과</text>
+
+    <rect x="65" y="229" width="100" height="24" rx="6" fill="#fff" stroke="#86efac"/>
+    <text x="115" y="245" font-size="11.5" fill="#166534" text-anchor="middle">Post 1</text>
+    <rect x="65" y="271" width="100" height="24" rx="6" fill="#fff" stroke="#86efac"/>
+    <text x="115" y="287" font-size="11.5" fill="#166534" text-anchor="middle">Post 2</text>
+    <rect x="65" y="313" width="100" height="24" rx="6" fill="#fff" stroke="#86efac"/>
+    <text x="115" y="329" font-size="11.5" fill="#166534" text-anchor="middle">Post 3</text>
+
+    <line x1="175" y1="283" x2="208" y2="283" stroke="#16a34a" stroke-width="2" marker-end="url(#ag)"/>
+
+    <rect x="215" y="229" width="265" height="24" rx="6" fill="#fff" stroke="#16a34a"/>
+    <text x="228" y="245" font-size="11.5" fill="#166534">Post 1 · Author A</text>
+    <rect x="215" y="271" width="265" height="24" rx="6" fill="#fff" stroke="#16a34a"/>
+    <text x="228" y="287" font-size="11.5" fill="#166534">Post 2 · Author B</text>
+    <rect x="215" y="313" width="265" height="24" rx="6" fill="#fff" stroke="#16a34a"/>
+    <text x="228" y="329" font-size="11.5" fill="#166534">Post 3 · Author A</text>
+
+    <text x="115" y="352" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">3건</text>
+    <text x="348" y="352" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">3행 — 늘지 않았다</text>
+
+    <rect x="60" y="362" width="460" height="62" rx="9" fill="#16a34a"/>
+    <text x="290" y="384" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">결과 1행 = Post 1건이 유지된다</text>
+    <text x="290" y="404" font-size="11.5" fill="#dcfce7" text-anchor="middle">→ limit 3 이 SQL에 그대로 붙고, 원하는 대로 게시글 3건이 온다</text>
+    <text x="290" y="418" font-size="11" fill="#bbf7d0" text-anchor="middle">여러 개를 겹쳐 fetch join 해도 마찬가지다</text>
+
+    <!-- RIGHT : ToMany -->
+    <rect x="580" y="140" width="500" height="300" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="600" y="166" font-size="13.5" fill="#991b1b" font-weight="700">ToMany — 컬렉션 연관 (금지 구간)</text>
+    <rect x="600" y="176" width="100" height="21" rx="10" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="650" y="191" font-size="11.5" fill="#991b1b" text-anchor="middle" class="mono">@OneToMany</text>
+    <rect x="708" y="176" width="110" height="21" rx="10" fill="#fee2e2" stroke="#fecaca"/>
+    <text x="763" y="191" font-size="11.5" fill="#991b1b" text-anchor="middle" class="mono">@ManyToMany</text>
+
+    <text x="655" y="220" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">루트 (Post)</text>
+    <text x="905" y="220" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">join fetch p.comments 결과</text>
+
+    <rect x="605" y="229" width="100" height="24" rx="6" fill="#fff" stroke="#fecaca"/>
+    <text x="655" y="245" font-size="11.5" fill="#991b1b" text-anchor="middle">Post 1 (댓글 3)</text>
+    <rect x="605" y="271" width="100" height="24" rx="6" fill="#fff" stroke="#fecaca"/>
+    <text x="655" y="287" font-size="11.5" fill="#991b1b" text-anchor="middle">Post 2 (댓글 3)</text>
+    <rect x="605" y="313" width="100" height="24" rx="6" fill="#fff" stroke="#fecaca"/>
+    <text x="655" y="329" font-size="11.5" fill="#991b1b" text-anchor="middle">Post 3 (댓글 3)</text>
+
+    <line x1="715" y1="283" x2="748" y2="283" stroke="#dc2626" stroke-width="2" marker-end="url(#ar)"/>
+
+    <rect x="755" y="222" width="300" height="13" rx="3" fill="#fff" stroke="#dc2626"/>
+    <text x="765" y="232" font-size="10" fill="#991b1b">Post 1 · 댓글 1</text>
+    <rect x="755" y="236" width="300" height="13" rx="3" fill="#fff" stroke="#dc2626"/>
+    <text x="765" y="246" font-size="10" fill="#991b1b">Post 1 · 댓글 2</text>
+    <rect x="755" y="250" width="300" height="13" rx="3" fill="#fff" stroke="#dc2626"/>
+    <text x="765" y="260" font-size="10" fill="#991b1b">Post 1 · 댓글 3</text>
+    <rect x="755" y="266" width="300" height="13" rx="3" fill="#fff" stroke="#dc2626"/>
+    <text x="765" y="276" font-size="10" fill="#991b1b">Post 2 · 댓글 1</text>
+
+    <line x1="745" y1="284" x2="1065" y2="284" stroke="#dc2626" stroke-width="2" stroke-dasharray="5 4"/>
+    <rect x="930" y="286" width="132" height="17" rx="8" fill="#dc2626"/>
+    <text x="996" y="299" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">limit 4 → 여기서 절단</text>
+
+    <rect x="755" y="306" width="300" height="13" rx="3" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="765" y="316" font-size="10" fill="#cbd5e1">Post 2 · 댓글 2 · 3 (버려진다)</text>
+    <rect x="755" y="320" width="300" height="13" rx="3" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="765" y="330" font-size="10" fill="#cbd5e1">Post 3 · 댓글 1 · 2 · 3 (버려진다)</text>
+
+    <text x="655" y="352" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">3건</text>
+    <text x="905" y="352" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">9행 — 자식 수만큼 복제</text>
+
+    <rect x="600" y="362" width="460" height="62" rx="9" fill="#dc2626"/>
+    <text x="830" y="384" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">결과 1행 ≠ Post 1건 — limit 은 "행"만 셀 수 있다</text>
+    <text x="830" y="404" font-size="11.5" fill="#fee2e2" text-anchor="middle">→ 게시글 3건을 달라고 했는데 Post 1 · Post 2 두 건만 오고,</text>
+    <text x="830" y="418" font-size="11" fill="#fecaca" text-anchor="middle">Post 2 는 댓글이 3개인데 1개짜리 게시글로 조립된다 (내용까지 거짓)</text>
+  </svg>
+  <figcaption><b><code>@OneToOne</code>이 안전한 이유는 "1:1이라서"가 아니라 "단일 값이라서"</b>다. 같은 이유로 <b><code>@ManyToOne</code>도 안전</b>하다 — 게시글 1,000개가 <b>같은 작성자</b>를 가리켜도 조인 결과는 <b>게시글 1건당 1행</b>이다. 작성자 쪽에서 보면 1:N이지만, <b>페이징하려는 대상(루트 엔티티)이 게시글</b>이므로 게시글 기준으로는 언제나 1행이다.</figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead good"><span class="tag">안전</span> ToOne은 몇 개를 겹쳐도 된다</div>
+<pre><code><span class="fn">@Query</span>(<span class="st">"""</span>
+<span class="st">       select p from Post p</span>
+<span class="st">       join fetch p.author      </span><span class="cm">// @ManyToOne → 1행 : 1행</span>
+<span class="st">       join fetch p.category    </span><span class="cm">// @ManyToOne → 1행 : 1행</span>
+<span class="st">       join fetch p.thumbnail   </span><span class="cm">// @OneToOne  → 1행 : 1행</span>
+<span class="st">       """</span>)
+Page&lt;Post&gt; findPageWithToOnes(Pageable pageable);
+
+<span class="ln-good"><span class="cm">// 조인 결과 = Post 20행. limit 20 이 SQL 에 그대로 붙고,</span></span>
+<span class="ln-good"><span class="cm">// 원하는 대로 Post 20건이 온다.            </span><span class="note">행 증폭 없음</span></span></code></pre>
+  </div>
+  <div>
+    <div class="codehead bad"><span class="tag">위험</span> 컬렉션 하나만 끼면 성질이 바뀐다</div>
+<pre><code><span class="fn">@Query</span>(<span class="st">"select p from Post p join fetch p.comments"</span>)
+<span class="ln-bad">Page&lt;Post&gt; findPage(Pageable pageable);  <span class="note">@OneToMany</span></span>
+
+<span class="cm">// Post 1건에 댓글 10개면 조인 결과는 10행.</span>
+<span class="cm">// limit 20 을 붙이면 Post 2건만 온다.</span>
+<span class="cm">//</span>
+<span class="cm">// → 그래서 Hibernate 는 limit 을 붙이지 않는다.</span>
+<span class="cm">//   대신 전체를 힙에 올린 뒤 자바에서 자른다. (3절)</span></code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>판별 규칙 — 한 문장으로 외운다</h4>
+  <div class="rule ok">조인해도 <b>"결과 1행 = 루트 엔티티 1건"</b>이 유지되면 안전, 깨지면 금지</div>
+  <div class="grid g2" style="margin-top:10px">
+    <div class="tile ok"><div class="k">ToOne = 단일 값</div><div class="d"><code>@ManyToOne</code> · <code>@OneToOne</code> — <b>몇 개를 겹쳐도</b> 행이 안 는다. 목록 화면의 <b>작성자 닉네임 · 카테고리 이름</b>처럼 <b>건당 하나씩 붙는 값</b>은 전부 여기.</div></div>
+    <div class="tile red"><div class="k">ToMany = 컬렉션</div><div class="d"><code>@OneToMany</code> · <code>@ManyToMany</code> — <b>하나만 끼어도</b> 부모 행이 자식 수만큼 복제된다. <b>페이징과 만나는 순간 금지 구간.</b></div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">면접에서 <b>"1:1은 괜찮다"가 아니라 "ToOne(단일 값 연관)은 괜찮고 ToMany(컬렉션)만 문제다"</b>라고 말하는 것 — <b>이 한 단어 차이가 "겪어서 아는 사람"과 "외운 사람"을 가른다.</b></p>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 행 뻥튀기를 눈으로 본다 — <code>limit</code>이 "틀리는" 이유</h2>
+
+<p>말로 "행이 늘어난다"고 하면 잘 안 와닿는다. <b>아주 작은 데이터</b>로 실제 조인 결과를 그려보자. <b>회원 2명이 각각 주문 3건</b>을 가진 상황에서 <code>select m from Member m join fetch m.orders</code>를 실행하고, 거기에 <b>"회원 2명만 주세요"(<code>limit 2</code>)</b>를 붙이면 무슨 일이 벌어지는가.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 445" role="img" aria-label="행 뻥튀기 도식. 왼쪽은 회원 2행과 주문 6행 원본 테이블. 가운데는 조인 결과 6행으로 회원 컬럼이 주문 건수만큼 복제되어 있고 limit 2가 위 2행만 남긴다. 오른쪽은 조립 결과로 회원 2명을 요청했으나 회원 1명이 오고 그 회원의 주문도 3건이 아니라 2건으로 조립되어 건수와 내용이 모두 틀린다.">
+    <defs>
+      <marker id="b1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">회원 2명 · 주문 6건 — 조인하면 결과는 6행이 되고, limit 2 는 "회원 2명"을 세지 못한다</text>
+
+    <!-- Col A : source tables -->
+    <text x="35" y="52" font-size="12" fill="#475569" font-weight="700">member 테이블</text>
+    <rect x="35" y="58" width="200" height="22" fill="#f1f3f7" stroke="#cbd5e1"/>
+    <text x="48" y="74" font-size="11" fill="#334155" class="mono">id</text>
+    <text x="105" y="74" font-size="11" fill="#334155" class="mono">name</text>
+    <rect x="35" y="80" width="200" height="22" fill="#fff" stroke="#cbd5e1"/>
+    <text x="48" y="96" font-size="11" fill="#1f2937" class="mono">1</text>
+    <text x="105" y="96" font-size="11" fill="#1f2937">김하나</text>
+    <rect x="35" y="102" width="200" height="22" fill="#fff" stroke="#cbd5e1"/>
+    <text x="48" y="118" font-size="11" fill="#1f2937" class="mono">2</text>
+    <text x="105" y="118" font-size="11" fill="#1f2937">이두리</text>
+    <text x="135" y="142" font-size="11.5" fill="#2563eb" text-anchor="middle" font-weight="700">회원 = 2행</text>
+
+    <text x="35" y="174" font-size="12" fill="#475569" font-weight="700">orders 테이블</text>
+    <rect x="35" y="180" width="245" height="22" fill="#f1f3f7" stroke="#cbd5e1"/>
+    <text x="46" y="196" font-size="11" fill="#334155" class="mono">id</text>
+    <text x="96" y="196" font-size="11" fill="#334155" class="mono">member_id</text>
+    <text x="205" y="196" font-size="11" fill="#334155" class="mono">amount</text>
+    <rect x="35" y="202" width="245" height="22" fill="#fff" stroke="#cbd5e1"/>
+    <text x="46" y="218" font-size="11" fill="#1f2937" class="mono">11</text><text x="96" y="218" font-size="11" fill="#1f2937" class="mono">1</text><text x="205" y="218" font-size="11" fill="#1f2937" class="mono">10,000</text>
+    <rect x="35" y="224" width="245" height="22" fill="#fff" stroke="#cbd5e1"/>
+    <text x="46" y="240" font-size="11" fill="#1f2937" class="mono">12</text><text x="96" y="240" font-size="11" fill="#1f2937" class="mono">1</text><text x="205" y="240" font-size="11" fill="#1f2937" class="mono">20,000</text>
+    <rect x="35" y="246" width="245" height="22" fill="#fff" stroke="#cbd5e1"/>
+    <text x="46" y="262" font-size="11" fill="#1f2937" class="mono">13</text><text x="96" y="262" font-size="11" fill="#1f2937" class="mono">1</text><text x="205" y="262" font-size="11" fill="#1f2937" class="mono">30,000</text>
+    <rect x="35" y="268" width="245" height="22" fill="#fff" stroke="#cbd5e1"/>
+    <text x="46" y="284" font-size="11" fill="#1f2937" class="mono">21</text><text x="96" y="284" font-size="11" fill="#1f2937" class="mono">2</text><text x="205" y="284" font-size="11" fill="#1f2937" class="mono">40,000</text>
+    <rect x="35" y="290" width="245" height="22" fill="#fff" stroke="#cbd5e1"/>
+    <text x="46" y="306" font-size="11" fill="#1f2937" class="mono">22</text><text x="96" y="306" font-size="11" fill="#1f2937" class="mono">2</text><text x="205" y="306" font-size="11" fill="#1f2937" class="mono">50,000</text>
+    <rect x="35" y="312" width="245" height="22" fill="#fff" stroke="#cbd5e1"/>
+    <text x="46" y="328" font-size="11" fill="#1f2937" class="mono">23</text><text x="96" y="328" font-size="11" fill="#1f2937" class="mono">2</text><text x="205" y="328" font-size="11" fill="#1f2937" class="mono">60,000</text>
+    <text x="157" y="352" font-size="11.5" fill="#2563eb" text-anchor="middle" font-weight="700">주문 = 6행</text>
+
+    <line x1="296" y1="200" x2="348" y2="200" stroke="#2563eb" stroke-width="2" marker-end="url(#b1)"/>
+    <text x="322" y="192" font-size="10.5" fill="#2563eb" text-anchor="middle" font-weight="700">join</text>
+
+    <!-- Col B : join result -->
+    <text x="358" y="52" font-size="12" fill="#475569" font-weight="700">조인 결과 — 회원 컬럼이 주문 건수만큼 복제된다</text>
+    <rect x="358" y="58" width="400" height="24" fill="#f1f3f7" stroke="#cbd5e1"/>
+    <text x="368" y="75" font-size="10.5" fill="#334155" class="mono">행</text>
+    <text x="404" y="75" font-size="10.5" fill="#334155" class="mono">m.id</text>
+    <text x="455" y="75" font-size="10.5" fill="#334155" class="mono">m.name</text>
+    <text x="570" y="75" font-size="10.5" fill="#334155" class="mono">o.id</text>
+    <text x="650" y="75" font-size="10.5" fill="#334155" class="mono">o.amount</text>
+
+    <rect x="358" y="82" width="400" height="26" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="368" y="99" font-size="11" fill="#1e40af" class="mono">1</text><text x="404" y="99" font-size="11" fill="#1e40af" class="mono">1</text><text x="455" y="99" font-size="11" fill="#1e40af">김하나</text><text x="570" y="99" font-size="11" fill="#1e40af" class="mono">11</text><text x="650" y="99" font-size="11" fill="#1e40af" class="mono">10,000</text>
+    <rect x="358" y="108" width="400" height="26" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="368" y="125" font-size="11" fill="#1e40af" class="mono">2</text><text x="404" y="125" font-size="11" fill="#1e40af" class="mono">1</text><text x="455" y="125" font-size="11" fill="#1e40af">김하나</text><text x="570" y="125" font-size="11" fill="#1e40af" class="mono">12</text><text x="650" y="125" font-size="11" fill="#1e40af" class="mono">20,000</text>
+
+    <rect x="358" y="134" width="400" height="26" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="368" y="151" font-size="11" fill="#cbd5e1" class="mono">3</text><text x="404" y="151" font-size="11" fill="#cbd5e1" class="mono">1</text><text x="455" y="151" font-size="11" fill="#cbd5e1">김하나</text><text x="570" y="151" font-size="11" fill="#cbd5e1" class="mono">13</text><text x="650" y="151" font-size="11" fill="#cbd5e1" class="mono">30,000</text>
+    <rect x="358" y="160" width="400" height="26" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="368" y="177" font-size="11" fill="#cbd5e1" class="mono">4</text><text x="404" y="177" font-size="11" fill="#cbd5e1" class="mono">2</text><text x="455" y="177" font-size="11" fill="#cbd5e1">이두리</text><text x="570" y="177" font-size="11" fill="#cbd5e1" class="mono">21</text><text x="650" y="177" font-size="11" fill="#cbd5e1" class="mono">40,000</text>
+    <rect x="358" y="186" width="400" height="26" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="368" y="203" font-size="11" fill="#cbd5e1" class="mono">5</text><text x="404" y="203" font-size="11" fill="#cbd5e1" class="mono">2</text><text x="455" y="203" font-size="11" fill="#cbd5e1">이두리</text><text x="570" y="203" font-size="11" fill="#cbd5e1" class="mono">22</text><text x="650" y="203" font-size="11" fill="#cbd5e1" class="mono">50,000</text>
+    <rect x="358" y="212" width="400" height="26" fill="#f8fafc" stroke="#e5e7eb"/>
+    <text x="368" y="229" font-size="11" fill="#cbd5e1" class="mono">6</text><text x="404" y="229" font-size="11" fill="#cbd5e1" class="mono">2</text><text x="455" y="229" font-size="11" fill="#cbd5e1">이두리</text><text x="570" y="229" font-size="11" fill="#cbd5e1" class="mono">23</text><text x="650" y="229" font-size="11" fill="#cbd5e1" class="mono">60,000</text>
+
+    <line x1="348" y1="134" x2="768" y2="134" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="6 4"/>
+    <rect x="600" y="120" width="158" height="18" rx="9" fill="#dc2626"/>
+    <text x="679" y="134" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">limit 2 → 여기까지만 읽는다</text>
+
+    <text x="558" y="258" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">회원은 2명인데 결과는 6행이다 (행 뻥튀기 · 조인에 의한 증폭)</text>
+    <text x="558" y="276" font-size="11" fill="#6b7280" text-anchor="middle">자바 객체로 돌아오면 다시 2건이 되므로, 애플리케이션 코드만 보면 6행이었다는 사실이 안 보인다</text>
+
+    <line x1="768" y1="130" x2="800" y2="130" stroke="#2563eb" stroke-width="2" marker-end="url(#b1)"/>
+    <text x="784" y="122" font-size="10" fill="#2563eb" text-anchor="middle" font-weight="700">조립</text>
+
+    <!-- Col C : assembled result -->
+    <rect x="812" y="52" width="278" height="52" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="826" y="72" font-size="11.5" fill="#1d4ed8" font-weight="700">요청한 것</text>
+    <text x="826" y="92" font-size="11.5" fill="#1e40af">회원 2명 (각자의 주문 전부)</text>
+
+    <rect x="812" y="112" width="278" height="70" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="826" y="132" font-size="11.5" fill="#b91c1c" font-weight="700">받은 것</text>
+    <text x="826" y="152" font-size="11.5" fill="#7f1d1d">회원 1명 (김하나)</text>
+    <text x="826" y="170" font-size="11.5" fill="#7f1d1d">그 회원의 주문 2건</text>
+
+    <rect x="812" y="194" width="278" height="46" rx="9" fill="#fff" stroke="#fecaca"/>
+    <circle cx="832" cy="217" r="10" fill="#dc2626"/>
+    <text x="832" y="221" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+    <text x="850" y="213" font-size="11.5" fill="#991b1b" font-weight="700">건수가 틀렸다</text>
+    <text x="850" y="230" font-size="11" fill="#7f1d1d">2명을 달라고 했는데 1명이 왔다</text>
+
+    <rect x="812" y="248" width="278" height="64" rx="9" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+    <circle cx="832" cy="271" r="10" fill="#dc2626"/>
+    <text x="832" y="275" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+    <text x="850" y="267" font-size="11.5" fill="#991b1b" font-weight="700">내용이 틀렸다 — 이게 더 위험</text>
+    <text x="850" y="284" font-size="11" fill="#7f1d1d">주문 3건인 회원이</text>
+    <text x="850" y="300" font-size="11" fill="#7f1d1d">2건짜리 회원으로 둔갑했다</text>
+
+    <text x="951" y="332" font-size="11" fill="#6b7280" text-anchor="middle">①은 화면에서 바로 보이지만, ②는 겉보기로 정상이다</text>
+
+    <!-- bottom strip -->
+    <rect x="30" y="372" width="1060" height="56" rx="10" fill="#1e293b"/>
+    <text x="560" y="396" font-size="13" fill="#e2e8f0" text-anchor="middle" font-weight="700">근본 원인 — SQL의 LIMIT 은 결과 집합의 "행"만 셀 수 있고, "부모 엔티티 단위로 N건"을 세는 문법이 아니다</text>
+    <text x="560" y="416" font-size="11.5" fill="#94a3b8" text-anchor="middle">조인 결과에서 부모와 자식이 한 행에 섞여 버린 이상, DB에게 "회원 2명치까지만 읽어라"라고 시킬 방법이 LIMIT 에는 없다</text>
+  </svg>
+  <figcaption>Hibernate는 이 6행을 받아 <b>같은 <code>m.id</code>끼리 묶어 회원 2개 객체로 조립</b>하고, 각 회원의 <code>orders</code> 컬렉션에 주문 3건씩을 채워 넣는다. <b>자바 객체로 돌아오는 순간에는 다시 2건이 되므로, 애플리케이션 코드만 보면 행이 6개였다는 사실이 안 보인다.</b> 이 문항의 함정이 여기서 시작한다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>비유 — 식당에 "2팀만 받으세요"라고 했는데 직원이 셀 수 있는 단위가 '의자'뿐이라면</h4>
+  <div class="chain">
+    <span class="chip b">요구: 팀 단위 2팀</span><span class="arrow">↔</span><span class="chip r">직원이 셀 수 있는 단위: 의자</span><span class="arrow">→</span><span class="chip r">의자 2개를 세면 4인 가족의 절반만 앉는다</span>
+  </div>
+  <p style="margin-bottom:0"><b>부모(팀)와 자식(사람)이 한 줄로 섞여 나오는 명부에서는 "팀 2개"라는 요구를 셀 수 없다.</b> 의자 2개를 세면 <b>①팀 수도 틀리고(1팀) ②그 팀의 인원도 틀린다(4명인데 2명).</b> 그래서 Hibernate가 택한 방법은 <b>"자르면 사람이 잘리니, 일단 전부 들여보낸 뒤 밖에서 팀 단위로 자르는 것"</b>이다 — 그것이 3절의 메모리 페이징이다.</p>
+</div>
+
+<h3>2-1. 잘린 엔티티는 영속성 컨텍스트에서 한 단계 더 나빠진다</h3>
+
+<p>②(내용이 틀림)가 특히 위험한 이유가 하나 더 있다. <b>오염된 엔티티가 영속성 컨텍스트에 올라가기 때문</b>이다.</p>
+
+<div class="callout trap">
+  <span class="t">스냅샷 자체가 거짓으로 찍힌다</span>
+  변경 감지는 <b>로딩 시점의 스냅샷</b>과 <b>커밋 시점의 상태</b>를 비교한다. 그런데 스냅샷이 <b>"주문 2건"</b>으로 찍혀 있으므로 <b>Hibernate는 원래 3건이었다는 사실을 알지 못한다.</b> 여기에 <code>orphanRemoval = true</code>가 걸려 있고 누군가 이 컬렉션을 조작하면 <b>실제 DELETE로 이어질 여지</b>까지 생긴다. <b>조회 하나가 데이터 삭제로 번질 수 있는 경로</b>가 열린다는 뜻이다.
+</div>
+
+<h3>2-2. 조금 더 큰 데이터로 보면 — <code>limit 25</code>가 만드는 "5개짜리 게시글"</h3>
+
+<pre><code>Post 1 (댓글 10개) → 조인 결과  1~10행
+Post 2 (댓글 10개) → 조인 결과 11~20행
+Post 3 (댓글 10개) → 조인 결과 21~30행
+
+여기에 limit 25 를 붙이면 25행까지만 읽는다.
+<span class="ln-good">  → Post 1: 댓글 10개 (정상)</span>
+<span class="ln-good">  → Post 2: 댓글 10개 (정상)</span>
+<span class="ln-bad">  → Post 3: 댓글 5개  <span class="note">실제로는 10개인데 5개짜리 게시글로 조립된다</span></span></code></pre>
+
+<div class="rule red">즉 <code>limit</code>을 SQL에 붙이는 선택은 <b>건수를 틀리게 하는 데서 끝나지 않고 엔티티의 상태를 거짓으로 만든다</b></div>
+
+<p class="sub">참고 — 윈도우 함수 <code>row_number()</code>로 부모별 순번을 매겨 흉내 낼 수는 있는데, 그건 <code>LIMIT</code>이 아니라 <b>아예 다른 쿼리</b>다. 7절에서 언급하는 <b>Hibernate 7.4의 파생 테이블 방식</b>이 정확히 이 발상이다.</p>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. Hibernate의 선택 — <code>limit</code>을 떼고 힙에 올린 뒤 <code>subList</code></h2>
+
+<p>2절까지 오면 <b>Hibernate 앞에 놓인 선택지가 둘뿐</b>이라는 것이 보인다. 그리고 어느 쪽을 골라도 대가가 있다.</p>
+
+<div class="scroll">
+<table>
+  <caption>컬렉션 fetch join + 페이징을 만났을 때 Hibernate가 고를 수 있는 것</caption>
+  <thead><tr><th>선택지</th><th>하는 일</th><th>대가</th></tr></thead>
+  <tbody>
+    <tr><td>(A) <code>limit</code>을 붙인다</td><td>SQL에 <code>limit</code>을 그대로 부착</td><td class="bad">결과가 틀린다 (2절의 ①②)</td></tr>
+    <tr class="hl"><td><b>(B) <code>limit</code>을 뗀다</b> ← 채택</td><td>조건에 맞는 <b>전체</b>를 읽어 조립한 뒤 <b>자바에서 자른다</b></td><td class="bad">메모리를 지불한다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><b>Hibernate는 (B)를 택했다.</b> <b>결과 오염을 허용하지 않겠다</b>는 판단이다. 이 선택을 알고 나면 아래 동작이 <b>"이상한 버그"가 아니라 의도된 트레이드오프</b>로 읽힌다 — <b>정확성을 지키기 위해 메모리를 지불한 것</b>이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="Hibernate의 처리 6단계 흐름도와 힙 적재량 도식. 감지, 경고 로그, limit 제거, 전량 로딩, 부모 중복 제거, subList 순서로 진행된다. 아래는 게시글 100만 건과 댓글 1000만 건이 힙에 올라간 뒤 앞의 20건만 남기고 버려지는 것을 막대로 표현한다.">
+    <defs>
+      <marker id="c1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#64748b"/></marker>
+    </defs>
+
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">실제 동작 순서 — ③에서 limit 이 사라지고, ④에서 힙이 채워지고, ⑥에서 자바가 자른다</text>
+
+    <rect x="30" y="42" width="163" height="88" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <circle cx="50" cy="62" r="11" fill="#2563eb"/><text x="50" y="66" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+    <text x="68" y="66" font-size="12" fill="#1f2937" font-weight="700">감지</text>
+    <text x="44" y="90" font-size="10.5" fill="#475569">컬렉션 fetch 가 있고</text>
+    <text x="44" y="105" font-size="10.5" fill="#475569">+ 페이징이 걸려 있다</text>
+    <text x="44" y="120" font-size="10.5" fill="#475569">는 조합을 발견</text>
+
+    <rect x="207" y="42" width="163" height="88" rx="10" fill="#fffbeb" stroke="#f59e0b" stroke-width="2"/>
+    <circle cx="227" cy="62" r="11" fill="#d97706"/><text x="227" y="66" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+    <text x="245" y="66" font-size="12" fill="#92400e" font-weight="700">경고 로그 한 줄</text>
+    <text x="221" y="90" font-size="10.5" fill="#92400e" font-weight="700">예외가 아니다.</text>
+    <text x="221" y="105" font-size="10.5" fill="#92400e">WARN 한 줄이 전부이고</text>
+    <text x="221" y="120" font-size="10.5" fill="#92400e">호출은 그대로 성공한다</text>
+
+    <rect x="384" y="42" width="163" height="88" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <circle cx="404" cy="62" r="11" fill="#dc2626"/><text x="404" y="66" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+    <text x="422" y="66" font-size="12" fill="#991b1b" font-weight="700">limit 제거</text>
+    <text x="398" y="90" font-size="10.5" fill="#7f1d1d">쿼리 옵션에서</text>
+    <text x="398" y="105" font-size="10.5" fill="#7f1d1d" class="mono">limit / offset</text>
+    <text x="398" y="120" font-size="10.5" fill="#7f1d1d">을 떼어낸다</text>
+
+    <rect x="561" y="42" width="163" height="88" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <circle cx="581" cy="62" r="11" fill="#dc2626"/><text x="581" y="66" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">4</text>
+    <text x="599" y="66" font-size="12" fill="#991b1b" font-weight="700">전량 로딩</text>
+    <text x="575" y="90" font-size="10.5" fill="#7f1d1d" font-weight="700">where 조건에 맞는</text>
+    <text x="575" y="105" font-size="10.5" fill="#7f1d1d" font-weight="700">전체 행을 엔티티로 조립</text>
+    <text x="575" y="120" font-size="10.5" fill="#b91c1c">← 힙이 채워지는 지점</text>
+
+    <rect x="738" y="42" width="163" height="88" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <circle cx="758" cy="62" r="11" fill="#2563eb"/><text x="758" y="66" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">5</text>
+    <text x="776" y="66" font-size="12" fill="#1f2937" font-weight="700">부모 중복 제거</text>
+    <text x="752" y="90" font-size="10.5" fill="#475569">같은 id 의 부모를</text>
+    <text x="752" y="105" font-size="10.5" fill="#475569">하나로 묶는다</text>
+    <text x="752" y="120" font-size="10.5" fill="#94a3b8">(6+ 는 항상 해준다)</text>
+
+    <rect x="915" y="42" width="175" height="88" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <circle cx="935" cy="62" r="11" fill="#16a34a"/><text x="935" y="66" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">6</text>
+    <text x="953" y="66" font-size="12" fill="#166534" font-weight="700">자바에서 자른다</text>
+    <text x="929" y="90" font-size="10.5" fill="#15803d" class="mono">subList(first,</text>
+    <text x="929" y="105" font-size="10.5" fill="#15803d" class="mono">  first + max)</text>
+    <text x="929" y="120" font-size="10.5" fill="#15803d">말 그대로 자바 subList</text>
+
+    <line x1="195" y1="86" x2="205" y2="86" stroke="#64748b" stroke-width="1.8" marker-end="url(#c1)"/>
+    <line x1="372" y1="86" x2="382" y2="86" stroke="#64748b" stroke-width="1.8" marker-end="url(#c1)"/>
+    <line x1="549" y1="86" x2="559" y2="86" stroke="#64748b" stroke-width="1.8" marker-end="url(#c1)"/>
+    <line x1="726" y1="86" x2="736" y2="86" stroke="#64748b" stroke-width="1.8" marker-end="url(#c1)"/>
+    <line x1="903" y1="86" x2="913" y2="86" stroke="#64748b" stroke-width="1.8" marker-end="url(#c1)"/>
+
+    <text x="35" y="164" font-size="12.5" fill="#475569" font-weight="700">그래서 실제로 일어나는 일 — status = 'PUBLISHED' 게시글 100만 건, 평균 댓글 10개인 서비스에서</text>
+
+    <rect x="30" y="176" width="1060" height="58" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <rect x="33" y="179" width="16" height="52" rx="3" fill="#16a34a"/>
+    <text x="560" y="200" font-size="13" fill="#991b1b" text-anchor="middle" font-weight="700">힙에 올라가는 것 — 조인 결과 1,000만 행을 읽어 엔티티 1,100만 개 (게시글 100만 + 댓글 1,000만)</text>
+    <text x="560" y="222" font-size="11.5" fill="#7f1d1d" text-anchor="middle">그중 초록 조각 = 실제로 반환되는 게시글 20건. 나머지는 만들자마자 버려진다 (그림의 초록 폭은 과장된 것 — 실제 비율은 20 : 1,000,000)</text>
+
+    <rect x="30" y="248" width="343" height="66" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="46" y="270" font-size="12" fill="#991b1b" font-weight="700">비용 ① I/O</text>
+    <text x="46" y="290" font-size="11" fill="#7f1d1d">DB가 전체 행을 스캔하고</text>
+    <text x="46" y="306" font-size="11" fill="#7f1d1d">네트워크로 전부 전송한다</text>
+
+    <rect x="388" y="248" width="343" height="66" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="404" y="270" font-size="12" fill="#991b1b" font-weight="700">비용 ② CPU</text>
+    <text x="404" y="290" font-size="11" fill="#7f1d1d">1,000만 행을 엔티티로 조립하고</text>
+    <text x="404" y="306" font-size="11" fill="#7f1d1d">부모 중복까지 제거한다</text>
+
+    <rect x="746" y="248" width="344" height="66" rx="9" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+    <text x="762" y="270" font-size="12" fill="#991b1b" font-weight="700">비용 ③ 힙 ← 죽는 곳</text>
+    <text x="762" y="290" font-size="11" fill="#7f1d1d">프로세스 전체가 공유하는 자원이라</text>
+    <text x="762" y="306" font-size="11" fill="#7f1d1d">피해가 이 API 밖으로 번진다 (4절)</text>
+
+    <rect x="30" y="328" width="1060" height="44" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="355" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">이것은 버그가 아니라 의도된 트레이드오프다 — 정확성을 지키기 위해 메모리를 지불한 것</text>
+  </svg>
+  <figcaption><b>확인 범위</b> — 위 흐름은 <b>Hibernate 6.6.53 소스에서 직접 확인</b>했다. <code>QuerySqmImpl.doList()</code>가 <code>hasLimit &amp;&amp; containsCollectionFetches</code>인 경우 <code>errorOrLogForPaginationWithCollectionFetch()</code>를 호출한 뒤 <code>omitSqlQueryOptions(...)</code>로 limit을 떼어내고, 마지막에 <code>handleDistinct()</code>가 <code>list.subList( first, Math.min( first + max, resultSize ) )</code>를 수행한다. <b>말 그대로 자바의 <code>subList</code></b>다.</figcaption>
+</figure>
+
+<h3>3-1. 기대한 SQL과 실제로 나가는 SQL</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead plain"><span class="tag">기대</span> limit 이 붙을 거라고 생각한 SQL</div>
+<pre><code><span class="kw">select</span> p.*, c.* <span class="kw">from</span> post p
+<span class="kw">left join</span> comment c <span class="kw">on</span> c.post_id = p.id
+<span class="kw">where</span> p.status = <span class="st">'PUBLISHED'</span>
+<span class="kw">order by</span> p.created_at <span class="kw">desc</span>
+<span class="ln-good"><span class="kw">limit</span> 20 <span class="kw">offset</span> 0;          <span class="cm">-- 이 줄이</span></span></code></pre>
+  </div>
+  <div>
+    <div class="codehead bad"><span class="tag">실제</span> 통째로 사라진 SQL</div>
+<pre><code><span class="kw">select</span> p.*, c.* <span class="kw">from</span> post p
+<span class="kw">left join</span> comment c <span class="kw">on</span> c.post_id = p.id
+<span class="kw">where</span> p.status = <span class="st">'PUBLISHED'</span>
+<span class="kw">order by</span> p.created_at <span class="kw">desc</span>;
+<span class="ln-bad"><span class="cm">-- limit / offset 이 통째로 사라졌다</span><span class="note">힙으로 이동</span></span></code></pre>
+  </div>
+</div>
+
+<div class="rule red"><code>status = 'PUBLISHED'</code>가 100만 건이면 — <b>1,000만 행을 읽어 게시글 100만 개 + 댓글 1,000만 개를 힙에 올린 뒤 앞의 20개만 남기고 버린다</b></div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 신호는 경고 한 줄 — 그리고 없는 신호 셋</h2>
+
+<h3>4-1. 로그 한 줄을 토막 내서 읽는다</h3>
+
+<p>이 모든 일을 알려주는 신호는 <b>딱 한 줄</b>이다. 애플리케이션 로그에 이렇게 찍힌다.</p>
+
+<pre><code>WARN 21472 --- [nio-8080-exec-3] org.hibernate.orm.query                  :
+<span class="ln-bad">HHH90003004: firstResult/maxResults specified with collection fetch; applying in memory</span></code></pre>
+
+<div class="scroll">
+<table>
+  <caption>이 한 줄을 "아는 사람만 알아듣게" 두면 안 된다 — 토막을 나눠 푼다</caption>
+  <thead><tr><th>토막</th><th>뜻</th></tr></thead>
+  <tbody>
+    <tr><td><code>firstResult</code> / <code>maxResults</code></td><td>JPA 표준 API <code>Query.setFirstResult(int)</code> / <code>setMaxResults(int)</code>의 이름이다. Spring Data의 <code>Pageable</code>은 결국 이 둘로 번역된다. → <b>"페이징을 걸었다"는 뜻</b></td></tr>
+    <tr><td><code>specified with collection fetch</code></td><td>그 쿼리에 <b>컬렉션 fetch join이 함께</b> 걸려 있다</td></tr>
+    <tr class="hl"><td><code>applying in memory</code></td><td>그래서 페이징을 DB가 아니라 <b>메모리에서</b> 적용하겠다</td></tr>
+    <tr><td><code>HHH90003004</code></td><td>Hibernate의 메시지 번호. 로거는 <code>org.hibernate.orm.query</code>, 레벨은 <code>WARN</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="rule">일상어로 옮기면 — <b>"당신은 20건만 달라고 했지만,<br>나는 조건에 맞는 전체를 힙에 올린 다음 거기서 20건을 잘라주겠다"</b></div>
+
+<p>게시글이 100만 건이면 <b>지금 100만 건을 힙에 올리는 중</b>이라는 통보다. <b>이 한 줄이 그 뜻이라는 것만 알아도 이 문항의 절반은 답한 셈이다.</b></p>
+
+<div class="memo red">
+  <h4>그런데 이 경고를 찾는 방법에 함정이 하나 더 있다 <span class="badge bonus">가산점</span></h4>
+  <p style="margin-top:0">인터넷에 널리 인용되는 코드는 <code>HHH000104</code>인데, <b>이건 Hibernate 5.x의 코드</b>다. 6.6.53 소스에서 확인한 내용은 다음과 같다.</p>
+  <div class="grid g2">
+    <div class="tile red"><div class="k">Hibernate 5.x</div><div class="d"><code>HHH000104: ... applying in memory<b>!</b></code><br><span class="s">끝에 느낌표가 있다</span></div></div>
+    <div class="tile"><div class="k">Hibernate 6.x 이후</div><div class="d">문구는 거의 같지만 <b>id가 <code>90003004</code></b>라 <code>HHH90003004</code>로 찍히고 <b>느낌표가 없다</b>. 로거 <code>org.hibernate.orm.query</code>, 레벨 <code>WARN</code></div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:6px">로그를 <code>HHH000104</code>로 grep 하면 <b>6.x 프로젝트에서는 하나도 안 걸린다</b></div>
+  <p style="margin-bottom:0">검색·알람 룰은 <b>코드가 아니라 문구로</b> 잡는 것이 버전에 안전하다 — <code>firstResult/maxResults specified with collection fetch</code>. <b>이 원칙은 6절의 테스트 코드에도 그대로 적용된다.</b></p>
+</div>
+
+<h3>4-2. 이 문항의 진짜 위험 — 평범한 버그의 신호 셋이 전부 없다</h3>
+
+<div class="grid g3">
+  <div class="tile red"><div class="k" style="font-family:inherit">① 예외가 안 난다</div><div class="d">컴파일도 되고 런타임 예외도 없다. <b>기본 설정에서는 경고 로그만</b> 찍고 호출은 성공한다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">② 결과가 맞다</div><div class="d">반환된 게시글 20건은 정확하고 <b>각 게시글의 댓글도 온전</b>하다. QA가 화면을 봐도 이상한 곳이 없고 <b>페이지 번호와 총 건수까지 다 맞는다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">③ 개발 환경 무증상</div><div class="d">로컬 DB 게시글이 200건이면 <b>200건을 힙에 올리는 건 아무 일도 아니다.</b> <b>부하 테스트를 해도 안 잡힌다</b> — 요청 수가 아니라 <b>데이터 양</b>의 문제라서.</div></div>
+</div>
+
+<div class="callout trap">
+  <span class="t">그래서 이 코드는 정상적으로 리뷰를 통과하고 정상적으로 배포된다</span>
+  그리고 <b>데이터가 임계점을 넘는 어느 날, 갑자기 죽는다.</b> 죽는 방식도 고약하다 — <b><code>OutOfMemoryError</code>는 힙을 채운 그 요청이 아니라 옆 요청에서 날 수 있다.</b>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 350" role="img" aria-label="시한폭탄 타임라인 도식. 데이터 양이 자라는 축을 따라 개발 초기에는 무증상, 성장기에는 Full GC 반복과 응답 지연, 임계점 초과 시점에는 OutOfMemoryError가 발생한다. 아래는 힙이 프로세스 공유 자원이라 목록 API가 힙을 채우면 무관한 결제 API가 죽는다는 것을 보여준다.">
+    <defs>
+      <marker id="d1" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+      <marker id="d2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">이건 "버그가 있다/없다"가 아니라 "시한폭탄이 있다/없다"의 문제다</text>
+
+    <rect x="40" y="42" width="330" height="78" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="58" y="65" font-size="12.5" fill="#166534" font-weight="700">개발 · 초기 운영 — 증상 0</text>
+    <text x="58" y="86" font-size="11" fill="#15803d">게시글 200건. 200건을 힙에 올리는 건</text>
+    <text x="58" y="102" font-size="11" fill="#15803d">아무 일도 아니다. 로그의 WARN 한 줄이 전부</text>
+
+    <rect x="390" y="42" width="330" height="78" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="408" y="65" font-size="12.5" fill="#92400e" font-weight="700">성장기 — 지연이 먼저 온다</text>
+    <text x="408" y="86" font-size="11" fill="#92400e">Full GC 가 반복되며 응답 시간이 늘어난다</text>
+    <text x="408" y="102" font-size="11" fill="#92400e">APM 에는 "원인 불명 지연"으로 보인다</text>
+
+    <rect x="740" y="42" width="340" height="78" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="758" y="65" font-size="12.5" fill="#991b1b" font-weight="700">임계점 초과 — OutOfMemoryError</text>
+    <text x="758" y="86" font-size="11" fill="#7f1d1d">"어제부터 서버가 가끔 죽는데 원인을 모르겠다"</text>
+    <text x="758" y="102" font-size="11" fill="#7f1d1d">로 며칠이 흘러간다</text>
+
+    <line x1="40" y1="140" x2="1080" y2="140" stroke="#475569" stroke-width="2" marker-end="url(#d1)"/>
+    <line x1="205" y1="120" x2="205" y2="140" stroke="#16a34a" stroke-width="2"/>
+    <line x1="555" y1="120" x2="555" y2="140" stroke="#d97706" stroke-width="2"/>
+    <line x1="910" y1="120" x2="910" y2="140" stroke="#dc2626" stroke-width="2"/>
+    <text x="560" y="160" font-size="12" fill="#475569" text-anchor="middle" font-weight="700">데이터 양 — 코드는 한 줄도 안 바뀌었는데 시간이 지나며 혼자 자란다</text>
+
+    <text x="40" y="196" font-size="12.5" fill="#475569" font-weight="700">그리고 죽는 방식이 고약하다 — 힙은 프로세스 전체가 공유하는 자원이다</text>
+
+    <rect x="40" y="208" width="290" height="66" rx="9" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+    <text x="56" y="230" font-size="12" fill="#991b1b" font-weight="700">범인: 목록 API</text>
+    <text x="56" y="250" font-size="11" fill="#7f1d1d">전체를 힙에 올려 90% 를 채운다</text>
+    <text x="56" y="266" font-size="11" fill="#7f1d1d">그런데 이 요청 자체는 성공할 수도 있다</text>
+
+    <rect x="352" y="208" width="330" height="66" rx="9" fill="#0f172a" stroke="#334155"/>
+    <text x="517" y="232" font-size="12" fill="#e2e8f0" text-anchor="middle" font-weight="700">JVM 힙 (프로세스 공유)</text>
+    <rect x="368" y="242" width="298" height="18" rx="4" fill="#1e293b" stroke="#475569"/>
+    <rect x="369" y="243" width="268" height="16" rx="3" fill="#dc2626"/>
+    <text x="503" y="256" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">목록 API 가 채운 영역 90%</text>
+
+    <rect x="704" y="208" width="376" height="66" rx="9" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="720" y="230" font-size="12" fill="#991b1b" font-weight="700">피해자: 아무 관계 없는 결제 API</text>
+    <text x="720" y="250" font-size="11" fill="#7f1d1d" class="mono">java.lang.OutOfMemoryError: Java heap space</text>
+    <text x="720" y="266" font-size="11" fill="#b91c1c" font-weight="700">스택 트레이스가 범인을 가리키지 않는다</text>
+
+    <line x1="332" y1="241" x2="348" y2="241" stroke="#dc2626" stroke-width="2" marker-end="url(#d2)"/>
+    <line x1="684" y1="241" x2="700" y2="241" stroke="#dc2626" stroke-width="2" marker-end="url(#d2)"/>
+
+    <rect x="40" y="288" width="1040" height="46" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="308" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">이 문항의 정답을 한 문장으로 — "결과가 맞다는 것이 안전하다는 뜻이 아니다."</text>
+    <text x="560" y="326" font-size="11.5" fill="#1e40af" text-anchor="middle">이건 정확성 문제가 아니라 자원 문제고, 자원 문제는 데이터가 자라야만 드러난다</text>
+  </svg>
+  <figcaption>세 신호가 모두 없다는 것은 <b>사람의 주의력으로 잡을 수 있는 조건이 하나도 없다</b>는 뜻이다. 그래서 6절의 결론이 <b>"코드 리뷰에서 잘 보겠다"가 아니라 "사람이 안 봐도 실패하는 장치"</b>가 된다.</figcaption>
+</figure>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 해법 3종 — 토 · 컬 · 조</h2>
+
+<div class="memo green">
+  <h4>해법 3종 3초 암기 — <b>토 · 컬 · 조</b></h4>
+  <div class="chain">
+    <span class="chip g"><b>토</b>One 연관</span><span class="arrow">→</span><span class="chip g"><b>fetch join</b> 으로 함께 끌고 온다 (행이 안 느니까)</span>
+  </div>
+  <div class="chain">
+    <span class="chip b"><b>컬</b>렉션</span><span class="arrow">→</span><span class="chip b">fetch 에서 <b>빼고</b> <code>default_batch_fetch_size</code> 에 맡긴다</span>
+  </div>
+  <div class="chain">
+    <span class="chip w"><b>조</b>회 전용 화면</span><span class="arrow">→</span><span class="chip w">아예 <b>DTO 프로젝션</b> (컬렉션은 2단 조회)</span>
+  </div>
+  <p style="margin-bottom:0">면접에서 한 문장으로: <b>"ToOne은 fetch join으로 함께 끌고, 컬렉션은 fetch에서 빼고 batch fetch size에 맡깁니다. 조회 전용 화면이면 아예 DTO 프로젝션으로 갑니다."</b></p>
+</div>
+
+<h3>5-1. 토 — ToOne 연관은 fetch join으로 함께 가져온다</h3>
+
+<p>1절에서 확인한 대로 <b>행이 안 늘어나므로 페이징과 아무 갈등이 없다.</b> 여러 개를 겹쳐도 된다. 목록 API에서 <b>작성자 닉네임, 카테고리 이름</b>처럼 <b>건당 하나씩 붙는 값</b>은 전부 여기서 처리한다.</p>
+
+<div class="codehead good"><span class="tag">토</span> ToOne은 조인으로 끌고 온다 — 쿼리 1개, limit 정상 부착</div>
+<pre><code><span class="fn">@Query</span>(<span class="st">"select p from Post p join fetch p.author"</span>)
+Page&lt;Post&gt; findPageWithAuthor(Pageable pageable);</code></pre>
+
+<div class="callout warn" style="margin-bottom:22px">
+  <span class="t"><code>join</code>과 <code>join fetch</code>를 반드시 구분해서 말한다</span>
+  일반 <code>join</code>은 <b>SQL 조인만 만들고 select 목록에는 부모만</b> 올라가므로 <b>연관은 여전히 프록시</b>이고 <b>N+1이 그대로</b>다. <code>join fetch</code>여야 <b>연관의 컬럼까지 함께 읽는다.</b>
+</div>
+
+<h3>5-2. 컬 — 컬렉션은 <code>default_batch_fetch_size</code>에 맡긴다 (표준 해법)</h3>
+
+<p><b>컬렉션은 쿼리에서 fetch하지 않는다.</b> LAZY로 두고, <b>실제로 접근하는 순간</b> Hibernate가 <b>여러 부모의 컬렉션을 묶어서 한 번에</b> 가져오게 한다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">BEFORE</span> 페이징이 메모리로 넘어간다</div>
+<pre><code><span class="ln-bad"><span class="fn">@Query</span>(<span class="st">"select p from Post p join fetch p.comments"</span>)</span>
+Page&lt;Post&gt; findPage(Pageable pageable);
+
+<span class="cm">// limit 이 SQL 에서 사라지고 전량이 힙에 올라간다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">AFTER</span> 컬렉션 fetch 를 빼면 끝</div>
+<pre><code><span class="ln-good">Page&lt;Post&gt; findAll(Pageable pageable);  <span class="note">fetch 없음</span></span>
+
+<span class="cm">// limit 이 SQL 에 정상 부착된다.</span>
+<span class="cm">// p.getComments() 에 접근하는 순간 batch fetch 발동</span></code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>설정은 한 줄인데, <b>위치를 틀리는 사람이 아주 많다</b> <span class="badge bonus">가산점</span></h4>
+  <div class="cmp" style="margin-top:4px">
+    <div>
+      <div class="codehead bad"><span class="tag">틀림</span> 조용히 무시된다</div>
+<pre><code>spring:
+  jpa:
+<span class="ln-bad">    hibernate:            <span class="note">properties 단계가 없다</span></span>
+      default_batch_fetch_size: 100
+
+<span class="cm"># 에러도 경고도 없이 그냥 안 먹는다</span></code></pre>
+    </div>
+    <div>
+      <div class="codehead good"><span class="tag">맞음</span> Hibernate 로 전달된다</div>
+<pre><code>spring:
+  jpa:
+<span class="ln-good">    properties:           <span class="note">이 단계가 반드시 필요</span></span>
+      hibernate:
+        default_batch_fetch_size: 100</code></pre>
+    </div>
+  </div>
+  <p style="margin-bottom:0">Spring Boot에는 이 설정을 위한 <b>전용 프로퍼티가 없어서</b> <code>spring.jpa.properties.</code> 아래로 넘겨야 Hibernate에 전달된다. <b>"설정했는데 안 먹는다"의 단골 원인</b>이다. 특정 연관만 다르게 주려면 필드에 <code>@BatchSize(size = 200)</code>을 붙인다.</p>
+</div>
+
+<h4>왜 이게 해법이 되는가 — 배치 기능이 특별해서가 아니라, <b>조인을 안 하기 때문</b>이다</h4>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 420" role="img" aria-label="컬렉션 fetch join과 batch fetch의 대비 도식. 왼쪽은 post와 comment를 조인해 1000만 행짜리 결과 집합 하나를 만들어 limit을 붙일 자리가 없다. 오른쪽은 부모 조회 쿼리와 자식 IN 조회 쿼리를 분리해 부모 쿼리의 결과 20행이 곧 게시글 20건이 되므로 limit이 의미를 되찾고, 자식은 애플리케이션에서 post_id를 키로 분배된다.">
+    <defs>
+      <marker id="e1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="e2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">핵심 대비 — (A)는 부모와 자식을 한 결과 집합 안에서 곱하고, (B)는 둘을 다른 결과 집합으로 떼어놓는다</text>
+
+    <!-- A -->
+    <rect x="25" y="40" width="525" height="296" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="45" y="66" font-size="13" fill="#991b1b" font-weight="700">(A) 컬렉션 fetch join — 한 방에 읽지만 조인이라 행이 불어난다</text>
+
+    <rect x="60" y="86" width="180" height="46" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="150" y="106" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">post</text>
+    <text x="150" y="123" font-size="11" fill="#991b1b" text-anchor="middle" font-weight="700">100만 행</text>
+    <text x="275" y="115" font-size="20" fill="#dc2626" text-anchor="middle" font-weight="700">×</text>
+    <rect x="310" y="86" width="180" height="46" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="400" y="106" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">comment</text>
+    <text x="400" y="123" font-size="11" fill="#991b1b" text-anchor="middle" font-weight="700">게시글당 평균 10개</text>
+
+    <line x1="275" y1="136" x2="275" y2="158" stroke="#dc2626" stroke-width="2" marker-end="url(#e2)"/>
+    <text x="292" y="152" font-size="10.5" fill="#b91c1c" font-weight="700">left join c on c.post_id = p.id</text>
+
+    <rect x="60" y="164" width="430" height="70" rx="9" fill="#dc2626"/>
+    <text x="275" y="190" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">결과 집합 하나 = 1,000만 행</text>
+    <text x="275" y="210" font-size="11.5" fill="#fee2e2" text-anchor="middle">게시글 컬럼이 댓글 수만큼 복제되어 섞여 있다</text>
+    <text x="275" y="226" font-size="11" fill="#fecaca" text-anchor="middle">"결과 1행"과 "게시글 1건"의 대응이 깨졌다</text>
+
+    <rect x="60" y="248" width="430" height="70" rx="9" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+    <text x="275" y="272" font-size="12.5" fill="#991b1b" text-anchor="middle" font-weight="700">이 결과 집합에서는 "게시글 20건"을 셀 방법이 없다</text>
+    <text x="275" y="292" font-size="11.5" fill="#7f1d1d" text-anchor="middle">→ limit 이 붙지 못하고, Hibernate 가 limit 을 떼어낸다</text>
+    <text x="275" y="308" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">→ 전량 힙 적재 → 메모리 페이징</text>
+
+    <!-- B -->
+    <rect x="570" y="40" width="525" height="296" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="590" y="66" font-size="13" fill="#166534" font-weight="700">(B) batch fetch — 쿼리를 둘로 나누면 각 쿼리 안에서 행이 안 불어난다</text>
+
+    <rect x="595" y="80" width="475" height="66" rx="9" fill="#fff" stroke="#16a34a"/>
+    <circle cx="617" cy="102" r="11" fill="#16a34a"/><text x="617" y="106" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+    <text x="636" y="100" font-size="11.5" fill="#166534" font-weight="700">부모만 조회 — 조인이 없다</text>
+    <text x="636" y="118" font-size="11" fill="#15803d" class="mono">select p ... order by p.created_at desc limit 20 offset 0</text>
+    <text x="636" y="136" font-size="11" fill="#166534" font-weight="700">결과 20행 = 게시글 20건 → limit 이 원래 의미를 되찾는다</text>
+
+    <line x1="832" y1="146" x2="832" y2="168" stroke="#16a34a" stroke-width="2" marker-end="url(#e1)"/>
+    <text x="852" y="162" font-size="10.5" fill="#15803d" font-weight="700">그 20건의 id</text>
+
+    <rect x="595" y="174" width="475" height="66" rx="9" fill="#fff" stroke="#16a34a"/>
+    <circle cx="617" cy="196" r="11" fill="#16a34a"/><text x="617" y="200" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+    <text x="636" y="194" font-size="11.5" fill="#166534" font-weight="700">자식을 id 목록으로 한 번에</text>
+    <text x="636" y="212" font-size="11" fill="#15803d" class="mono">select c ... where c.post_id in (?, ?, ..., ?)</text>
+    <text x="636" y="230" font-size="11" fill="#166534" font-weight="700">IN 은 조인이 아니라 필터다 — ①의 행을 늘리지 않는다</text>
+
+    <line x1="832" y1="240" x2="832" y2="260" stroke="#16a34a" stroke-width="2" marker-end="url(#e1)"/>
+
+    <rect x="595" y="266" width="475" height="52" rx="9" fill="#16a34a"/>
+    <text x="832" y="288" font-size="12.5" fill="#fff" text-anchor="middle" font-weight="700">애플리케이션에서 post_id 를 키로 부모에게 나눠 붙인다</text>
+    <text x="832" y="308" font-size="11.5" fill="#dcfce7" text-anchor="middle">총 2쿼리 · 페이징 정상 · 행 증폭 없음</text>
+
+    <!-- bottom compare -->
+    <rect x="25" y="348" width="1070" height="58" rx="10" fill="#1e293b"/>
+    <text x="285" y="372" font-size="12" fill="#fca5a5" text-anchor="middle" font-weight="700">(A) 읽는 총량: 게시글 100만 + 댓글 1,000만</text>
+    <text x="285" y="392" font-size="11" fill="#94a3b8" text-anchor="middle">조건에 맞는 전부를 읽고 20건만 남긴다</text>
+    <text x="560" y="384" font-size="15" fill="#e2e8f0" text-anchor="middle" font-weight="700">vs</text>
+    <text x="835" y="372" font-size="12" fill="#86efac" text-anchor="middle" font-weight="700">(B) 읽는 총량: 게시글 20 + 댓글 약 200</text>
+    <text x="835" y="392" font-size="11" fill="#94a3b8" text-anchor="middle">같은 화면을 그리는 데 드는 비용이 5만 배 차이 난다</text>
+  </svg>
+  <figcaption><b>떼어놓으면 부모 쿼리의 행 수가 곧 부모 엔티티 수</b>가 되므로, <code>limit</code>이 잃어버렸던 의미를 되찾는다. ②에 <code>limit</code>이 필요 없는 이유도 같다 — <b><code>where</code> 조건 자체가 "이 20건에 딸린 것"으로 범위를 이미 닫아놓았기 때문</b>이다.</figcaption>
+</figure>
+
+<div class="callout ok">
+  <span class="t">쿼리 수는 <code>1 + N</code>에서 <code>1 + ceil(N / size)</code>로 떨어진다</span>
+  페이지 크기 20에 size 100이면 <code>1 + ceil(20/100) = 2</code>, 즉 <b>총 2쿼리</b>다. 눈치챘겠지만 이건 <b>"부모를 페이징해 조회 → 그 id들로 컬렉션 일괄 조회 → 애플리케이션에서 조합"이라는 2쿼리 설계를 Hibernate가 대신 해주는 것</b>이다. <b>손으로 짜던 패턴에 이름이 붙어 있는 것뿐</b>이다.
+</div>
+
+<h4><code>size</code>는 어떻게 정하나</h4>
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">하한</div><div class="d"><b>페이지 크기 이상</b>이 최소선. 페이지 크기가 20인데 size가 5면 <b>컬렉션 쿼리가 4번</b> 나간다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">상한</div><div class="d">size만큼 <code>IN</code> 파라미터가 늘어 <b>SQL이 길어지고</b>, DB에 따라 <b><code>IN</code> 목록의 최대 항목 수 제한</b>에 걸릴 수 있다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">실무 기본값</div><div class="d">전역에 <b>100</b> 정도를 깔아 <b>안전망</b>으로 쓰고, 유독 큰 페이지를 쓰는 화면의 연관만 <code>@BatchSize</code>로 올린다. <b>100~1000 범위를 벗어날 일은 드물다.</b></div></div>
+</div>
+
+<div class="memo red">
+  <h4>공존의 조건을 정확히 말해야 한다 — <code>@EntityGraph</code>를 붙이면 그대로 재현된다</h4>
+  <p style="margin-top:0">batch fetch가 페이징과 공존하는 이유는 <b>그 기능이 특별해서가 아니라 페이징 쿼리가 컬렉션을 fetch하지 않기 때문</b>이다. 위 (B)의 ①에 <b>조인이 없다</b>는 사실이 전부다.</p>
+  <p>그래서 <code>default_batch_fetch_size</code>를 켜두고도 <code>@EntityGraph(attributePaths = "comments")</code>를 붙이면 <b>메모리 페이징이 그대로 재현된다</b> — <code>@EntityGraph</code>는 <b>fetch join과 같은 SQL로 번역되어 (A)로 돌아가기 때문</b>이다.</p>
+  <div class="rule red">지켜야 할 규칙은 <b>설정값이 아니라</b><br>"페이징 쿼리에서 컬렉션을 fetch하지 않는다"</div>
+  <p style="margin-bottom:0"><b>한계도 정직하게 말한다.</b> <b>쿼리가 1개가 되는 것은 아니고</b>, N+1을 없애는 게 아니라 <code>1+N</code>을 <code>1+몇 개</code>로 낮추는 <b>완화책</b>이다. 그리고 가장 큰 부작용은 성능이 아니라 <b>은폐</b>다 — <b>증상이 옅어져서 문제의 존재 자체를 모르게 된다.</b> 그래서 <b>6절의 탐지 장치와 반드시 짝으로</b> 깔아야 한다.</p>
+</div>
+
+<h3>5-3. 조 — 조회 전용 화면이면 애초에 DTO 프로젝션</h3>
+
+<p>앞의 둘은 <b>엔티티를 만든다</b>는 전제를 공유한다. 목록 API처럼 <b>읽기만 하는 화면</b>이라면 그 전제를 버리는 게 가장 근본적이다. <b>엔티티를 안 만들면 프록시도 스냅샷도 없다.</b></p>
+
+<pre><code><span class="kw">public</span> Page&lt;PostView&gt; <span class="fn">page</span>(Pageable pageable) {
+<span class="ln-good">    <span class="cm">// ① 부모를 필요한 컬럼만, 페이징으로 — 조인이 없으니 limit 정상</span></span>
+    Page&lt;PostRow&gt; posts = postRepository.findRows(pageable);                    <span class="cm">// 쿼리 1</span>
+
+    List&lt;Long&gt; postIds = posts.getContent().stream().map(PostRow::id).toList();
+
+<span class="ln-good">    <span class="cm">// ② 자식을 id 목록으로 한 번에 — 5-2 (B)②와 같은 모양의 IN 조회다</span></span>
+    Map&lt;Long, List&lt;CommentRow&gt;&gt; byPost = commentRepository.findRowsByPostIdIn(postIds)
+            .stream().collect(groupingBy(CommentRow::postId));                  <span class="cm">// 쿼리 2</span>
+
+    <span class="cm">// ③ 애플리케이션에서 조합 — 총 2쿼리, 페이징 정상, 행 증폭 없음</span>
+    <span class="kw">return</span> posts.map(p -&gt; <span class="kw">new</span> PostView(p, byPost.getOrDefault(p.id(), List.of())));
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">5-2와 5-3은 같은 전략이고, <b>누가 수행하느냐</b>만 다르다</span>
+  <b>5-2는 Hibernate가 알아서 해주는 것</b>이고, <b>5-3은 내가 손으로 쓰는 것</b>이다. 손으로 쓰면 <b>엔티티를 안 만들 수 있다는 이득이 추가</b>된다.
+</div>
+
+<div class="memo red">
+  <h4>주의 — <b>"DTO를 반환한다"와 "DTO 프로젝션"은 다르다</b></h4>
+  <p style="margin:0">반환 타입이 DTO여도 <b>엔티티를 조회해서 자바에서 변환하면 아무것도 달라지지 않는다.</b> 엔티티는 이미 다 만들어졌고 영속성 컨텍스트에도 올라갔다. <b>DTO가 쿼리의 결과여야</b> 효과가 있다.</p>
+</div>
+
+<h3>5-4. "id만 먼저 페이징하고 다시 조회"는 언제 필요한가</h3>
+
+<p><code>select distinct p.id from Post p join p.comments c ... limit 20</code>으로 <b>id를 먼저 뽑는 2단계 방식</b>도 자주 언급된다. <b>방향은 맞지만 조건을 정확히 붙여야 한다.</b></p>
+
+<div class="split">
+  <div class="pane g">
+    <h4>이때만 필요하다 — 컬렉션에 <b>검색 조건</b>이 걸린 경우</h4>
+    <ul>
+      <li>예: <b>"댓글에 특정 키워드가 달린 게시글 목록"</b></li>
+      <li>이때는 <b>조인이 불가피</b>하고, 행이 불어나므로 <b><code>distinct</code>가 SQL에 반드시 있어야 한다.</b></li>
+      <li><code>distinct</code>를 붙이면 결과 집합이 다시 <b>"게시글 1건 = 1행"</b>이 되므로 <b><code>limit</code>이 의미를 되찾는다</b> — 이것이 이 기법의 원리다.</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>이때는 그 조인 자체가 불필요하다</h4>
+    <ul>
+      <li><b>컬렉션이 그냥 화면에 필요할 뿐</b>이고 조건은 게시글에만 걸려 있는 경우.</li>
+      <li><code>select p from Post p where ... limit 20</code>으로 끝이고, 컬렉션은 <b>5-2나 5-3의 방식</b>으로 채우면 된다.</li>
+      <li><b>조인을 걷어내는 게 id 서브쿼리보다 낫다.</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4><code>distinct</code> — 두 경우를 뭉뚱그리면 틀린다 <span class="badge bonus">가산점</span></h4>
+  <div class="grid g2">
+    <div class="tile red"><div class="k">엔티티 fetch join의 distinct</div><div class="d"><b>Hibernate 6부터 불필요하고 오히려 손해.</b> 부모 중복 제거를 <b>Hibernate가 항상 해주는데</b>, <code>distinct</code>를 쓰면 <b>SQL로도 나가서 DB가 중복 제거 비용</b>을 낸다.</div></div>
+    <div class="tile ok"><div class="k">id만 프로젝션하는 쿼리의 distinct</div><div class="d"><b>여전히 필수.</b> 여기서는 <b>결과 집합을 "1건 = 1행"으로 되돌리는 것 자체가 목적</b>이라 SQL에 나가야 한다.</div></div>
+  </div>
+</div>
+
+<h3>5-5. 선택 기준 — 상황에서 바로 답으로</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>상황</th><th>선택</th><th>근거</th></tr></thead>
+  <tbody>
+    <tr><td>ToOne 연관 (페이징 유무 무관)</td><td class="good"><code>fetch join</code> / <code>@EntityGraph</code></td><td>조인해도 행이 안 늘어 <code>limit</code> 정상</td></tr>
+    <tr><td>컬렉션 1개 + <b>페이징 없음</b></td><td class="good"><code>fetch join</code></td><td>쿼리 1개. 6+ 에서 <code>distinct</code>는 빼는 게 낫다</td></tr>
+    <tr class="hl"><td><b>컬렉션 + 페이징</b></td><td class="good"><b>batch fetch size</b></td><td><b>fetch join 금지 구간</b></td></tr>
+    <tr><td>컬렉션 2개 이상</td><td class="good">batch fetch size</td><td>fetch join은 <b>카테시안 곱</b></td></tr>
+    <tr><td>조회 전용 목록 API</td><td class="good">DTO 프로젝션 (컬렉션은 2단 조회)</td><td>엔티티·프록시를 아예 안 만든다</td></tr>
+    <tr><td>전 구간 안전망</td><td class="good">전역 <code>default_batch_fetch_size</code></td><td>놓친 지점의 피해를 낮춘다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 배포 전에 잡는 4층 방어선 — 이 문항의 실제 관문</h2>
+
+<p>4절에서 확인한 대로 이 버그는 <b>예외 없음 / 결과 정상 / 개발 환경 무증상</b>이 동시에 성립한다. <b>사람의 주의력으로 잡을 수 있는 조건이 하나도 없다</b>는 뜻이다.</p>
+
+<div class="callout trap">
+  <span class="t">그래서 이 답변들은 여기서 미달로 기록된다</span>
+  <b>"코드 리뷰에서 잘 보겠다"</b> · <b>"쿼리 로그를 확인하겠다"</b> — 둘 다 <b>사람의 주의력에 기대는 장치</b>다. 필요한 것은 <b>사람이 안 봐도 실패하는 장치</b>다.
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="4층 방어선 도식. 1층은 fail_on_pagination_over_collection_fetch 설정으로 그 쿼리를 실행하는 순간 예외가 나고 비용은 설정 한 줄이다. 2층은 로그 어펜더로 경고를 단정해 테스트 실행 시 잡는다. 3층은 Statistics로 쿼리 수를 단정해 PR 단계에서 잡는다. 4층은 카디널리티 픽스처로 위 셋의 전제 조건을 만든다. 아래는 도입 순서가 1, 4, 3, 2임을 보여준다.">
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">사람이 안 봐도 실패하는 장치 — 4층으로 세운다</text>
+
+    <text x="300" y="44" font-size="11.5" fill="#6b7280" text-anchor="middle" font-weight="700">장치</text>
+    <text x="700" y="44" font-size="11.5" fill="#6b7280" text-anchor="middle" font-weight="700">언제 잡히나</text>
+    <text x="950" y="44" font-size="11.5" fill="#6b7280" text-anchor="middle" font-weight="700">비용</text>
+
+    <rect x="30" y="52" width="1060" height="62" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <circle cx="60" cy="83" r="16" fill="#2563eb"/><text x="60" y="88" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+    <text x="88" y="78" font-size="12" fill="#1d4ed8" font-weight="700" class="mono">fail_on_pagination_over_collection_fetch: true</text>
+    <text x="88" y="97" font-size="11" fill="#1e40af">경고를 예외로 승격시킨다. 기본값은 false — 아무 조치도 안 하면 조용히 메모리 페이징</text>
+    <text x="700" y="83" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">그 쿼리를 실행하는 순간</text>
+    <text x="950" y="76" font-size="11.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">설정 한 줄</text>
+    <text x="950" y="94" font-size="10.5" fill="#1e40af" text-anchor="middle">압도적으로 저렴하다</text>
+
+    <rect x="30" y="122" width="1060" height="62" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <circle cx="60" cy="153" r="16" fill="#64748b"/><text x="60" y="158" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+    <text x="88" y="148" font-size="12" fill="#1f2937" font-weight="700">로그 어펜더로 WARN 단정</text>
+    <text x="88" y="167" font-size="11" fill="#475569">1층을 운영에 켜지 못하는 팀의 대체재. 테스트에서 경고 자체를 실패로 다룬다</text>
+    <text x="700" y="153" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">테스트 실행 시</text>
+    <text x="950" y="153" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">테스트 유틸 1개</text>
+
+    <rect x="30" y="192" width="1060" height="62" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <circle cx="60" cy="223" r="16" fill="#64748b"/><text x="60" y="228" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+    <text x="88" y="218" font-size="12" fill="#1f2937" font-weight="700">Statistics 로 쿼리 수를 단정</text>
+    <text x="88" y="237" font-size="11" fill="#475569">고친 뒤 회귀를 막는 자물쇠 — 다음 PR 에서 누가 @EntityGraph 를 붙여 되돌리는 것을 막는다</text>
+    <text x="700" y="223" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">PR 단계</text>
+    <text x="950" y="223" font-size="11.5" fill="#334155" text-anchor="middle" font-weight="700">테스트당 3줄</text>
+
+    <rect x="30" y="262" width="1060" height="62" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <circle cx="60" cy="293" r="16" fill="#16a34a"/><text x="60" y="298" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">4</text>
+    <text x="88" y="288" font-size="12" fill="#166534" font-weight="700">카디널리티 픽스처 — 부모 수 &gt; 페이지 크기 AND 자식 수 &gt; 1</text>
+    <text x="88" y="307" font-size="11" fill="#15803d">코드가 아닌 항목. "로컬에서 안 터진다"는 검증이 아니라 사각지대라는 인식을 규칙으로 바꾼다</text>
+    <text x="700" y="293" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">위 셋의 전제 조건</text>
+    <text x="950" y="293" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">픽스처 규칙</text>
+
+    <rect x="30" y="336" width="1060" height="52" rx="10" fill="#1e293b"/>
+    <text x="150" y="367" font-size="12.5" fill="#e2e8f0" text-anchor="middle" font-weight="700">도입 순서는 1 → 4 → 3 → 2</text>
+    <text x="410" y="360" font-size="11" fill="#93c5fd" text-anchor="middle">① 압도적으로 저렴하고 효과가 크므로</text>
+    <text x="410" y="376" font-size="11" fill="#93c5fd" text-anchor="middle">먼저 켠다</text>
+    <text x="640" y="360" font-size="11" fill="#86efac" text-anchor="middle">④ 로 "1번이 발동할 수 있는</text>
+    <text x="640" y="376" font-size="11" fill="#86efac" text-anchor="middle">테스트"를 확보한다</text>
+    <text x="850" y="360" font-size="11" fill="#e2e8f0" text-anchor="middle">③ 은 고친 뒤 회귀를 막는</text>
+    <text x="850" y="376" font-size="11" fill="#e2e8f0" text-anchor="middle">자물쇠</text>
+    <text x="1010" y="360" font-size="11" fill="#e2e8f0" text-anchor="middle">② 는 1번을 전 환경에</text>
+    <text x="1010" y="376" font-size="11" fill="#e2e8f0" text-anchor="middle">켜지 못할 때의 대체재</text>
+  </svg>
+  <figcaption><b>1층이 이 문항의 실제 관문이다.</b> 나머지 셋은 1층을 보강하거나 대체하는 장치이고, <b>4층은 위 셋이 발동할 수 있게 만드는 전제 조건</b>이다.</figcaption>
+</figure>
+
+<h3>6-1. 1층 — 경고를 예외로 승격시킨다 (가장 먼저 할 일)</h3>
+
+<p>Hibernate에는 이 상황을 <b>경고 대신 예외로 만드는 설정</b>이 있다. <b>아는 사람이 드물다.</b></p>
+
+<div class="codehead good"><span class="tag">1층</span> 이 한 줄이 문제의 성격을 바꾼다</div>
+<pre><code>spring:
+  jpa:
+    properties:
+      hibernate:
+        query:
+<span class="ln-good">          fail_on_pagination_over_collection_fetch: <span class="kw">true</span>   <span class="note">기본값 false</span></span></code></pre>
+
+<div class="callout info">
+  <span class="t">확인 범위</span>
+  6.6.53 소스에서 확인했다. 프로퍼티 이름은 <code>hibernate.query.fail_on_pagination_over_collection_fetch</code>이고 <b>기본값은 <code>false</code></b>, Hibernate <b>5.2.13부터</b> 존재한다(<code>org.hibernate.cfg.QuerySettings</code>). <code>true</code>면 <code>AbstractSqmSelectionQuery.errorOrLogForPaginationWithCollectionFetch()</code>가 로그 대신 <code>HibernateException</code>을 던진다.
+</div>
+
+<pre><code><span class="ln-bad">org.hibernate.HibernateException: setFirstResult() or setMaxResults() specified with
+collection fetch join (in-memory pagination was about to be applied, but
+'hibernate.query.fail_on_pagination_over_collection_fetch' is enabled)</span></code></pre>
+
+<p><code>in-memory pagination was about to be applied</code>가 이 메시지의 요지다 — <b>"막 메모리 페이징을 하려던 참이었는데, 당신이 그걸 하지 말라고 켜뒀으므로 대신 실패한다."</b> 4-1의 경고와 <b>완전히 같은 상황</b>을 가리키는데, <b>로그 한 줄이 아니라 예외로 온다</b>는 것만 다르다.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>켜는 순간 달라지는 것</h4>
+    <ul>
+      <li>배포 전에 <b>테스트가 빨간불로 실패</b>한다. 목록 API를 한 번이라도 호출하는 테스트가 있으면 그 자리에서 잡힌다.</li>
+      <li><b>데이터가 적어도 잡힌다.</b> 이 검사는 <b>데이터 양이 아니라 쿼리의 모양</b>을 보기 때문이다 — <b>4-2의 세 번째 조건(개발 환경 무증상)을 정면으로 무력화</b>한다.</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>주의점 둘</h4>
+    <ul>
+      <li>예외는 <b>부팅 시점이 아니라 그 쿼리를 실행하는 시점</b>에 난다. 그러므로 <b>"켜두면 안전하다"가 아니라 "켜두고 그 쿼리를 타는 테스트가 있어야 안전하다"</b>이다.</li>
+      <li>Hibernate <b>7.4 이상</b>에서는 파생 테이블로 밀어넣기가 가능한 경우 <b>애초에 메모리 페이징이 아니므로 발동하지 않는다.</b></li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>기본값이 <code>false</code>라는 사실이 이 문항의 핵심을 그대로 말해준다</h4>
+  <div class="rule red" style="margin-bottom:0">아무 조치도 안 하면 <b>조용히 메모리 페이징이 된다</b></div>
+</div>
+
+<h3>6-2. 2층 — 경고 로그를 테스트에서 실패로 만든다</h3>
+
+<p>1층을 <b>운영에 켜는 것이 부담스러운 팀</b>도 있다(7절 꼬리질문 참고). 그런 경우에도 <b>테스트에서는 경고 자체를 실패로 다룰 수 있다.</b> 로그 어펜더를 붙여 WARN을 수집한 뒤 단정하면 된다.</p>
+
+<pre><code><span class="cm">// Hibernate 쿼리 로거의 WARN 을 수집해 "한 건도 없어야 한다" 로 못 박는다</span>
+<span class="kw">class</span> NoInMemoryPaginationTest {
+
+    <span class="kw">private</span> ListAppender&lt;ILoggingEvent&gt; appender;
+    <span class="kw">private</span> Logger queryLogger;
+
+    <span class="fn">@BeforeEach</span>
+    <span class="kw">void</span> <span class="fn">attach</span>() {
+        <span class="cm">// 6.x 의 로거 이름. 5.x 는 org.hibernate 하위의 다른 이름이므로,</span>
+        <span class="cm">// 버전이 다르면 실제 로그 한 줄을 찍어보고 로거 이름을 확인해 맞춘다.</span>
+        queryLogger = (Logger) LoggerFactory.getLogger(<span class="st">"org.hibernate.orm.query"</span>);
+        appender = <span class="kw">new</span> ListAppender&lt;&gt;();
+        appender.start();
+        queryLogger.addAppender(appender);
+    }
+
+    <span class="fn">@AfterEach</span>
+    <span class="kw">void</span> <span class="fn">detach</span>() { queryLogger.detachAppender(appender); }
+
+    <span class="fn">@Test</span>
+    <span class="kw">void</span> <span class="fn">게시글_목록은_메모리_페이징을_하지_않는다</span>() {
+        postService.list(PageRequest.of(<span class="kw">0</span>, <span class="kw">20</span>));
+
+<span class="ln-good">        <span class="cm">// 메시지 코드(HHH000104 / HHH90003004)는 버전마다 달라지므로 문구로 잡는다</span></span>
+        assertThat(appender.list)
+                .noneMatch(e -&gt; e.getFormattedMessage()
+                        .contains(<span class="st">"firstResult/maxResults specified with collection fetch"</span>));
+    }
+}</code></pre>
+
+<div class="rule red">메시지 <b>코드가 아니라 문구</b>로 매칭하는 것이 핵심 — <code>HHH000104</code>는 5.x 코드라서 6.x에서는 절대 안 걸린다<br><span style="font-size:.92rem;font-weight:600">운영 로그 알람 룰도 같은 이유로 문구 기준이어야 한다</span></div>
+
+<h3>6-3. 3층 — 쿼리 수를 단정한다</h3>
+
+<p>batch fetch로 고친 뒤에는 <b>"이 API는 쿼리 몇 개인가"</b>를 테스트로 고정한다. 이게 있어야 다음 PR에서 누군가 <code>@EntityGraph(attributePaths = "comments")</code>를 붙여 <b>원상 복구시키는 것을 막을 수 있다.</b></p>
+
+<pre><code><span class="fn">@Test</span>
+<span class="kw">void</span> <span class="fn">목록_API_는_쿼리_2개로_끝난다</span>() {
+    Statistics stats = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+    stats.clear();
+<span class="ln-good">    entityManager.clear();          <span class="cm">// 1차 캐시가 남아 있으면 쿼리 수가 줄어 통과해버린다</span></span>
+
+    postService.list(PageRequest.of(<span class="kw">0</span>, <span class="kw">20</span>));   <span class="cm">// 부모 1 + 컬렉션 배치 1</span>
+
+    assertThat(stats.getPrepareStatementCount()).isEqualTo(<span class="kw">2</span>);
+}</code></pre>
+
+<div class="callout warn">
+  <span class="t">사소하지만 자주 틀리는 것 둘</span>
+  메서드 이름은 <code>getPrepareStatementCount()</code>다(<b><code>Prepared</code>가 아니다</b>). 그리고 <code>Statistics</code>를 쓰려면 <code>spring.jpa.properties.hibernate.generate_statistics=true</code>가 필요하다.
+</div>
+
+<h3>6-4. 4층 — "로컬에서 안 터진다"를 안전 신호로 읽지 않는다</h3>
+
+<p>가장 중요한데 <b>코드가 아닌 항목</b>이다. <b>개발 DB에 데이터가 적다는 사실은 검증이 아니라 사각지대다.</b> 이 인식을 <b>픽스처 설계 규칙</b>으로 바꿔야 한다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">BEFORE</span> 데이터는 많은데 통과한다</div>
+<pre><code><span class="ln-bad">Post post = savePost();                       <span class="note">부모 1건</span></span>
+IntStream.range(<span class="kw">0</span>, <span class="kw">100</span>).forEach(i -&gt; saveComment(post));
+
+<span class="cm">// 게시글 1건에 댓글 100개.</span>
+<span class="cm">// 페이징이 발동을 안 해 문제가 재현되지 않는다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">AFTER</span> 두 조건을 동시에 만족시킨다</div>
+<pre><code><span class="ln-good">IntStream.range(<span class="kw">0</span>, <span class="kw">50</span>).forEach(i -&gt; {   <span class="note">50 &gt; 페이지 20</span></span>
+    Post p = savePost();
+<span class="ln-good">    IntStream.range(<span class="kw">0</span>, <span class="kw">3</span>).forEach(j -&gt; saveComment(p)); <span class="note">3 &gt; 1</span></span>
+});</code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>재현 조건 두 개 — 하나만 만족하는 픽스처는 문제를 통과시킨다</h4>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k">부모 수 &gt; 페이지 크기</div><div class="d"><b>페이징이 실제로 잘라야</b> 한다. 부모가 페이지 크기보다 적으면 <code>limit</code>이 <b>아무것도 자르지 않아 차이가 안 난다.</b></div></div>
+    <div class="tile ok"><div class="k">자식 수 &gt; 1</div><div class="d"><b>행이 실제로 불어나야</b> 한다. 자식이 1개뿐이면 조인해도 행이 안 늘어 <b>ToOne과 구분이 안 된다.</b></div></div>
+  </div>
+  <p style="margin-bottom:0">2절의 표를 떠올리면 <b>왜 두 조건이 다 필요한지</b>가 보인다. 이건 <b>N+1 재현 실패의 원인과 정확히 같은 함정</b>이다 — <b>"픽스처는 건수가 아니라 카디널리티로 설계한다."</b></p>
+</div>
+
+<div class="callout ok" style="margin-bottom:0">
+  <span class="t">여기에 운영 관점의 습관을 하나 더 붙이면 완성된다</span>
+  <b>"운영 데이터가 지금의 10배가 되면 이 코드는 어떻게 되나"</b>를 목록·검색 API에 대해 <b>배포 전에 한 번씩 묻는 것.</b> 이 문항은 <b>그 질문을 안 하면 절대 안 걸리는 유형</b>이다.
+</div>
+
+<div class="scroll">
+<table>
+  <caption>층별 정리 — 무엇이 언제 잡히고 얼마짜리인가</caption>
+  <thead><tr><th>층</th><th>장치</th><th>언제 잡히나</th><th>비용</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>1</b></td><td><code>fail_on_pagination_over_collection_fetch: true</code></td><td>그 쿼리를 <b>실행하는 순간</b></td><td class="good">설정 한 줄</td></tr>
+    <tr><td>2</td><td>로그 어펜더로 WARN 단정</td><td>테스트 실행 시</td><td>테스트 유틸 1개</td></tr>
+    <tr><td>3</td><td><code>Statistics</code> 쿼리 수 단정</td><td>PR 단계</td><td>테스트당 3줄</td></tr>
+    <tr><td>4</td><td>카디널리티 픽스처</td><td>위 셋의 <b>전제 조건</b></td><td>픽스처 규칙</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>7-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">판별 축 한 문장?</div><div class="d">조인해도 <b>"결과 1행 = 루트 엔티티 1건"</b>이 유지되는가. <b>ToOne은 안전 / ToMany만 문제.</b> "1:1이라 안전"이 아니라 <b>"단일 값이라 안전"</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">Hibernate가 택한 것과 대가?</div><div class="d"><b>정확성</b>을 택하고 <b>메모리</b>를 지불했다 — SQL에서 <code>limit</code>을 떼고 <b>전량을 힙에 올린 뒤 자바 <code>subList</code></b>로 자른다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">grep 기준은?</div><div class="d">코드가 아니라 <b>문구</b> — <code>firstResult/maxResults specified with collection fetch</code>. <code>HHH000104</code>는 <b>5.x 코드</b>라 6.x에선 안 걸린다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">해법 3종 약어?</div><div class="d"><b>토·컬·조</b> — <b>토</b>One은 fetch join / <b>컬</b>렉션은 <code>default_batch_fetch_size</code> / <b>조</b>회 전용은 DTO 프로젝션.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">설정 위치 함정?</div><div class="d"><code>spring.jpa.<b>properties</b>.hibernate.default_batch_fetch_size</code>. <code>properties</code>를 빼면 <b>에러도 경고도 없이 무시</b>된다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">1층 방어선 이름과 기본값?</div><div class="d"><code>hibernate.query.fail_on_pagination_over_collection_fetch</code> — <b>기본 <code>false</code></b>. <code>true</code>면 <b>로그 대신 예외</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">없는 신호 셋?</div><div class="d"><b>예외 없음 · 결과 정상 · 개발 환경 무증상.</b> 그래서 <b>리뷰를 통과하고 정상 배포된다.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">재현 조건 둘?</div><div class="d"><b>부모 수 &gt; 페이지 크기</b> AND <b>자식 수 &gt; 1</b>. 하나만 만족하는 픽스처는 <b>문제를 통과시킨다</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">쿼리 수 공식?</div><div class="d"><code>1 + N</code> → <code>1 + ceil(N / size)</code>. 페이지 20 · size 100이면 <b>2쿼리</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>distinct</code> 두 경우?</div><div class="d">엔티티 fetch join의 <code>distinct</code>는 <b>6+ 에서 불필요·손해</b>, <b>id만 프로젝션하는 쿼리</b>의 <code>distinct</code>는 <b>여전히 필수</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">컬렉션 둘 + 페이징?</div><div class="d">fetch join은 <b>후보에서 탈락</b>(카테시안 곱). <b>ToOne만 fetch join, 컬렉션 둘은 batch</b> → 곱이 아니라 <b>합</b>(총 3쿼리).</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">한 문장 결론?</div><div class="d"><b>"결과가 맞다는 것이 안전하다는 뜻이 아니다."</b> 정확성 문제가 아니라 <b>자원 문제</b>고, 자원 문제는 <b>데이터가 자라야만 드러난다</b>.</div></div>
+</div>
+
+<h3>7-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>결과는 정확하게 나온다면서요. 그럼 뭐가 문제인가요? <span class="badge core">필수</span><span class="hint">힌트: "정확성"과 "자원"을 갈라 말한다</span></summary><div class="a">
+  <p><b>정확성의 문제가 아니라 자원의 문제</b>이기 때문이다. 반환되는 20건은 완벽하지만, <b>그 20건을 얻기 위해 조건에 맞는 전체를 읽어 엔티티로 조립한다.</b></p>
+  <p>비용은 세 군데서 난다 — <b>DB에서 전체 행을 스캔하고 네트워크로 전송하는 I/O</b>, <b>그것을 엔티티로 만드는 CPU</b>, 그리고 <b>힙 사용량</b>이다.</p>
+  <p>그리고 이 비용은 <b>데이터 양에 비례해 자란다.</b> 오늘 200건이면 무해하고 내년 200만 건이면 치명적이다.</p>
+  <div class="rule red" style="margin-bottom:0">즉 이건 "버그가 있다/없다"의 문제가 아니라 <b>시한폭탄이 있다/없다</b>의 문제다</div>
+</div></details>
+
+<details class="q"><summary>페이지 정보(전체 건수, 마지막 페이지)는 왜 정상으로 보이나요? <span class="badge bonus">가산점</span><span class="hint">힌트: <code>Page</code>가 쏘는 쿼리는 하나가 아니다</span></summary><div class="a">
+  <p><code>Page</code>를 반환할 때 <b>총 건수를 세는 count 쿼리는 별도로 나가고, 거기엔 조인 fetch가 없으므로 정상</b>이기 때문이다. 그래서 화면의 페이지네이션 UI는 <b>완벽하게 동작하고, 내용도 맞다.</b></p>
+  <p style="margin-bottom:0"><b>관측 가능한 모든 지표가 정상을 가리키는데 힙만 조용히 차오르는 상태</b> — 4-2에서 말한 "신호가 없다"는 것의 구체적인 모습이다. 이 질문에 <b>"count는 정상이라 더 헷갈린다"</b>고 답하면 <b>실제로 겪어본 사람으로 읽힌다.</b></p>
+</div></details>
+
+<details class="q"><summary><code>@EntityGraph(attributePaths = "comments")</code>로 바꾸면 안전한가요? <span class="badge trap">함정</span><span class="hint">힌트: 무엇으로 "번역"되는지를 본다</span></summary><div class="a">
+  <p><b>아니다. 완전히 같은 문제가 재현된다.</b> <code>@EntityGraph</code>는 <b>fetch join과 같은 SQL로 번역</b>되기 때문이다 — 5-2 도식의 <b>(A)로 그대로 돌아간다.</b></p>
+  <p><code>default_batch_fetch_size</code>를 켜 두었더라도 마찬가지다. <b>batch fetch가 페이징과 공존하는 이유는 그 설정이 특별해서가 아니라 "페이징 쿼리가 컬렉션을 fetch하지 않기 때문"</b>인데, <code>@EntityGraph</code>가 그 전제를 깨버린다.</p>
+  <div class="rule red" style="margin-bottom:0">지켜야 할 것은 <b>설정값이 아니라 규칙</b>이다 —<br>"페이징 쿼리에서 컬렉션을 fetch하지 않는다"</div>
+</div></details>
+
+<details class="q"><summary><code>Page</code> 대신 <code>Slice</code>로 바꾸면 해결되나요? <span class="badge trap">함정</span><span class="hint">힌트: <code>Slice</code>가 없애는 것은 어느 쿼리인가</span></summary><div class="a">
+  <p><b>해결되지 않는다.</b> <code>Slice</code>가 <code>Page</code>와 다른 점은 <b>총 건수를 세는 count 쿼리를 생략한다</b>는 것뿐이다.</p>
+  <p>본체 쿼리는 여전히 <code>Pageable</code>을 <b><code>setFirstResult()</code> / <code>setMaxResults()</code>로 번역</b>해서 실행한다. 그리고 Hibernate가 보는 것은 정확히 <b>그 둘 + 컬렉션 fetch의 조합</b>이다. 그래서 <b>같은 경고가 그대로 찍히고 같은 메모리 페이징이 일어난다.</b></p>
+  <p style="margin-bottom:0">이 질문의 교훈은 <b>"반환 타입을 바꾸는 것은 쿼리의 모양을 바꾸는 것이 아니다"</b>이다. 고쳐야 할 것은 <b>컬렉션 fetch를 쿼리에서 빼는 것</b> 하나다.</p>
+</div></details>
+
+<details class="q"><summary>그럼 컬렉션 fetch join은 언제 써도 되나요? <span class="badge core">필수</span><span class="hint">힌트: 이 문항이 금지하는 것은 fetch join이 아니라 <b>조합</b>이다</span></summary><div class="a">
+  <p><b>페이징이 없으면 써도 된다.</b> 이 문항이 금지하는 것은 <b>fetch join 자체가 아니라 "컬렉션 fetch join + 페이징"이라는 조합</b>이다.</p>
+  <ul style="margin:6px 0 10px;padding-left:20px">
+    <li><b>상세 화면(단건 조회)</b> — <code>where p.id = ?</code>로 부모가 하나면 행이 불어나도 총량이 뻔하다. <b>쿼리 1개로 끝나는 가장 좋은 선택</b>이다.</li>
+    <li><b>결과 전체가 작다는 것이 보장되는 조회</b> — 조건이 강해서 부모가 수십 건 이하로 닫히는 경우.</li>
+    <li><b>단, 컬렉션은 하나만.</b> 둘 이상이면 페이징이 없어도 <b>카테시안 곱</b>이다.</li>
+  </ul>
+  <p style="margin-bottom:0">덧붙여 <b>Hibernate 6부터는 이때 <code>distinct</code>를 빼는 게 낫다</b> — 부모 중복 제거는 Hibernate가 항상 해주는데 <code>distinct</code>를 쓰면 <b>SQL로도 나가서 DB가 중복 제거 비용을 낸다.</b></p>
+</div></details>
+
+<details class="q"><summary><code>default_batch_fetch_size</code>를 전역으로 1000처럼 크게 두면 부작용은 없나요? <span class="badge core">필수</span><span class="hint">힌트: 셋인데, <b>가장 큰 것은 성능이 아니다</b></span></summary><div class="a">
+  <p><b>세 가지가 있다.</b></p>
+  <div class="step"><span class="n">1</span><div class="body"><b><code>IN</code> 파라미터가 그만큼 늘어난다.</b> SQL 길이가 커지고, DB에 따라 <b><code>IN</code> 목록 항목 수 제한</b>에 걸릴 수 있다.</div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>한 번에 올라오는 엔티티 수가 커진다.</b> 배치 크기가 곧 <b>한 쿼리로 힙에 올리는 자식 수의 상한</b>이므로, 자식이 무거운 엔티티면 큰 값이 <b>그 자체로 메모리 압력</b>이 된다.</div></div>
+  <div class="step red"><span class="n">3</span><div class="body"><b>가장 큰 부작용은 은폐다.</b> 값이 크면 N+1이 <code>1+2</code>쯤으로 줄어 <b>로그가 조용해지고, 문제가 있는지조차 모르게 된다.</b></div></div>
+  <div class="rule red" style="margin-bottom:0">전역 batch fetch size는 <b>"안전망"이지 "해결"이 아니다</b><br><span style="font-size:.92rem;font-weight:600">6절의 탐지 장치와 함께 깔지 않으면 <b>"조용한 1 + 수십 쿼리"</b> 상태로 굳는다</span></div>
+</div></details>
+
+<details class="q"><summary>컬렉션이 두 개고 페이징도 필요한 화면은 어떻게 푸나요? <span class="badge core">필수</span><span class="hint">힌트: <code>List</code> 둘과 <code>Set</code> 둘이 <b>다르게 실패한다</b></span></summary><div class="a">
+  <p><b>fetch join은 아예 후보에서 빠진다</b> — 컬렉션 둘을 조인하면 <b>카테시안 곱</b>이 되기 때문이다(각각 100개면 <b>10,000행</b>). 2절 표에서 자식이 한 종류일 때 이미 6행이 됐는데, <b>두 종류를 동시에 조인하면 두 자식 수를 곱한 만큼</b>으로 불어난다.</p>
+  <p>그리고 <code>List</code> 둘이면 <b><code>MultipleBagFetchException</code>으로 크게 실패</b>하지만 <b><code>Set</code> 둘이면 예외도 경고도 없이 조용히 곱해진다.</b></p>
+  <p><b>정답은 ToOne만 fetch join하고 컬렉션 둘은 batch fetch size에 맡기는 것</b>이다. 각 컬렉션이 <b>독립적인 <code>IN</code> 쿼리</b>로 나가므로 <b>곱이 아니라 합</b>이 되고(총 3쿼리), 페이징도 정상이다.</p>
+  <div class="rule red" style="margin-bottom:0"><span class="badge bonus">가산점</span> 흔한 요령인 <b>"<code>List</code>를 <code>Set</code>으로 바꾸면 된다"</b>는<br><b>예외를 없애는 것이지 카테시안 곱을 없애는 게 아니다</b> — 큰 소리로 실패하던 것을 조용한 성능 문제로 바꾸는, <b>감지 장치를 끄는 행위</b>에 가깝다</div>
+</div></details>
+
+<details class="q"><summary>쿼리 수를 2로 단정했는데 3이 나옵니다. 테스트가 틀린 건가요? <span class="badge bonus">가산점</span><span class="hint">힌트: 의심할 곳이 둘 있다 — 하나는 반환 타입, 하나는 1차 캐시</span></summary><div class="a">
+  <p><b>먼저 반환 타입을 본다.</b> <code>Page</code>를 반환하면 <b>총 건수를 세는 count 쿼리가 별도로 나간다.</b> 즉 <b>부모 1 + 컬렉션 배치 1 + count 1 = 3</b>이 정상일 수 있다. <code>Slice</code>로 바꾸면 count가 빠져 2가 된다.</p>
+  <p><b>반대 방향의 함정도 있다.</b> <code>entityManager.clear()</code>를 안 하면 <b>1차 캐시가 남아 쿼리 수가 오히려 줄어들어</b> 잘못된 코드가 <b>통과해 버린다.</b> 그래서 6-3의 테스트에 <code>stats.clear()</code>와 <code>entityManager.clear()</code>가 함께 들어 있는 것이다.</p>
+  <p style="margin-bottom:0"><b>단정값은 외워서 쓰는 게 아니라 실제 쿼리 로그로 확정한 뒤 고정하는 것</b>이다. 이 테스트의 목적은 <b>"절대값이 몇이냐"가 아니라 "다음 PR에서 이 숫자가 변하면 알아차리는 것"</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>실제로 <code>limit</code>이 빠졌는지 어떻게 확인하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 볼 것이 두 군데다 — 로그 한 줄과 SQL 한 줄</span></summary><div class="a">
+  <p><b>두 곳을 본다.</b></p>
+  <p>① <b>애플리케이션 로그의 WARN 한 줄</b> — <code>firstResult/maxResults specified with collection fetch</code>. <b>문구로</b> 찾는다(코드는 버전마다 다르다).</p>
+  <p>② <b>실제로 나간 SQL</b> — 개발 환경에서 SQL 로깅을 <b>상시</b> 켜두고, 그 목록 쿼리 끝에 <code>limit ? offset ?</code>이 <b>있는지 없는지</b>를 눈으로 확인한다. 3-1의 두 SQL을 나란히 놓고 보면 차이는 <b>마지막 한 줄</b>뿐이다.</p>
+  <p style="margin-bottom:0">다만 <b>이 확인은 사람이 하는 일이라 언젠가 뚫린다.</b> 그래서 답을 여기서 끝내지 말고 <b>"그래서 6절의 1층(<code>fail_on_pagination_over_collection_fetch</code>)을 켜서 사람이 안 봐도 실패하게 만들겠다"</b>까지 이어야 한다.</p>
+</div></details>
+
+<details class="q"><summary>DTO로 받으면 엔티티가 아니니까 이 문제는 안 생기는 것 아닌가요? <span class="badge trap">함정</span><span class="hint">힌트: 문제의 원인은 "무엇을 담느냐"가 아니라 "결과 집합의 모양"이다</span></summary><div class="a">
+  <p><b>반환 타입이 아니라 쿼리의 모양이 원인</b>이다. DTO로 받더라도 <b>부모와 컬렉션을 한 번에 조인해서 읽으면 행 증폭은 똑같이 일어난다.</b> 그 결과 집합에 <code>limit</code>을 붙이면 <b>여전히 "부모 N건"이 아니라 "행 N개"를 자른다.</b></p>
+  <p>DTO에서 달라지는 것은 <b>얻는 이득</b>이다 — 엔티티·프록시·스냅샷을 안 만들므로 <b>메모리와 CPU가 가벼워진다.</b> 하지만 <b>부모 단위로 자를 수 없다는 문제는 그대로</b>다.</p>
+  <p style="margin-bottom:0">그래서 5-3의 DTO 해법이 <b>굳이 2단 조회 형태</b>인 것이다 — <b>부모를 페이징으로 먼저 읽고, 자식은 id 목록으로 따로 읽어 애플리케이션에서 조합</b>한다. <b>"DTO라서 안전한 것"이 아니라 "조인을 안 나눠서 안전한 것"</b>이라고 말해야 정확하다.</p>
+</div></details>
+
+<details class="q"><summary><code>fail_on_pagination_over_collection_fetch</code>를 운영에도 켜는 게 맞나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "켠다/안 켠다"가 아니라 <b>순서</b>로 답한다</span></summary><div class="a">
+  <p>기본 입장은 <b>켜는 쪽</b>이고, 근거는 <b>"예외가 OOM보다 싸다"</b>는 것이다. 이 설정이 없으면 장애는 <b>OOM으로, 무관한 API에서, 원인 불명으로</b> 온다. 켜두면 문제가 <b>그 API 하나의 500 에러로, 스택 트레이스와 함께</b> 온다. <b>피해 범위와 진단 시간이 비교가 안 된다.</b></p>
+  <p>다만 <b>조건 없이 "무조건 켜세요"는 정확한 답이 아니다.</b> 켜는 순간 <b>지금까지 조용히 잘 돌던 API가 즉시 실패하기</b> 때문이다. 그래서 <b>순서</b>를 말하는 편이 낫다.</p>
+  <div class="step ok"><span class="n">1</span><div class="body"><b>로컬·CI·테스트 프로파일에 먼저 켠다.</b> 여기엔 반대 이유가 없다. <b>신규 코드가 이 함정에 빠지는 것을 그날로 막는다.</b></div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b>스테이징에서 켜고 전 화면을 돌려 기존 위반 지점을 전수로 뽑는다.</b> <b>이 단계가 운영 적용 전의 조사에 해당한다.</b></div></div>
+  <div class="step"><span class="n">3</span><div class="body"><b>위반 지점을 다 정리한 뒤 운영에 켠다.</b> 이때부터는 <b>회귀 방지 장치</b>로 작동한다.</div></div>
+  <div class="rule ok" style="margin-bottom:0">답변의 형태는 "켠다/안 켠다"가 아니라<br><b>"어느 환경에 어떤 순서로 켜서, 켜는 행위 자체를 조사 도구로 쓴다"</b><br><span style="font-size:.92rem;font-weight:600"><code>spring.jpa.open-in-view: false</code>를 켜서 숨어 있던 <code>LazyInitializationException</code>을 드러내는 것과 <b>완전히 같은 전략</b>이다</span></div>
+</div></details>
+
+<details class="q"><summary>Hibernate 7.4에서 고쳐졌다면 이 지식은 이제 필요 없는 것 아닌가요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 셋인데, <b>세 번째가 이 문항의 진짜 값</b>이다</span></summary><div class="a">
+  <p><b>세 가지 이유로 여전히 필요하다.</b></p>
+  <p>① <b>버전이 안 따라온다.</b> <b>Spring Boot 3.x는 Hibernate 6.x</b>이고, 현업 프로젝트의 다수가 여기 있다. <b>프레임워크 메이저 업그레이드는 몇 년 단위로 밀린다.</b></p>
+  <p>② <b>7.4의 개선에도 조건이 있다.</b> 파생 테이블 방식은 <b>DB가 서브쿼리 안의 limit/offset을 지원해야 하고 루트 엔티티가 하나여야 한다.</b> <b>조건을 못 맞추면 옛 동작으로 떨어지는데, 그때 필요한 지식이 정확히 이것이다.</b> (옛 동작으로 되돌리는 쿼리 힌트가 <code>org.hibernate.limitInMemory</code>다.)</p>
+  <p>③ <b>더 중요한 건 원리 쪽이다.</b> 이 문항이 가르치는 것은 <code>limit</code> 부착 여부가 아니라 <b>"조인은 행을 증폭시키고, 페이징의 단위와 조인 결과의 단위는 다르다"</b>는 관계다. 이건 <b>JPA 밖에서도 똑같이 나온다</b> — MyBatis에서 1:N 조인 결과에 <code>limit</code>을 붙일 때, 리포트 쿼리에서 상세 조인 후 상위 N건을 자를 때 <b>전부 같은 함정</b>이다.</p>
+  <div class="rule ok" style="margin-bottom:0"><b>도구가 막아주는 범위가 넓어졌을 뿐, 판단해야 하는 사람은 그대로다</b></div>
+</div></details>
+
+<!-- ===================== SUMMARY ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  컬렉션 fetch join에 페이징을 걸면 <b>조인이 부모 행을 자식 수만큼 복제</b>해 <code>limit</code>이 <b>"부모 N건"을 셀 수 없게</b> 되고, Hibernate는 결과가 틀어지는 것을 막으려 <b>SQL에서 <code>limit</code>을 빼고 전체를 힙에 올린 뒤 자바에서 잘라내며</b>, <b>예외도 없고 결과도 맞고 개발 환경에선 증상도 없기</b> 때문에 — 해법 3종(<b>토·컬·조</b> = ToOne은 fetch join / 컬렉션은 batch fetch size / 조회 전용은 DTO)만큼이나 <b><code>fail_on_pagination_over_collection_fetch</code>로 경고를 예외로 승격시켜 배포 전에 실패하게 만드는 것</b>이 이 문항의 진짜 답이다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/03-jpa-orm/08-fetch-join-pagination-in-memory.md</code> · 이어서 볼 문서: N+1 탐지와 해결(<code>04-n-plus-one-detection-and-fixes.md</code>) · 즉시 로딩과 지연 로딩(<code>03-eager-vs-lazy-fetch-strategy.md</code>) · LazyInitializationException(<code>07-lazy-initialization-exception.md</code>) · DTO 프로젝션(<code>18-dto-projection-for-read-only.md</code>)</p>
+</main>
+</body>
+</html>

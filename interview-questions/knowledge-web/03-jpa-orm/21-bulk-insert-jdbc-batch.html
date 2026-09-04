@@ -1,0 +1,1486 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>대량 INSERT와 JDBC batch — IDENTITY가 배치를 무력화하는 이유, 그리고 JPA 안에서 조여가는 4단계</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">03 JPA · ORM &nbsp;|&nbsp; 성능 · 배치 &nbsp;|&nbsp; 21번 문서</span>
+  <h1>대량 INSERT와 JDBC batch<br><span class="sub">IDENTITY가 배치를 무력화하는 이유, 그리고 JPA 안에서 조여가는 4단계</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"대량 데이터 INSERT 시 JPA의 한계와 JDBC batch로 우회하는 방법(IDENTITY 전략의 문제 포함)을 설명해주세요."</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — <b>100만 건이 2시간 걸리는 이유는 한 갈래가 아니라 두 갈래다</b> — ① <b>왕복 100만 번</b>(건별 INSERT) ② <b>영속성 컨텍스트에 엔티티 100만 개 + 스냅샷 100만 벌이 그대로 누적</b>(힙이 밀리고, flush마다 비교 대상이 늘어 <b>뒤로 갈수록 느려진다</b>). 첫 처방으로 "JPQL 벌크 INSERT"를 말하면 그 자리에서 끝난다 — <b>JPQL에는 INSERT 문이 없다</b>(<code>insert into ... select</code> 제외). 그리고 <code>hibernate.jdbc.batch_size</code>를 켜도 <b><code>@GeneratedValue(IDENTITY)</code>면 단 한 건도 묶이지 않는다</b>: 1차 캐시의 키가 식별자라서 id 없이는 영속 상태를 만들 수 없고, 그래서 <code>persist()</code>가 그 자리에서 INSERT를 날려 키를 받아온다 → <b>쓰기 지연이 성립하지 않으니 묶을 대상 자체가 없다.</b> 처방은 JPA를 버리는 것이 아니라 <b>JPA 안에서 순서대로 조이는 것</b>이다 — ① ID 전략을 <code>SEQUENCE</code>(PostgreSQL) 또는 <code>TABLE</code>(MySQL) + 큰 <code>allocationSize</code>로 바꿔 채번을 미리 받아오고 ② <code>batch_size</code> + <code>order_inserts</code>로 같은 테이블끼리 모으고 ③ 배치 크기마다 <code>flush()</code> + <code>clear()</code>로 힙을 비우고 ④ 그래도 부족할 때 <code>JdbcTemplate.batchUpdate</code> 또는 벌크 적재 명령(PostgreSQL <code>COPY</code>, MySQL <code>LOAD DATA INFILE</code>)으로 내려간다. 여기서 <b>드라이버 층을 반드시 확인해야 한다</b> — PostgreSQL은 배치를 파이프라이닝으로 밀어 보내지만 문장은 행마다 실행되므로 <code>reWriteBatchedInserts=true</code>가 있어야 multi-values 한 문장으로 합쳐지고, MySQL은 <code>rewriteBatchedStatements=true</code>가 없으면 아예 문장을 하나씩 보낸다. <b>이건 Hibernate 로그로는 절대 확인되지 않는다.</b> 마지막으로 100만 건을 트랜잭션 하나로 묶지 않는다 — <b>청크 단위 커밋 + (정산일자, 거래ID) 유니크 키 기반 멱등성</b>이 있어야 어디서 끊겨도 재실행할 수 있다. 그리고 <b>내려가는 데에는 대가가 있다</b> — Auditing·엔티티 검증·영속성 컨텍스트 정합성·타입 안전성을 함께 내려놓는 것이지, 공짜로 빨라지는 것이 아니다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>원인을 두 갈래로 쪼개서 말한다</b> — ① <b>왕복 100만 번</b>(비용이 왕복 횟수에 비례하므로 하드웨어로는 안 움직인다) ② <b>영속성 컨텍스트 누적</b>(엔티티 + 스냅샷이 쌓여 flush마다 대조 대상이 커진다). <b>"쿼리가 100만 번 나가서"까지만 말하면 처방도 절반만 나온다</b> — 배치만 켜고 <code>clear()</code>를 빼먹는다.</div></li>
+    <li><span class="n">2</span><div><b><code>batch_size</code>는 안 켜진 게 아니라 켜졌는데 할 일이 없는 것이다</b> — 1차 캐시는 <b>식별자를 키로 갖는 <code>Map</code></b>이라 id 없이는 영속 상태를 만들 수 없고, <code>IDENTITY</code>는 DB가 INSERT를 실행해야 id를 준다. 그래서 <code>persist()</code>가 <b>즉시 INSERT</b>를 날리고 <b>쓰기 지연 저장소가 비어 있다.</b> (같은 이유로 영속성 컨텍스트가 없는 <code>JdbcTemplate</code>은 같은 auto_increment에서도 잘 묶인다.)</div></li>
+    <li><span class="n">3</span><div><b>처방은 "버릴까 말까"가 아니라 순서다</b> — ① ID 전략 → ② <code>batch_size</code> + <code>order_inserts</code> → ③ <code>flush()</code> + <code>clear()</code> → ④ <code>JdbcTemplate</code> / <code>COPY</code>. <b>각 단계에서 측정하고 충분하면 멈춘다.</b> 그리고 <b>드라이버 재작성 옵션</b>과 <b>청크 커밋 + 멱등성</b>까지 붙여야 배치로서 완성된다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도 · 예제</a></li>
+    <li><a href="#s1">왜 2시간인가 — 두 갈래 진단</a></li>
+    <li><a href="#s2">첫 처방이 헛나가는 세 자리</a></li>
+    <li><a href="#s3">IDENTITY가 배치를 무력화하는 메커니즘</a></li>
+    <li><a href="#s4">처방 — 순서대로 조이는 4단계</a></li>
+    <li><a href="#s5">드라이버 층과 관측의 3층</a></li>
+    <li><a href="#s6">성능 뒤에 남는 것 — 트랜잭션 · 멱등성 · 대가</a></li>
+    <li><a href="#s7">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도 · 하나의 예제</h2>
+<div class="card">
+  <p><b>질문</b>: "대량 데이터 INSERT 시 JPA의 한계와 JDBC batch로 우회하는 방법(IDENTITY 전략의 문제 포함)을 설명해주세요."</p>
+  <p><b>출제 의도</b>: "JPA로 짰더니 100만 건에 2시간"이라는, <b>실무에서 반드시 한 번은 만나는 상황</b>이다. 원인(<b>건별 INSERT</b>, <b>IDENTITY의 batch 무력화</b>)을 알고 <b>우회로를 설계할 수 있는지</b>를 본다. 더 깊게는 <b>ORM의 한계를 인정하고 내려갈 줄 아는 유연함</b> — ORM을 신봉해 끝까지 붙들지도 않고, 조금 느리다고 곧장 던져버리지도 않는 <b>균형 감각</b>을 확인하는 질문이다.</p>
+  <div class="callout trap"><span class="t">함정은 세 갈래다</span>
+    ① <b>느린 이유를 한 갈래만 본다.</b> "쿼리가 100만 번 나가서"는 절반이다. 나머지 절반인 <b>영속성 컨텍스트 누적</b>을 말하지 못하면 <b>"왜 앞의 10만 건은 3분인데 뒤의 10만 건은 40분인가"</b>를 설명할 수 없다.<br>
+    ② <b>처방이 JPQL로 샌다.</b> "JPQL 벌크로 바꾸겠다"는 <b>JPQL에 INSERT가 없다는 사실 하나로 무너진다</b>(2절).<br>
+    ③ <b>JPA 안에서 조여가는 단계가 통째로 비어 있다.</b> IDENTITY가 문제라는 걸 알면서 곧장 "그럼 JPA를 버리겠다"로 점프하는 것 — <b>가장 흔하고, 가장 아쉬운 감점</b>이다. 실무자는 그 사이에 <b>카드를 세 장 더</b> 갖고 있다(4절).
+  </div>
+  <div class="callout info" style="margin-bottom:0"><span class="t">이 문서는 하나의 예제를 끝까지 끌고 간다</span>
+    외부 정산 시스템에서 받아온 <b>하루치 거래 100만 건을 우리 DB에 적재하는 배치</b>다. 그리고 <b>DB는 PostgreSQL을 기준</b>으로 쓴다 — 이 문항은 <b>드라이버와 DB 벤더에 따라 동작이 실제로 갈리는 자리가 많아서</b>, 벤더가 다르면 그때마다 "MySQL은 이렇다"고 명시한다. <b>"DB는 대체로 이렇다"는 식의 서술이 이 문항에서 가장 위험하다.</b>
+  </div>
+</div>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">예제 엔티티</span> 문제의 한 줄이 여기 있다</div>
+<pre><code><span class="kw">@Entity</span>
+<span class="kw">@Table</span>(name = <span class="st">"settlement"</span>)
+<span class="kw">public class</span> <span class="fn">Settlement</span> {
+
+    <span class="kw">@Id</span>
+<span class="ln-bad">    <span class="kw">@GeneratedValue</span>(strategy = GenerationType.IDENTITY)  <span class="note">3절의 전부</span></span>
+    <span class="kw">private</span> Long id;
+
+    <span class="kw">private</span> LocalDate      settlementDate;  <span class="cm">// 정산일자</span>
+    <span class="kw">private</span> String         txId;            <span class="cm">// 외부 거래 ID</span>
+    <span class="kw">private</span> BigDecimal     amount;          <span class="cm">// 금액</span>
+    <span class="kw">private</span> Long           merchantId;      <span class="cm">// 가맹점</span>
+    <span class="kw">private</span> LocalDateTime  createdAt;
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead bad"><span class="tag">문제의 코드</span> 100만 건에 2시간</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">load</span>(List&lt;SettlementDto&gt; dtos) {   <span class="cm">// size == 1_000_000</span>
+<span class="ln-bad">    <span class="kw">for</span> (SettlementDto dto : dtos) {</span>
+<span class="ln-bad">        settlementRepository.save(Settlement.from(dto));</span>
+<span class="ln-bad">    }</span>
+}
+
+<span class="cm">// 여기서 실제로 벌어지는 일 두 가지</span>
+<span class="cm">//  ① save() 1회 = SQL 1문장 = 왕복 1회      → 100만 왕복</span>
+<span class="cm">//  ② 저장한 엔티티가 트랜잭션 끝까지 상자에 남는다</span>
+<span class="cm">//     → 엔티티 100만 + 스냅샷 100만이 힙에 살아 있다</span></code></pre>
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 왜 2시간인가 — 원인은 두 갈래다</h2>
+
+<p>첫 답변에서 <b>"쿼리가 100만 번 나가서"까지만 말하고 멈추는 것</b>이 이 문항의 가장 흔한 모습이다. 진단이 틀린 건 아니지만 절반이고, <b>나머지 절반을 놓치면 처방도 절반만 나온다</b> — 배치만 켜고 <code>flush</code>/<code>clear</code>를 빼먹는다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 404" role="img" aria-label="100만 건 2시간의 원인을 두 갈래로 나눈 도식. 왼쪽 갈래 1은 네트워크 왕복 100만 번으로 애플리케이션과 DB 사이를 건별로 왕복하며 관측 신호는 처음부터 끝까지 일정하게 느린 것이고 처방은 배치로 묶어 보내는 것이다. 오른쪽 갈래 2는 영속성 컨텍스트 누적으로 엔티티와 스냅샷이 100만 벌 쌓여 flush마다 전건을 대조하며 관측 신호는 뒤로 갈수록 느려지는 것이고 처방은 flush와 clear다.">
+    <defs>
+      <marker id="d1r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="d1w" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">100만 건 2시간 — 원인은 한 갈래가 아니라 두 갈래이고, 신호도 처방도 서로 다르다</text>
+
+    <!-- lane 1 -->
+    <rect x="26" y="40" width="524" height="316" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="46" y="66" font-size="13.5" font-weight="700" fill="#b91c1c">갈래 ① 네트워크 왕복 100만 번</text>
+    <rect x="46" y="80" width="152" height="56" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="122" y="103" font-size="12" fill="#7f1d1d" text-anchor="middle" font-weight="700">애플리케이션</text>
+    <text x="122" y="121" font-size="10.5" fill="#b91c1c" text-anchor="middle" class="mono">save() 1회 = SQL 1문장</text>
+    <rect x="392" y="80" width="140" height="56" rx="9" fill="#0f172a" stroke="#334155"/>
+    <text x="462" y="113" font-size="13" fill="#e2e8f0" text-anchor="middle" font-weight="700">DB</text>
+    <line x1="204" y1="96" x2="386" y2="96" stroke="#dc2626" stroke-width="1.8" marker-end="url(#d1r)"/>
+    <text x="295" y="91" font-size="10.5" fill="#b91c1c" text-anchor="middle">insert 1건 보내고</text>
+    <line x1="386" y1="122" x2="204" y2="122" stroke="#dc2626" stroke-width="1.8" marker-end="url(#d1r)"/>
+    <text x="295" y="136" font-size="10.5" fill="#b91c1c" text-anchor="middle">응답(생성된 id)을 기다린다</text>
+    <text x="295" y="158" font-size="13" fill="#dc2626" text-anchor="middle" font-weight="700">× 1,000,000 회</text>
+
+    <rect x="46" y="170" width="484" height="40" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="60" y="187" font-size="11.5" fill="#7f1d1d" font-weight="700">성질 — 비용은 CPU도 디스크도 아니고 "왕복 횟수"에 비례한다</text>
+    <text x="60" y="203" font-size="11" fill="#b91c1c">그래서 인덱스를 손보거나 서버를 키워도 이 축은 거의 움직이지 않는다</text>
+
+    <rect x="46" y="218" width="484" height="38" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="60" y="242" font-size="11.5" fill="#b91c1c" font-weight="700">관측 신호 — 처음부터 끝까지 "일정하게" 느리다</text>
+
+    <rect x="46" y="264" width="484" height="42" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="60" y="281" font-size="11.5" fill="#7f1d1d">비유 — 택배 100만 개를 한 개씩 트럭에 실어 왕복하는 것.</text>
+    <text x="60" y="298" font-size="11.5" fill="#7f1d1d">트럭을 빠르게(하드웨어) 하는 것보다 <tspan font-weight="700">한 번에 여러 개 싣는 것</tspan>이 압도적이다</text>
+
+    <rect x="46" y="314" width="484" height="30" rx="9" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="288" y="334" font-size="12" fill="#991b1b" text-anchor="middle" font-weight="700">처방 → ② batch_size 로 묶어 보낸다</text>
+
+    <!-- lane 2 -->
+    <rect x="570" y="40" width="524" height="316" rx="12" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="590" y="66" font-size="13.5" font-weight="700" fill="#b45309">갈래 ② 영속성 컨텍스트 누적</text>
+
+    <rect x="590" y="80" width="236" height="82" rx="9" fill="#fff" stroke="#fde68a"/>
+    <text x="602" y="98" font-size="11.5" fill="#92400e" font-weight="700">영속성 컨텍스트 (1차 캐시)</text>
+    <rect x="602" y="106" width="98" height="17" rx="4" fill="#fef3c7" stroke="#fbbf24"/>
+    <text x="651" y="118" font-size="9.5" fill="#92400e" text-anchor="middle">엔티티</text>
+    <rect x="708" y="106" width="106" height="17" rx="4" fill="#fef3c7" stroke="#fbbf24"/>
+    <text x="761" y="118" font-size="9.5" fill="#92400e" text-anchor="middle">스냅샷(값 복사본)</text>
+    <rect x="602" y="127" width="98" height="17" rx="4" fill="#fef3c7" stroke="#fbbf24"/>
+    <text x="651" y="139" font-size="9.5" fill="#92400e" text-anchor="middle">엔티티</text>
+    <rect x="708" y="127" width="106" height="17" rx="4" fill="#fef3c7" stroke="#fbbf24"/>
+    <text x="761" y="139" font-size="9.5" fill="#92400e" text-anchor="middle">스냅샷</text>
+    <text x="602" y="157" font-size="10.5" fill="#b45309" font-weight="700">… 각 100만 벌 — 메모리가 사실상 2배</text>
+
+    <rect x="846" y="80" width="230" height="82" rx="9" fill="#fff" stroke="#fde68a"/>
+    <text x="858" y="99" font-size="11.5" fill="#92400e" font-weight="700">flush 1회가 하는 일</text>
+    <text x="858" y="117" font-size="11" fill="#92400e">관리 엔티티 <tspan font-weight="700">전건 × 전 필드</tspan>를</text>
+    <text x="858" y="133" font-size="11" fill="#92400e">스냅샷과 대조해 UPDATE를 만든다</text>
+    <text x="858" y="152" font-size="11" fill="#b45309" font-weight="700">→ 대조 대상이 계속 늘어난다</text>
+    <line x1="830" y1="121" x2="842" y2="121" stroke="#d97706" stroke-width="2" marker-end="url(#d1w)"/>
+
+    <rect x="590" y="170" width="486" height="40" rx="9" fill="#fff" stroke="#fde68a"/>
+    <text x="604" y="187" font-size="11.5" fill="#92400e" font-weight="700">성질 — GC가 회수하지 못한다</text>
+    <text x="604" y="203" font-size="11" fill="#92400e">강한 참조로 붙들려 있어 힙이 차도 버릴 것이 없다 → Full GC 반복 / OOM</text>
+
+    <rect x="590" y="218" width="486" height="38" rx="9" fill="#fff" stroke="#fde68a"/>
+    <text x="604" y="235" font-size="11.5" fill="#b45309" font-weight="700">관측 신호 — 뒤로 갈수록 느려진다</text>
+    <text x="604" y="250" font-size="11" fill="#92400e">앞의 10만 건은 몇 분인데 뒤의 10만 건이 수십 분이면 범인은 왕복이 아니라 누적이다</text>
+
+    <rect x="590" y="264" width="486" height="42" rx="9" fill="#fff" stroke="#fde68a"/>
+    <text x="604" y="281" font-size="11.5" fill="#92400e">원인은 "힙이 부족한 것"이 아니라 <tspan font-weight="700">"컨텍스트를 안 비운 것"</tspan>이다.</text>
+    <text x="604" y="298" font-size="11.5" fill="#92400e">그래서 힙을 키우는 처방은 시간을 벌 뿐 곡선을 못 바꾼다</text>
+
+    <rect x="590" y="314" width="486" height="30" rx="9" fill="#fef3c7" stroke="#d97706"/>
+    <text x="833" y="334" font-size="12" fill="#92400e" text-anchor="middle" font-weight="700">처방 → ③ 배치 크기마다 flush() + clear()</text>
+
+    <rect x="26" y="366" width="1068" height="32" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="387" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">두 신호를 구분하면 처방이 갈린다 — "일정하게 느림"은 왕복, "갈수록 느림"은 누적. 배치만 켜고 clear() 를 빼먹는 답이 흔한 이유가 이 구분을 안 해서다</text>
+  </svg>
+  <figcaption>같은 "느리다"지만 <b>곡선의 모양이 다르다.</b> 왕복 비용만 문제라면 처리 속도는 <b>처음부터 끝까지 일정</b>해야 한다. <b>그래서 진단의 첫 질문은 "얼마나 느린가"가 아니라 "뒤로 갈수록 느려지는가"</b>가 되어야 한다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>3초 암기 — 두 갈래는 <b>왕 · 누</b></h4>
+  <div class="chain">
+    <span class="chip r"><b>왕</b>복 100만 번</span><span class="arrow">→</span><span class="chip r">일정하게 느리다</span><span class="arrow">→</span><span class="chip b">처방: 묶어 보낸다 (batch)</span>
+  </div>
+  <div class="chain">
+    <span class="chip w"><b>누</b>적 (엔티티+스냅샷)</span><span class="arrow">→</span><span class="chip w">갈수록 느려진다</span><span class="arrow">→</span><span class="chip b">처방: 주기적으로 비운다 (clear)</span>
+  </div>
+  <p style="margin-bottom:0" class="sub"><b>한 갈래만 말하면 처방도 한 개만 나온다.</b> 이 문항에서 실점의 절반이 여기서 발생한다.</p>
+</div>
+
+<h3>1-1. 누적 비용을 숫자로 — <code>clear()</code>가 하는 일은 "메모리 절약"이 아니다</h3>
+
+<p>"뒤로 갈수록 느려진다"를 감으로만 말하면 잘 와닿지 않는다. <b>1,000건마다 <code>flush()</code>만 하고 <code>clear()</code>를 빼먹으면</b> 매 회차의 비교 대상이 1,000건씩 늘어난다. 100만 건에 그대로 계산해 보자.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 366" role="img" aria-label="누적 대조량 곡선 그래프. 가로축은 처리 건수 0에서 100만 건, 세로축은 누적 대조량. clear 없이 flush만 하면 건수의 제곱에 비례해 5억 500만 건까지 치솟는 곡선이 되고, clear를 함께 하면 100만 건으로 축의 바닥에 붙는 직선이 된다. 차이는 500.5배이며 테스트 1만 건 구간에서는 두 선이 구분되지 않는다.">
+    <defs>
+      <marker id="c1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#6b7280"/></marker>
+      <marker id="c2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">누적 대조량 — 100만 건 / 1,000건마다 flush · <tspan fill="#16a34a">clear() 를 넣으면 곡선이 직선으로 펴진다</tspan></text>
+
+    <!-- axes -->
+    <line x1="92" y1="56" x2="92" y2="302" stroke="#9ca3af" stroke-width="1.5"/>
+    <line x1="92" y1="302" x2="1072" y2="302" stroke="#9ca3af" stroke-width="1.5"/>
+    <text x="92" y="48" font-size="11" fill="#6b7280" text-anchor="middle">누적 대조량</text>
+    <text x="1072" y="322" font-size="11" fill="#6b7280" text-anchor="end">처리 건수</text>
+    <!-- grid ticks -->
+    <line x1="286" y1="302" x2="286" y2="306" stroke="#9ca3af"/><text x="286" y="320" font-size="10.5" fill="#6b7280" text-anchor="middle">20만</text>
+    <line x1="480" y1="302" x2="480" y2="306" stroke="#9ca3af"/><text x="480" y="320" font-size="10.5" fill="#6b7280" text-anchor="middle">40만</text>
+    <line x1="674" y1="302" x2="674" y2="306" stroke="#9ca3af"/><text x="674" y="320" font-size="10.5" fill="#6b7280" text-anchor="middle">60만</text>
+    <line x1="868" y1="302" x2="868" y2="306" stroke="#9ca3af"/><text x="868" y="320" font-size="10.5" fill="#6b7280" text-anchor="middle">80만</text>
+    <line x1="1062" y1="302" x2="1062" y2="306" stroke="#9ca3af"/><text x="1062" y="320" font-size="10.5" fill="#6b7280" text-anchor="middle">100만</text>
+
+    <!-- parabola: clear 없음 -->
+    <path d="M92,302 L189,299.6 L286,292.4 L383,280.4 L480,263.6 L577,240 L674,213.6 L771,182.4 L868,146.4 L965,105.6 L1062,60" fill="none" stroke="#dc2626" stroke-width="2.6"/>
+    <circle cx="1062" cy="60" r="4.5" fill="#dc2626"/>
+    <text x="1054" y="52" font-size="12.5" fill="#b91c1c" text-anchor="end" font-weight="700">clear() 없음 — 누적 5억 500만 건</text>
+    <text x="1054" y="70" font-size="11" fill="#b91c1c" text-anchor="end" class="mono">1,000 × (1+2+…+1,000) = 500,500,000</text>
+
+    <!-- line: clear 있음 -->
+    <line x1="92" y1="302" x2="1062" y2="299.6" stroke="#16a34a" stroke-width="2.8"/>
+    <circle cx="1062" cy="299.6" r="4.5" fill="#16a34a"/>
+    <text x="1054" y="288" font-size="12.5" fill="#15803d" text-anchor="end" font-weight="700">clear() 있음 — 누적 100만 건 (거의 바닥에 붙는다)</text>
+
+    <!-- 500.5x annotation -->
+    <line x1="1082" y1="60" x2="1082" y2="299.6" stroke="#dc2626" stroke-width="1.4" stroke-dasharray="4 3"/>
+    <text x="1092" y="186" font-size="13" fill="#dc2626" font-weight="700" transform="rotate(-90 1092 186)" text-anchor="middle">500.5배</text>
+
+    <!-- test blind spot -->
+    <rect x="104" y="258" width="150" height="40" rx="8" fill="#fff" stroke="#d1d5db"/>
+    <text x="179" y="274" font-size="10.5" fill="#6b7280" text-anchor="middle">테스트 1만 건 구간</text>
+    <text x="179" y="290" font-size="10.5" fill="#6b7280" text-anchor="middle" font-weight="700">두 선이 구분되지 않는다</text>
+    <line x1="110" y1="288" x2="96" y2="300" stroke="#6b7280" stroke-width="1.4" marker-end="url(#c1)"/>
+
+    <!-- formula box -->
+    <rect x="300" y="70" width="420" height="86" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="316" y="92" font-size="12" fill="#7f1d1d" font-weight="700">읽어야 할 것은 "500배"라는 숫자가 아니라 곡선의 모양이다</text>
+    <text x="316" y="113" font-size="11.5" fill="#b91c1c">누적 대조량은 건수 n 에 대해 <tspan font-weight="700">n²에 비례</tspan>해 늘어난다</text>
+    <text x="316" y="131" font-size="11.5" fill="#b91c1c">(정확히는 n(n+k)/2k, k 는 flush 주기)</text>
+    <text x="316" y="149" font-size="12" fill="#dc2626" font-weight="700">→ 건수가 2배가 되면 이 비용은 4배가 된다</text>
+    <line x1="720" y1="113" x2="800" y2="140" stroke="#dc2626" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#c2)"/>
+
+    <rect x="26" y="332" width="1068" height="30" rx="9" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="560" y="352" font-size="12.5" fill="#15803d" text-anchor="middle" font-weight="700">clear() 가 하는 일은 "메모리 절약"이 아니라 "곡선을 직선으로 만드는 것"이다 — 매 flush의 대조 대상이 배치 크기로 고정되기 때문이다</text>
+  </svg>
+  <figcaption><b>테스트 데이터 1만 건에서는 전혀 안 보이다가 운영 100만 건에서 폭발하는 이유가 정확히 이 곡선</b>이다. 같은 축의 계산이 <code>02-persistence-context-dirty-checking.md</code>에 5만 건 기준(1,275,000건 대 50,000건, <b>25.5배</b>)으로 나와 있고, 이 문서는 그 계산을 100만 건으로 이어서 한 것이다.</figcaption>
+</figure>
+
+<div class="callout warn">
+  <span class="t">이 갈래를 놓치는 것이 왜 아까운가 — "아는 개념을 새 상황에 옮겨 붙이기"</span>
+  조회 전용 DTO 프로젝션 문항에서는 <b>"1차 캐시에 적재하는 행위 자체가 비용"</b>이라고 정확히 말할 수 있는 사람이, 대량 INSERT 상황에서는 같은 축을 떠올리지 못하는 경우가 많다. <b>개념을 모르는 것이 아니라, 개념이 붙는 상황의 목록이 좁은 것</b>이다. 그래서 기억해야 할 것은 사실이 아니라 <b>트리거</b>다.
+  <div class="rule" style="margin-bottom:0">"엔티티를 <b>루프에서 대량으로</b> 다룬다"는 말이 나오면 <b>반사적으로 영속성 컨텍스트 누적을 의심한다</b><br><span style="font-size:.92rem;font-weight:600">읽기든 쓰기든 똑같다 — 읽기는 DTO 프로젝션으로 애초에 안 올리고, 쓰기는 flush + clear로 비운다</span></div>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 첫 처방이 헛나가는 세 자리 — JPQL · <code>saveAll()</code> · 벌크 연산</h2>
+
+<p>진단을 마치면 처방으로 넘어가는데, <b>여기서 세 갈래로 새는 답이 정해져 있다.</b> 셋 다 "벌크"라는 단어에 끌려간 결과이고, 셋 다 <b>왕복 횟수를 1도 줄이지 못한다.</b></p>
+
+<div class="memo red">
+  <h4>여기서 말하면 그 자리에서 끝나는 세 문장</h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">"JPQL 벌크 INSERT로"</div><div class="d"><b>JPQL에 INSERT 문이 없다.</b> 지원하는 벌크 연산은 <b>UPDATE와 DELETE 둘뿐</b>이고, 예외는 하이버네이트 HQL의 <code>insert into … select</code> 하나다.</div></div>
+    <div class="tile red"><div class="k">"saveAll() 로 바꾸면"</div><div class="d"><b>내부는 결국 리스트를 순회하며 <code>save()</code></b>를 부른다. <b>이름이 복수형이라고 SQL이 하나가 되지 않는다.</b> 왕복 횟수는 그대로다.</div></div>
+    <div class="tile red"><div class="k">"@Modifying 벌크 연산으로"</div><div class="d">그건 <b>다른 문항의 도구</b>다. 대상이 <b>이미 DB에 있는 행</b>이고 문제도 <b>컨텍스트 불일치</b>다. 이 문항의 대상은 <b>아직 DB에 없는 데이터</b>다.</div></div>
+  </div>
+</div>
+
+<h3>2-1. JPQL에 INSERT가 없는 이유까지 말한다</h3>
+
+<p>용어부터. <b>JPQL(Java Persistence Query Language)은 테이블이 아니라 엔티티를 대상으로 쓰는 질의 언어</b>다. <code>select s from Settlement s where s.amount &gt; 1000</code>처럼 <b>클래스 이름과 필드 이름으로</b> 쓰고, 하이버네이트가 그걸 실제 SQL로 번역한다. <b>이 사실 하나를 모르면 면접에서 첫 처방이 통째로 무효가 된다.</b></p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">없다</span> 파싱 단계에서 실패한다</div>
+<pre><code><span class="cm">// 존재하지 않는 문법</span>
+<span class="ln-bad">em.createQuery(</span>
+<span class="ln-bad">  <span class="st">"insert into Settlement (settlementDate, txId, amount) "</span> +</span>
+<span class="ln-bad">  <span class="st">"values (?1, ?2, ?3)"</span>);</span>
+
+<span class="cm">// 왜 없는가 ─ 단순 암기가 아니라는 신호가 되는 지점</span>
+<span class="cm">//  JPQL은 "이미 DB에 존재하는 엔티티"를 대상으로 한다.</span>
+<span class="cm">//  UPDATE·DELETE는 where 로 대상을 지정할 수 있지만,</span>
+<span class="cm">//  INSERT는 대상이 DB가 아니라 애플리케이션 메모리에 있다.</span>
+<span class="cm">//  값을 SQL 문자열로 옮기는 것은 질의가 아니라 "직렬화"이므로</span>
+<span class="cm">//  JPA는 그 역할을 persist() 에 맡긴다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">예외 하나</span> HQL의 insert into … select</div>
+<pre><code><span class="cm">-- 이건 된다: 출처가 "이미 DB에 있는 행"이라 질의로 표현 가능</span>
+<span class="ln-good"><span class="kw">insert into</span> Settlement (settlementDate, txId, amount)</span>
+<span class="ln-good"><span class="kw">select</span> s.settlementDate, s.txId, s.amount</span>
+<span class="ln-good"><span class="kw">from</span> StagingSettlement s <span class="kw">where</span> ...</span>
+
+<span class="cm">-- 그런데 이 예외가 오늘 문제를 풀어주지는 않는다.</span>
+<span class="cm">-- 우리 데이터는 외부에서 받아온 것이라 아직 DB 어디에도 없다.</span>
+<span class="cm">-- 다만 4-5에서 되살아난다 →</span>
+<span class="cm">--   ① 벌크 적재 명령으로 스테이징 테이블에 통째로 밀어 넣고</span>
+<span class="cm">--   ② 거기서 insert … select 로 정제해 본 테이블로 옮긴다</span></code></pre>
+  </div>
+</div>
+
+<div class="callout ok"><span class="t">가산점 <span class="badge bonus">연결</span></span>
+"JPQL에 INSERT가 없다"에서 멈추지 말고 <b>"단, 스테이징 테이블을 두면 <code>insert … select</code>가 설계로 되살아난다"</b>까지 이어 말하면, <b>제약을 외운 사람</b>이 아니라 <b>제약을 우회 설계로 바꿔본 사람</b>으로 읽힌다.
+</div>
+
+<h3>2-2. <code>@Modifying</code> 벌크 연산과 축이 정반대다</h3>
+
+<div class="scroll">
+<table>
+  <caption>같은 "벌크"라는 단어를 쓰지만 대상도 문제도 처방도 반대다</caption>
+  <thead><tr><th></th><th>벌크 UPDATE/DELETE (<code>@Modifying</code>)</th><th>대량 INSERT (이 문항)</th></tr></thead>
+  <tbody>
+    <tr><td><b>대상</b></td><td>이미 DB에 있는 행</td><td><b>아직 DB에 없는</b> 새 데이터</td></tr>
+    <tr class="hl"><td><b>영속성 컨텍스트</b></td><td><b>우회한다</b> → 불일치가 문제</td><td><b>통과한다</b> → 누적이 문제</td></tr>
+    <tr><td><b>핵심 처방</b></td><td>실행 후 <code>clear()</code> (또는 순서 조정)</td><td>배치 묶기 + 주기적 <code>flush</code>/<code>clear</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>2-3. <code>saveAll()</code>이 답이 아닌 이유, 그리고 진짜 스위치</h3>
+
+<p>"루프 대신 <code>saveAll(list)</code>을 쓰면 되지 않나"는 자연스러운 발상이지만, <b><code>saveAll()</code> 내부는 결국 리스트를 순회하며 <code>save()</code>를 부르는 것</b>이다. 여러 건을 한 문장으로 묶는 일은 <code>saveAll()</code>이 아니라 <b>JDBC 배치 계층</b>이 한다.</p>
+
+<div class="callout info" style="margin-bottom:0"><span class="t">JDBC 배치(batch)가 무엇인가 — 한 번 짚고 간다</span>
+JDBC에는 <code>PreparedStatement.addBatch()</code>로 <b>파라미터 세트를 여러 벌 쌓아 두었다가</b> <code>executeBatch()</code> 한 번으로 <b>몰아 보내는</b> API가 있다. 하이버네이트는 <code>hibernate.jdbc.batch_size</code>를 보고 이 API를 쓴다. <b>그런데 그 스위치를 켜도 <code>IDENTITY</code>면 아무 일도 일어나지 않는다.</b> 다음 절이 그 이야기다.
+</div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. IDENTITY가 배치를 무력화하는 메커니즘</h2>
+
+<p>이 문항에서 가장 중요한 지점이고, <b>"auto_increment라 INSERT 전엔 id를 알 수 없어서"</b>라고 답할 수 있으면 <b>절반은 통과</b>다. 나머지 절반은 <b>"그래서 무슨 일이 연쇄적으로 일어나는가"</b>다.</p>
+
+<div class="step red"><span class="n">1</span><div class="body"><b>1차 캐시는 식별자를 키로 갖는 <code>Map</code>이다.</b> 영속성 컨텍스트의 1차 캐시는 개념적으로 <b><code>@Id</code> 값 → 엔티티 인스턴스</b>의 <code>Map</code> 하나다. 같은 트랜잭션에서 같은 id를 두 번 조회하면 같은 인스턴스가 돌아오는 것(<b>동일성 보장</b>)이 이 구조 때문이다. <b><code>Map</code>이므로 키가 없는 항목은 넣을 수 없다.</b></div></div>
+<div class="step red"><span class="n">2</span><div class="body"><b>그래서 id 없이는 엔티티를 영속 상태로 만들 수 없다.</b> <code>persist()</code>의 계약은 "이 엔티티를 관리 대상으로 만든다"이고, 관리 대상이 된다는 것은 곧 <b>1차 캐시에 들어간다</b>는 뜻이다. <b>키가 정해지기 전에는 그 일이 물리적으로 불가능하다.</b></div></div>
+<div class="step red"><span class="n">3</span><div class="body"><b><code>IDENTITY</code>는 DB가 INSERT를 실행해야 id를 준다.</b> 키 생성을 <b>DB의 자동 증가 컬럼</b>에 맡긴다는 뜻이다(PostgreSQL의 <code>GENERATED … AS IDENTITY</code>·<code>serial</code>, MySQL의 <code>auto_increment</code>). 그 값은 <b>INSERT 문이 실제로 실행되는 순간에야</b> 정해진다.</div></div>
+<div class="step red"><span class="n">4</span><div class="body"><b>따라서 <code>persist()</code>가 그 자리에서 INSERT를 날려야 한다.</b> ②가 요구하는 키를 얻을 유일한 방법이 ③의 INSERT이므로, 하이버네이트는 <code>persist()</code> 시점에 INSERT를 보내고 <code>getGeneratedKeys</code>로 id를 받아온다. 그 결과 <b>쓰기 지연(write-behind)이 성립하지 않는다</b> — 쌓아 둘 것이 애초에 생기지 않는다.</div></div>
+
+<div class="rule red">배치는 "쌓인 것을 묶어 보내는" 기술인데 <b>쌓인 것이 없으니 할 일이 없다</b><br><span style="font-size:.92rem;font-weight:600"><code>batch_size</code>가 <b>안 켜진 것이 아니라, 켜져 있는데 묶을 것이 없는 것</b> — 이 구분이 "설정을 외운 사람"과 "동작을 아는 사람"을 가른다</span></div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 486" role="img" aria-label="IDENTITY와 SEQUENCE를 나란히 비교한 도식. 맨 위에 두 전략 공통 제약으로 1차 캐시가 식별자를 키로 갖는 맵이라는 박스가 있고, 아래로 왼쪽 IDENTITY 레인은 DB가 INSERT를 실행해야 id를 주므로 persist가 즉시 INSERT를 보내고 쓰기 지연 저장소가 비어 batch_size가 할 일이 없다는 순서로 내려간다. 오른쪽 SEQUENCE 레인은 nextval로 INSERT 없이 키를 받아 persist는 채번만 하고 INSERT를 쌓아 두었다가 flush 시점에 한꺼번에 나가 batch_size가 비로소 일을 한다는 순서로 내려간다.">
+    <defs>
+      <marker id="i1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="i2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 네 칸을 두 번 채운다 — 갈리는 것은 "id를 언제 알 수 있는가" 한 칸뿐이다</text>
+
+    <!-- shared constraint -->
+    <rect x="26" y="38" width="1068" height="52" rx="11" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+    <rect x="42" y="30" width="132" height="20" rx="10" fill="#64748b"/>
+    <text x="108" y="45" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">두 전략 공통 제약</text>
+    <text x="560" y="68" font-size="13" fill="#334155" text-anchor="middle" font-weight="700">① 1차 캐시 = "식별자 → 엔티티" 의 Map — Map 이므로 키 없는 항목은 넣을 수 없다</text>
+    <text x="560" y="84" font-size="11.5" fill="#64748b" text-anchor="middle">persist() 의 계약 = "1차 캐시에 넣어 관리 대상으로 만든다" → 키가 정해지기 전에는 물리적으로 불가능</text>
+    <line x1="290" y1="92" x2="290" y2="108" stroke="#dc2626" stroke-width="1.8" marker-end="url(#i1)"/>
+    <line x1="830" y1="92" x2="830" y2="108" stroke="#16a34a" stroke-width="1.8" marker-end="url(#i2)"/>
+
+    <text x="290" y="128" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">IDENTITY — 배치가 무력화된다</text>
+    <text x="830" y="128" font-size="13.5" font-weight="700" fill="#15803d" text-anchor="middle">SEQUENCE — 배치가 성립한다</text>
+
+    <!-- left lane -->
+    <rect x="26" y="138" width="528" height="62" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <rect x="400" y="130" width="140" height="20" rx="10" fill="#dc2626"/>
+    <text x="470" y="145" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">여기가 갈리는 지점</text>
+    <text x="46" y="164" font-size="12.5" fill="#991b1b" font-weight="700">② DB가 INSERT를 실행해야 id를 준다</text>
+    <text x="46" y="184" font-size="11.5" fill="#b91c1c">auto_increment / GENERATED AS IDENTITY 값은 INSERT 시점에 확정</text>
+    <line x1="290" y1="200" x2="290" y2="214" stroke="#dc2626" stroke-width="1.8" marker-end="url(#i1)"/>
+
+    <rect x="26" y="216" width="528" height="62" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="46" y="242" font-size="12.5" fill="#991b1b" font-weight="700">③ persist() 가 그 자리에서 INSERT 를 보낸다 — 왕복 1회, 지금 발생</text>
+    <text x="46" y="262" font-size="11.5" fill="#b91c1c">그리고 getGeneratedKeys 로 id 를 받아 1차 캐시에 넣는다</text>
+    <line x1="290" y1="278" x2="290" y2="292" stroke="#dc2626" stroke-width="1.8" marker-end="url(#i1)"/>
+
+    <rect x="26" y="294" width="528" height="62" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="46" y="320" font-size="12.5" fill="#991b1b" font-weight="700">④ 쓰기 지연 저장소가 비어 있다</text>
+    <text x="46" y="340" font-size="11.5" fill="#b91c1c">"모아 뒀다 flush 때 몰아 보내기"가 성립하지 않는다 → 묶을 대상이 없다</text>
+    <line x1="290" y1="356" x2="290" y2="370" stroke="#dc2626" stroke-width="1.8" marker-end="url(#i1)"/>
+
+    <rect x="26" y="372" width="528" height="56" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+    <text x="290" y="396" font-size="13" fill="#991b1b" text-anchor="middle" font-weight="700">⑤ hibernate.jdbc.batch_size 는 켜져 있지만 할 일이 없다</text>
+    <text x="290" y="416" font-size="11.5" fill="#b91c1c" text-anchor="middle">로그도, 소요 시간도, 아무것도 달라지지 않는다</text>
+
+    <!-- right lane -->
+    <rect x="566" y="138" width="528" height="62" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <rect x="940" y="130" width="140" height="20" rx="10" fill="#16a34a"/>
+    <text x="1010" y="145" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">여기가 갈리는 지점</text>
+    <text x="586" y="164" font-size="12.5" fill="#166534" font-weight="700">② INSERT 없이도 키를 준다</text>
+    <text x="586" y="184" font-size="11.5" fill="#15803d"><tspan class="mono">select nextval(…)</tspan> 1회로 1000개 구간 선점 · 나머지 999건은 메모리 채번</text>
+    <line x1="830" y1="200" x2="830" y2="214" stroke="#16a34a" stroke-width="1.8" marker-end="url(#i2)"/>
+
+    <rect x="566" y="216" width="528" height="62" rx="10" fill="#fff" stroke="#bbf7d0"/>
+    <text x="586" y="242" font-size="12.5" fill="#166534" font-weight="700">③ persist() 는 채번만 하고 1차 캐시에 넣는다</text>
+    <text x="586" y="262" font-size="11.5" fill="#15803d">INSERT 문은 쓰기 지연 저장소에 쌓아만 둔다 — 지금은 왕복이 없다</text>
+    <line x1="830" y1="278" x2="830" y2="292" stroke="#16a34a" stroke-width="1.8" marker-end="url(#i2)"/>
+
+    <rect x="566" y="294" width="528" height="62" rx="10" fill="#fff" stroke="#bbf7d0"/>
+    <text x="586" y="320" font-size="12.5" fill="#166534" font-weight="700">④ flush 시점에 INSERT 1000건이 한꺼번에 나간다</text>
+    <text x="586" y="340" font-size="11.5" fill="#15803d">묶을 대상이 생겼다 — 여기서 비로소 배치 계층이 개입할 자리가 열린다</text>
+    <line x1="830" y1="356" x2="830" y2="370" stroke="#16a34a" stroke-width="1.8" marker-end="url(#i2)"/>
+
+    <rect x="566" y="372" width="528" height="56" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="830" y="396" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">⑤ hibernate.jdbc.batch_size 가 비로소 일을 한다</text>
+    <text x="830" y="416" font-size="11.5" fill="#15803d" text-anchor="middle">채번 왕복도 allocationSize 만큼 나눠져 1/1000 이 된다</text>
+
+    <rect x="26" y="440" width="1068" height="36" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="463" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">연쇄 한 문장 — IDENTITY → 키를 DB만 안다 → 키 없이는 1차 캐시에 못 넣는다 → persist() 가 즉시 INSERT → 쓰기 지연 저장소가 빈다 → 묶을 대상 자체가 없다</text>
+  </svg>
+  <figcaption><b>하이버네이트 소스에서도 이 동작이 그대로 보인다.</b> 6.6 기준으로 <code>ActionQueue</code>는 IDENTITY 인서트를 큐에 쌓지 않고 즉시 실행하며, 그 자리에 <code>"Executing identity-insert immediately"</code>라는 로그가 박혀 있다. 실행 여부를 가르는 조건은 <code>delayIdentityInserts = !트랜잭션_진행중 &amp;&amp; !즉시_id_필요 &amp;&amp; DB채번</code>인데, <b>트랜잭션 안에서 <code>persist()</code>를 부르는 정상 경로는 첫 항목에서 이미 거짓</b>이므로 언제나 즉시 실행 쪽으로 간다.</figcaption>
+</figure>
+
+<div class="split">
+  <div class="pane r">
+    <h4>3-1. 로그로 확인하는 장면 — 켰는데 아무 변화가 없다</h4>
+<pre style="margin:8px 0"><code><span class="cm"># batch_size 를 켰다</span>
+spring.jpa.properties.hibernate:
+  show_sql: <span class="kw">true</span>
+  jdbc:
+    batch_size: 1000
+
+<span class="cm"># 그런데 로그는 전혀 달라지지 않는다</span>
+<span class="ln-bad">Hibernate: insert into settlement (...) values (?,?,?,?,?)</span>
+<span class="ln-bad">Hibernate: insert into settlement (...) values (?,?,?,?,?)</span>
+<span class="ln-bad">... (100만 줄, 소요 시간도 그대로)</span></code></pre>
+    <p style="margin:8px 0 0;font-size:.93rem"><b>주의</b>: 이 로그만으로 "배치가 안 됐다"고 단정하면 안 된다. <b><code>show_sql</code>은 배치 여부를 보여주는 도구가 아니다</b> — 배치가 잘 될 때도 문장은 한 줄씩 찍힌다(5절). <b>여기서 증거는 "로그 줄 수"가 아니라 "소요 시간이 그대로"</b>다.</p>
+  </div>
+  <div class="pane g">
+    <h4>3-2. 그럼 <code>JdbcTemplate</code>은 왜 같은 auto_increment에서 잘 묶이나</h4>
+    <p style="margin:6px 0"><b>테이블은 그대로 자동 증가 컬럼인데</b> <code>JdbcTemplate.batchUpdate</code>는 잘 묶인다. 왜 JPA에서 문제였던 것이 여기서는 문제가 안 되는가 —</p>
+    <div class="rule ok" style="margin:8px 0"><b>JDBC에는 영속성 컨텍스트가 없기 때문이다</b></div>
+    <p style="margin:6px 0">JPA가 id를 필요로 했던 이유는 <b>DB에 넣기 위해서가 아니라 1차 캐시에 넣기 위해서</b>였다(①②). <b>JDBC는 애초에 캐시할 대상이 없으므로 id를 몰라도 아무 지장이 없다.</b> 값만 <code>addBatch</code>로 쌓았다가 <code>executeBatch</code>로 한 번에 보내면 되고, id는 DB가 알아서 채운다.</p>
+    <p style="margin:6px 0 0;font-size:.93rem">이 설명까지 붙일 수 있으면 <b>"우회로를 아는 것"이 아니라 "우회로가 통하는 이유를 아는 것"</b>이 된다 — <b>암기와 이해가 갈리는 지점</b>이다.</p>
+  </div>
+</div>
+
+<div class="memo">
+  <h4>비유로 한 번 더 — 사물함과 번호표</h4>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">IDENTITY</div><div class="d">1차 캐시는 <b>번호가 붙은 사물함</b>이고, 물건을 넣으려면 <b>번호가 먼저 있어야</b> 한다. 그런데 번호는 <b>물건을 DB 창구에 맡겨야만</b> 발급된다 → <b>한 개 넣을 때마다 창구까지 다녀와야 한다.</b></div></div>
+    <div class="tile ok"><div class="k" style="font-family:inherit">SEQUENCE + allocationSize</div><div class="d">창구에서 <b>번호표 1000장 묶음을 미리 받아온다.</b> 그다음부터는 <b>자리에서 번호를 매기고</b>, 물건은 <b>수레에 모아 두었다가 한 번에</b> 창구로 민다. <b>창구 방문이 1/1000</b>이 된다.</div></div>
+  </div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 처방 — JPA를 버리는 것이 아니라 순서대로 조인다</h2>
+
+<p><b>핵심은 "JPA를 버릴까 말까"의 이분법이 아니라 순서다.</b> 아래 네 단계는 <b>위험도와 포기하는 것이 순서대로 커진다.</b> 실무자는 위에서부터 하나씩 열어보고, <b>효과가 충분한 지점에서 멈춘다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="처방 4단계를 오르는 계단으로 그린 도식. 1단계 ID 전략 교체, 2단계 batch_size와 order_inserts, 3단계 flush와 clear, 4단계 JdbcTemplate과 벌크 적재 명령 순서로 올라가며 오른쪽으로 갈수록 얻는 것과 포기하는 것이 함께 커진다. 3단계와 4단계 사이에 대개 여기서 충분하다는 경계선이 있다.">
+    <defs>
+      <marker id="s4a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#6b7280"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">위에서부터 하나씩 열고, 효과가 충분한 지점에서 멈춘다 — ④는 마지막 카드지 첫 카드가 아니다</text>
+
+    <text x="26" y="200" font-size="11.5" fill="#6b7280" font-weight="700" transform="rotate(-90 26 200)" text-anchor="middle">포기하는 것 · 되돌리기 어려움</text>
+    <line x1="40" y1="358" x2="40" y2="80" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#s4a)"/>
+
+    <!-- step 1 -->
+    <rect x="58" y="238" width="238" height="122" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <circle cx="84" cy="262" r="14" fill="#2563eb"/><text x="84" y="267" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">1</text>
+    <text x="106" y="267" font-size="12.5" fill="#1d4ed8" font-weight="700">ID 전략 교체</text>
+    <text x="74" y="290" font-size="11" fill="#1e40af" class="mono">SEQUENCE(PG) / TABLE(MySQL)</text>
+    <text x="74" y="306" font-size="11" fill="#1e40af" class="mono">+ allocationSize = 1000</text>
+    <text x="74" y="328" font-size="11" fill="#16a34a" font-weight="700">해결 — 쓰기 지연이 성립</text>
+    <text x="74" y="344" font-size="10.5" fill="#b91c1c">포기 — id 연속성 · 마이그레이션</text>
+
+    <!-- step 2 -->
+    <rect x="312" y="198" width="238" height="162" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <circle cx="338" cy="222" r="14" fill="#2563eb"/><text x="338" y="227" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">2</text>
+    <text x="360" y="227" font-size="12.5" fill="#1d4ed8" font-weight="700">배치로 묶는다</text>
+    <text x="328" y="250" font-size="11" fill="#1e40af" class="mono">jdbc.batch_size = 1000</text>
+    <text x="328" y="266" font-size="11" fill="#1e40af" class="mono">order_inserts / order_updates</text>
+    <text x="328" y="288" font-size="11" fill="#16a34a" font-weight="700">해결 — 하이버네이트 층 왕복</text>
+    <text x="328" y="306" font-size="10.5" fill="#b45309">못 해결 — 힙 누적, 드라이버 층</text>
+    <text x="328" y="324" font-size="10.5" fill="#b91c1c">포기 — 실패 지점 특정이 어려움</text>
+    <text x="328" y="344" font-size="10.5" fill="#6b7280">크게 잡을수록 이기는 값이 아니다</text>
+
+    <!-- step 3 -->
+    <rect x="566" y="158" width="238" height="202" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <circle cx="592" cy="182" r="14" fill="#2563eb"/><text x="592" y="187" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">3</text>
+    <text x="614" y="187" font-size="12.5" fill="#1d4ed8" font-weight="700">비운다</text>
+    <text x="582" y="210" font-size="11" fill="#1e40af" class="mono">batchSize 마다 flush() + clear()</text>
+    <text x="582" y="232" font-size="11" fill="#16a34a" font-weight="700">해결 — 힙 누적, 전건 대조 폭증</text>
+    <text x="582" y="250" font-size="10.5" fill="#16a34a">1-1의 곡선이 직선이 되는 지점</text>
+    <text x="582" y="272" font-size="10.5" fill="#b45309">못 해결 — 트랜잭션 크기(6절)</text>
+    <text x="582" y="292" font-size="10.5" fill="#b91c1c">포기 — 컨텍스트를 통째로 비움</text>
+    <text x="582" y="308" font-size="10.5" fill="#b91c1c">(다른 엔티티도 함께 준영속)</text>
+    <text x="582" y="334" font-size="11" fill="#6b7280">flush 는 커밋이 아니다 —</text>
+    <text x="582" y="350" font-size="11" fill="#6b7280">롤백하면 전부 사라진다</text>
+
+    <!-- boundary -->
+    <line x1="812" y1="70" x2="812" y2="368" stroke="#16a34a" stroke-width="2" stroke-dasharray="7 5"/>
+    <rect x="742" y="46" width="140" height="22" rx="11" fill="#16a34a"/>
+    <text x="812" y="62" font-size="11" fill="#fff" text-anchor="middle" font-weight="700">대개 여기서 충분하다</text>
+
+    <!-- step 4 -->
+    <rect x="824" y="94" width="270" height="266" rx="11" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <circle cx="850" cy="118" r="14" fill="#d97706"/><text x="850" y="123" font-size="13" fill="#fff" text-anchor="middle" font-weight="700">4</text>
+    <text x="872" y="123" font-size="12.5" fill="#b45309" font-weight="700">JPA 밖으로 내려간다</text>
+    <text x="840" y="146" font-size="11" fill="#92400e" class="mono">JdbcTemplate.batchUpdate</text>
+    <text x="840" y="164" font-size="11" fill="#92400e" class="mono">PostgreSQL COPY / MySQL LOAD DATA</text>
+    <text x="840" y="188" font-size="11" fill="#16a34a" font-weight="700">해결 — 매핑 · 객체 생성 비용</text>
+    <text x="840" y="208" font-size="10.5" fill="#b45309">이때부터 병목은 애플리케이션을 떠나</text>
+    <text x="840" y="224" font-size="10.5" fill="#b45309">DB(인덱스 유지·WAL)로 옮겨간다</text>
+    <text x="840" y="248" font-size="11" fill="#b91c1c" font-weight="700">포기하는 것 — 공짜가 아니다</text>
+    <text x="840" y="266" font-size="10.5" fill="#b91c1c">· JPA Auditing 이 안 붙는다</text>
+    <text x="840" y="282" font-size="10.5" fill="#b91c1c">· 엔티티 검증 · @PrePersist 우회</text>
+    <text x="840" y="298" font-size="10.5" fill="#b91c1c">· 영속성 컨텍스트와 어긋남</text>
+    <text x="840" y="314" font-size="10.5" fill="#b91c1c">· 타입 안전성 상실(컬럼 순서)</text>
+    <text x="840" y="330" font-size="10.5" fill="#b91c1c">· 테스트 방식 변경(Testcontainers)</text>
+    <text x="840" y="350" font-size="10.5" fill="#6b7280">→ 배치 전용 클래스로 경계를 좁힌다</text>
+
+    <line x1="58" y1="376" x2="1094" y2="376" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#s4a)"/>
+    <text x="560" y="394" font-size="12" fill="#6b7280" text-anchor="middle" font-weight="700">각 단계에서 실제로 측정한 다음, 충분하면 멈춘다 — "얻는 것이 큰 만큼 포기하는 것도 크다"</text>
+  </svg>
+  <figcaption><b>면접에서 이 계단을 말로 풀 때의 문장</b>: "저는 ①부터 열어보고, <b>각 단계에서 실제로 측정한 다음</b> 충분하면 멈춥니다. <b>④는 마지막 카드지 첫 카드가 아닙니다</b> — 얻는 것이 큰 만큼 포기하는 것도 크기 때문입니다."</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>순서 암기 — <b>아 · 배 · 비 · 내</b></h4>
+  <div class="chain">
+    <span class="chip b"><b>아</b>이디 전략</span><span class="arrow">→</span><span class="chip b"><b>배</b>치 묶기</span><span class="arrow">→</span><span class="chip b"><b>비</b>우기(flush+clear)</span><span class="arrow">→</span><span class="chip w"><b>내</b>려가기(JdbcTemplate·COPY)</span>
+  </div>
+  <p style="margin-bottom:0" class="sub">순서를 바꾸면 앞 단계가 무효가 된다 — <b>ID 전략을 안 고치고 <code>batch_size</code>만 켜면 아무 일도 일어나지 않고</b>, <b><code>clear()</code> 없이 배치만 켜면 뒤로 갈수록 느려지는 곡선이 그대로 남는다.</b></p>
+</div>
+
+<h3>4-1. ① ID 전략 교체 — 채번을 미리 받아와 INSERT를 미룬다</h3>
+
+<p>3절에서 확인한 대로 <b>막힌 것은 배치가 아니라 쓰기 지연</b>이다. 그러니 첫 카드는 <b>"INSERT 전에 id를 알 수 있게 만드는 것"</b>이다. <b>PostgreSQL이라면 <code>SEQUENCE</code>가 정답</b>이다 — 진짜 시퀀스 오브젝트가 있어서 <code>nextval</code>로 INSERT 없이 번호를 받아올 수 있다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> persist() 마다 즉시 INSERT</div>
+<pre><code><span class="kw">@Id</span>
+<span class="ln-bad"><span class="kw">@GeneratedValue</span>(strategy = GenerationType.IDENTITY)</span>
+<span class="kw">private</span> Long id;
+
+<span class="cm">// 쓰기 지연 불가 → 묶을 대상이 없다</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After (PostgreSQL)</span> 채번 1회로 1000개 선점</div>
+<pre><code><span class="kw">@Id</span>
+<span class="ln-good"><span class="kw">@GeneratedValue</span>(strategy = GenerationType.SEQUENCE,</span>
+<span class="ln-good">                generator = <span class="st">"settlement_seq"</span>)</span>
+<span class="ln-good"><span class="kw">@SequenceGenerator</span>(</span>
+<span class="ln-good">        name = <span class="st">"settlement_seq"</span>,</span>
+<span class="ln-good">        sequenceName = <span class="st">"settlement_seq"</span>,  <span class="cm">// DB에 실제로 만들 이름</span></span>
+<span class="ln-good">        allocationSize = 1000)             <span class="note">한 번에 1000개 선점</span></span>
+<span class="kw">private</span> Long id;</code></pre>
+  </div>
+</div>
+
+<div class="codehead plain"><span class="tag">반드시 함께</span> DB 시퀀스의 증가폭을 <code>allocationSize</code>와 맞춘다</div>
+<pre><code><span class="kw">create sequence</span> settlement_seq <span class="kw">start with</span> 1 <span class="kw">increment by</span> 1000;
+
+<span class="cm">-- 맞추지 않으면 애플리케이션이 아예 안 뜬다 (Hibernate 6.6 메시지)</span>
+<span class="cm">--   The increment size of the [settlement_seq] sequence is set to [1000]</span>
+<span class="cm">--   in the entity mapping while the associated database sequence</span>
+<span class="cm">--   increment size is [1].</span></code></pre>
+
+<div class="callout ok">
+  <span class="t">이 예외는 고마운 예외다</span>
+  <code>allocationSize</code>가 1보다 크면 하이버네이트는 <b>pooled 최적화기</b>를 쓰는데, 이 방식은 <b>시퀀스가 한 번에 <code>allocationSize</code>만큼 건너뛴다는 것을 전제</b>로 구간을 계산한다. 그래서 기동 시점에 실제 DB 시퀀스의 증가폭을 조회해 매핑값과 비교하고, 다르면 예외를 던진다(기본 정책 <code>hibernate.id.sequence.increment_size_mismatch_strategy</code> = <code>EXCEPTION</code>). <b>조용히 넘어갔다면 두 인스턴스가 같은 id를 발급해 PK 충돌이 났을 것</b>이다.
+</div>
+
+<div class="callout warn">
+  <span class="t">MySQL은 사정이 다르다 — 벤더를 뭉뚱그리지 않는다</span>
+  MySQL에는 <b>시퀀스 오브젝트가 없다.</b> 그래서 <code>GenerationType.SEQUENCE</code>를 지정해도 하이버네이트는 <b>테이블 기반 제너레이터로 대체</b>한다(6.6의 <code>SequenceStyleGenerator</code>가 방언에 시퀀스 지원 여부를 물어보고, 없으면 테이블 구조로 만든다). 결과적으로 MySQL에서는 <b><code>TABLE</code> 제너레이터를 명시적으로 쓰는 것</b>이 동작과 의도가 일치해 혼란이 적다. (<code>AUTO</code>는 하이버네이트 버전과 설정에 따라 매핑이 달라질 수 있으므로 <b>배치 성능이 걸린 자리에서는 전략을 명시</b>한다.)
+<pre style="margin:10px 0 0"><code><span class="cm">// After (MySQL): TABLE 제너레이터 + 큰 allocationSize</span>
+<span class="kw">@Id</span>
+<span class="kw">@GeneratedValue</span>(strategy = GenerationType.TABLE, generator = <span class="st">"settlement_seq"</span>)
+<span class="kw">@TableGenerator</span>(name = <span class="st">"settlement_seq"</span>, table = <span class="st">"id_sequences"</span>,
+                pkColumnName = <span class="st">"seq_name"</span>, valueColumnName = <span class="st">"next_val"</span>,
+                pkColumnValue = <span class="st">"settlement"</span>, allocationSize = 1000)
+<span class="kw">private</span> Long id;</code></pre>
+</div>
+
+<div class="callout trap">
+  <span class="t">이 단계가 못 해결하는 것 — 반드시 같은 호흡에 말할 것</span>
+  <b>· id에 구멍이 생긴다.</b> 재시작하면 선점 구간의 남은 번호는 버려진다. <b>PK는 연속일 필요가 없으므로 대개 문제가 아니지만</b>, id를 업무 일련번호로 노출하고 있다면 문제가 된다.<br>
+  <b>· 채번 지점이 경합 지점이 된다.</b> 여러 인스턴스가 동시에 채번하면 그 지점에 경합이 생긴다. MySQL의 <code>TABLE</code> 제너레이터는 <b>채번 테이블의 행에 락</b>이 걸리므로 특히 그렇다. <code>allocationSize</code>가 크면 방문 횟수가 적어 경합도 줄지만, <b><code>allocationSize</code>가 1이면 오히려 병목</b>이다. (PostgreSQL 시퀀스는 트랜잭션 밖에서 원자적으로 증가하므로 락 경합은 훨씬 덜하다.)<br>
+  <b>· 기존 테이블의 마이그레이션이 필요하다.</b> 이미 자동 증가 컬럼으로 운영 중이라면 시퀀스·채번 테이블의 시작값을 <b>현재 최대 id보다 크게</b> 잡아야 한다. <b>"코드 한 줄 바꾸면 끝"이 아니다.</b><br>
+  <b>· 왕복 횟수 자체는 아직 그대로다.</b> 이 단계는 <b>묶을 수 있는 상태를 만든 것</b>일 뿐이고, 실제로 묶는 건 ②다.
+</div>
+
+<h3>4-2. ② <code>batch_size</code> + <code>order_inserts</code> / <code>order_updates</code></h3>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 쓰기 지연은 되지만 한 문장씩</div>
+<pre><code>spring:
+  jpa:
+    properties:
+      hibernate:
+        jdbc:
+<span class="ln-bad">          batch_size: 0</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 묶어 보낸다 + 묶일 수 있게 정렬한다</div>
+<pre><code>spring:
+  jpa:
+    properties:
+      hibernate:
+        jdbc:
+<span class="ln-good">          batch_size: 1000</span>
+<span class="ln-good">        order_inserts: <span class="kw">true</span>   <span class="cm"># 기본값 false</span></span>
+<span class="ln-good">        order_updates: <span class="kw">true</span>   <span class="cm"># 기본값 false</span></span></code></pre>
+  </div>
+</div>
+
+<p><b><code>order_inserts</code>가 왜 필요한가.</b> <b>JDBC 배치는 "연속된 같은 SQL 문장"만 묶는다.</b> 쓰기 지연 저장소에 <code>Settlement → Merchant → Settlement → Merchant</code>처럼 섞여 있으면, 문장이 바뀔 때마다 배치가 끊겨 <b>크기 1짜리 배치가 줄줄이</b> 만들어진다. <code>order_inserts</code>는 flush 직전에 <b>같은 엔티티끼리 모아</b> 배치가 실제로 묶이게 한다.</p>
+
+<p>정확히 말하면 하이버네이트 6.6의 정렬기(<code>ActionQueue.InsertActionSorter</code>)는 <b>엔티티 이름으로 그룹을 만들고, 연관관계로 인한 선후 의존을 지키면서 그룹 단위로 스케줄</b>한다. 단순히 이름순으로 줄 세우는 것이 아니라 <b>"부모를 먼저, 자식을 나중에"라는 제약을 지키면서 묶는 것</b>이라, 순환 참조가 있으면 정렬에 실패했다는 경고를 남기고 그대로 내보낸다.</p>
+
+<div class="rule">"묶기 스위치를 켰는데 왜 안 빨라지지"의 원인 <b>세 개를 순서대로</b> 나열할 수 있으면 <b>실제로 겪어본 사람</b>으로 읽힌다<br><span style="font-size:.92rem;font-weight:600">① IDENTITY (3절) → ② order_inserts 누락 (4-2) → ③ 드라이버 재작성 옵션 (5절)</span></div>
+
+<h3>4-3. "켰는데 왜 안 묶이나" 체크리스트</h3>
+
+<p><code>hibernate.jdbc.batch_size</code>는 <b>켠다고 항상 묶이는 스위치가 아니다.</b> 하이버네이트 6.6은 여러 조건을 확인해서 하나라도 걸리면 <b>조용히 배치를 포기하고 건별 실행으로 되돌아간다. 예외도 경고도 없다.</b> 그래서 아래를 <b>위에서부터</b> 확인하는 것이 빠르다.</p>
+
+<div class="scroll">
+<table class="wide">
+  <caption>위 3개는 빈도순, 4~7번은 하이버네이트가 "배치 키 없음"을 돌려주는 조건이다</caption>
+  <thead><tr><th>#</th><th>원인</th><th>확인 방법</th><th>처방</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>1</b></td><td><b>ID 전략이 <code>IDENTITY</code></b></td><td>엔티티의 <code>@GeneratedValue</code></td><td><code>SEQUENCE</code>(PostgreSQL) / <code>TABLE</code>(MySQL)로 교체 (4-1)</td></tr>
+    <tr class="hl"><td><b>2</b></td><td><b>여러 엔티티가 섞여 배치가 끊김</b></td><td><code>p6spy</code>/<code>datasource-proxy</code>에서 <b>배치 크기가 1</b>로 찍힘</td><td><code>hibernate.order_inserts=true</code>, <code>order_updates=true</code> (4-2)</td></tr>
+    <tr class="hl"><td><b>3</b></td><td><b>드라이버가 도로 풀어서 보냄</b></td><td><b>서버 측</b> 쿼리 로그</td><td>PostgreSQL <code>reWriteBatchedInserts=true</code> / MySQL <code>rewriteBatchedStatements=true</code> (5절)</td></tr>
+    <tr><td>4</td><td><code>@DynamicInsert</code> / <code>@DynamicUpdate</code>가 붙어 있음</td><td>엔티티 클래스 애너테이션</td><td>매번 SQL 문장이 달라지므로 배치 불가 — <b>배치 경로에서는 뗀다</b></td></tr>
+    <tr><td>5</td><td><code>@OptimisticLocking(type = ALL 또는 DIRTY)</code></td><td>엔티티 클래스 애너테이션</td><td><code>where</code> 절이 행마다 달라져 배치 불가 — <b><code>@Version</code> 방식으로</b></td></tr>
+    <tr><td>6</td><td>트랜잭션 없이 실행 중</td><td><code>@Transactional</code> 유무</td><td>배치는 <b>트랜잭션이 열려 있어야</b> 성립한다</td></tr>
+    <tr><td>7</td><td><code>@Version</code> 엔티티인데 배치를 껐음</td><td><code>hibernate.jdbc.batch_versioned_data</code></td><td><b>6.x 기본값은 <code>true</code>이므로 대개 문제 없다.</b> 명시적으로 <code>false</code>로 꺼두지 않았는지만 본다</td></tr>
+    <tr><td>8</td><td><code>flush()</code> 없이 트랜잭션 끝까지 감</td><td>힙 사용량 곡선</td><td>묶이기는 하지만 <b>힙이 터진다</b> — <code>flush()</code> + <code>clear()</code> (4-4)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout warn">
+  <span class="t">4번과 5번이 왜 배치를 막는지는 한 문장으로 설명된다</span>
+  <b>JDBC 배치는 "SQL 문자열은 같고 파라미터만 다른" 경우에만 성립한다.</b> <code>@DynamicInsert</code>는 null이 아닌 컬럼만 골라 INSERT를 만들므로 <b>행마다 문장이 달라지고</b>, <code>ALL</code>/<code>DIRTY</code> 방식의 낙관적 락은 <code>where</code> 절에 이전 값들을 나열하므로 <b>역시 행마다 달라진다.</b> <b>문장이 달라지면 묶을 수가 없다.</b> (4~7번은 <code>AbstractMutationCoordinator.resolveBatchKeyAccess()</code> 한 곳에서 판정되고, "배치 키 없음"을 돌려주는 순간 <b>배치 경로가 통째로 닫힌다.</b>)
+</div>
+
+<h3>4-4. ③ 배치 크기마다 <code>flush()</code> + <code>clear()</code></h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 트랜잭션 끝까지 100만 개가 힙에 남는다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">load</span>(List&lt;SettlementDto&gt; dtos) {
+    <span class="kw">for</span> (SettlementDto dto : dtos) {
+<span class="ln-bad">        settlementRepository.save(Settlement.from(dto));</span>
+    }
+}
+<span class="cm">// 힙: 엔티티 100만 + 스냅샷 100만</span>
+<span class="cm">// flush 대조량: 5억 500만 건 (1-1의 붉은 곡선)</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> batch_size 와 같은 주기로 내보내고 비운다</div>
+<pre><code><span class="kw">@PersistenceContext</span> <span class="kw">private</span> EntityManager em;
+
+<span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">load</span>(List&lt;SettlementDto&gt; dtos) {
+<span class="ln-good">    <span class="kw">int</span> batchSize = 1000;   <span class="note">hibernate.jdbc.batch_size 와 맞춘다</span></span>
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; dtos.size(); i++) {
+        em.persist(Settlement.from(dtos.get(i)));
+
+        <span class="kw">if</span> ((i + 1) % batchSize == 0) {
+<span class="ln-good">            em.flush();   <span class="cm">// 쌓인 INSERT 1000건을 배치로 내보낸다</span></span>
+<span class="ln-good">            em.clear();   <span class="cm">// 1차 캐시 + 스냅샷을 비운다 → 힙이 평평해진다</span></span>
+        }
+    }
+<span class="ln-good">    em.flush(); em.clear();   <span class="cm">// 1000의 배수가 아닌 꼬리</span></span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="memo green">
+  <h4>둘은 역할이 다르고 <b>둘 다</b> 필요하다 — 가장 흔한 반쪽 처방</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k">flush()</div><div class="d">쌓인 SQL을 <b>DB로 내보낸다.</b> 이게 없으면 트랜잭션 끝에 100만 건이 한꺼번에 몰린다.</div></div>
+    <div class="tile ok"><div class="k">clear()</div><div class="d">영속성 컨텍스트를 <b>비운다.</b> <b><code>flush()</code>만 하면 SQL은 나가지만 엔티티는 그대로 남아 힙 문제도, 전건 대조 문제도 전혀 해결되지 않는다.</b> 1-1의 <b>500.5배</b>가 정확히 이 차이다.</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">그리고 <b><code>flush()</code>는 커밋이 아니다</b> — SQL을 보낸 것일 뿐이라 <b>롤백하면 전부 사라진다</b><br><span style="font-size:.92rem;font-weight:600">100만 건이 여전히 한 트랜잭션에 묶여 있다는 사실은 그대로다 → 6절</span></div>
+</div>
+
+<p><b><code>batchSize</code>를 <code>hibernate.jdbc.batch_size</code>와 맞추는 이유</b>는 단순하다. 주기가 어긋나면 flush 시점에 쌓인 개수가 배치 크기와 맞지 않아 <b>자투리 배치</b>가 계속 생긴다.</p>
+
+<div class="callout trap" style="margin-bottom:0">
+  <span class="t">이 단계가 새로 만드는 위험 — <code>clear()</code>는 컨텍스트를 통째로 비운다</span>
+  같은 트랜잭션에서 다루던 <b>다른 엔티티들도 함께 준영속(detached)</b>이 된다. 준영속이란 <b>"한때 관리 대상이었지만 지금은 상자 밖으로 나온 상태"</b>다. 루프 안에서 조회해 둔 가맹점 엔티티를 <code>clear()</code> 뒤에 만지면 <b>지연 로딩이 터지거나 변경 감지가 사라진다.</b> → <b>배치 로직은 다른 엔티티 조작과 섞지 않는 것</b>이 안전하고, 꼭 필요하면 <code>clear()</code> 이후 <b>id로 다시 조회</b>한다. (7절 꼬리질문에서 자세히)
+</div>
+
+<h3>4-5. ④ 그래도 부족하면 — <code>JdbcTemplate.batchUpdate</code> / <code>COPY</code> / <code>LOAD DATA INFILE</code></h3>
+
+<p>①~③으로 대개 충분하지만, <b>엔티티 매핑 자체가 무거운 경우</b>(연관관계가 많다, 컨버터가 여럿이다, 리스너가 붙어 있다)에는 건당 객체 생성·매핑 비용이 남는다. <b>이때 비로소 아래로 내려간다.</b></p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> JPA — 건마다 엔티티 + 컨텍스트 통과 비용</div>
+<pre><code><span class="kw">for</span> (SettlementDto dto : dtos)
+    em.persist(Settlement.from(dto));</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> JdbcTemplate — 값만 보낸다</div>
+<pre><code><span class="kw">private static final</span> String SQL = <span class="st">"""
+        insert into settlement (settlement_date, tx_id, amount,
+                                merchant_id, created_at)
+        values (?, ?, ?, ?, ?)
+        """</span>;
+
+<span class="kw">public void</span> <span class="fn">load</span>(List&lt;SettlementDto&gt; dtos) {
+    <span class="kw">for</span> (List&lt;SettlementDto&gt; chunk : Lists.partition(dtos, 1000)) {
+        jdbcTemplate.batchUpdate(SQL, chunk, chunk.size(), (ps, dto) -&gt; {
+            ps.setObject(1, dto.settlementDate());
+            ps.setString(2, dto.txId());
+            ps.setBigDecimal(3, dto.amount());
+            ps.setLong(4, dto.merchantId());
+<span class="ln-good">            ps.setObject(5, LocalDateTime.now());  <span class="note">Auditing 이 안 붙으므로 직접</span></span>
+        });
+    }
+}</code></pre>
+  </div>
+</div>
+
+<div class="split">
+  <div class="pane b">
+    <h4>벌크 적재 명령은 한 단계 더 아래다</h4>
+    <p style="margin:6px 0">데이터를 <b>파일이나 스트림으로 만들어 DB가 직접 읽게 하는</b> 방식으로, <b>INSERT 문 파싱조차 건너뛰므로</b> 가장 빠르다.</p>
+    <ul>
+      <li><b>PostgreSQL — <code>COPY</code></b>: <code>COPY settlement (…) FROM STDIN (FORMAT csv)</code>. JDBC에서는 드라이버의 <code>CopyManager</code>로 스트림을 그대로 밀어 넣을 수 있어 <b>중간 파일 없이도</b> 된다.</li>
+      <li><b>MySQL — <code>LOAD DATA INFILE</code></b>: 파일을 만들어 서버(또는 클라이언트)에서 읽게 한다. <b>서버 설정(로컬 파일 읽기 허용)이 열려 있어야 하고</b>, 파일을 만들고 옮길 경로가 필요하다.</li>
+    </ul>
+    <p style="margin:8px 0 0;font-size:.93rem">두 방식 모두 <b>애플리케이션 코드에서 SQL로 표현되지 않아 추적이 어렵다</b>는 대가가 있다.</p>
+  </div>
+  <div class="pane g">
+    <h4>두 경로를 절충하는 좋은 설계 <span class="badge bonus">가산점</span></h4>
+    <p style="margin:6px 0">2-1에서 예고한 <code>insert … select</code>가 <b>여기서 되살아난다.</b></p>
+    <div class="chain">
+      <span class="chip g">① 벌크 적재 명령</span><span class="arrow">→</span><span class="chip g">스테이징 테이블</span><span class="arrow">→</span><span class="chip g">② insert … select</span><span class="arrow">→</span><span class="chip g">본 테이블</span>
+    </div>
+    <p style="margin:8px 0 0"><b>가장 무거운 구간(파일 → DB)은 DB에게 맡기고, 변환 로직은 SQL로 남겨 검증할 수 있게 된다.</b> "JPQL에 INSERT가 없다"는 제약이 <b>설계로 우회되는 지점</b>이라, 이 연결을 말하면 <b>제약을 외운 사람과 설계해본 사람이 갈린다.</b></p>
+  </div>
+</div>
+
+<h3>4-6. 종합 — 각 단계가 무엇을 해결하고 무엇을 못 해결하는가</h3>
+
+<div class="scroll">
+<table class="wide">
+  <thead><tr><th>단계</th><th>해결하는 것</th><th>못 해결하는 것</th><th>포기하는 것</th></tr></thead>
+  <tbody>
+    <tr><td><b>① ID 전략 교체</b></td><td>쓰기 지연이 성립 → <b>묶을 대상이 생긴다</b></td><td>왕복 횟수, 힙 누적</td><td>id 연속성, 마이그레이션 비용</td></tr>
+    <tr><td><b>② <code>batch_size</code> + <code>order_inserts</code></b></td><td><b>하이버네이트 층의 왕복 횟수</b></td><td>힙 누적, <b>드라이버 단 전송(5절)</b></td><td>실패 지점 특정이 어려워짐</td></tr>
+    <tr class="hl"><td><b>③ <code>flush()</code> + <code>clear()</code></b></td><td><b>힙 누적, 전건 대조 폭증</b></td><td>트랜잭션 크기(6절)</td><td>컨텍스트 통째 비움의 부작용</td></tr>
+    <tr><td><b>④ <code>JdbcTemplate</code> / <code>COPY</code></b></td><td><b>매핑·객체 생성 비용</b></td><td>(성능은 끝, 이제 <b>정합성이 과제</b>)</td><td>Auditing·검증·타입 안전성(6-4)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 드라이버 층과 관측의 3층 — 로그가 정상인데 안 빨라지는 자리</h2>
+
+<p>①~③을 다 하고도 시간이 기대만큼 줄지 않는 일이 흔하다. 원인은 <b>하이버네이트 아래 한 층, JDBC 드라이버</b>에 있다. <b>하이버네이트가 성실히 묶어서 넘겨도, 그것을 실제로 어떻게 전송할지는 드라이버가 정한다.</b></p>
+
+<div class="memo">
+  <h4>전송에서 줄일 수 있는 비용은 <b>둘</b>이고, 벤더가 이 둘을 다르게 처리한다</h4>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">① 네트워크 왕복</div><div class="d">문장 하나 보내고 <b>응답을 기다리기</b>를 반복할 것인가, <b>몰아서 한 번에</b> 보낼 것인가.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">② 서버 측 실행 횟수</div><div class="d">서버가 문장을 <b>100만 번 실행</b>할 것인가, <code>values (…),(…),(…)</code> 형태의 <b>multi-values 한 문장</b>으로 합쳐 적게 실행할 것인가.</div></div>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 442" role="img" aria-label="드라이버 층 도식. 맨 위 하이버네이트는 벤더와 무관하게 batch_size만큼 묶어서 넘긴다. 아래 왼쪽 PostgreSQL 레인은 기본 상태에서 이미 파이프라이닝으로 왕복이 줄어 있지만 서버 실행 횟수는 행마다 1회이고, reWriteBatchedInserts를 켜면 multi-values 한 문장으로 합쳐진다. 오른쪽 MySQL 레인은 기본 상태에서 드라이버가 배치를 도로 풀어 하나씩 보내므로 왕복과 서버 실행이 모두 줄지 않고, rewriteBatchedStatements를 켜야 둘 다 줄어든다. 맨 아래 띠는 이 층이 하이버네이트 로그에 전혀 남지 않는다는 경고다.">
+    <defs>
+      <marker id="dv" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 배치가 PostgreSQL과 MySQL에서 다르게 나간다 — 하이버네이트 아래 한 층의 이야기</text>
+
+    <rect x="26" y="38" width="1068" height="48" rx="11" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="560" y="60" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">Hibernate — batch_size 만큼 성실히 묶어서 드라이버에 넘긴다 (여기까지는 벤더 무관, 그리고 여기까지만 로그에 찍힌다)</text>
+    <text x="560" y="78" font-size="11.5" fill="#1e40af" text-anchor="middle" class="mono">PreparedStatement.addBatch() × 1000 → executeBatch()</text>
+    <line x1="290" y1="88" x2="290" y2="104" stroke="#64748b" stroke-width="1.8" marker-end="url(#dv)"/>
+    <line x1="830" y1="88" x2="830" y2="104" stroke="#64748b" stroke-width="1.8" marker-end="url(#dv)"/>
+
+    <!-- PG lane -->
+    <rect x="26" y="108" width="528" height="270" rx="11" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="46" y="132" font-size="13.5" fill="#334155" font-weight="700">PostgreSQL JDBC 드라이버</text>
+
+    <rect x="46" y="142" width="488" height="76" rx="9" fill="#fff" stroke="#cbd5e1"/>
+    <text x="60" y="162" font-size="12" fill="#334155" font-weight="700">기본 상태 (reWriteBatchedInserts = false)</text>
+    <text x="60" y="180" font-size="11" fill="#475569">배치의 Bind/Execute 메시지를 연속으로 밀어 넣고 <tspan font-weight="700">마지막에 Sync 1회</tspan></text>
+    <rect x="60" y="188" width="222" height="22" rx="11" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="171" y="203" font-size="11" fill="#15803d" text-anchor="middle" font-weight="700">① 왕복 — 이미 줄어 있다</text>
+    <rect x="292" y="188" width="234" height="22" rx="11" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="409" y="203" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">② 서버 실행 — 행마다 1회, 줄지 않는다</text>
+    <line x1="290" y1="220" x2="290" y2="234" stroke="#64748b" stroke-width="1.8" marker-end="url(#dv)"/>
+
+    <rect x="46" y="238" width="488" height="76" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="60" y="258" font-size="12" fill="#166534" font-weight="700" class="mono">?reWriteBatchedInserts=true</text>
+    <text x="60" y="276" font-size="11" fill="#15803d">조건이 맞는 INSERT 배치를 <tspan class="mono">insert into … values (…),(…),(…)</tspan> 한 문장으로 재작성</text>
+    <rect x="60" y="284" width="222" height="22" rx="11" fill="#dcfce7" stroke="#bbf7d0"/>
+    <text x="171" y="299" font-size="11" fill="#15803d" text-anchor="middle" font-weight="700">① 왕복 — 그대로 좋다</text>
+    <rect x="292" y="284" width="234" height="22" rx="11" fill="#dcfce7" stroke="#bbf7d0"/>
+    <text x="409" y="299" font-size="11" fill="#15803d" text-anchor="middle" font-weight="700">② 서버 실행 — 크게 줄어든다</text>
+
+    <rect x="46" y="322" width="488" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+    <text x="60" y="340" font-size="11" fill="#475569">한 문장에 담기는 행 수 상한 — <tspan font-weight="700">2의 거듭제곱으로 내림 · 32,768행 이하 · 65,535 / 행당 파라미터 수</tspan></text>
+    <text x="60" y="358" font-size="11" fill="#475569">이 예제는 컬럼 5개 → 65,535 / 5 = 13,107 → 내리면 <tspan font-weight="700" fill="#1d4ed8">8,192행이 한 문장</tspan>에 담긴다</text>
+
+    <!-- MySQL lane -->
+    <rect x="566" y="108" width="528" height="270" rx="11" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="586" y="132" font-size="13.5" fill="#334155" font-weight="700">MySQL JDBC 드라이버</text>
+
+    <rect x="586" y="142" width="488" height="76" rx="9" fill="#fff" stroke="#cbd5e1"/>
+    <text x="600" y="162" font-size="12" fill="#334155" font-weight="700">기본 상태 (rewriteBatchedStatements = false)</text>
+    <text x="600" y="180" font-size="11" fill="#b91c1c" font-weight="700">executeBatch() 를 받아도 문장을 하나씩 서버로 전송한다 — 도로 풀어서 보낸다</text>
+    <rect x="600" y="188" width="222" height="22" rx="11" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="711" y="203" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">① 왕복 — 줄지 않는다</text>
+    <rect x="832" y="188" width="234" height="22" rx="11" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="949" y="203" font-size="11" fill="#b91c1c" text-anchor="middle" font-weight="700">② 서버 실행 — 문장마다 1회</text>
+    <line x1="830" y1="220" x2="830" y2="234" stroke="#64748b" stroke-width="1.8" marker-end="url(#dv)"/>
+
+    <rect x="586" y="238" width="488" height="76" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="600" y="258" font-size="12" fill="#166534" font-weight="700" class="mono">?rewriteBatchedStatements=true</text>
+    <text x="600" y="276" font-size="11" fill="#15803d">드라이버가 배치를 multi-values 한 문장으로 재작성해 보낸다</text>
+    <rect x="600" y="284" width="222" height="22" rx="11" fill="#dcfce7" stroke="#bbf7d0"/>
+    <text x="711" y="299" font-size="11" fill="#15803d" text-anchor="middle" font-weight="700">① 왕복 — 크게 줄어든다</text>
+    <rect x="832" y="284" width="234" height="22" rx="11" fill="#dcfce7" stroke="#bbf7d0"/>
+    <text x="949" y="299" font-size="11" fill="#15803d" text-anchor="middle" font-weight="700">② 서버 실행 — 크게 줄어든다</text>
+
+    <rect x="586" y="322" width="488" height="46" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="600" y="340" font-size="11.5" fill="#b91c1c" font-weight="700">MySQL에서는 이 옵션이 사실상 필수다</text>
+    <text x="600" y="358" font-size="11" fill="#7f1d1d">없으면 "배치를 켠 의미" 자체가 거의 없다 — 하이버네이트만 묶고 드라이버가 푼다</text>
+
+    <rect x="26" y="388" width="1068" height="46" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="560" y="408" font-size="12.5" fill="#991b1b" text-anchor="middle" font-weight="700">그리고 이 층은 하이버네이트 로그에 전혀 남지 않는다 — 배치가 정상이든 아니든 로그 모양이 똑같다</text>
+    <text x="560" y="426" font-size="11.5" fill="#b91c1c" text-anchor="middle">"로그를 봤는데 정상인 것 같은데 안 빨라져요" 가 이 함정의 표준 증상이다</text>
+  </svg>
+  <figcaption><b>공통으로 주의할 점 둘.</b> ① 재작성된 문장이 커지므로 <b>서버의 최대 패킷 크기 제한</b>에 걸릴 수 있다(배치 크기와 함께 조절한다). ② <b>재작성된 multi-values INSERT에서는 생성 키 반환이 기대대로 동작하지 않을 수 있다</b> — 적재 후 생성된 id가 필요한 로직이 있다면 반드시 검증한다.</figcaption>
+</figure>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 옵션 없는 JDBC URL</div>
+<pre><code><span class="cm"># PostgreSQL</span>
+<span class="ln-bad">jdbc:postgresql://host:5432/settlement?...</span>
+
+<span class="cm"># MySQL</span>
+<span class="ln-bad">jdbc:mysql://host:3306/settlement?...</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 철자가 서로 다르다 — 그대로 외운다</div>
+<pre><code><span class="cm"># PostgreSQL — 드라이버 기본값은 false</span>
+<span class="ln-good">jdbc:postgresql://host:5432/settlement?reWriteBatchedInserts=true&amp;...</span>
+
+<span class="cm"># MySQL</span>
+<span class="ln-good">jdbc:mysql://host:3306/settlement?rewriteBatchedStatements=true&amp;...</span></code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>이 두 이름은 헷갈리라고 만든 것 같은 이름이다 — 갈라 외우는 장치</h4>
+  <div class="grid g2">
+    <div class="tile red"><div class="k">reWriteBatchedInserts</div><div class="d"><b>PostgreSQL</b> · <b><code>W</code>가 대문자</b>이고 대상이 <b>Inserts</b>(INSERT만). <span class="s">"PG는 W를 크게 쓴다, 그리고 INSERT만 다시 쓴다"</span></div></div>
+    <div class="tile red"><div class="k">rewriteBatchedStatements</div><div class="d"><b>MySQL</b> · <b>전부 소문자</b>이고 대상이 <b>Statements</b>(문장 일반). <span class="s">"MySQL은 소문자로, 문장 전부를 다시 쓴다"</span></div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">둘 다 <b>URL에서 한 글자만 빠져도 조용히 사라지는 설정</b>이고, 사라져도 <b>애플리케이션은 정상 동작하고 배치만 느려진다.</b></p>
+</div>
+
+<h3>5-1. 무엇으로 확인하나 — 관측의 3층</h3>
+
+<p><code>show_sql</code>이나 <code>org.hibernate.SQL</code> 로그는 <b>하이버네이트가 만든 문장</b>을 찍는다. <b>JDBC 드라이버가 그 아래에서 무엇을 어떻게 보냈는지는 찍지 않는다.</b> <b>관측 도구가 문제 지점을 덮지 못하면 아무리 열심히 봐도 안 보인다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 356" role="img" aria-label="관측의 3층 도식. 위층은 하이버네이트 Statistics로 문장 수를 보며 IDENTITY 문제가 잡히고 배치 여부는 알 수 없다. 가운데 층은 p6spy나 datasource-proxy로 JDBC API 수준의 배치 크기를 보며 order_inserts 누락이 잡히지만 드라이버 내부 재작성은 보이지 않는다. 아래층은 DB 서버 측 쿼리 로그로 실제 보낸 문장을 보며 재작성 옵션 누락이 잡히지만 운영에서 상시로 켜기 곤란하다. 장애를 좁히는 순서는 위층에서 아래층으로 내려가는 순서와 같다.">
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">세 층이 각각 다른 것을 본다 — 그래서 장애를 좁히는 순서도 위에서 아래로 고정된다</text>
+    <text x="140" y="52" font-size="12" fill="#6b7280" text-anchor="middle" font-weight="700">관측 층</text>
+    <text x="300" y="52" font-size="12" fill="#6b7280" font-weight="700">도구</text>
+    <text x="740" y="52" font-size="12" fill="#16a34a" text-anchor="middle" font-weight="700">이 층에서만 잡히는 문제</text>
+    <text x="990" y="52" font-size="12" fill="#dc2626" text-anchor="middle" font-weight="700">이 층이 못 보는 것</text>
+
+    <!-- layer 1 -->
+    <rect x="26" y="62" width="1068" height="76" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="140" y="94" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">① Hibernate 층</text>
+    <text x="140" y="114" font-size="11" fill="#1e40af" text-anchor="middle">문장을 몇 개 준비·실행했나</text>
+    <text x="300" y="94" font-size="10.5" fill="#1e40af" class="mono">Statistics.getPrepareStatementCount()</text>
+    <text x="300" y="114" font-size="10.5" fill="#1e40af" class="mono">SQLStatementCountValidator</text>
+    <rect x="620" y="76" width="240" height="48" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="740" y="96" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">IDENTITY 문제</text>
+    <text x="740" y="114" font-size="10.5" fill="#15803d" text-anchor="middle">문장 수가 아예 안 줄어든다</text>
+    <text x="990" y="105" font-size="11" fill="#b91c1c" text-anchor="middle">배치로 묶였는지는 모른다</text>
+
+    <!-- layer 2 -->
+    <rect x="26" y="146" width="1068" height="76" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="140" y="178" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">② JDBC API 층</text>
+    <text x="140" y="198" font-size="11" fill="#1e40af" text-anchor="middle">배치가 실제로 쓰였나 · 크기는</text>
+    <text x="300" y="178" font-size="10.5" fill="#1e40af" class="mono">p6spy</text>
+    <text x="300" y="198" font-size="10.5" fill="#1e40af" class="mono">datasource-proxy</text>
+    <rect x="620" y="160" width="240" height="48" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="740" y="180" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">order_inserts 누락</text>
+    <text x="740" y="198" font-size="10.5" fill="#15803d" text-anchor="middle">배치 크기가 1로 찍힌다</text>
+    <text x="990" y="180" font-size="11" fill="#b91c1c" text-anchor="middle">드라이버 내부의 재작성은</text>
+    <text x="990" y="197" font-size="11" fill="#b91c1c" text-anchor="middle">이 아래에서 일어나 안 보인다</text>
+
+    <!-- layer 3 -->
+    <rect x="26" y="230" width="1068" height="80" rx="10" fill="#0f172a" stroke="#334155"/>
+    <text x="140" y="262" font-size="12.5" fill="#e2e8f0" text-anchor="middle" font-weight="700">③ DB 서버 층</text>
+    <text x="140" y="282" font-size="11" fill="#94a3b8" text-anchor="middle">실제로 서버에 도착한 문장</text>
+    <text x="300" y="260" font-size="10.5" fill="#cbd5e1" class="mono">PostgreSQL log_statement=&apos;all&apos;</text>
+    <text x="300" y="278" font-size="10.5" fill="#cbd5e1" class="mono">pg_stat_statements</text>
+    <text x="300" y="296" font-size="10.5" fill="#cbd5e1" class="mono">MySQL general log</text>
+    <rect x="620" y="246" width="240" height="48" rx="8" fill="#052e16" stroke="#16a34a"/>
+    <text x="740" y="266" font-size="11.5" fill="#86efac" text-anchor="middle" font-weight="700">재작성 옵션 누락</text>
+    <text x="740" y="284" font-size="10.5" fill="#86efac" text-anchor="middle">multi-values 로 합쳐졌는가</text>
+    <text x="990" y="266" font-size="11" fill="#fca5a5" text-anchor="middle">운영에서 상시로 켜기 곤란</text>
+    <text x="990" y="283" font-size="11" fill="#fca5a5" text-anchor="middle">→ 성능 검증 환경에서 확인</text>
+
+    <rect x="26" y="318" width="1068" height="32" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="560" y="339" font-size="12" fill="#1d4ed8" text-anchor="middle" font-weight="700">장애를 좁히는 절차 = 층을 내려가는 순서 — 위층에서 문장 수가 이미 100만이면 아래를 볼 필요가 없고(IDENTITY), 위층은 정상인데 배치 크기가 1이면 정렬 문제, 가운데까지 정상인데 안 빠르면 그때가 드라이버 옵션</text>
+  </svg>
+  <figcaption><b>비유하자면 CCTV가 로비만 비추는 것</b>과 같다. 지하 주차장에서 벌어진 일은 <b>아무리 로비 화면을 돌려봐도 안 나온다.</b> 이 문항에서 "로그는 정상인데 느리다"가 생기는 이유가 정확히 <b>관측 층과 문제 층의 불일치</b>다.</figcaption>
+</figure>
+
+<h3>5-2. 이 성질을 코드로 고정하기</h3>
+
+<p>재작성 옵션은 <b>URL에서 한 글자만 빠져도 조용히 사라지는 설정</b>이다. 누군가 DataSource 설정을 정리하다 옵션을 지워도 <b>애플리케이션은 정상 동작하고 배치만 느려진다</b> — 즉 <b>테스트로 잡지 않으면 언젠가 반드시 되돌아온다.</b></p>
+
+<div class="codehead good"><span class="tag">After</span> 로그로 확인되지 않는 것을 테스트로 붙잡는다</div>
+<pre><code><span class="kw">@Test</span>
+<span class="kw">void</span> <span class="fn">정산_적재는_배치로_묶여_나간다</span>() {
+    SQLStatementCountValidator.reset();
+
+    loader.load(fixture(1_000));                     <span class="cm">// 1000건 적재</span>
+
+<span class="ln-good">    <span class="cm">// 건별 INSERT 라면 1000이 된다. 배치가 살아 있으면 그보다 훨씬 작아야 한다.</span></span>
+<span class="ln-good">    SQLStatementCountValidator.assertInsertCount(1);</span>
+}
+
+<span class="kw">@Test</span>
+<span class="kw">void</span> <span class="fn">JDBC_URL에_배치_재작성_옵션이_켜져있다</span>() {
+<span class="ln-good">    <span class="cm">// 로그로는 확인할 수 없는 설정이라, 존재 자체를 단정해 붙잡아 둔다.</span></span>
+<span class="ln-good">    assertThat(dataSourceUrl()).contains(<span class="st">"reWriteBatchedInserts=true"</span>);</span>
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">두 번째 테스트는 우스워 보이지만 유일한 장치다</span>
+  그리고 여기서 <b>DB는 실제 PostgreSQL이어야 한다</b> — <b>H2로는 드라이버 동작도, 배치 재작성도 검증되지 않으므로</b> Testcontainers를 쓴다.
+  <div class="rule" style="margin-bottom:0">"문제를 만나면 잘 푼다"와 <b>"문제가 오기 전에 잡는 장치를 만든다"</b>는 다른 능력이다<br><span style="font-size:.92rem;font-weight:600">증상이 '조금 느림'뿐이고 로그에는 아무 흔적도 남지 않는 이 자리에서 그 차이가 가장 선명하다</span></div>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 성능이 잡힌 뒤에 남는 것 — 트랜잭션 · 멱등성 · 대가</h2>
+
+<p>①~④로 시간을 줄였다고 이 문항이 끝나는 게 아니다. <b>남는 것이 셋이다.</b> 트랜잭션을 어떻게 쪼갤 것인가, 아래로 내려가면서 무엇을 포기했는가, 그리고 <b>"차라리 id를 밖에서 받아오면 되지 않느냐"</b>는 흔한 반문을 어떻게 정리할 것인가.</p>
+
+<h3>6-1. 100만 건을 트랜잭션 하나로 묶지 않는다</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 316" role="img" aria-label="단일 트랜잭션과 청크 커밋을 비교한 타임라인 도식. 위쪽은 100만 건이 하나의 트랜잭션으로 두 시간 동안 이어지다가 99만 9999건째에서 실패하면 전부 롤백되고 그동안 죽은 행 회수가 밀리고 락이 유지된다. 아래쪽은 1000건 청크마다 커밋해 실패 지점 이전 청크는 남고 유니크 키 기반 upsert로 그냥 다시 돌리면 된다.">
+    <defs>
+      <marker id="t1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 100만 건, 트랜잭션 경계만 다르다 — 99만 9999건째에서 실패했을 때 무엇이 남는가</text>
+
+    <!-- single tx -->
+    <text x="26" y="66" font-size="12.5" fill="#b91c1c" font-weight="700">단일 트랜잭션</text>
+    <rect x="150" y="52" width="820" height="34" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="170" y="74" font-size="11.5" fill="#991b1b" font-weight="700">BEGIN</text>
+    <text x="520" y="74" font-size="11.5" fill="#b91c1c" text-anchor="middle">2시간 동안 커밋 없음 — 그동안 확정되는 것이 하나도 없다</text>
+    <line x1="962" y1="40" x2="962" y2="98" stroke="#dc2626" stroke-width="2.5"/>
+    <text x="1000" y="58" font-size="13" fill="#dc2626" font-weight="700">실패</text>
+    <text x="1000" y="76" font-size="11" fill="#b91c1c">99만 9999건째</text>
+    <path d="M958 96 L166 96" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#t1)"/>
+    <text x="560" y="112" font-size="12" fill="#dc2626" text-anchor="middle" font-weight="700">전부 롤백 — 두 시간 일하고 아무것도 남지 않으며, 롤백 자체도 오래 걸리고, 다시 돌려도 같은 데이터에서 또 실패한다</text>
+
+    <rect x="26" y="124" width="344" height="60" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="40" y="144" font-size="11.5" fill="#991b1b" font-weight="700">① 죽은 행이 쌓이고 정리가 밀린다</text>
+    <text x="40" y="161" font-size="10.5" fill="#b91c1c">PostgreSQL VACUUM은 "열려 있는 가장 오래된 트랜잭션이</text>
+    <text x="40" y="176" font-size="10.5" fill="#b91c1c">볼 수도 있는 버전"을 회수하지 못한다 (MySQL이면 undo 팽창)</text>
+
+    <rect x="382" y="124" width="344" height="60" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="396" y="144" font-size="11.5" fill="#991b1b" font-weight="700">② 락 보유 시간이 배치 전체 길이가 된다</text>
+    <text x="396" y="161" font-size="10.5" fill="#b91c1c">새 행에 대한 락, 인덱스 갱신에 따른 락이</text>
+    <text x="396" y="176" font-size="10.5" fill="#b91c1c">커밋 전까지 전부 유지 → 온라인 트랜잭션이 대기한다</text>
+
+    <rect x="738" y="124" width="356" height="60" rx="9" fill="#fff" stroke="#fecaca"/>
+    <text x="752" y="144" font-size="11.5" fill="#991b1b" font-weight="700">③ 배치와 무관한 다른 조회까지 느려진다</text>
+    <text x="752" y="161" font-size="10.5" fill="#b91c1c">회수되지 못한 옛 버전이 쌓여 같은 DB를 쓰는</text>
+    <text x="752" y="176" font-size="10.5" fill="#b91c1c">다른 트랜잭션의 성능이 함께 떨어진다</text>
+
+    <!-- chunked -->
+    <text x="26" y="230" font-size="12.5" fill="#15803d" font-weight="700">청크 커밋</text>
+    <text x="26" y="248" font-size="11" fill="#6b7280">1,000건 단위</text>
+    <g>
+      <rect x="150" y="216" width="76" height="34" rx="6" fill="#f0fdf4" stroke="#16a34a"/><text x="188" y="238" font-size="10.5" fill="#15803d" text-anchor="middle" font-weight="700">commit</text>
+      <rect x="232" y="216" width="76" height="34" rx="6" fill="#f0fdf4" stroke="#16a34a"/><text x="270" y="238" font-size="10.5" fill="#15803d" text-anchor="middle" font-weight="700">commit</text>
+      <rect x="314" y="216" width="76" height="34" rx="6" fill="#f0fdf4" stroke="#16a34a"/><text x="352" y="238" font-size="10.5" fill="#15803d" text-anchor="middle" font-weight="700">commit</text>
+      <text x="430" y="238" font-size="13" fill="#15803d" text-anchor="middle" font-weight="700">· · ·</text>
+      <rect x="470" y="216" width="76" height="34" rx="6" fill="#f0fdf4" stroke="#16a34a"/><text x="508" y="238" font-size="10.5" fill="#15803d" text-anchor="middle" font-weight="700">commit</text>
+      <rect x="552" y="216" width="76" height="34" rx="6" fill="#f0fdf4" stroke="#16a34a"/><text x="590" y="238" font-size="10.5" fill="#15803d" text-anchor="middle" font-weight="700">commit</text>
+      <text x="670" y="238" font-size="13" fill="#15803d" text-anchor="middle" font-weight="700">· · ·</text>
+      <rect x="712" y="216" width="76" height="34" rx="6" fill="#f0fdf4" stroke="#16a34a"/><text x="750" y="238" font-size="10.5" fill="#15803d" text-anchor="middle" font-weight="700">commit</text>
+      <rect x="794" y="216" width="76" height="34" rx="6" fill="#f0fdf4" stroke="#16a34a"/><text x="832" y="238" font-size="10.5" fill="#15803d" text-anchor="middle" font-weight="700">commit</text>
+      <rect x="876" y="216" width="86" height="34" rx="6" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/><text x="919" y="238" font-size="10.5" fill="#b91c1c" text-anchor="middle" font-weight="700">실패한 청크</text>
+    </g>
+    <line x1="962" y1="204" x2="962" y2="256" stroke="#dc2626" stroke-width="2.5"/>
+    <text x="1000" y="222" font-size="13" fill="#dc2626" font-weight="700">실패</text>
+    <text x="1000" y="240" font-size="11" fill="#b91c1c">같은 지점</text>
+    <text x="560" y="272" font-size="12" fill="#15803d" text-anchor="middle" font-weight="700">앞의 999개 청크는 그대로 남는다 — 롤백되는 것은 마지막 청크 하나뿐</text>
+
+    <rect x="26" y="282" width="1068" height="30" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="560" y="302" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">단, 청크 커밋은 "어디까지 들어갔는지 모르는 상태에서 다시 돌리는 상황"을 만든다 → 그래서 청크 커밋과 멱등성은 한 세트다</text>
+  </svg>
+  <figcaption>성능이 해결돼도 <b>설계가 남는다.</b> ①~④를 다 해도 <code>@Transactional</code> 하나가 100만 건을 감싸고 있으면 <b>배치로서는 여전히 부실하다.</b></figcaption>
+</figure>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">Before</span> 실패 시 전부 소멸</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">load</span>(List&lt;SettlementDto&gt; dtos) { ... }
+<span class="cm">// 100만 건이 트랜잭션 하나</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">After</span> 청크마다 독립 트랜잭션 — 성공한 청크는 남는다</div>
+<pre><code><span class="kw">public void</span> <span class="fn">load</span>(List&lt;SettlementDto&gt; dtos) {
+    <span class="kw">for</span> (List&lt;SettlementDto&gt; chunk : Lists.partition(dtos, 1_000)) {
+<span class="ln-good">        chunkLoader.loadChunk(chunk);   <span class="note">별도 빈이어야 한다</span></span>
+    }
+}
+
+<span class="ln-good"><span class="kw">@Transactional</span>                       <span class="cm">// 트랜잭션 경계가 청크가 된다</span></span>
+<span class="kw">public void</span> <span class="fn">loadChunk</span>(List&lt;SettlementDto&gt; chunk) {
+    <span class="kw">for</span> (SettlementDto dto : chunk) em.persist(Settlement.from(dto));
+    <span class="cm">// 메서드 종료 = flush + commit. clear 는 컨텍스트가 닫히며 함께 정리된다</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="callout trap">
+  <span class="t">주의 — 같은 클래스 메서드를 부르면 트랜잭션이 아예 안 걸린다 (self-invocation)</span>
+  <code>@Transactional</code>은 <b>그 메서드의 코드를 바꾸는 것이 아니라 빈을 감싼 프록시가 트랜잭션을 열고 닫는 구조</b>이고, <code>this.loadChunk(...)</code>는 <b>그 프록시를 건너뛴다.</b> 청크 로더를 <b>별도 빈으로 분리</b>해야 한다. <b>이 실수는 "느려진다"가 아니라 "청크 커밋이 통째로 사라진다"로 나타나서 더 위험하다.</b>
+</div>
+
+<div class="callout info">
+  <span class="t">Spring Batch를 쓰면 이 구조가 기본값이다</span>
+  <code>chunk(1000)</code>으로 읽기·처리·쓰기를 묶고 <b>청크마다 커밋</b>하며, <b>어디까지 처리했는지를 JobRepository가 기록</b>해 실패 지점부터 재시작할 수 있다. "배치 프레임워크가 실제로 해주는 일"은 이렇게 설명하면 좋다 —
+  <div class="chain" style="margin-bottom:0">
+    <span class="chip b">청크 커밋</span><span class="chip b">재시작 지점 관리</span><span class="chip b">실패 건 격리(skip/retry)</span>
+  </div>
+</div>
+
+<h3>6-2. 멱등성 — 재실행 가능해야 진짜 배치다</h3>
+
+<p>용어부터. <b>멱등성(idempotency)은 "같은 작업을 여러 번 해도 결과가 한 번 한 것과 같은 성질"</b>이다. 배치에서 이게 왜 필요하냐면, <b>청크 커밋을 하는 순간 "어디까지 들어갔는지 모르는 상태에서 다시 돌리는 상황"이 생기기 때문</b>이다.</p>
+
+<div class="codehead plain"><span class="tag">전제</span> 자연 키에 유니크 제약을 건다</div>
+<pre><code><span class="cm">-- 같은 정산일자의 같은 거래는 한 번만</span>
+<span class="kw">alter table</span> settlement
+  <span class="kw">add constraint</span> uk_settlement_date_tx <span class="kw">unique</span> (settlement_date, tx_id);</code></pre>
+
+<div class="cmp">
+  <div>
+    <div class="codehead good"><span class="tag">PostgreSQL</span> 재실행해도 안전한 적재</div>
+<pre><code><span class="kw">insert into</span> settlement (settlement_date, tx_id, amount,
+                        merchant_id, created_at)
+<span class="kw">values</span> (?, ?, ?, ?, ?)
+<span class="ln-good"><span class="kw">on conflict</span> (settlement_date, tx_id) <span class="kw">do nothing</span>;</span>
+
+<span class="cm">-- on conflict (컬럼) 은 그 조합에 유니크 인덱스가</span>
+<span class="cm">-- 실제로 있어야만 동작한다 → 구문 자체가 제약을 전제로 성립</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">MySQL</span> 같은 목적의 구문</div>
+<pre><code><span class="kw">insert into</span> settlement (settlement_date, tx_id, amount,
+                        merchant_id, created_at)
+<span class="kw">values</span> (?, ?, ?, ?, ?)
+<span class="ln-good"><span class="kw">on duplicate key update</span> tx_id = tx_id;  <span class="cm">-- no-op upsert</span></span>
+
+<span class="cm">-- "어느 제약에서 충돌했는지"를 지정할 수 없다 →</span>
+<span class="cm">-- 유니크 인덱스가 여럿이면 의도치 않은 제약에서의 충돌을</span>
+<span class="cm">-- 성공으로 오인할 수 있다</span></code></pre>
+  </div>
+</div>
+
+<div class="callout trap">
+  <span class="t">MySQL의 <code>INSERT IGNORE</code>가 더 짧지만 권하지 않는다</span>
+  중복뿐 아니라 <b>데이터 잘림이나 타입 변환 실패까지 경고로 낮춰 조용히 통과</b>시키기 때문이다. <b>배치는 사람이 안 보는 새벽에 도는 코드라, 조용히 잘못된 데이터를 넣는 것이 실패보다 훨씬 나쁘다.</b>
+</div>
+
+<div class="memo green">
+  <h4>세 가지가 한 줄로 연결된다 — 성능 질문에 <b>운영 감각</b>으로 답하는 지점</h4>
+  <div class="chain">
+    <span class="chip g">유니크 제약</span><span class="arrow">→</span><span class="chip g">upsert</span><span class="arrow">→</span><span class="chip g">재실행 가능</span>
+  </div>
+  <p style="margin-bottom:0" class="sub"><b>중복을 DB가 막는다</b> → <b>중복이 예외가 아니라 정상 흐름이 된다</b> → <b>어디서 끊겨도 그냥 다시 돌리면 된다.</b></p>
+</div>
+
+<h3>6-3. 내려갈 때 포기하는 것 — "한계를 인정한다"는 "대가 없이 내려간다"가 아니다</h3>
+
+<p>이 문항이 보는 것은 <b>"ORM의 한계를 인정하고 내려갈 줄 아는 유연함"</b>인데, 여기서 자주 생기는 오해가 있다. <b>유연함은 "쉽게 버리는 것"이 아니라 "무엇을 내려놓는지 알고 버리는 것"</b>이다.</p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>④로 내려가면 함께 잃는 다섯 가지</h4>
+    <ul>
+      <li><b>JPA Auditing이 안 붙는다.</b> <code>@CreatedDate</code>·<code>@LastModifiedDate</code>·<code>@CreatedBy</code>는 <b>엔티티 생명주기 이벤트에 걸린 기능</b>이라 SQL을 직접 쓰면 전혀 동작하지 않는다. <b><code>created_at</code>이 통째로 <code>null</code>인 100만 행이 남는 사고</b>가 여기서 나온다.</li>
+      <li><b>엔티티의 검증·도메인 로직을 우회한다.</b> 생성자의 금액 부호 검사, 상태 초기화, <code>@PrePersist</code> 훅이 전부 건너뛰어진다 → <b>"엔티티를 거치면 절대 만들 수 없는 데이터"가 테이블에 들어갈 수 있다.</b></li>
+      <li><b>영속성 컨텍스트와 어긋난다.</b> 같은 트랜잭션에서 JPA로 조회한 데이터가 있다면, JDBC로 밀어 넣은 행은 그 컨텍스트에 없다. <b><code>@Version</code>도 증가하지 않고, 2차 캐시가 낡은 상태로 남는다.</b></li>
+      <li><b>타입 안전성을 잃는다.</b> <code>ps.setString(2, …)</code>의 인덱스가 컬럼 순서와 어긋나도 <b>컴파일은 통과한다.</b> 컬럼을 하나 추가하는 순간 <b>조용히 밀린다.</b></li>
+      <li><b>테스트 방식이 달라진다.</b> <code>@DataJpaTest</code>의 롤백에 기대던 방식이 통하지 않고, 벤더 종속 SQL이라 H2로는 검증되지 않는다 → <b>Testcontainers가 사실상 필수.</b></li>
+    </ul>
+  </div>
+  <div class="pane g">
+    <h4>균형점은 전면 교체가 아니라 <b>경계 좁히기</b></h4>
+    <p style="margin:6px 0">대량 적재 경로만 <code>SettlementBulkWriter</code> 같은 <b>별도 클래스로 격리</b>하고 나머지는 JPA를 유지한다. <b>그 클래스 안에서만 위 다섯 가지를 신경 쓰면 되고, 위험이 코드베이스 전체로 번지지 않는다.</b></p>
+    <p style="margin:10px 0 0"><b>방어 장치도 짝지어 둔다.</b></p>
+    <div class="chain">
+      <span class="chip g">감사 컬럼을 직접 채우고 테스트로 고정</span><span class="chip g">컬럼 순서를 단정하는 통합 테스트</span><span class="chip g">Testcontainers 실제 DB</span>
+    </div>
+    <div class="rule ok" style="margin-bottom:0;font-size:.97rem">면접 답변 문장으로<br><span style="font-size:.9rem;font-weight:600">"④로 내려갑니다. 얻는 것은 매핑·컨텍스트 비용의 제거이고, 대신 <b>Auditing·엔티티 검증·타입 안전성을 포기</b>합니다. 그 대가를 감당할 수 있는 이유는 이 경로가 <b>배치 전용 클래스 하나로 격리</b>돼 있고, <b>컬럼 매핑과 감사 컬럼을 통합 테스트로 고정</b>해 두기 때문입니다."</span></div>
+  </div>
+</div>
+
+<h3>6-4. "차라리 id를 밖에서 받아오면 되지 않느냐" — 외부 채번과 UUID</h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4>외부 채번(Redis <code>INCR</code> · 스노우플레이크)이 <b>정당한</b> 경우</h4>
+    <p style="margin:6px 0;font-size:.93rem">DB가 아니라 <b>별도 시스템이 번호를 발급하는 방식</b>이다 — Redis <code>INCR</code>로 카운터를 올리거나, 스노우플레이크처럼 <b>시각 + 장비 번호 + 순번</b>을 비트로 조합해 64비트 정수를 만든다.</p>
+    <ul>
+      <li><b>DB를 샤딩했다.</b> 샤드마다 자동 증가를 돌리면 충돌하거나 범위를 쪼개 관리해야 한다 → <b>전역 유일 id 발급기가 요구사항 자체</b>다.</li>
+      <li><b>DB에 넣기 전에 id가 필요하다.</b> 이벤트를 먼저 발행하거나, 여러 저장소에 같은 식별자로 기록해야 하는 경우.</li>
+      <li><b>id로 규모를 추정당하면 곤란하다.</b> 자동 증가 값은 연속이라 노출하면 건수가 드러난다 → <b>성능이 아니라 보안 요구사항</b>.</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4><b>정당하지 않은</b> 경우 — "이 배치 하나가 느려서"</h4>
+    <ul>
+      <li><b>가용성이 결합된다.</b> Redis가 죽으면 <b>채번이 막혀 배치가 못 돈다.</b> 원래 DB만 있으면 되던 일에 <b>장애 지점이 하나 늘어난다.</b></li>
+      <li><b>운영 대상이 늘어난다.</b> 모니터링·백업·업그레이드·장애 대응이 따라 붙는다 — <b>배치 하나의 성능이 인프라 팀의 상시 부담으로 바뀌는 것</b>은 비싼 거래다.</li>
+      <li><b>정합성 사고의 복구가 어렵다.</b> 리셋이나 페일오버로 카운터가 되감기면 <b>중복 id가 발급</b>된다. 다른 테이블에서 이미 그 id를 참조했다면 데이터 정정이 필요해진다.</li>
+      <li><b>무엇보다 <code>SEQUENCE</code>/<code>TABLE</code> + <code>allocationSize</code>가 같은 문제를 인프라 추가 없이 푼다.</b> <b>인프라를 늘리지 않고 되는 일을 늘려서 하는 것</b>은 설계에서 감점 요인이다.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>"UUID를 쓰면 채번 왕복이 없으니 최고 아닌가요" <span class="badge bonus">가산점</span></h4>
+  <p style="margin-top:0"><b>UUID는 128비트(16바이트) 난수 기반 식별자</b>라 채번 왕복이 아예 없다 — 애플리케이션이 혼자 만들어 낸다. 문제는 <b>무작위라는 성질이 인덱스에 나쁘다</b>는 것이고, <b>나쁜 방식이 벤더마다 다르다.</b></p>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">MySQL(InnoDB) — 테이블 자체가 흔들린다</div><div class="d"><b>PK 순서로 데이터를 물리 정렬해 저장</b>하는 클러스터드 인덱스 구조라서, 무작위 값이 PK가 되면 <b>새 행이 인덱스 중간중간에 끼어들어 페이지 분할이 잦아진다.</b> 대량 적재에서 특히 비싸다.</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">PostgreSQL — 테이블이 아니라 인덱스가 흔들린다</div><div class="d">테이블은 힙 구조라 새 행이 그냥 뒤에 붙는다. 대신 <b>PK B-트리 삽입 지점이 전 구간에 흩어져</b> 캐시 적중률이 떨어지고 더티 페이지와 WAL 기록이 늘어난다. <b>"PostgreSQL은 힙이라 괜찮다"는 절반만 맞는 말.</b></div></div>
+  </div>
+  <p style="margin-bottom:0">정렬 가능한 형태(시간 순서가 앞에 오는 UUID 변형이나 스노우플레이크 계열)를 쓰면 양쪽 모두 완화되지만, <b>PK 폭이 8바이트에서 16바이트로 커져 모든 보조 인덱스가 함께 커진다</b>는 대가는 남는다.</p>
+  <div class="rule red" style="margin-bottom:0">한 문장으로 — 외부 채번은 <b>분산 ID가 요구사항일 때의 답</b>이지, <b>배치가 느릴 때의 답은 아니다</b></div>
+</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>7-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">100만 건이 2시간인 이유 두 갈래?</div><div class="d"><b>왕 · 누</b> — <b>왕</b>복 100만 번(일정하게 느림) / 영속성 컨텍스트 <b>누</b>적(갈수록 느림). <b>한 갈래만 말하면 처방도 한 개만 나온다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">IDENTITY 연쇄 한 문장?</div><div class="d">키를 <b>DB만 안다</b> → 키 없이는 <b>1차 캐시(Map)</b>에 못 넣는다 → <code>persist()</code>가 <b>즉시 INSERT</b> → 쓰기 지연 저장소가 빈다 → <b>묶을 대상 자체가 없다.</b></div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">처방 순서 4단계?</div><div class="d"><b>아 · 배 · 비 · 내</b> — <b>아</b>이디 전략 → <b>배</b>치(<code>batch_size</code>+<code>order_inserts</code>) → <b>비</b>우기(<code>flush</code>+<code>clear</code>) → <b>내</b>려가기(<code>JdbcTemplate</code>/<code>COPY</code>).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">첫 처방이 새는 세 자리?</div><div class="d"><b>JPQL 벌크 INSERT</b>(문법 자체가 없다) · <b><code>saveAll()</code></b>(내부는 루프) · <b><code>@Modifying</code> 벌크</b>(대상이 이미 DB에 있는 행이라 다른 문항).</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit"><code>clear()</code>가 하는 일?</div><div class="d">"메모리 절약"이 아니라 <b>"곡선을 직선으로 만드는 것"</b>. <code>flush()</code>만 하면 <b>SQL은 나가지만 엔티티는 그대로</b> 남는다 → <b>500.5배</b> 차이.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">누적 대조량의 형태?</div><div class="d">건수 <code>n</code>의 <b><code>n²</code>에 비례</b>(정확히는 <code>n(n+k)/2k</code>). <b>건수 2배 → 비용 4배</b>. 그래서 <b>테스트 1만 건에서는 안 보인다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">"켰는데 안 묶임" 상위 3원인?</div><div class="d">① <code>IDENTITY</code> ② <code>order_inserts</code> 누락(배치 크기 1) ③ <b>드라이버 재작성 옵션</b>. 그 다음이 <code>@DynamicInsert</code> · <code>ALL</code>/<code>DIRTY</code> 락 · 트랜잭션 부재.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">배치가 성립하는 조건 한 줄?</div><div class="d"><b>"SQL 문자열은 같고 파라미터만 다를 것."</b> 문장이 행마다 달라지면(<code>@DynamicInsert</code>, <code>ALL</code>/<code>DIRTY</code> 락) <b>묶을 수가 없다.</b></div></div>
+  <div class="tile"><div class="k">reWriteBatchedInserts</div><div class="d"><b>PostgreSQL</b> · <b>W가 대문자</b>, 대상은 <b>Inserts</b>. 왕복은 이미 파이프라이닝으로 줄어 있고, 이 옵션은 <b>서버 실행 횟수</b>를 줄인다.</div></div>
+  <div class="tile"><div class="k">rewriteBatchedStatements</div><div class="d"><b>MySQL</b> · <b>전부 소문자</b>, 대상은 <b>Statements</b>. <b>없으면 드라이버가 배치를 도로 풀어</b> 하나씩 보낸다 → 사실상 필수.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">관측 3층과 담당 문제?</div><div class="d"><b>Statistics</b>(문장 수 → IDENTITY) → <b>p6spy</b>(배치 크기 → <code>order_inserts</code>) → <b>서버 로그</b>(실제 문장 → 재작성 옵션). <b>층을 내려가야만 보이는 문제가 있다.</b></div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>show_sql</code>로 판단하면 안 되는 이유?</div><div class="d"><b>배치가 잘 될 때도 문장은 한 줄씩 찍힌다.</b> 근거는 <b>로그 줄 수가 아니라 실행 시간과 <code>Statistics</code> 카운트</b>여야 한다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">배치 설계 한 세트?</div><div class="d"><b>청크 커밋 + 유니크 제약 + upsert</b>. 청크 커밋을 하는 순간 <b>"어디까지 들어갔는지 모름"</b>이 생기므로 <b>멱등성과 한 세트</b>다.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">④로 내려가며 포기하는 것?</div><div class="d"><b>Auditing · 엔티티 검증 · 컨텍스트 정합성 · 타입 안전성 · 테스트 방식.</b> 그래서 답은 전면 교체가 아니라 <b>배치 전용 클래스로 경계 좁히기</b>.</div></div>
+</div>
+
+<h3>7-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary>왜 앞의 10만 건은 3분인데 뒤의 10만 건은 40분인가요? <span class="badge core">필수</span><span class="hint">힌트: 왕복 비용만이라면 속도가 일정해야 한다. 그럼 무엇이 달라졌나</span></summary><div class="a">
+  <p><b>범인은 왕복이 아니라 영속성 컨텍스트 누적</b>이다. 왕복 비용은 건당 일정하므로 <b>그것만으로는 뒤로 갈수록 느려질 수 없다.</b></p>
+  <p>메커니즘은 둘이다. ① <b>flush 한 번의 비용이 커진다</b> — flush는 <b>관리 중인 엔티티 전건 × 전 필드</b>를 스냅샷과 대조해 SQL을 만든다. 50만 건째의 flush는 <b>그 순간 50만 개를 훑는다.</b> ② <b>힙이 밀린다</b> — 엔티티 100만 + 스냅샷 100만이 <b>강한 참조로 붙들려 GC가 회수하지 못하므로</b> Full GC가 반복되고, 운이 나쁘면 <code>OutOfMemoryError</code>로 <b>2시간 뒤에</b> 끝난다.</p>
+  <p>그래서 1,000건마다 <code>flush()</code>만 하고 <code>clear()</code>를 빼면 누적 대조량이 <b>5억 500만 건</b>, <code>clear()</code>까지 하면 <b>100만 건</b> — <b>500.5배</b>다.</p>
+  <div class="rule red" style="margin-bottom:0">원인은 "힙이 부족한 것"이 아니라 <b>"컨텍스트를 안 비운 것"</b>이다<br><span style="font-size:.92rem;font-weight:600">그래서 힙을 키우는 처방은 시간을 벌 뿐 <b>n² 곡선의 모양을 바꾸지 못한다</b></span></div>
+</div></details>
+
+<details class="q"><summary>그럼 JPQL로 벌크 INSERT를 쓰면 한 방에 끝나지 않나요? <span class="badge trap">함정</span><span class="hint">힌트: 있는지부터 확인한다. 그리고 "왜 없는지"까지 말한다</span></summary><div class="a">
+  <p><b>그런 문법이 없다.</b> <b>JPQL이 지원하는 벌크 연산은 UPDATE와 DELETE 둘뿐</b>이고, INSERT 구문은 파싱 단계에서 실패한다.</p>
+  <p><b>왜 없는지까지 말하면 단순 암기가 아니라는 신호</b>가 된다. JPQL은 <b>이미 DB에 존재하는 엔티티를 대상으로 하는 질의 언어</b>다. UPDATE·DELETE는 <code>where</code>로 대상을 지정할 수 있지만, <b>INSERT는 대상이 DB가 아니라 애플리케이션 메모리에 있다.</b> 값을 SQL 문자열로 옮기는 순간 그건 질의가 아니라 <b>직렬화</b>이므로, JPA는 그 역할을 <code>persist()</code>에 맡긴다.</p>
+  <p><b>예외는 하나</b> — 하이버네이트 HQL의 <code>insert into … select</code>다. <b>출처가 "이미 DB에 있는 행"이므로 질의로 표현 가능</b>하기 때문이다. 다만 <b>우리 데이터는 외부에서 받아온 것이라 아직 DB 어디에도 없어서</b> 오늘 문제를 풀어주지는 않는다.</p>
+  <div class="rule ok" style="margin-bottom:0">여기서 <b>한 걸음 더</b> — 벌크 적재 명령으로 <b>스테이징 테이블</b>에 통째로 밀어 넣고<br><code>insert … select</code>로 정제해 본 테이블로 옮기면 <b>이 예외가 설계로 되살아난다</b> <span class="badge bonus">가산점</span></div>
+</div></details>
+
+<details class="q"><summary><code>saveAll()</code>로 바꾸면 SQL이 하나로 합쳐지지 않나요?<span class="hint">힌트: 이름과 동작을 분리해서 본다</span></summary><div class="a">
+  <p><b>합쳐지지 않는다.</b> <code>saveAll()</code> 내부는 <b>리스트를 순회하며 <code>save()</code>를 부르는 것</b>이라 왕복 횟수가 그대로다. <b>이름이 복수형이라고 SQL이 하나가 되지는 않는다.</b></p>
+  <p>여러 건을 한 문장으로 묶는 일은 <code>saveAll()</code>이 아니라 <b>JDBC 배치 계층</b>이 한다 — <code>PreparedStatement.addBatch()</code>로 파라미터 세트를 쌓아 두었다가 <code>executeBatch()</code>로 몰아 보내는 API이고, 하이버네이트는 <code>hibernate.jdbc.batch_size</code>를 보고 이 API를 쓴다.</p>
+  <p style="margin-bottom:0"><b>다만 그 스위치를 켜도 <code>IDENTITY</code>면 아무 일도 일어나지 않는다</b>는 것이 이 문항의 본론이다.</p>
+</div></details>
+
+<details class="q"><summary><code>batch_size</code>를 켰는데 로그에 insert가 100만 줄 그대로입니다. 무엇부터 보시겠어요? <span class="badge core">필수</span><span class="hint">힌트: 순서에 이유가 있다. 그리고 "로그 100만 줄"이라는 근거 자체를 의심한다</span></summary><div class="a">
+  <p><b>세 가지를 순서대로 확인한다.</b></p>
+  <div class="step red"><span class="n">1</span><div class="body"><b>ID 생성 전략</b> — <code>IDENTITY</code>면 <b>여기서 끝이다.</b> 배치가 안 켜진 게 아니라 <b>묶을 대상이 없는 것</b>이므로 다른 걸 아무리 봐도 소용없다.</div></div>
+  <div class="step"><span class="n">2</span><div class="body"><b><code>order_inserts</code></b> — 여러 종류의 엔티티를 함께 저장한다면 <b>문장이 섞여 배치가 잘게 끊긴다.</b> <code>p6spy</code>에서 <b>배치 크기가 1</b>로 찍히는지 본다.</div></div>
+  <div class="step"><span class="n">3</span><div class="body"><b>JDBC URL의 재작성 옵션</b> — PostgreSQL <code>reWriteBatchedInserts</code>, MySQL <code>rewriteBatchedStatements</code>. <b>하이버네이트 로그로는 확인되지 않으므로</b> 서버 측 로그나 <code>p6spy</code>/<code>datasource-proxy</code>로 <b>층을 내려가야</b> 한다.</div></div>
+  <p><b>여기까지 다 봤는데도 안 묶이면</b> 4-3의 체크리스트로 넘어간다 — <code>@DynamicInsert</code>가 붙어 있거나, 낙관적 락이 <code>ALL</code>/<code>DIRTY</code>거나, 트랜잭션이 없는 경로였거나. <b>하이버네이트가 예외 없이 조용히 배치를 포기하는 자리</b>라서, 알고 있지 않으면 찾는 데 오래 걸린다.</p>
+  <div class="rule red" style="margin-bottom:0"><b>추가로 짚을 것</b> — "로그에 100만 줄"이라는 관측 자체가 근거로는 약하다<br><span style="font-size:.92rem;font-weight:600"><code>show_sql</code>은 배치 여부를 보여주는 도구가 아니라서 <b>배치가 잘 될 때도 문장은 한 줄씩 찍힌다.</b> 판단 근거는 <b>실행 시간과 <code>Statistics</code> 카운트</b>여야 한다</span></div>
+</div></details>
+
+<details class="q"><summary><code>SEQUENCE</code>/<code>TABLE</code>로 바꾸면 id에 구멍이 생기는데 괜찮나요?<span class="hint">힌트: "괜찮다"로 끝내지 말고 "안 괜찮은 경우"를 특정한다</span></summary><div class="a">
+  <p><b>대개 괜찮고, 안 괜찮은 경우가 언제인지 아는 것이 핵심이다.</b> <code>allocationSize</code>만큼 미리 선점하므로 재시작하면 <b>남은 번호가 버려진다</b> — id가 <code>1000, 1001, … 1523, 2001, …</code>처럼 뛴다.</p>
+  <ul style="margin:6px 0 10px;padding-left:20px">
+    <li><b>PK는 유일하기만 하면 되므로 기술적으로는 문제가 없다.</b> 조인·인덱스·조회 성능 어디에도 영향이 없다.</li>
+    <li><b>문제가 되는 경우는 id를 업무적으로 해석할 때다.</b> "id로 건수를 센다", "id 순서가 곧 접수 순서다", "고객에게 보여주는 번호다" 같은 사용이 있으면 곤란해진다. 그런 요구가 있다면 <b>PK와 별도로 업무 번호 컬럼을 두는 것</b>이 정석이다 — <b>기술 식별자와 업무 식별자를 겸용하던 것이 애초의 문제</b>이기 때문이다.</li>
+    <li><b>정산 배치의 자연 키는 어차피 <code>(정산일자, 거래ID)</code></b>다. PK가 무엇이든 <b>업무적 동일성은 그 조합이 판단</b>하므로 구멍은 무해하다.</li>
+  </ul>
+  <p style="margin-bottom:0"><b>같이 말할 것</b>: DB 시퀀스의 <code>increment by</code>를 <code>allocationSize</code>와 맞추지 않으면 <b>기동 시점에 예외로 막힌다.</b> 이건 <b>고마운 예외</b>다 — 안 막아주면 두 인스턴스가 같은 id를 발급해 PK 충돌이 난다.</p>
+</div></details>
+
+<details class="q"><summary>그럼 <code>allocationSize</code>를 10만으로 올리면 더 빨라지나요? 한계는 어디죠? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 효과와 대가가 같은 속도로 커지지 않는다</span></summary><div class="a">
+  <p><b>효과는 금방 포화하고, 대가는 계속 커진다.</b></p>
+  <p>채번 왕복은 <code>건수 / allocationSize</code>이므로 <b>1 → 1000에서 이미 1/1000</b>이 된다(100만 → 1000회). 1000 → 10만으로 더 올려봐야 줄어드는 왕복은 <b>1000번에서 10번으로</b>, 전체 소요 시간에서 차지하는 비중이 <b>이미 무의미한 수준</b>이다.</p>
+  <div class="rule">최적화는 <b>지배적인 비용</b>에 해야 하는데, 이 지점에서 <b>지배적인 비용은 더 이상 채번이 아니다</b></div>
+  <p><b>반면 대가는 커진다.</b></p>
+  <ul style="margin:6px 0 10px;padding-left:20px">
+    <li><b>재시작마다 버려지는 구간이 커진다.</b> 매일 배포하는 서비스라면 id가 빠르게 소진되고, <code>int</code> 범위를 쓰고 있었다면 <b>한계 도달 시점이 앞당겨진다.</b></li>
+    <li><b>여러 인스턴스의 구간이 크게 엇갈린다.</b> 정렬성이 나빠져 인덱스 삽입 지역성이 떨어질 수 있다.</li>
+    <li><b>채번 지점의 경합은 이미 해결된 상태</b>라 더 얻을 것이 없다.</li>
+  </ul>
+  <p style="margin-bottom:0"><b>여기서 진짜 보고 싶은 것은 숫자가 아니라 판단 방식</b>이다 — <b>"어느 비용이 지배적인지 측정하고, 지배적인 것만 건드린다."</b> ①~③을 다 하고 나면 지배적인 비용은 대개 <b>DB 측의 인덱스 유지와 로그 기록</b>으로 옮겨가 있고, 그때부터는 애플리케이션 설정이 아니라 <b>적재 중 보조 인덱스를 잠시 떼고 나중에 붙이는 것 같은 DB 작업</b>이 다음 카드가 된다.</p>
+</div></details>
+
+<details class="q"><summary><code>batch_size</code>는 클수록 좋은 것 아닌가요? 10,000으로 잡으면?<span class="hint">힌트: 실패했을 때 무슨 일이 생기는지도 함께 본다</span></summary><div class="a">
+  <p><b>크게 잡을수록 이기는 값이 아니다.</b> 이유가 셋이다.</p>
+  <ul style="margin:6px 0 10px;padding-left:20px">
+    <li><b>패킷이 커진다.</b> 한 번에 보내는 양이 커져 <b>DB의 최대 패킷 크기 제한</b>에 걸릴 수 있다. 특히 드라이버 재작성으로 multi-values 한 문장이 되면 더 그렇다.</li>
+    <li><b>실패 지점을 좁히기 어려워진다.</b> 배치 하나가 실패했을 때 <b>어느 건이 문제인지</b> 알아내는 비용이 커진다.</li>
+    <li><b>재작성 상한에 부딪힌다.</b> PostgreSQL은 확장 질의 프로토콜에서 <code>65,535 / 행당 파라미터 수</code>를 넘을 수 없고(컬럼 5개면 13,107 → 2의 거듭제곱으로 내려 <b>8,192행</b>), 32,768행 상한도 있다. <b>그 위로 올린 숫자는 그냥 안 쓰인다.</b></li>
+  </ul>
+  <p style="margin-bottom:0"><b>수백~수천 사이에서 측정해 정하는 값</b>이고, <code>flush()</code>/<code>clear()</code> 주기를 <b>같은 값으로 맞춰</b> 자투리 배치를 없애는 것이 함께 가야 한다.</p>
+</div></details>
+
+<details class="q"><summary><code>flush()</code>/<code>clear()</code>를 넣었더니 이번엔 엉뚱한 곳에서 예외가 납니다. 왜죠? <span class="badge core">필수</span><span class="hint">힌트: <code>clear()</code>의 사정거리를 생각한다. 그리고 예외조차 안 나는 경우가 더 위험하다</span></summary><div class="a">
+  <p><b><code>clear()</code>가 영속성 컨텍스트를 통째로 비우기 때문</b>이다. 배치와 무관하게 그 트랜잭션에서 다루던 엔티티들도 <b>함께 준영속(detached)</b>이 된다.</p>
+  <ul style="margin:6px 0 10px;padding-left:20px">
+    <li><b>지연 로딩이 터진다.</b> <code>clear()</code> 이전에 조회해 둔 가맹점 엔티티의 연관을 이후에 건드리면 <code>LazyInitializationException</code>.</li>
+    <li><b>변경 감지가 사라진다.</b> <code>clear()</code> 전에 수정해 둔 값이 flush 대상에서 빠져 <b>UPDATE가 조용히 사라진다.</b> <b>예외조차 안 나서 더 위험하다.</b></li>
+    <li><b>동일성이 깨진다.</b> <code>clear()</code> 후 같은 id를 다시 조회하면 <b>다른 인스턴스</b>가 나온다. <code>==</code> 비교에 의존한 코드가 조용히 오동작한다.</li>
+  </ul>
+  <p><b>처방은 둘이다.</b> ① <b>배치 로직을 다른 엔티티 조작과 섞지 않는다</b> — 청크 로더는 "DTO를 받아 엔티티를 만들어 저장한다"만 하게 한다. ② 꼭 참조가 필요하면 <b>엔티티를 들고 다니지 말고 id(또는 값 객체)를 들고 다니다가 필요한 시점에 다시 조회</b>한다.</p>
+  <p style="margin-bottom:0">이 성질은 <b>벌크 연산의 <code>clearAutomatically</code>가 만드는 부작용과 정확히 같은 것</b>이다(<code>11-bulk-operation-persistence-context.md</code>).</p>
+</div></details>
+
+<details class="q"><summary>청크 커밋으로 바꿨는데 실패해도 여전히 전부 롤백됩니다. 왜죠? <span class="badge trap">함정</span><span class="hint">힌트: <code>@Transactional</code>이 어떻게 동작하는지로 돌아간다</span></summary><div class="a">
+  <p><b>같은 클래스의 메서드를 호출해서 프록시를 타지 않았을 가능성이 가장 높다(self-invocation).</b></p>
+  <p><code>@Transactional</code>은 <b>그 메서드의 코드를 바꾸는 것이 아니라, 빈을 감싼 프록시가 트랜잭션을 열고 닫는 구조</b>다. 그래서 <code>this.loadChunk(...)</code>처럼 내부에서 직접 부르면 <b>프록시를 건너뛰어 트랜잭션 경계가 아예 만들어지지 않는다.</b> 그러면 바깥 <code>load()</code>의 트랜잭션(있다면)에 그대로 참여하므로 <b>청크 커밋이 통째로 사라진다.</b></p>
+  <p><b>처방은 청크 로더를 별도 빈으로 분리</b>하는 것이다. 그리고 이 실수는 <b>"느려진다"가 아니라 "설계가 사라진다"로 나타나기 때문에</b> 로그만 봐서는 눈치채기 어렵다 — <b>중간에 강제로 실패시키고 앞의 청크가 남는지 확인하는 테스트</b>로 고정해 두는 편이 안전하다.</p>
+  <p style="margin-bottom:0"><b>Spring Batch를 쓰면 이 구조가 기본값</b>이라는 점도 함께 말하면 좋다 — <code>chunk(1000)</code> + JobRepository의 <b>재시작 지점 관리</b> + <b>실패 건 격리(skip/retry)</b>가 프레임워크가 실제로 해주는 일이다.</p>
+</div></details>
+
+<details class="q"><summary>청크 커밋을 하면 중간에 끊겼을 때 중복 적재가 나지 않나요? <span class="badge core">필수</span><span class="hint">힌트: 이 질문의 답은 "조심한다"가 아니라 "DB가 막게 만든다"이다</span></summary><div class="a">
+  <p><b>그래서 청크 커밋과 멱등성은 한 세트</b>다. 청크 커밋을 하는 순간 <b>"어디까지 들어갔는지 모르는 상태에서 다시 돌리는 상황"</b>이 반드시 생긴다.</p>
+  <p><b>설계는 세 단계로 연결된다.</b></p>
+  <div class="chain">
+    <span class="chip g">① 자연 키에 유니크 제약<br>(정산일자, 거래ID)</span><span class="arrow">→</span><span class="chip g">② upsert<br>on conflict do nothing</span><span class="arrow">→</span><span class="chip g">③ 재실행 가능<br>그냥 다시 돌리면 된다</span>
+  </div>
+  <p><b>벤더 차이도 짚는다.</b> PostgreSQL의 <code>on conflict (컬럼)</code>은 <b>그 조합에 유니크 인덱스가 실제로 있어야만 동작</b>하므로 구문 자체가 제약을 전제한다. MySQL은 <b>"어느 제약에서 충돌했는지"를 지정할 수 없어서</b> 유니크 인덱스가 여럿인 테이블에서는 <b>의도하지 않은 제약에서의 충돌을 성공으로 오인</b>할 수 있다.</p>
+  <p style="margin-bottom:0"><b>그리고 <code>INSERT IGNORE</code>는 피한다</b> — 중복뿐 아니라 <b>데이터 잘림·타입 변환 실패까지 경고로 낮춰 조용히 통과</b>시킨다. <b>배치는 사람이 안 보는 새벽에 도는 코드라, 조용히 잘못된 데이터를 넣는 것이 실패보다 훨씬 나쁘다.</b></p>
+</div></details>
+
+<details class="q"><summary><code>JdbcTemplate</code>으로 내려가면 정말 끝인가요? 그래도 느리면요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 튜닝 대상이 어디로 이동했는지를 먼저 말한다</span></summary><div class="a">
+  <p><b>아니다. 그 지점에서 병목은 애플리케이션을 떠나 DB로 이동해 있다.</b> 여기서부터 <b>튜닝 대상이 바뀐다는 것을 아는지</b>가 변별점이다.</p>
+  <ul style="margin:6px 0 10px;padding-left:20px">
+    <li><b>인덱스 유지 비용이 지배적</b>이 된다(행마다 모든 보조 인덱스를 갱신). 그래서 <b>적재 전에 보조 인덱스를 떼고 적재 후 다시 만드는</b> 전략을 쓴다 — 다만 그 사이 <b>해당 테이블의 조회 성능이 무너지므로</b> 신규 테이블이거나 적재 중 조회가 없는 배치 윈도우에서만 가능하다.</li>
+    <li><b>PK 순서가 중요해진다.</b> 정렬된 순서로 넣으면 인덱스 삽입 지역성이 좋아지고, MySQL이면 페이지 분할도 줄어든다. <b>입력 데이터를 PK 기준으로 정렬해서 넣는 것만으로 개선되는 경우</b>가 있다.</li>
+    <li><b>벌크 적재 명령이 다음 카드</b>다. PostgreSQL <code>COPY</code>, MySQL <code>LOAD DATA INFILE</code>은 <b>INSERT 문 파싱 자체를 건너뛴다.</b></li>
+    <li><b>트랜잭션 로그·복제 지연</b>도 본다. 대량 적재는 WAL(또는 binlog) 생성량을 급증시켜 <b>복제 지연</b>을 만들고 <b>읽기 replica를 보는 서비스에 영향</b>을 준다. 그래서 배치 윈도우를 나누거나 속도를 일부러 제한(throttling)하기도 한다.</li>
+  </ul>
+  <div class="rule ok" style="margin-bottom:0">"가장 빠른 것"이 아니라 <b>"다른 트래픽을 안 죽이는 선에서 충분히 빠른 것"이 배치의 목표</b><br><span style="font-size:.92rem;font-weight:600">그리고 DB 층의 카드들은 <b>대부분 다른 사용자에게 영향을 주는 결정</b>이라 혼자 정할 수 없다</span></div>
+</div></details>
+
+<details class="q"><summary>이 배치가 몇 달 뒤 다시 느려지는 것을 어떻게 막나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 이 문항의 성능은 대부분 "설정"으로 얻은 것이다. 설정은 어떻게 사라지나</span></summary><div class="a">
+  <p><b>설정으로 얻은 성능은 설정이 지워지면 사라지고, 그 사실은 로그에 남지 않는다.</b> 그래서 세 가지를 <b>코드로 고정</b>한다.</p>
+  <div class="step ok"><span class="n">1</span><div class="body"><b>쿼리 수 단정 테스트</b> — <code>SQLStatementCountValidator.assertInsertCount(…)</code>나 <code>Statistics.getPrepareStatementCount()</code>로 <b>1000건 적재 시 문장 수가 임계 이하</b>임을 단정한다. 누군가 ID 전략을 <code>IDENTITY</code>로 되돌리면 <b>테스트가 즉시 실패한다.</b></div></div>
+  <div class="step ok"><span class="n">2</span><div class="body"><b>설정 존재 자체를 단정</b> — JDBC URL의 재작성 옵션, <code>hibernate.jdbc.batch_size</code>, <code>order_inserts</code> 값을 검사한다. <b>우스운 테스트지만 로그로 확인할 수 없는 설정을 잡는 유일한 장치</b>다.</div></div>
+  <div class="step ok"><span class="n">3</span><div class="body"><b>실제 DB로 검증</b> — <b>H2에서는 배치 재작성도, 벤더 특유의 동작도 재현되지 않는다.</b> Testcontainers로 실제 PostgreSQL을 띄운다.</div></div>
+  <p>여기에 운영 관측을 하나 더 붙이면 완성이다 — <b>배치 잡의 처리 건수와 소요 시간을 매 실행 기록하고, 임계치를 넘으면 알림.</b> 성능 회귀는 <b>어느 날 갑자기가 아니라 서서히</b> 오기 때문에, <b>추세를 보는 지표가 없으면 "원래 이렇게 오래 걸렸나?"로 넘어간다.</b></p>
+  <div class="rule" style="margin-bottom:0">이 문항에서 배울 수 있는 <b>가장 이식성 높은 교훈</b><br><span style="font-size:.95rem;font-weight:600">주장으로 남긴 설계 원칙은 언젠가 지워지고, <b>테스트로 고정한 원칙만 살아남는다</b></span></div>
+</div></details>
+
+<details class="q"><summary>Redis <code>INCR</code>나 스노우플레이크로 id를 미리 받아오면 더 깔끔하지 않나요? <span class="badge trap">함정</span><span class="hint">힌트: "안 된다"가 아니라 "언제 정당한가"로 답한다</span></summary><div class="a">
+  <p><b>분명히 유효한 선택지다. 다만 이 문항의 답으로는 순서가 뒤바뀐 선택</b>이라, <b>"언제 정당한가"를 구분</b>하는 것이 핵심이다.</p>
+  <p><b>정당한 경우 — 분산 ID가 실제로 요구사항일 때.</b> ① <b>DB를 샤딩</b>했다(전역 유일 id 발급기가 요구사항 자체다) ② <b>DB에 넣기 전에 id가 필요</b>하다(이벤트 선발행, 여러 저장소에 같은 식별자로 기록) ③ <b>id로 규모를 추정당하면 곤란</b>하다(성능이 아니라 <b>보안 요구사항</b>).</p>
+  <p><b>정당하지 않은 경우 — "이 배치 하나가 느려서".</b> ① <b>가용성이 결합된다</b>(Redis가 죽으면 채번이 막혀 배치가 못 돈다 — 장애 지점이 하나 늘어난다) ② <b>운영 대상이 늘어난다</b>(배치 하나의 성능이 인프라 팀의 상시 부담으로 바뀐다) ③ <b>페일오버로 카운터가 되감기면 중복 id</b>가 발급된다.</p>
+  <div class="rule red" style="margin-bottom:0"><code>SEQUENCE</code>/<code>TABLE</code> + <code>allocationSize</code>가 <b>같은 문제를 인프라 추가 없이</b> 푼다<br><span style="font-size:.92rem;font-weight:600"><b>인프라를 늘리지 않고 되는 일을 늘려서 하는 것</b>은 설계에서 감점 요인이다</span></div>
+</div></details>
+
+<details class="q"><summary>UUID를 PK로 쓰면 채번 왕복이 아예 없으니 제일 빠르지 않나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 채번은 사라지지만 다른 비용이 생긴다. 그리고 그 비용의 위치가 벤더마다 다르다</span></summary><div class="a">
+  <p><b>채번 왕복은 사라지지만, 무작위라는 성질이 인덱스에 나쁘다.</b> 그리고 <b>나쁜 방식이 벤더마다 다르다</b>는 것까지 말하면 변별이 된다.</p>
+  <p><b>MySQL(InnoDB) — 테이블 자체가 흔들린다.</b> <b>PK 순서로 데이터를 물리 정렬해 저장</b>하는 클러스터드 인덱스 구조라서, 무작위 값이 PK가 되면 <b>새 행이 인덱스 중간중간에 끼어들어 페이지 분할이 잦아진다.</b> 대량 적재에서 이 비용이 특히 크다.</p>
+  <p><b>PostgreSQL — 테이블이 아니라 인덱스가 흔들린다.</b> 테이블은 힙 구조라 새 행이 그냥 뒤에 붙으므로 테이블 자체에는 이 문제가 없다. 대신 <b>PK B-트리 인덱스의 삽입 지점이 전 구간에 흩어져</b> 캐시 적중률이 떨어지고 더티 페이지와 WAL 기록이 늘어난다. <b>"PostgreSQL은 힙이라 괜찮다"는 절반만 맞는 말</b>이다.</p>
+  <p style="margin-bottom:0">정렬 가능한 형태(시간 순서가 앞에 오는 UUID 변형이나 스노우플레이크 계열)를 쓰면 양쪽 모두 완화되지만, <b>PK 폭이 8바이트에서 16바이트로 커져 모든 보조 인덱스가 함께 커진다</b>는 대가는 남는다.</p>
+</div></details>
+
+<details class="q"><summary>그럼 대량 INSERT는 처음부터 <code>JdbcTemplate</code>으로 짜는 게 낫지 않나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 질문의 전제("성능만 보면 된다")를 먼저 거부한다</span></summary><div class="a">
+  <p><b>"내려가는 것"과 "대가 없이 내려가는 것"은 다르다.</b> <code>JdbcTemplate</code>이나 벌크 적재 명령으로 가면 다섯 가지를 함께 잃는다 — <b>JPA Auditing</b>(<code>created_at</code>이 통째로 <code>null</code>인 100만 행이 여기서 나온다), <b>엔티티 검증·<code>@PrePersist</code></b>("엔티티를 거치면 절대 만들 수 없는 데이터"가 들어갈 수 있다), <b>영속성 컨텍스트 정합성</b>(<code>@Version</code>이 안 오르고 2차 캐시가 낡는다), <b>타입 안전성</b>(<code>ps.setString(2, …)</code>의 인덱스가 밀려도 컴파일은 통과한다), <b>테스트 방식</b>(H2로는 검증되지 않아 Testcontainers가 필수가 된다).</p>
+  <p><b>그래서 실무의 균형점은 "전면 교체"가 아니라 "경계 좁히기"</b>다. 대량 적재 경로만 <code>SettlementBulkWriter</code> 같은 <b>별도 클래스로 격리</b>하고 나머지는 JPA를 유지한다 — <b>그 클래스 안에서만 다섯 가지를 신경 쓰면 되고, 위험이 코드베이스 전체로 번지지 않는다.</b></p>
+  <p style="margin-bottom:0"><b>그리고 대개는 ①~③으로 충분하다.</b> ④가 필요한 것은 <b>엔티티 매핑 자체가 무거운 경우</b>(연관관계가 많다, 컨버터가 여럿이다, 리스너가 붙어 있다)이지, <b>"JPA라서"가 아니다.</b></p>
+</div></details>
+
+<!-- ===================== SUMMARY ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  <b>100만 건이 2시간인 이유는 두 갈래</b> — <b>왕복 100만 번</b>과 <b>영속성 컨텍스트에 엔티티·스냅샷 100만 벌이 누적되어 뒤로 갈수록 느려지는 것</b>(1,000건마다 <code>flush()</code>만 하고 <code>clear()</code>를 빼면 누적 대조량 5억 500만 건, <code>clear()</code>까지 하면 100만 건 — <b>500.5배</b>이고 이 곡선은 건수의 제곱으로 자란다). 첫 처방으로 "JPQL 벌크 INSERT"는 성립하지 않고(<b>JPQL에 INSERT 문이 없다</b>, <code>insert into … select</code> 제외), <code>saveAll()</code>도 내부는 루프다. <code>batch_size</code>를 켜도 <b><code>IDENTITY</code>면 한 건도 묶이지 않는다</b> — <b>1차 캐시가 식별자를 키로 갖는 <code>Map</code></b>이라 id 없이는 영속 상태를 만들 수 없고, IDENTITY는 DB가 INSERT를 실행해야 id를 주므로 <b><code>persist()</code>가 즉시 INSERT를 날려 쓰기 지연 자체가 성립하지 않기 때문</b>이다(같은 이유로 영속성 컨텍스트가 없는 <code>JdbcTemplate</code>은 같은 auto_increment에서도 잘 묶인다). 처방은 <b>JPA를 버리는 것이 아니라 순서대로 조이는 것</b> — ① <b>ID 전략을 <code>SEQUENCE</code>/<code>TABLE</code> + 큰 <code>allocationSize</code></b>(시퀀스 <code>increment by</code>를 안 맞추면 기동 시점에 예외) ② <b><code>batch_size</code> + <code>order_inserts</code></b>로 같은 엔티티끼리 모아 실제로 묶고 ③ <b>배치 크기마다 <code>flush()</code> + <code>clear()</code></b>로 힙과 전건 대조를 잘라내고 ④ 그래도 부족하면 <b><code>JdbcTemplate.batchUpdate</code> / <code>COPY</code> / <code>LOAD DATA INFILE</code></b>. 그래도 안 묶이면 <b><code>@DynamicInsert</code>·<code>ALL</code>/<code>DIRTY</code> 낙관적 락·트랜잭션 부재</b>를 의심한다 — <b>하이버네이트가 예외 없이 조용히 배치를 포기하는</b> 조건들이다. 드라이버 층도 반드시 본다 — <b>PostgreSQL은 파이프라이닝으로 왕복이 이미 줄어 있고 <code>reWriteBatchedInserts=true</code>가 서버 실행 횟수를 줄이며, MySQL은 <code>rewriteBatchedStatements=true</code>가 없으면 드라이버가 문장을 하나씩 보낸다.</b> 그리고 <b>이건 하이버네이트 로그로는 절대 확인되지 않으므로</b> <code>Statistics</code> → <code>p6spy</code> → 서버 측 로그로 <b>관측의 층을 내려가야</b> 한다. 성능이 잡혀도 설계가 남는다 — <b>100만 건을 트랜잭션 하나로 묶지 않고</b>(죽은 행 회수 지연·락 보유·전량 롤백), <b>청크 단위 커밋 + <code>(정산일자, 거래ID)</code> 유니크 키 기반 upsert로 재실행 가능하게</b> 만든다. 아래로 내려가는 데에는 대가가 있다 — <b>Auditing 미적용, 엔티티 검증 우회, 컨텍스트 불일치, 타입 안전성 상실, 테스트 방식 변경</b>. 그래서 실무의 답은 전면 교체가 아니라 <b>배치 전용 클래스로 경계를 좁히고, 그 경계를 테스트로 고정하는 것</b>이다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/03-jpa-orm/21-bulk-insert-jdbc-batch.md</code> · 함께 볼 문서: 영속성 컨텍스트와 변경 감지(<code>02-persistence-context-dirty-checking.md</code>) · 벌크 연산과 영속성 컨텍스트(<code>11-bulk-operation-persistence-context.md</code>) · 복합 유니크 제약과 동시 INSERT(<code>14-unique-constraint-concurrent-insert.md</code>) · flush 시점과 쓰기 지연 SQL 실행 순서(<code>15-flush-timing-and-sql-ordering.md</code>) · 조회 전용 DTO 프로젝션(<code>18-dto-projection-for-read-only.md</code>) · PR 리뷰와 findById 루프(<code>19-pr-review-loop-findbyid.md</code>)</p>
+</main>
+</body>
+</html>

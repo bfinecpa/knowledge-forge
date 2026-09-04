@@ -1,0 +1,1565 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flush 시점과 쓰기 지연 SQL 실행 순서 — 코드 순서는 실행 순서가 아니다</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">03 JPA · ORM &nbsp;|&nbsp; 중급⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>flush 시점과 쓰기 지연 SQL 실행 순서<br><span class="sub">코드 순서는 실행 순서가 아니다</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"영속성 컨텍스트의 flush는 언제 일어나나요? 쓰기 지연 SQL의 실행 순서가 코드 순서와 달라서 생기는 문제(유니크 제약, 데드락)는?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — flush가 일어나는 시점은 <b>세 가지</b>다 — ① <b>트랜잭션 커밋 직전</b>(자동) ② <b>JPQL·Criteria·네이티브 쿼리를 실행하기 직전</b>(auto-flush, 아직 DB에 안 보낸 변경분 때문에 쿼리 결과가 틀리는 것을 막으려고) ③ <b><code>em.flush()</code> 명시 호출</b>. 여기서 사람들이 놓치는 <b>비대칭</b>이 하나 있다 — <b><code>findById</code>는 flush를 유발하지 않는다.</b> auto-flush는 "이 쿼리가 건드리는 테이블 집합(<b>query space</b>)에 미반영 변경이 있는가"를 판정해서 결정하는데, <code>em.find()</code>는 PK 조회라 <b>그 판정 경로 자체를 타지 않는다. 1차 캐시에 있든 없든 마찬가지다.</b> 그리고 flush가 실제로 SQL을 내보낼 때, <b>순서는 내가 코드에 쓴 순서가 아니라 Hibernate가 <code>ActionQueue</code>에 고정해 둔 타입별 순서</b>다 — <b>DELETE가 항상 맨 마지막</b>이고, 이유는 ① <b>FK 제약 위반을 줄이려는 의도</b> ② <b>같은 종류의 SQL을 몰아야 JDBC 배치가 먹히기</b> 때문이다. 그래서 "지우고 넣기"가 실제로는 "넣고 지우기"가 되어 유니크 제약을 위반한다. 최선의 처방은 <code>flush()</code>를 끼워 넣는 것이 아니라 <b>애초에 DELETE+INSERT를 UPDATE로 바꾸는 것</b>이다. 같은 원리의 더 나쁜 얼굴이 <b>데드락</b>인데, 이건 <b>Hibernate가 순서를 지켜주지 않으므로 반드시 PK 정렬로 코드에 고정</b>해야 한다. 마지막으로 이 유형은 <b>배포 전에 기계로 잡을 수 있다</b> — <b>p6spy로 실제 SQL 순서 관측</b> + <b><code>@DataJpaTest</code>의 롤백이 커밋 시점 문제를 숨기므로 <code>@Commit</code>/<code>TestTransaction</code>으로 실제 커밋</b> + <b>H2 대신 Testcontainers로 실제 DB</b>.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>시점은 셋이고, 하나에는 예외가 있다</b> — <b>커밋 직전 · JPQL 실행 직전(auto-flush) · <code>em.flush()</code></b>. auto-flush는 <b>쿼리가 읽는 테이블 집합(query space)에 미반영 변경이 겹치는가</b>로 판정하는데, <b><code>findById</code>는 쿼리가 아니라 PK 조회라 그 판정 경로 자체를 타지 않는다</b> — <b>1차 캐시 히트 여부와 무관</b>하다.</div></li>
+    <li><span class="n">2</span><div><b>순서는 내 코드가 아니라 <code>ActionQueue</code>가 정한다</b> — INSERT는 3번 칸, <b>DELETE는 9번 칸으로 항상 맨 마지막</b>이고, 이유는 <b>FK 위반 회피 + JDBC 배치 효율</b>이라는 <b>의도적 설계</b>다. 그래서 <b>"지우고 넣기"가 "넣고 지우기"로 뒤집혀</b> 유니크 위반이 나고, 커밋도 안 했는데 예외가 나는 이유는 <b>DB가 flush 시점에 이미 제약을 검사하고 락을 잡기</b> 때문이다.</div></li>
+    <li><span class="n">3</span><div><b>처방은 <code>flush()</code> 끼우기가 아니고, 안전망은 사람이 아니다</b> — 최선은 <b>DELETE+INSERT를 UPDATE로 바꾸는 것</b>이며, <b>데드락은 Hibernate가 지켜주지 않으니 PK 정렬로 코드에 고정</b>한다. 그리고 이 유형은 소스만 봐서는 안 보이므로 <b>p6spy(실제 순서) · <code>@Commit</code>(롤백이 숨기는 커밋 시점) · Testcontainers(벤더별 제약·락)</b>로 기계가 잡게 만든다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">못 하나 — flush는 commit이 아니다</a></li>
+    <li><a href="#s2">시점 셋 — 커 · 쿼 · 명</a></li>
+    <li><a href="#s3">비대칭 — query space와 <code>findById</code></a></li>
+    <li><a href="#s4">순서 — <code>ActionQueue</code>에 박힌 9칸</a></li>
+    <li><a href="#s5">사고 ① 지우고 넣었는데 유니크 위반</a></li>
+    <li><a href="#s6">사고 ② 같은 원리의 더 나쁜 얼굴, 데드락</a></li>
+    <li><a href="#s7">처방 — 코드와 스키마를 고친다</a></li>
+    <li><a href="#s8">안전망 — 기계가 지키게 만든다</a></li>
+    <li><a href="#s9">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "영속성 컨텍스트의 flush는 언제 일어나나요? 쓰기 지연 SQL의 실행 순서가 코드 순서와 달라서 생기는 문제(유니크 제약, 데드락)는?"</p>
+  <p class="sub" style="margin-top:0">관련 질문: "<code>save(new Member("kim"))</code> 직후 같은 트랜잭션에서 <code>findByName("kim")</code>을 호출하면 결과 크기가 0인가 1인가?" · "그럼 <code>findById(1L)</code>은? 이때도 flush가 일어나나?" · "<code>email</code>에 유니크 제약이 있는 테이블에서 <code>delete(기존 행)</code> 후 <code>save(같은 email 새 행)</code> — 코드는 지우고 넣는데 유니크 위반이 난다. 왜인가? 어떻게 고치겠나? 그리고 이 유형은 테스트에서 잘 안 잡히고 운영에서 터지는데, 배포 전에 발견할 방법이 있나?"</p>
+  <p><b>출제 의도</b>: <b>"flush가 커밋·JPQL 실행 직전에 일어나고 쓰기 지연 SQL이 코드 순서와 다르게 나갈 수 있음을 모르면, '코드상 삭제 후 삽입인데 유니크 제약 위반' 같은 미스터리를 못 푼다."</b> 즉 이 질문은 영속성 컨텍스트를 <b>개념으로 외웠는지, 아니면 SQL이 실제로 언제 어떤 순서로 나가는지까지 그림이 있는지</b>를 가르는 리트머스다.</p>
+
+  <div class="callout info"><span class="t">채점은 네 층으로 이루어진다</span>
+    ① flush <b>시점을 세 개 다</b> 말하는가 (하나만 말하면 개념만 외운 것)<br>
+    ② <code>findById</code>/<code>findByName</code>의 <b>비대칭을 설명</b>하는가 (= auto-flush의 판정 기준을 아는가)<br>
+    ③ 순서가 뒤집히는 원인을 <b>"Hibernate가 정해둔 규칙"</b>으로 말하는가, 아니면 "왜인지 모르겠지만 그렇더라"에 머무는가<br>
+    ④ <b>배포 전에 잡는 장치</b>를 설계할 수 있는가
+  </div>
+
+  <div class="callout trap" style="margin-bottom:0"><span class="t">이 페이지가 겨냥하는 함정 세 개</span>
+    ① <b>"flush는 커밋할 때 일어난다"에서 멈추는 것</b> — 틀리진 않았지만 <b>트랜잭션 중간의 auto-flush를 설명할 수 없어</b> "저장했는데 조회에 왜 나오지?"도 "커밋도 안 했는데 왜 유니크 위반이지?"도 못 푼다 → 2·5절.<br>
+    ② <b>"조회하면 flush된다"로 일반화하는 것</b> — 조회에는 두 종류가 있고 <b>정반대로 동작한다</b> → 3절.<br>
+    ③ <b><code>flush()</code>를 끼워 넣는 것을 정답이라고 믿는 것</b> — 동작은 하지만 <b>증상 대응</b>이다. 애초에 DELETE+INSERT를 하지 않는 설계가 훨씬 낫다 → 7절.
+  </div>
+</div>
+
+<div class="callout warn">
+  <span class="t">읽는 순서 — 이 페이지는 축이 셋이다</span>
+  <b>2·3절 = "언제 나가는가"</b>(세 시점과 <code>findById</code>의 비대칭) · <b>4·5·6절 = "어떤 순서로 나가는가"</b>(<code>ActionQueue</code>의 고정 순서, 유니크 위반, 데드락) · <b>7·8절 = "그래서 무엇을 하는가"</b>(코드 수정과 기계 장치). 버전에 의존하는 서술은 <b>Hibernate ORM 6.6 / Spring Boot 3.x 기준</b>이며, 내부 동작에는 실제 클래스 이름을 함께 적어 두었다.
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 못 하나 — flush는 commit이 아니다</h2>
+
+<p>모든 오해가 여기서 갈린다. <b>flush는 영속성 컨텍스트에 쌓인 변경분을 SQL로 만들어 DB로 보내는 행위</b>이고, <b>commit은 DB에게 "지금까지 보낸 걸 확정하라"고 말하는 행위</b>다. 둘은 <b>완전히 다른 사건</b>이고, 시점도 다르다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 322" role="img" aria-label="왼쪽 애플리케이션 메모리의 영속성 컨텍스트에서 flush 화살표가 DB로 향해 SQL이 도착하며 제약 검사와 락 획득이 일어나고, 그 아래 commit 화살표가 확정과 락 해제를 일으킨다는 것을 보여주는 도식">
+    <defs>
+      <marker id="a1r" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/></marker>
+      <marker id="a1g" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">flush(보낸다)와 commit(확정한다)은 다른 사건이다</text>
+
+    <!-- left: memory -->
+    <rect x="24" y="52" width="300" height="176" rx="12" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="174" y="76" font-size="13" font-weight="700" fill="#334155" text-anchor="middle">애플리케이션 메모리</text>
+    <text x="174" y="94" font-size="11.5" fill="#64748b" text-anchor="middle">영속성 컨텍스트</text>
+    <rect x="44" y="106" width="260" height="34" rx="8" fill="#fff" stroke="#cbd5e1"/>
+    <text x="60" y="128" font-size="11.5" fill="#334155">1차 캐시 (엔티티 + 스냅샷)</text>
+    <rect x="44" y="148" width="260" height="34" rx="8" fill="#fff" stroke="#cbd5e1"/>
+    <text x="60" y="170" font-size="11.5" fill="#334155">쓰기 지연 SQL 저장소</text>
+    <text x="174" y="206" font-size="11.5" fill="#dc2626" text-anchor="middle" font-weight="700">여기 있는 동안 DB는 아무것도 모른다</text>
+
+    <!-- arrows -->
+    <line x1="332" y1="122" x2="700" y2="122" stroke="#dc2626" stroke-width="2.2" marker-end="url(#a1r)"/>
+    <text x="516" y="112" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">flush — SQL을 보낸다</text>
+    <text x="516" y="140" font-size="11.5" fill="#7f1d1d" text-anchor="middle">우체통에 편지를 넣는 것</text>
+
+    <line x1="332" y1="200" x2="700" y2="200" stroke="#16a34a" stroke-width="2.2" marker-end="url(#a1g)"/>
+    <text x="516" y="190" font-size="13" fill="#15803d" text-anchor="middle" font-weight="700">commit — 확정하라고 말한다</text>
+    <text x="516" y="218" font-size="11.5" fill="#166534" text-anchor="middle">배달을 확정하는 것</text>
+
+    <!-- right boxes -->
+    <rect x="710" y="80" width="386" height="82" rx="11" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="728" y="104" font-size="12.5" fill="#b91c1c" font-weight="700">DB에 SQL 도착 — 아직 미확정</text>
+    <text x="728" y="126" font-size="11.5" fill="#7f1d1d">· 유니크 · FK 제약이 <tspan font-weight="700">이 시점에 검사된다</tspan></text>
+    <text x="728" y="146" font-size="11.5" fill="#7f1d1d">· 변경한 행에 <tspan font-weight="700">쓰기 락이 걸린다</tspan> (커밋까지 유지)</text>
+
+    <rect x="710" y="176" width="386" height="60" rx="11" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="728" y="200" font-size="12.5" fill="#15803d" font-weight="700">확정</text>
+    <text x="728" y="222" font-size="11.5" fill="#166534">· 락 해제 · 다른 트랜잭션에 보이기 시작</text>
+
+    <!-- bottom band -->
+    <rect x="24" y="250" width="1072" height="58" rx="11" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="44" y="274" font-size="13" fill="#1d4ed8" font-weight="700">이 문서가 다루는 두 사고가 정확히 여기서 나온다</text>
+    <text x="44" y="296" font-size="12" fill="#1e40af"><tspan font-weight="700">유니크 위반</tspan>은 flush 시점에 DB가 제약을 검사하기 때문에 나고, <tspan font-weight="700">데드락</tspan>은 flush 시점에 락이 잡히기 때문에 난다 — 둘 다 <tspan font-weight="700">커밋 전에</tspan> 벌어진다</text>
+  </svg>
+  <figcaption><b>flush는 편지를 우체통에 넣는 것</b>이고 <b>commit은 배달을 확정하는 것</b>이다. 우체통에 넣는 순간 이미 <b>DB는 그 SQL을 실행</b>하므로, <b>제약 검사도 되고 락도 걸린다.</b> 그래서 "flush했으니 저장됐다"는 착각은 위험하다 — 롤백하면 전부 사라진다.</figcaption>
+</figure>
+
+<div class="rule">"flush가 언제 일어나는가"는 학술적 질문이 아니라 <b>"내 트랜잭션이 언제 DB를 건드리는가"라는 운영 질문</b>이다</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 시점 셋 — 커 · 쿼 · 명</h2>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="트랜잭션 시작부터 커밋까지의 가로 타임라인 위에 flush가 일어나는 세 지점(명시 호출, JPQL 실행 직전 auto-flush, 커밋 직전)이 표시되고, 첫 flush부터 커밋까지가 락 보유 구간으로 표시된 도식">
+    <defs>
+      <marker id="a2" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker>
+      <marker id="a2d" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">하나의 <tspan class="mono">@Transactional</tspan> 안에서 flush가 일어날 수 있는 세 지점</text>
+
+    <!-- callout boxes -->
+    <rect x="180" y="48" width="200" height="62" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="280" y="70" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">③ 명 — 명시 호출</text>
+    <text x="280" y="90" font-size="11.5" fill="#1e40af" text-anchor="middle" class="mono">em.flush()</text>
+    <text x="280" y="104" font-size="10.5" fill="#1e40af" text-anchor="middle">saveAndFlush() 포함</text>
+
+    <rect x="420" y="48" width="300" height="62" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="570" y="70" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">② 쿼 — 쿼리 실행 직전 (auto-flush)</text>
+    <text x="570" y="90" font-size="11.5" fill="#1e40af" text-anchor="middle">JPQL · Criteria · 네이티브 쿼리</text>
+    <text x="570" y="104" font-size="10.5" fill="#1e40af" text-anchor="middle">이유: 내 변경분이 빠진 결과가 나오는 것을 막으려고</text>
+
+    <rect x="778" y="48" width="220" height="62" rx="10" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="888" y="70" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">① 커 — 커밋 직전 (자동)</text>
+    <text x="888" y="90" font-size="11.5" fill="#1e40af" text-anchor="middle">가장 익숙한 시점</text>
+    <text x="888" y="104" font-size="10.5" fill="#1e40af" text-anchor="middle">메서드가 정상 종료될 때</text>
+
+    <!-- connectors -->
+    <line x1="280" y1="112" x2="280" y2="160" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a2d)"/>
+    <line x1="570" y1="112" x2="570" y2="160" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a2d)"/>
+    <line x1="888" y1="112" x2="888" y2="160" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#a2d)"/>
+
+    <!-- timeline -->
+    <line x1="60" y1="170" x2="1060" y2="170" stroke="#334155" stroke-width="2.4" marker-end="url(#a2)"/>
+    <g fill="#334155">
+      <circle cx="280" cy="170" r="7"/><circle cx="570" cy="170" r="7"/><circle cx="888" cy="170" r="7"/>
+    </g>
+    <rect x="60" y="156" width="6" height="28" fill="#334155"/>
+    <text x="66" y="200" font-size="11.5" fill="#334155" font-weight="700">@Transactional 시작</text>
+    <rect x="1004" y="156" width="6" height="28" fill="#16a34a"/>
+    <text x="1010" y="200" font-size="11.5" fill="#15803d" font-weight="700" text-anchor="end">commit</text>
+    <text x="998" y="216" font-size="10.5" fill="#166534" text-anchor="end">← 여기가 확정</text>
+
+    <!-- lock band -->
+    <rect x="280" y="232" width="724" height="30" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="642" y="252" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">이 구간 내내 변경한 행의 쓰기 락을 쥐고 있다 — flush를 앞으로 당길수록 경합이 커진다</text>
+    <line x1="280" y1="186" x2="280" y2="230" stroke="#fca5a5" stroke-width="1.4" stroke-dasharray="3 3"/>
+    <line x1="1004" y1="186" x2="1004" y2="230" stroke="#fca5a5" stroke-width="1.4" stroke-dasharray="3 3"/>
+
+    <text x="560" y="286" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">순서는 상황마다 다르지만 개수는 셋뿐이다 — 커(밋 직전) · 쿼(리 직전) · 명(시 호출)</text>
+  </svg>
+  <figcaption>세 시점은 <b>배타적이지 않다.</b> 한 트랜잭션 안에서 <b>여러 번 flush가 일어날 수 있고</b>, 그 경우 <b>4절의 순서 규칙은 "한 번의 flush 안에서만" 적용된다</b> — 이 사실이 7-2절 처방의 근거가 된다.</figcaption>
+</figure>
+
+<div class="memo">
+  <h4>3초 암기 — <b>커 · 쿼 · 명</b></h4>
+  <div class="chain">
+    <span class="chip b">커 = 커밋 직전(자동)</span><span class="arrow">·</span>
+    <span class="chip b">쿼 = 쿼리(JPQL) 실행 직전(auto-flush)</span><span class="arrow">·</span>
+    <span class="chip b">명 = 명시 호출 <code>em.flush()</code></span>
+  </div>
+  <p class="sub" style="margin-bottom:0">"flush는 커밋할 때"라고만 답하면 <b>세 개 중 하나</b>만 말한 것이고, 이 문항의 <b>두 사고(유니크 위반·데드락) 어느 쪽도 설명하지 못한다.</b></p>
+</div>
+
+<h3>2-1. 시점 ① 커 — 트랜잭션 커밋 직전 (자동)</h3>
+
+<p><code>@Transactional</code> 메서드가 정상 종료되면 Spring이 커밋을 부르고, <b>커밋 직전</b>에 Hibernate가 flush를 수행한다.</p>
+
+<div class="codehead plain"><span class="tag">기본</span> 메서드 안에서는 SQL이 한 줄도 안 나간다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">changeName</span>(Long id, String name) {
+    Member m = memberRepository.<span class="fn">findById</span>(id).<span class="fn">orElseThrow</span>();
+    m.<span class="fn">setName</span>(name);       <span class="cm">// ← 여기서는 SQL이 나가지 않는다</span>
+}                          <span class="cm">// ← 메서드가 끝나며 커밋 → 그 직전에 flush → 여기서 UPDATE 발생</span></code></pre>
+
+<p>그래서 <b>디버거로 메서드 중간에 멈춰 DB를 직접 조회해도 옛날 값이 보인다.</b> "코드는 분명 바꿨는데 DB에 없다"는 당황은 대부분 이 시점 문제다.</p>
+
+<h3>2-2. 시점 ② 쿼 — JPQL·Criteria·네이티브 쿼리 실행 직전 (auto-flush)</h3>
+
+<p>JPQL 같은 쿼리는 <b>DB에 직접 나가서 DB의 데이터를 읽는다.</b> 그런데 내가 방금 저장한 데이터가 아직 메모리에만 있고 DB에는 없다면, 쿼리 결과가 <b>틀린다.</b></p>
+
+<div class="codehead plain"><span class="tag">기본</span> auto-flush가 없다면 결과가 0건이 되어버린다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">demo</span>() {
+    memberRepository.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">Member</span>(<span class="st">"kim"</span>));           <span class="cm">// 메모리에만 INSERT 예약</span>
+<span class="ln-good">    List&lt;Member&gt; found = memberRepository.<span class="fn">findByName</span>(<span class="st">"kim"</span>);</span>
+    <span class="cm">//                   ↑ JPQL → 실행 직전에 auto-flush → INSERT가 DB로 나감 → 결과 1건</span>
+}</code></pre>
+
+<div class="callout info" style="margin-top:14px">
+  <span class="t">auto-flush의 존재 이유는 한 가지뿐이다</span>
+  <b>"내 트랜잭션 안에서의 읽기 일관성"</b> — 내가 방금 한 변경은 내가 조회할 때 보여야 한다(read-your-own-writes). 이 판정이 <b>정확히 어떤 기준으로</b> 이루어지는지가 3절의 주제이고, 그 기준을 알아야 <code>findById</code>가 왜 예외인지가 풀린다.
+</div>
+
+<h3>2-3. 시점 ③ 명 — <code>em.flush()</code> 명시 호출</h3>
+
+<p>개발자가 직접 부른다. Spring Data JPA의 <code>repository.flush()</code>, <code>saveAndFlush()</code>도 같은 일을 한다. <b>필요한 경우는 셋뿐</b>이다.</p>
+
+<div class="grid g3">
+  <div class="tile"><div class="k" style="font-family:inherit">① 실행 순서를 강제할 때</div><div class="d">DELETE를 INSERT보다 먼저 내보내야 할 때. flush 경계를 하나 더 만드는 유일한 수단이다 → <b>7-2절</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">② DB가 만든 값을 도중에 읽어야 할 때</div><div class="d">시퀀스·트리거·DB 기본값처럼 <b>DB에 다녀와야 알 수 있는 값</b>을 트랜잭션 중간에 써야 하는 경우</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">③ 대량 처리에서 <code>clear()</code>와 짝지을 때</div><div class="d">영속성 컨텍스트가 비대해지는 것을 막기 위해 <code>flush()</code> + <code>clear()</code>를 주기적으로 부른다</div></div>
+</div>
+
+<div class="callout warn">
+  <span class="t">대가는 분명하다 — 락 보유 시간</span>
+  <b>flush로 UPDATE/DELETE를 보내는 순간부터 커밋까지 그 행의 쓰기 락을 쥐고 있게 된다.</b> 트랜잭션 앞쪽에서 flush하고 뒤에서 외부 API를 호출하는 코드는 락 보유 시간을 수백 ms 단위로 늘려 경합을 만든다. 그래서 원칙은 <b>"필요할 때만 최소로, 가능하면 커밋 직전으로 미룬다"</b>.
+</div>
+
+<h3>2-4. <code>FlushModeType.COMMIT</code> — ②를 끌 수는 있지만 쓰지 않는다</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>모드</th><th>동작</th><th>실무</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><code>AUTO</code> (기본)</td><td>커밋 직전 <b>+</b> 쿼리 실행 직전</td><td>사실상 항상 이것</td></tr>
+    <tr><td><code>COMMIT</code></td><td>커밋 직전에만</td><td class="bad">거의 쓰지 않는다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 위험한 최적화</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">danger</span>() {
+<span class="ln-bad">    em.<span class="fn">setFlushMode</span>(FlushModeType.COMMIT);</span>
+    memberRepository.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">Member</span>(<span class="st">"kim"</span>));
+
+    <span class="kw">long</span> n = memberRepository.<span class="fn">countByName</span>(<span class="st">"kim"</span>);
+    <span class="cm">// JPQL인데 flush가 안 일어난다 → n == 0</span>
+
+<span class="ln-bad">    <span class="kw">if</span> (n == 0) <span class="kw">throw new</span> <span class="fn">IllegalStateException</span>(<span class="st">"저장 실패?"</span>);</span>
+    <span class="cm">// ← 여기서 터진다. 저장은 잘 됐는데.</span>
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 기본값(AUTO)을 그대로 둔다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">safe</span>() {
+    memberRepository.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">Member</span>(<span class="st">"kim"</span>));
+
+<span class="ln-good">    <span class="kw">long</span> n = memberRepository.<span class="fn">countByName</span>(<span class="st">"kim"</span>);</span>
+    <span class="cm">// auto-flush → 정확히 1</span>
+}
+
+<span class="cm">// 성능이 정말 문제라면 flush 모드가 아니라</span>
+<span class="cm">// "쓰기와 읽기를 같은 트랜잭션에 섞지 않는 설계"로 푼다.</span></code></pre>
+  </div>
+</div>
+
+<div class="rule">면접에서의 정답은 <b>"끌 수 있지만 그 순간 읽기 일관성을 잃으므로 안 쓴다"</b>까지다<br><span style="font-size:.92rem;font-weight:600">존재를 모르는 것과, 알면서 안 쓰는 것은 다르다</span></div>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 비대칭 — <code>findByName</code>은 flush를 부르고 <code>findById</code>는 안 부른다</h2>
+
+<p>여기서부터가 <b>이 문항에서 가장 많이 틀리는 지점</b>이다. "1차 캐시에 있으면 flush를 안 하고, 없으면 DB에 가야 하니까 flush하겠지"라는 추론은 자연스럽지만 <b>틀렸다.</b> 왜 틀렸는지 이해하려면 Hibernate가 <b>무엇을 보고 판정하는지</b>부터 알아야 한다.</p>
+
+<h3>3-1. 용어부터 — query space는 그냥 "테이블 이름 목록"이다</h3>
+
+<p><b>query space란 "이 쿼리가 손대는 테이블들의 이름 집합"</b>이다. 직역하면 "쿼리 공간"인데, 하나의 쿼리가 읽거나 쓰는 테이블들을 그 쿼리가 차지하는 영역으로 보고 붙인 이름이다. <b>어려운 개념이 아니라 그냥 테이블 이름 목록</b>이라고 생각하면 된다.</p>
+
+<pre><code>select m from Member m where m.name = ?      <span class="cm">→  query space = { member }</span>
+select o from Order o join o.member m        <span class="cm">→  query space = { orders, member }</span></code></pre>
+
+<h3>3-2. 왜 하필 "테이블 집합"으로 판정하는가</h3>
+
+<p>질문을 뒤집으면 답이 나온다. Hibernate가 flush를 해야 하는 유일한 이유는 <b>"아직 DB에 못 보낸 내 변경분 때문에 이 쿼리의 결과가 틀리는 것"</b>을 막기 위해서다. 그런데 내 변경분이 이 쿼리 결과를 틀리게 만들 수 있으려면, 그 변경분이 <b>이 쿼리가 실제로 읽는 바로 그 테이블</b>에 있어야 한다.</p>
+
+<p><code>member</code> 테이블에 INSERT가 대기 중인데 <code>orders</code>만 읽는 쿼리를 날린다면, 그 대기 중인 INSERT는 이 쿼리 결과에 <b>영향을 줄 수 없다.</b> 그러니 flush할 이유도 없다. 즉 <b>테이블 집합이 겹치는가</b>는 <b>"미반영 변경이 이 쿼리 결과를 틀리게 만들 수 있는가"를 값싸게 근사하는 방법</b>이다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 372" role="img" aria-label="auto-flush 판정 절차 3단계와 두 집합이 겹치는지에 따라 flush 여부가 갈리는 분기, 그리고 오른쪽에 orders 조회는 겹치지 않아 flush가 없고 member 조회는 겹쳐서 flush가 발생하며 findById는 아예 판정에 들어오지 않는다는 예시 도식">
+    <defs>
+      <marker id="a3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+
+    <text x="450" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">auto-flush는 무엇을 보고 결정하는가</text>
+
+    <!-- steps -->
+    <rect x="20" y="46" width="410" height="52" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="36" y="68" font-size="12.5" fill="#1d4ed8" font-weight="700">① 이 쿼리가 읽을 테이블 집합을 구한다</text>
+    <text x="36" y="88" font-size="11.5" fill="#1e40af">= 쿼리의 query space</text>
+
+    <line x1="225" y1="100" x2="225" y2="116" stroke="#64748b" stroke-width="1.6" marker-end="url(#a3)"/>
+
+    <rect x="20" y="120" width="410" height="52" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="36" y="142" font-size="12.5" fill="#1d4ed8" font-weight="700">② 쓰기 지연 저장소에 쌓인 작업들의 테이블 집합을 구한다</text>
+    <text x="36" y="162" font-size="11.5" fill="#1e40af">= 대기 중인 액션들의 query space</text>
+
+    <line x1="225" y1="174" x2="225" y2="190" stroke="#64748b" stroke-width="1.6" marker-end="url(#a3)"/>
+
+    <rect x="20" y="194" width="410" height="42" rx="10" fill="#fff" stroke="#2563eb" stroke-width="2"/>
+    <text x="225" y="220" font-size="13" fill="#1d4ed8" text-anchor="middle" font-weight="700">③ 두 집합이 겹치는가?</text>
+
+    <line x1="130" y1="238" x2="130" y2="256" stroke="#64748b" stroke-width="1.6" marker-end="url(#a3)"/>
+    <line x1="325" y1="238" x2="325" y2="256" stroke="#64748b" stroke-width="1.6" marker-end="url(#a3)"/>
+
+    <rect x="20" y="260" width="200" height="56" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="120" y="282" font-size="12.5" fill="#15803d" text-anchor="middle" font-weight="700">겹친다 → flush 한다</text>
+    <text x="120" y="302" font-size="11" fill="#166534" text-anchor="middle">안 하면 결과가 틀리니까</text>
+
+    <rect x="230" y="260" width="200" height="56" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="330" y="282" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">안 겹친다 → 안 한다</text>
+    <text x="330" y="302" font-size="11" fill="#475569" text-anchor="middle">틀릴 수가 없으니까</text>
+
+    <!-- examples -->
+    <rect x="456" y="46" width="424" height="46" rx="10" fill="#1e293b"/>
+    <text x="472" y="66" font-size="11.5" fill="#e2e8f0" class="mono">memberRepository.save(new Member("kim"));</text>
+    <text x="472" y="84" font-size="11" fill="#fbbf24">대기 중인 작업의 테이블 = { member }</text>
+
+    <rect x="456" y="104" width="424" height="62" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="472" y="124" font-size="11.5" fill="#334155" class="mono">orderRepository.findByStatus(PAID);</text>
+    <text x="472" y="143" font-size="11.5" fill="#475569">query space = { orders } → 안 겹침</text>
+    <text x="472" y="160" font-size="12" fill="#334155" font-weight="700">→ flush 없음</text>
+
+    <rect x="456" y="176" width="424" height="62" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="472" y="196" font-size="11.5" fill="#166534" class="mono">memberRepository.findByName("kim");</text>
+    <text x="472" y="215" font-size="11.5" fill="#166534">query space = { member } → 겹침</text>
+    <text x="472" y="232" font-size="12" fill="#15803d" font-weight="700">→ auto-flush 발생 (INSERT가 DB로)</text>
+
+    <rect x="456" y="248" width="424" height="68" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="472" y="268" font-size="11.5" fill="#b91c1c" class="mono">memberRepository.findById(1L);</text>
+    <text x="472" y="287" font-size="11.5" fill="#7f1d1d">쿼리가 아니라 <tspan font-weight="700">PK 조회(lookup)</tspan></text>
+    <text x="472" y="305" font-size="12" fill="#b91c1c" font-weight="700">→ 이 판정 절차에 애초에 들어오지 않는다</text>
+
+    <!-- bottom -->
+    <rect x="20" y="330" width="860" height="34" rx="9" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="450" y="352" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">테이블 집합 겹침 = "미반영 변경이 이 쿼리 결과를 틀리게 만들 수 있는가"의 값싼 근사</text>
+  </svg>
+  <figcaption>Hibernate 소스에서도 그대로 확인된다. <code>DefaultAutoFlushEventListener</code>가 <code>actionQueue.areTablesToBeUpdated(event.getQuerySpaces())</code>를 호출하고, <code>ActionQueue.areTablesToBeUpdated</code>는 <b>대기 중인 액션들의 query space와 쿼리의 query space가 하나라도 겹치는지만</b> 검사한다.</figcaption>
+</figure>
+
+<div class="callout ok">
+  <span class="t">가산점 포인트 — 네이티브 쿼리는 이 판정을 못 한다</span>
+  SQL 문자열을 Hibernate가 파싱해 테이블을 알아내지는 않기 때문에, 네이티브 쿼리는 <b>"어느 테이블을 건드리는지 모른다"고 보고 보수적으로 전체를 flush</b>한다. 실제로 <code>NativeQueryImpl.prepareForExecution()</code>은 동기화 대상 query space가 지정돼 있으면 부분 flush로 끝내고, 지정돼 있지 않으면 <code>session.flush()</code>를 그냥 호출한다. 좁히려면 <code>NativeQuery.addSynchronizedEntityClass(...)</code>(또는 <code>addSynchronizedQuerySpace</code>)로 관련 엔티티를 알려줘야 한다. <b>"네이티브 쿼리 하나 때문에 트랜잭션 중간에 예상 못 한 UPDATE 폭탄이 나갔다"는 사고의 정체가 이것</b>이다.
+</div>
+
+<h3>3-3. <code>em.find()</code>는 그 판정 경로 자체를 타지 않는다</h3>
+
+<p>이제 비대칭의 이유를 말할 수 있다. <code>findById</code>(내부적으로 <code>EntityManager.find()</code>)는 <b>쿼리가 아니다.</b> 이것은 <b>"PK가 이것인 엔티티 하나를 달라"는 조회(lookup)</b>이고, 애초에 3-2절의 판정 절차에 진입하지 않는다.</p>
+
+<pre><code>findById(1L)
+  → 1차 캐시에 (Member, 1) 있나?
+       있다  → 그대로 반환 (SQL 없음)
+       없다  → select ... from member where id = ? 를 즉시 실행해서 채운다
+<span class="cm">                ↑ 이 경로 어디에도 "query space 비교 → auto-flush" 단계가 없다</span></code></pre>
+
+<p><b>왜 없어도 되는가</b>를 이해하면 외울 필요가 없다. auto-flush의 목적은 <b>"내 변경분이 빠진 결과가 나오는 것"을 막는 것</b>인데, PK 조회에서는 그런 일이 애초에 벌어지지 않는다. 경우를 둘로 나눠 보면 분명하다.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>아직 INSERT 안 된 새 엔티티</h4>
+    <p style="margin:0;font-size:.94rem">어차피 영속성 컨텍스트에 있으므로 <code>find()</code>는 <b>1차 캐시에서 찾아 반환한다.</b> DB에 갈 필요가 없다.</p>
+  </div>
+  <div class="pane b">
+    <h4>수정만 하고 아직 UPDATE 안 된 엔티티</h4>
+    <p style="margin:0;font-size:.94rem">이것도 1차 캐시에 있고, <b>JPA는 "같은 트랜잭션·같은 PK면 항상 같은 인스턴스"(동일성 보장)</b>를 지키므로 <b>DB에서 옛날 값을 읽어와도 캐시에 있는 인스턴스를 그대로 돌려준다.</b> 즉 <b>내가 바꾼 값이 그대로 보인다.</b></p>
+  </div>
+</div>
+
+<div class="rule ok">PK 조회는 <b>flush 없이도 읽기 일관성이 이미 보장</b>되므로, Hibernate가 flush할 이유가 없다</div>
+
+<div class="memo red">
+  <h4>"1차 캐시에 없으면 그때는 flush하겠지" — 이것이 틀리는 지점</h4>
+  <p>캐시에 없어서 <code>select ... where id = ?</code>가 <b>실제로 나가더라도</b>, 그 SELECT는 여전히 <b>PK 하나를 집어오는 lookup이지 조건을 평가하는 쿼리가 아니다.</b></p>
+  <p style="margin-bottom:0"><b>아직 DB에 안 간 내 변경분이 "id로 찾는 행 하나"의 존재 여부를 바꿀 수 있는 경우란, 그 행을 내가 이 트랜잭션에서 방금 만든 경우뿐인데 그건 이미 1차 캐시에 있다.</b> 그래서 판정 경로가 필요 없다. 반면 JPQL은 조건(<code>where name = 'kim'</code>)을 <b>DB가</b> 평가하므로, 미반영 변경이 DB에 없으면 <b>애초에 결과 집합에서 빠져버린다</b> — 그래서 flush가 필수다.</p>
+</div>
+
+<h3>3-4. 나란히 놓고 SQL을 비교한다</h3>
+
+<p>같은 상황(엔티티 하나를 수정해 둔 상태)에서 <b>다음 줄만</b> 바꿔 두 코드를 나란히 놓는다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 흔한 오해: "조회하면 flush된다"</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">misunderstanding</span>() {
+    Member m = memberRepository.<span class="fn">findById</span>(1L).<span class="fn">orElseThrow</span>();
+    m.<span class="fn">setName</span>(<span class="st">"changed"</span>);            <span class="cm">// UPDATE 예약 (아직 SQL 없음)</span>
+
+<span class="ln-bad">    memberRepository.<span class="fn">findById</span>(1L);   <span class="cm">// flush 안 남. SQL도 안 남(캐시 히트)</span></span>
+<span class="ln-bad">    memberRepository.<span class="fn">findById</span>(999L); <span class="cm">// flush 안 남. select 999 만 나감</span></span>
+    <span class="cm">//   ↑ "캐시에 없으면 flush하겠지"가 틀리는 지점</span>
+
+    <span class="cm">// 이 시점까지 DB에는 UPDATE가 단 한 건도 도착하지 않았다.</span>
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 실제로 flush를 유발하는 것은 JPQL 쪽</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">reality</span>() {
+    Member m = memberRepository.<span class="fn">findById</span>(1L).<span class="fn">orElseThrow</span>();
+    m.<span class="fn">setName</span>(<span class="st">"changed"</span>);            <span class="cm">// UPDATE 예약</span>
+
+<span class="ln-good">    memberRepository.<span class="fn">findByName</span>(<span class="st">"changed"</span>);</span>
+    <span class="cm">// JPQL → query space {member} 겹침 → auto-flush</span>
+    <span class="cm">// 이 줄에서 UPDATE가 DB로 나가고,</span>
+    <span class="cm">// 그 순간부터 커밋까지 1번 행의 쓰기 락을 쥔다.</span>
+}</code></pre>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 372" role="img" aria-label="왼쪽은 findById만 호출한 경우로 UPDATE가 커밋 직전까지 밀리고, 오른쪽은 findByName을 호출해 그 줄에서 auto-flush로 UPDATE가 나가며 그 시점부터 커밋까지 락을 쥔다는 것을 비교하는 SQL 타임라인 도식">
+    <defs>
+      <marker id="a4" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <text x="560" y="26" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">실제로 나가는 SQL을 순서대로 늘어놓으면 — 차이는 "UPDATE가 언제 나가는가"다</text>
+
+    <rect x="24" y="42" width="516" height="30" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="282" y="63" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">misunderstanding()  —  findById만 부른다</text>
+
+    <rect x="580" y="42" width="516" height="30" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="838" y="63" font-size="13" fill="#15803d" text-anchor="middle" font-weight="700" class="mono">reality()  —  findByName을 부른다</text>
+
+    <!-- rows -->
+    <rect x="24" y="84" width="516" height="46" rx="9" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="40" y="104" font-size="11.5" fill="#334155" class="mono">select ... from member where id=1</text>
+    <text x="40" y="121" font-size="11" fill="#64748b">findById(1L) — 최초 로딩</text>
+
+    <rect x="580" y="84" width="516" height="46" rx="9" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="596" y="104" font-size="11.5" fill="#334155" class="mono">select ... from member where id=1</text>
+    <text x="596" y="121" font-size="11" fill="#64748b">findById(1L) — 최초 로딩</text>
+
+    <rect x="24" y="140" width="516" height="46" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="5 4"/>
+    <text x="40" y="160" font-size="11.5" fill="#64748b">SQL 없음 — 1차 캐시 히트</text>
+    <text x="40" y="177" font-size="11" fill="#64748b">findById(1L) 재호출</text>
+
+    <rect x="580" y="140" width="516" height="46" rx="9" fill="#fffbeb" stroke="#f59e0b" stroke-width="2"/>
+    <text x="596" y="160" font-size="11.5" fill="#b45309" font-weight="700">── auto-flush 발동 ──</text>
+    <text x="596" y="177" font-size="11.5" fill="#92400e" class="mono">update member set name='changed' where id=1</text>
+
+    <rect x="24" y="196" width="516" height="52" rx="9" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="40" y="216" font-size="11.5" fill="#334155" class="mono">select ... from member where id=999</text>
+    <text x="40" y="233" font-size="11" fill="#b91c1c" font-weight="700">이 SELECT가 나가도 UPDATE는 여전히 대기 중이다</text>
+
+    <rect x="580" y="196" width="516" height="52" rx="9" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="596" y="216" font-size="11.5" fill="#334155" class="mono">select ... from member where name='changed'</text>
+    <text x="596" y="233" font-size="11" fill="#166534">이제 DB에도 변경분이 있으므로 결과가 맞다</text>
+
+    <line x1="282" y1="252" x2="282" y2="268" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a4)"/>
+    <line x1="838" y1="252" x2="838" y2="268" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a4)"/>
+
+    <rect x="24" y="272" width="516" height="52" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="40" y="292" font-size="11.5" fill="#1d4ed8" font-weight="700">── 메서드 종료, 커밋 직전 flush ──</text>
+    <text x="40" y="311" font-size="11.5" fill="#1e40af" class="mono">update member set name='changed' where id=1</text>
+
+    <rect x="580" y="272" width="516" height="52" rx="9" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="596" y="292" font-size="11.5" fill="#15803d" font-weight="700">── 메서드 종료, 커밋 ──</text>
+    <text x="596" y="311" font-size="11.5" fill="#166534">UPDATE는 이미 나갔다</text>
+
+    <rect x="580" y="332" width="516" height="30" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="838" y="352" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">이 구간(auto-flush → 커밋) 내내 1번 행의 쓰기 락을 쥔다 → 6절 데드락의 씨앗</text>
+
+    <rect x="24" y="332" width="516" height="30" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="282" y="352" font-size="11.5" fill="#475569" text-anchor="middle">락은 커밋 직전에야 잡힌다 — 보유 시간이 훨씬 짧다</text>
+  </svg>
+  <figcaption><b>핵심은 결과가 아니라 시점이다.</b> <code>findById</code>만 부른 쪽은 UPDATE가 <b>커밋 직전까지 밀리고</b>, <code>findByName</code>을 부른 쪽은 UPDATE가 <b>그 줄에서 나간다.</b> 6절에서 다룰 데드락이 바로 이 <b>"락을 언제부터 쥐느냐"</b>의 문제다.</figcaption>
+</figure>
+
+<div class="callout ok">
+  <span class="t">면접에서 이 비대칭을 한 문장으로</span>
+  "<code>findById</code>는 쿼리가 아니라 PK 조회라 auto-flush 판정 경로를 타지 않습니다. <b>1차 캐시 히트 여부와 무관</b>하고, PK 조회는 <b>동일성 보장 덕분에 flush 없이도 내 변경분이 보이기 때문에</b> flush할 이유가 없습니다."
+</div>
+
+<div class="callout trap" style="margin-bottom:0">
+  <span class="t">실무에서 이 비대칭이 물리는 순간 <span class="badge trap">함정</span></span>
+  저장 로직 테스트에서 결과를 <code>findById</code>로 검증하면, <b>flush가 한 번도 일어나지 않은 채로 1차 캐시에 있는 그 객체를 그대로 돌려받으므로 무조건 통과한다.</b> <b>DB에 정말 들어갔는지는 전혀 검증되지 않는다.</b> 이것이 8절에서 다룰 <b>"테스트가 통과하는데 운영에서 터지는" 첫 번째 이유</b>다.
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. 순서 — <code>ActionQueue</code>에 박힌 9칸</h2>
+
+<p>flush가 일어나면 Hibernate는 쌓인 작업들을 <b>내가 호출한 순서가 아니라, 작업 종류별로 미리 정해진 순서</b>로 실행한다. 이 대기열이 <code>ActionQueue</code>이고, 순서는 소스의 <code>ActionQueue.OrderedActions</code> 열거형에 <b>박혀 있다.</b> 그 열거형 바로 위에 달린 주석이 <b>"The order of these operations is very important"</b>인데, 말 그대로 <b>열거 순서 자체가 실행 순서</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 268" role="img" aria-label="flush가 실행하는 9칸 파이프라인에서 3번 칸이 INSERT, 9번 칸이 DELETE이며, 코드에서 먼저 쓴 delete가 마지막 칸으로 밀리고 나중에 쓴 save가 3번 칸으로 당겨져 순서가 뒤집히는 것을 화살표로 보여주는 도식">
+    <defs>
+      <marker id="a5r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a5b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    </defs>
+
+    <text x="560" y="22" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">한 번의 flush = 9칸짜리 컨베이어. 내 코드 순서는 이 컨베이어에 영향을 주지 않는다</text>
+
+    <!-- code order boxes -->
+    <rect x="110" y="36" width="250" height="38" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="235" y="60" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">코드 1번째: delete(old)</text>
+
+    <rect x="470" y="36" width="250" height="38" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="595" y="60" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700" class="mono">코드 2번째: save(new)</text>
+
+    <!-- crossing arrows -->
+    <path d="M235,76 C 420,100 820,86 1035,106" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#a5r)"/>
+    <path d="M595,76 C 560,92 500,96 452,106" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#a5b)"/>
+
+    <!-- slots -->
+    <g font-size="10.5" text-anchor="middle">
+      <rect x="40" y="112" width="110" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="95" y="132" fill="#64748b" font-weight="700">1</text><text x="95" y="150" fill="#475569">고아 컬렉션</text><text x="95" y="164" fill="#475569">제거</text>
+
+      <rect x="158" y="112" width="110" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="213" y="132" fill="#64748b" font-weight="700">2</text><text x="213" y="150" fill="#475569">고아 객체</text><text x="213" y="164" fill="#475569">제거</text>
+
+      <rect x="276" y="112" width="110" height="62" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="2.4"/>
+      <text x="331" y="132" fill="#1d4ed8" font-weight="700">3</text><text x="331" y="152" fill="#1d4ed8" font-size="13" font-weight="700" class="mono">INSERT</text><text x="331" y="167" fill="#1e40af" font-size="10">엔티티 삽입</text>
+
+      <rect x="394" y="112" width="110" height="62" rx="8" fill="#eff6ff" stroke="#93c5fd"/>
+      <text x="449" y="132" fill="#1d4ed8" font-weight="700">4</text><text x="449" y="152" fill="#1d4ed8" font-size="13" font-weight="700" class="mono">UPDATE</text><text x="449" y="167" fill="#1e40af" font-size="10">엔티티 수정</text>
+
+      <rect x="512" y="112" width="110" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="567" y="132" fill="#64748b" font-weight="700">5</text><text x="567" y="150" fill="#475569">컬렉션</text><text x="567" y="164" fill="#475569">지연 연산</text>
+
+      <rect x="630" y="112" width="110" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="685" y="132" fill="#64748b" font-weight="700">6</text><text x="685" y="150" fill="#475569">컬렉션</text><text x="685" y="164" fill="#475569">삭제</text>
+
+      <rect x="748" y="112" width="110" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="803" y="132" fill="#64748b" font-weight="700">7</text><text x="803" y="150" fill="#475569">컬렉션</text><text x="803" y="164" fill="#475569">갱신</text>
+
+      <rect x="866" y="112" width="110" height="62" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="921" y="132" fill="#64748b" font-weight="700">8</text><text x="921" y="150" fill="#475569">컬렉션</text><text x="921" y="164" fill="#475569">재생성</text>
+
+      <rect x="984" y="112" width="110" height="62" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2.4"/>
+      <text x="1039" y="132" fill="#b91c1c" font-weight="700">9</text><text x="1039" y="152" fill="#b91c1c" font-size="13" font-weight="700" class="mono">DELETE</text><text x="1039" y="167" fill="#7f1d1d" font-size="10">항상 맨 마지막</text>
+    </g>
+
+    <!-- bottom bands -->
+    <rect x="40" y="190" width="520" height="62" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="58" y="212" font-size="12.5" fill="#1d4ed8" font-weight="700">Hibernate가 보장하는 것 — 칸의 순서</text>
+    <text x="58" y="232" font-size="11.5" fill="#1e40af">INSERT(3)는 언제나 DELETE(9)보다 먼저다.</text>
+    <text x="58" y="248" font-size="11.5" fill="#1e40af">설정으로 바꿀 수 없다 → <tspan font-weight="700">알고 피해야 할 규칙</tspan></text>
+
+    <rect x="574" y="190" width="520" height="62" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="592" y="212" font-size="12.5" fill="#b91c1c" font-weight="700">보장하지 않는 것 — 한 칸 안에서의 행 순서</text>
+    <text x="592" y="232" font-size="11.5" fill="#7f1d1d">UPDATE 여러 건 중 어느 행이 먼저인지는 정해주지 않는다.</text>
+    <text x="592" y="248" font-size="11.5" fill="#7f1d1d">→ <tspan font-weight="700">내 코드의 책임</tspan> (6절 데드락)</text>
+  </svg>
+  <figcaption>거의 모든 프로젝트에 해당하는 것은 <b>3번과 9번의 관계 하나</b>다. 나머지 여섯 칸은 컬렉션 매핑을 쓸 때만 등장한다. 그리고 이건 설정으로 바꿀 수 있는 값이 아니라 <b>Hibernate 구현에 박혀 있는 규칙</b>이다.</figcaption>
+</figure>
+
+<div class="scroll">
+<table class="wide">
+  <caption>정확한 이름까지 — 의심스러우면 <code>ActionQueue.OrderedActions</code> 소스에서 직접 확인할 수 있다</caption>
+  <thead><tr><th>순서</th><th>액션 (Hibernate 내부 이름)</th><th>무슨 SQL인가</th><th>언제 등장하나</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>OrphanCollectionRemoveAction</code></td><td>고아가 된 컬렉션 통째 삭제</td><td class="dash">컬렉션 매핑 시</td></tr>
+    <tr><td>2</td><td><code>OrphanRemovalAction</code></td><td><code>orphanRemoval = true</code>로 끊긴 자식 엔티티 DELETE</td><td class="dash">컬렉션 매핑 시</td></tr>
+    <tr class="hl"><td><b>3</b></td><td><code>EntityInsertAction</code></td><td class="good">엔티티 INSERT</td><td>거의 항상</td></tr>
+    <tr class="hl"><td><b>4</b></td><td><code>EntityUpdateAction</code></td><td class="good">엔티티 UPDATE</td><td>거의 항상</td></tr>
+    <tr><td>5</td><td><code>QueuedOperationCollectionAction</code></td><td>컬렉션에 미뤄 둔 개별 연산</td><td class="dash">컬렉션 매핑 시</td></tr>
+    <tr><td>6</td><td><code>CollectionRemoveAction</code></td><td>컬렉션 삭제</td><td class="dash">컬렉션 매핑 시</td></tr>
+    <tr><td>7</td><td><code>CollectionUpdateAction</code></td><td>컬렉션 갱신</td><td class="dash">컬렉션 매핑 시</td></tr>
+    <tr><td>8</td><td><code>CollectionRecreateAction</code></td><td>컬렉션 재생성</td><td class="dash">컬렉션 매핑 시</td></tr>
+    <tr class="hl"><td><b>9</b></td><td><code>EntityDeleteAction</code></td><td class="bad">엔티티 DELETE — 항상 맨 마지막</td><td>거의 항상</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="memo green">
+  <h4>9칸 암기 — <b>고2 · 인업 · 컬4 · 딜</b></h4>
+  <div class="chain">
+    <span class="chip w">고2 = 고아 둘 (컬렉션·객체)</span><span class="arrow">→</span>
+    <span class="chip b">인업 = INSERT · UPDATE</span><span class="arrow">→</span>
+    <span class="chip w">컬4 = 컬렉션 넷</span><span class="arrow">→</span>
+    <span class="chip r">딜 = DELETE (끝)</span>
+  </div>
+  <div class="rule red" style="margin-bottom:0">면접에서 아홉 개를 다 못 외워도 된다. <b>"INSERT가 항상 DELETE보다 먼저"</b> 하나면 이 문항은 풀린다</div>
+</div>
+
+<h3>4-1. 왜 하필 DELETE가 뒤인가 — 이유 두 가지</h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4>이유 ① FK(외래 키) 제약 위반을 줄이려는 의도</h4>
+    <p style="margin:0;font-size:.94rem">부모-자식 관계에서 자식이 부모를 참조할 때 <b>부모를 먼저 지우면 FK 위반</b>이 난다. INSERT를 앞에, DELETE를 뒤에 두면 <b>"필요한 행은 먼저 만들어 두고, 참조가 끊긴 행을 나중에 지우는"</b> 순서가 되어 일반적인 경우에 안전하다.</p>
+  </div>
+  <div class="pane b">
+    <h4>이유 ② 같은 종류의 SQL을 몰아야 JDBC 배치가 먹힌다</h4>
+    <p style="margin:0;font-size:.94rem">JDBC 배치는 <b>같은 형태의 SQL을 하나로 묶어 한 번에 보내는 최적화</b>다. 종류가 섞여 있으면 묶을 수가 없다. <b>세탁기를 색깔별로 모아 돌리는 것</b>과 같다 — 손님이 맡긴 순서가 아니라 <b>같은 색끼리 모아야 한 번에 돌아간다.</b></p>
+  </div>
+</div>
+
+<pre><code><span class="cm">섞여 있으면 (코드 순서대로 실행한다면):</span>
+  insert / delete / insert / delete / insert  →  묶을 수 없다. 네트워크 왕복 <span class="st">5회</span>
+
+<span class="cm">종류별로 몰아두면:</span>
+  insert · insert · insert  →  한 묶음
+  delete · delete           →  한 묶음        →  네트워크 왕복 <span class="st">2회</span></code></pre>
+
+<div class="rule">순서 고정은 <b>버그가 아니라 성능을 위한 의도적 설계</b>다<br><span style="font-size:.92rem;font-weight:600">이걸 알면 "왜 안 고쳐주냐"가 아니라 "이 규칙 위에서 어떻게 코드를 쓸 것인가"로 사고가 바뀐다</span></div>
+
+<div class="callout ok" style="margin-bottom:0">
+  <span class="t">가산점 포인트 — <code>IDENTITY</code> 전략에서는 INSERT가 지연되지 않는다</span>
+  PK를 DB의 auto_increment에 맡기면(<code>GenerationType.IDENTITY</code>), Hibernate는 <b>엔티티를 영속 상태로 만들려면 id가 필요한데 그 id를 DB만 알기 때문에</b> <code>persist()</code> 시점에 <b>INSERT를 즉시 실행</b>한다. 소스에서는 이 INSERT를 <b>"early insert"</b>라고 부르고, <code>ActionQueue.addInsertAction()</code>이 <code>insert.isEarlyInsert()</code>인 경우 큐에 쌓지 않고 그 자리에서 <code>executeInserts()</code>를 부른다. 그래서 <b>IDENTITY 환경에서는 5절의 문제가 더 확실하게 터진다</b> — DELETE는 flush까지 대기하는데 INSERT는 이미 나가버렸기 때문이다. 덤으로 <b>IDENTITY는 INSERT 배치도 사실상 불가능</b>하다.
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 사고 ① — "지우고 넣었는데 유니크 위반"</h2>
+
+<p><code>member</code> 테이블의 <code>email</code>에 유니크 제약이 있다고 하자.</p>
+
+<pre><code><span class="kw">create table</span> member (
+    id    <span class="kw">bigint</span> auto_increment <span class="kw">primary key</span>,
+    email <span class="kw">varchar</span>(255) <span class="kw">not null</span>,
+    name  <span class="kw">varchar</span>(255),
+<span class="ln-bad">    <span class="kw">constraint</span> uk_member_email <span class="kw">unique</span> (email)</span>
+);</code></pre>
+
+<div class="codehead bad"><span class="tag">before</span> 코드는 "지우고 넣기"인데, SQL은 "넣고 나서 지우기"로 나간다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">replaceMember</span>(String email, String newName) {
+    Member old = memberRepository.<span class="fn">findByEmail</span>(email).<span class="fn">orElseThrow</span>();
+<span class="ln-bad">    memberRepository.<span class="fn">delete</span>(old);                       <span class="cm">// ① DELETE 예약 (아직 SQL 없음)</span></span>
+<span class="ln-bad">    memberRepository.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">Member</span>(email, newName));  <span class="cm">// ② INSERT 예약 (아직 SQL 없음)</span></span>
+}   <span class="cm">// ← 커밋 직전 flush. ActionQueue 규칙에 따라 INSERT가 먼저, DELETE가 나중.</span></code></pre>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="코드 순서에서는 delete가 먼저이지만 ActionQueue에는 타입별로 다른 리스트에 쌓이고, flush 실행 시 3번 칸의 INSERT가 먼저 나가 유니크 위반으로 터지며 9번 칸의 DELETE에는 도달하지 못한다는 3단계 도식">
+    <defs>
+      <marker id="a6" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">코드 순서가 뒤집히는 과정을 세 단계로 늘어놓으면</text>
+
+    <text x="180" y="56" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">① 내가 쓴 코드 순서</text>
+    <text x="530" y="56" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">② ActionQueue에 쌓인 모습</text>
+    <text x="900" y="56" font-size="12.5" fill="#334155" text-anchor="middle" font-weight="700">③ flush가 실제로 내보내는 순서</text>
+
+    <!-- col 1 -->
+    <rect x="30" y="72" width="300" height="46" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="180" y="100" font-size="12.5" fill="#b91c1c" text-anchor="middle" class="mono">delete(old)</text>
+    <rect x="30" y="128" width="300" height="46" rx="9" fill="#eff6ff" stroke="#2563eb"/>
+    <text x="180" y="156" font-size="12.5" fill="#1d4ed8" text-anchor="middle" class="mono">save(new Member(...))</text>
+
+    <line x1="336" y1="95" x2="376" y2="95" stroke="#64748b" stroke-width="1.8" marker-end="url(#a6)"/>
+    <line x1="336" y1="151" x2="376" y2="151" stroke="#64748b" stroke-width="1.8" marker-end="url(#a6)"/>
+
+    <!-- col 2 -->
+    <rect x="382" y="72" width="296" height="46" rx="9" fill="#fff" stroke="#dc2626"/>
+    <text x="398" y="94" font-size="11.5" fill="#b91c1c" class="mono">deletions  = [ Member#1 ]</text>
+    <text x="398" y="111" font-size="10.5" fill="#7f1d1d">9번 칸으로 갈 리스트</text>
+
+    <rect x="382" y="128" width="296" height="46" rx="9" fill="#fff" stroke="#2563eb"/>
+    <text x="398" y="150" font-size="11.5" fill="#1d4ed8" class="mono">insertions = [ Member(new) ]</text>
+    <text x="398" y="167" font-size="10.5" fill="#1e40af">3번 칸으로 갈 리스트</text>
+
+    <rect x="382" y="184" width="296" height="44" rx="9" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="398" y="204" font-size="11" fill="#475569">타입별로 <tspan font-weight="700">다른 리스트</tspan>에 따로 쌓인다.</text>
+    <text x="398" y="220" font-size="11" fill="#475569">호출 순서는 <tspan font-weight="700">리스트 안에서만</tspan> 유지된다.</text>
+
+    <line x1="684" y1="95" x2="724" y2="95" stroke="#64748b" stroke-width="1.8" marker-end="url(#a6)"/>
+    <line x1="684" y1="151" x2="724" y2="151" stroke="#64748b" stroke-width="1.8" marker-end="url(#a6)"/>
+
+    <!-- col 3 -->
+    <rect x="730" y="72" width="360" height="72" rx="9" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="746" y="93" font-size="11.5" fill="#1d4ed8" font-weight="700">3번 칸: EntityInsertAction</text>
+    <text x="746" y="112" font-size="11.5" fill="#1e40af" class="mono">insert into member ...</text>
+    <text x="746" y="132" font-size="12" fill="#b91c1c" font-weight="700">↑ 여기서 터진다 — 기존 행이 아직 살아 있다</text>
+
+    <rect x="730" y="154" width="360" height="66" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-dasharray="6 4"/>
+    <text x="746" y="175" font-size="11.5" fill="#64748b" font-weight="700">9번 칸: EntityDeleteAction</text>
+    <text x="746" y="194" font-size="11.5" fill="#64748b" class="mono">delete from member where id=1</text>
+    <text x="746" y="212" font-size="11.5" fill="#64748b" font-weight="700">↑ 도달하지 못한다</text>
+
+    <!-- exception chain -->
+    <rect x="30" y="248" width="1060" height="66" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="50" y="270" font-size="12.5" fill="#b91c1c" font-weight="700">예외는 이렇게 번역되어 올라온다 — 커밋도 하기 전에</text>
+    <text x="50" y="292" font-size="11.5" fill="#7f1d1d" class="mono">Duplicate entry 'kim@example.com' for key 'member.uk_member_email'  →  org.hibernate.exception.ConstraintViolationException  →  org.springframework.dao.DataIntegrityViolationException</text>
+    <text x="50" y="308" font-size="11" fill="#7f1d1d">DB는 <tspan font-weight="700">SQL을 받는 즉시 제약을 검사</tspan>하므로(1절), 커밋 여부와 무관하게 flush 시점에 터진다</text>
+  </svg>
+  <figcaption>실제 SQL 로그(p6spy 기준, 바인딩값 포함)로 보면 <code>insert into member (email, name) values ('kim@example.com', 'kim2')</code>가 <b>먼저</b> 찍히고 그 자리에서 예외가 난다. <b>"분명 지우고 넣었는데 중복 오류"의 정체가 이것</b>이다.</figcaption>
+</figure>
+
+<div class="rule red">원인을 한 문장으로 — <b>DELETE는 항상 맨 마지막에 실행되므로,<br>"DELETE로 자리를 비운 뒤 INSERT를 넣는다"는 전제가 애초에 성립하지 않는다</b></div>
+
+<div class="callout warn" style="margin-bottom:0">
+  <span class="t">로컬 테스트에서 통과하는 이유도 여기서 설명된다</span>
+  <b>테스트가 롤백되면 커밋 직전 flush가 아예 실행되지 않아</b> 이 예외를 만날 기회 자체가 없다. 이 함정 하나가 <b>"테스트는 초록불인데 운영에서 터진다"의 절반</b>을 설명한다 → <b>8-2절</b>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 사고 ② — 같은 원리의 더 나쁜 얼굴, 데드락</h2>
+
+<p>여기서 축을 하나 옮긴다. 지금까지는 <b>"제약 검사가 언제 되느냐"</b>의 이야기였고, 지금부터는 <b>"락이 언제 잡히느냐"</b>의 이야기다. 둘 다 뿌리는 같다 — <b>flush가 SQL을 DB로 보내는 그 순간</b>에 벌어지는 일이라는 것.</p>
+
+<div class="split">
+  <div class="pane b">
+    <h4>데드락(교착 상태)이란</h4>
+    <p style="margin:0;font-size:.94rem"><b>두 트랜잭션이 서로가 쥔 락을 기다리며 영원히 멈추는 상황</b>이다. DB는 이를 감지하면 <b>한쪽을 희생자로 골라 강제로 롤백</b>시킨다.</p>
+  </div>
+  <div class="pane r">
+    <h4>유니크 위반보다 훨씬 잡기 어렵다</h4>
+    <p style="margin:0;font-size:.94rem">유니크 위반은 <b>예외 하나로 끝나고 원인도 로그에 찍힌다.</b> 데드락은 <b>재현이 안 되고, 부하가 높을 때만 나고</b>, 로그에는 <code>Deadlock found when trying to get lock</code>이라는 문장만 남는다.</p>
+  </div>
+</div>
+
+<p><b>flush로 UPDATE가 나가는 순간, 그 행에 쓰기 락이 걸리고 커밋까지 유지된다</b>(1절). 그래서 한 트랜잭션에서 여러 행을 UPDATE하면 <b>락을 여러 개 순차적으로 쥐게 된다.</b> 두 트랜잭션이 <b>서로 반대 순서로</b> 쥐면 교착이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 368" role="img" aria-label="왼쪽 패널은 정렬하지 않아 트랜잭션 A가 1번 2번 순서로, B가 2번 1번 순서로 락을 잡아 서로를 기다리는 순환 대기가 생기는 모습이고, 오른쪽 패널은 PK 오름차순 정렬 후 두 트랜잭션이 같은 순서로 락을 잡아 대기만 발생하고 교착이 없는 모습을 비교하는 도식">
+    <defs>
+      <marker id="a7r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+      <marker id="a7g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">락 획득 순서 하나로 교착이 되기도 하고, 단순 대기가 되기도 한다</text>
+
+    <!-- panels -->
+    <rect x="16" y="38" width="536" height="272" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="284" y="60" font-size="13.5" fill="#b91c1c" text-anchor="middle" font-weight="700">정렬하지 않음 — 요청이 준 순서 그대로</text>
+    <text x="150" y="80" font-size="11.5" fill="#7f1d1d" text-anchor="middle" font-weight="700">트랜잭션 A  [1, 2]</text>
+    <text x="418" y="80" font-size="11.5" fill="#7f1d1d" text-anchor="middle" font-weight="700">트랜잭션 B  [2, 1]</text>
+
+    <rect x="574" y="38" width="530" height="272" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="839" y="60" font-size="13.5" fill="#15803d" text-anchor="middle" font-weight="700">PK 오름차순 정렬 후 — 둘 다 [1, 2]</text>
+    <text x="706" y="80" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">트랜잭션 A  [1, 2]</text>
+    <text x="972" y="80" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">트랜잭션 B  [1, 2]</text>
+
+    <!-- time labels -->
+    <g font-size="11" fill="#64748b" text-anchor="middle" font-weight="700">
+      <text x="560" y="115">t1</text><text x="560" y="163">t2</text><text x="560" y="211">t3</text><text x="560" y="259">t4</text>
+    </g>
+
+    <!-- LEFT lanes -->
+    <rect x="32" y="94" width="236" height="36" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="150" y="117" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">id=1 락 획득 ✓</text>
+
+    <rect x="300" y="142" width="236" height="36" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="418" y="165" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">id=2 락 획득 ✓</text>
+
+    <rect x="32" y="190" width="236" height="36" rx="8" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+    <text x="150" y="213" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">id=2 락 요청 → 대기</text>
+
+    <rect x="300" y="238" width="236" height="36" rx="8" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+    <text x="418" y="261" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">id=1 락 요청 → 대기</text>
+
+    <!-- cycle arrows -->
+    <path d="M268,208 C 300,200 300,178 300,164" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#a7r)"/>
+    <path d="M300,256 C 250,256 200,240 160,132" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#a7r)"/>
+
+    <rect x="32" y="282" width="504" height="20" rx="6" fill="#dc2626"/>
+    <text x="284" y="297" font-size="11.5" fill="#fff" text-anchor="middle" font-weight="700">서로 영원히 기다림 = 데드락 → DB가 한쪽을 희생자로 골라 강제 롤백</text>
+
+    <!-- RIGHT lanes -->
+    <rect x="590" y="94" width="232" height="36" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="706" y="117" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">id=1 락 획득 ✓</text>
+
+    <rect x="856" y="142" width="232" height="36" rx="8" fill="#fff" stroke="#94a3b8"/>
+    <text x="972" y="165" font-size="11.5" fill="#475569" text-anchor="middle" font-weight="700">id=1 락 요청 → 대기</text>
+
+    <rect x="590" y="190" width="232" height="36" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="706" y="213" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">id=2 락 획득 ✓ → 커밋</text>
+
+    <rect x="856" y="238" width="232" height="36" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="972" y="261" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">깨어나서 1 → 2 진행 ✓</text>
+
+    <path d="M822,208 C 856,208 856,240 856,254" fill="none" stroke="#16a34a" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#a7g)"/>
+
+    <rect x="590" y="282" width="498" height="20" rx="6" fill="#16a34a"/>
+    <text x="839" y="297" font-size="11.5" fill="#fff" text-anchor="middle" font-weight="700">순환이 없다 — 뒤에 온 쪽은 그냥 "대기"할 뿐 교착이 아니다</text>
+
+    <text x="560" y="332" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">데드락의 필요조건은 "락을 여러 개 잡는 것"이 아니라 "서로 다른 순서로 잡는 것"이다</text>
+    <text x="560" y="354" font-size="11.5" fill="#64748b" text-anchor="middle">그래서 처방은 "락을 줄이자"가 아니라 <tspan font-weight="700">"순서를 하나로 고정하자"</tspan>가 된다</text>
+  </svg>
+  <figcaption>정렬은 <b>락 경합 자체를 없애지 않는다.</b> 없애는 것은 <b>순환</b>이다. 순서가 같아지면 뒤에 온 트랜잭션은 <b>앞선 쪽이 커밋할 때까지 기다렸다가 정상 진행</b>하므로, 느려질 수는 있어도 <b>희생자로 롤백되지는 않는다.</b></figcaption>
+</figure>
+
+<h3>6-1. 그 "순서"는 어디서 오는가</h3>
+
+<p>여기가 핵심이다. <b>flush 안의 UPDATE들이 어떤 순서로 나가는지는 내가 엔티티를 다룬 순서(정확히는 영속성 컨텍스트에 올라온 순서)에 좌우된다.</b> 그리고 그 순서는 <b>요청마다 얼마든지 달라진다.</b></p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 요청이 준 순서를 그대로 따른다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">addPoints</span>(List&lt;Long&gt; memberIds, <span class="kw">int</span> amount) {
+<span class="ln-bad">    <span class="kw">for</span> (Long id : memberIds) {        <span class="cm">// 클라이언트가 준 순서 그대로</span></span>
+        Member m = memberRepository.<span class="fn">findById</span>(id).<span class="fn">orElseThrow</span>();
+        m.<span class="fn">addPoint</span>(amount);
+    }
+}
+
+<span class="cm">// 요청 A: [1, 2, 3]  → 락을 1 → 2 → 3 순으로</span>
+<span class="cm">// 요청 B: [3, 2, 1]  → 락을 3 → 2 → 1 순으로   ← 서로 반대. 데드락 성립.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 항상 같은 기준(PK 오름차순)으로 정렬한 뒤 처리</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">addPoints</span>(List&lt;Long&gt; memberIds, <span class="kw">int</span> amount) {
+<span class="ln-good">    List&lt;Long&gt; ordered = memberIds.<span class="fn">stream</span>().<span class="fn">distinct</span>().<span class="fn">sorted</span>().<span class="fn">toList</span>();</span>
+    <span class="cm">//                                ↑ 중복 제거   ↑ 항상 같은 순서로 고정</span>
+
+    <span class="kw">for</span> (Long id : ordered) {
+        Member m = memberRepository.<span class="fn">findById</span>(id).<span class="fn">orElseThrow</span>();
+        m.<span class="fn">addPoint</span>(amount);
+    }
+}
+
+<span class="cm">// 요청 A: [1,2,3] → 정렬 후 1,2,3</span>
+<span class="cm">// 요청 B: [3,2,1] → 정렬 후 1,2,3   ← 획득 순서가 같아졌다.</span></code></pre>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4>순서가 조용히 흔들리는 다섯 경로 — 전부 "내가 정하지 않은 순서"다</h4>
+  <div class="grid g2">
+    <div class="tile red"><div class="k" style="font-family:inherit">① 요청 파라미터 순서</div><div class="d">클라이언트가 준 <code>List</code>를 그대로 순회 — 호출자마다 다르다</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">② <code>HashSet</code>/<code>HashMap</code> 순회</div><div class="d">해시값에 따라 순서가 달라진다. 같은 원소라도 보장 없음</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">③ <code>ORDER BY</code> 없는 SELECT</div><div class="d">반환 순서는 <b>DB가 보장하지 않는다.</b> 실행 계획이 바뀌면 순서도 바뀐다</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">④ 연관관계를 <code>Set</code>으로 매핑</div><div class="d">컬렉션 순회 순서가 정해지지 않는다</div></div>
+    <div class="tile red"><div class="k" style="font-family:inherit">⑤ 여러 서비스가 각자 다른 순서로</div><div class="d">A 서비스는 회원→주문, B 서비스는 주문→회원 — <b>테이블 간 순서</b>도 같은 문제다</div></div>
+  </div>
+</div>
+
+<h3>6-2. 조회 단계에서 순서를 고정하는 것이 더 깔끔하다</h3>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 반환 순서가 보장되지 않는다</div>
+<pre><code>List&lt;Member&gt; members =
+    memberRepository.<span class="fn">findAllByIdIn</span>(ids);</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 쿼리에서 순서를 못 박는다</div>
+<pre><code>List&lt;Member&gt; members =
+    memberRepository.<span class="fn">findAllByIdInOrderByIdAsc</span>(ids);</code></pre>
+  </div>
+</div>
+
+<div class="codehead good"><span class="tag">after</span> 비관적 락을 명시적으로 잡을 때도 같은 원칙</div>
+<pre><code><span class="kw">for</span> (Long id : ids.<span class="fn">stream</span>().<span class="fn">sorted</span>().<span class="fn">toList</span>()) {
+    accountRepository.<span class="fn">findByIdForUpdate</span>(id);   <span class="cm">// @Lock(PESSIMISTIC_WRITE)</span>
+}</code></pre>
+
+<h3>6-3. 이건 Hibernate가 지켜주지 않는다 — 이 문항의 핵심 대비</h3>
+
+<div class="memo">
+  <h4>면접에서 이 대비를 명시적으로 말하면 이해도가 확실히 드러난다</h4>
+  <div class="split" style="margin:10px 0 0">
+    <div class="pane b">
+      <h4>Hibernate가 보장하는 것</h4>
+      <p style="margin:0;font-size:.94rem"><b>"DELETE가 INSERT보다 뒤"</b> — 작업 <b>타입</b>의 순서. <b>내가 바꿀 수 없고, 알고 피해야 한다.</b></p>
+    </div>
+    <div class="pane r">
+      <h4>Hibernate가 보장하지 않는 것</h4>
+      <p style="margin:0;font-size:.94rem"><b>"1번 행 락 → 2번 행 락"</b> — 같은 타입 안에서 어느 <b>행</b>이 먼저인지. <b>내 코드의 책임이므로 정렬로 직접 고정해야 한다.</b></p>
+    </div>
+  </div>
+</div>
+
+<div class="callout ok">
+  <span class="t">가산점 포인트 — 부분적인 도움은 있다: <code>hibernate.order_updates</code></span>
+  이 옵션을 켜면 Hibernate가 flush 시점에 UPDATE들을 <b>엔티티 타입과 PK 기준으로 정렬</b>해 실행한다(소스에서는 <code>ExecutableList</code>를 정렬 가능한 형태로 만드는 <code>isOrderUpdatesEnabled()</code> 플래그로 나타난다). 배치 효율을 위한 옵션인데 <b>부수 효과로 데드락 확률도 낮아진다</b>(<code>hibernate.order_inserts</code>도 INSERT에 대해 같은 일을 한다). <b>다만 기본값이 꺼져 있고, 한계가 분명하다</b> — ① <b>한 번의 flush 안에서만</b> 유효하다(중간에 flush가 여러 번 일어나면 소용없다) ② <b><code>SELECT ... FOR UPDATE</code>나 벌크 JPQL처럼 Hibernate의 UPDATE 액션을 거치지 않는 락 획득 순서는 전혀 덮지 못한다.</b>
+</div>
+
+<div class="rule red">옵션은 <b>보험</b>이고, 정렬은 <b>코드로 고정</b>한다</div>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 처방 — 코드와 스키마를 고친다</h2>
+
+<p>앞의 절들이 "무엇이 왜 일어나는가"였다면 여기서부터는 "그래서 무엇을 하는가"다. <b>좋은 처방부터</b> 놓는다.</p>
+
+<div class="grid g3">
+  <div class="tile ok"><div class="k" style="font-family:inherit">최선 — 7-1</div><div class="d">애초에 <b>DELETE + INSERT를 하지 않는다.</b> 있는 행을 <b>UPDATE</b>로 고친다</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">차선 — 7-2</div><div class="d">구조상 불가피하면 <code>flush()</code>로 <b>실행 경계를 하나 더 만든다</b></div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">스키마 — 7-3</div><div class="d">soft delete 환경이면 <b>유니크 제약의 정의 자체를 바꾼다</b></div></div>
+</div>
+
+<h3>7-1. 최선 — 애초에 DELETE + INSERT를 하지 않는다</h3>
+
+<p><b>5절의 상황은 사실 UPDATE 한 줄로 끝나는 일</b>이다. 이메일 주인의 이름을 바꾸는 것이라면 <b>행을 지웠다 새로 만들 이유가 없다.</b></p>
+
+<div class="codehead good"><span class="tag">after (최선)</span> 지웠다 넣는 대신, 있는 행을 고친다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">replaceMember</span>(String email, String newName) {
+    Member m = memberRepository.<span class="fn">findByEmail</span>(email).<span class="fn">orElseThrow</span>();
+<span class="ln-good">    m.<span class="fn">changeName</span>(newName);   <span class="cm">// 변경 감지 → flush 시 UPDATE 한 건</span></span>
+    <span class="cm">// 유니크 충돌 자체가 발생할 수 없다. 순서 문제가 사라지는 것이 아니라 "문제 자체"가 사라진다.</span>
+}</code></pre>
+
+<div class="grid g3">
+  <div class="tile ok"><div class="k" style="font-family:inherit">① 참조가 깨지지 않는다</div><div class="d"><b>PK가 유지</b>되므로 이 행을 참조하는 FK·로그·외부 시스템의 참조가 살아 있다</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">② 더 싸고 락 범위가 좁다</div><div class="d"><b>UPDATE 1건</b>으로 끝난다. DELETE+INSERT 2건보다 싸다</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">③ 이력이 보존된다</div><div class="d"><code>created_at</code> 같은 <b>생성 이력</b>이 그대로 남는다</div></div>
+</div>
+
+<p><b>컬렉션 교체에서도 같은 판단이 적용된다.</b> 태그 전체를 갈아끼우는 흔한 코드가 정확히 같은 함정을 밟는다.</p>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 전체 삭제 + 전체 삽입</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">replaceTags</span>(Long postId, List&lt;String&gt; names) {
+<span class="ln-bad">    tagRepository.<span class="fn">deleteByPostId</span>(postId);</span>
+<span class="ln-bad">    names.<span class="fn">forEach</span>(n -&gt; tagRepository.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">Tag</span>(postId, n)));</span>
+    <span class="cm">// (post_id, name) 유니크면 그대로 터진다</span>
+    <span class="cm">// 안 터지더라도 바뀌지 않은 태그까지 전부 지웠다 다시 넣는다</span>
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 차집합만 건드린다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">replaceTags</span>(Long postId, List&lt;String&gt; names) {
+    Set&lt;String&gt; target  = <span class="kw">new</span> <span class="fn">HashSet</span>&lt;&gt;(names);
+    List&lt;Tag&gt;   current = tagRepository.<span class="fn">findByPostId</span>(postId);
+
+<span class="ln-good">    current.<span class="fn">stream</span>().<span class="fn">filter</span>(t -&gt; !target.<span class="fn">contains</span>(t.<span class="fn">getName</span>()))</span>
+           .<span class="fn">forEach</span>(tagRepository::delete);            <span class="cm">// 빠진 것만 삭제</span>
+
+    Set&lt;String&gt; exists = current.<span class="fn">stream</span>().<span class="fn">map</span>(Tag::getName).<span class="fn">collect</span>(toSet());
+<span class="ln-good">    target.<span class="fn">stream</span>().<span class="fn">filter</span>(n -&gt; !exists.<span class="fn">contains</span>(n))</span>
+          .<span class="fn">forEach</span>(n -&gt; tagRepository.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">Tag</span>(postId, n)));  <span class="cm">// 새 것만 삽입</span>
+    <span class="cm">// 삭제 대상과 삽입 대상이 겹치지 않으므로 순서가 뒤집혀도 충돌하지 않는다</span>
+    <span class="cm">// 덤: 실제로 바뀐 것만 SQL이 나가므로 더 싸다</span>
+}</code></pre>
+  </div>
+</div>
+
+<h3>7-2. 차선 — 구조상 불가피하면 <code>em.flush()</code>로 경계를 명시</h3>
+
+<p><b>"delete 후 flush를 끼운다"는 처방 자체는 맞다.</b> 다만 <b>최선이 아니라 차선이라는 위치</b>를 알고 쓰는 것이 중요하다.</p>
+
+<div class="codehead good"><span class="tag">after (차선)</span> 지우고 넣는 것이 정말 불가피할 때</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">replaceMember</span>(String email, String newName) {
+    memberRepository.<span class="fn">delete</span>(memberRepository.<span class="fn">findByEmail</span>(email).<span class="fn">orElseThrow</span>());
+<span class="ln-good">    memberRepository.<span class="fn">flush</span>();   <span class="cm">// ← 여기서 DELETE를 먼저 내보내 자리를 비운다</span></span>
+    <span class="cm">//   이 flush를 지우면 유니크 위반이 조용히 부활한다. 반드시 이유를 주석으로 남긴다.</span>
+    memberRepository.<span class="fn">save</span>(<span class="kw">new</span> <span class="fn">Member</span>(email, newName));
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">왜 이게 통하는가 — 4절의 규칙으로 설명할 수 있어야 한다</span>
+  <code>ActionQueue</code>의 순서는 <b>한 번의 flush 안에서만</b> 적용된다. <code>flush()</code>를 중간에 부르면 <b>그 시점의 큐에는 DELETE밖에 없으므로 DELETE가 먼저 나가고</b>, 그 다음에 예약된 INSERT는 <b>다음 flush(커밋 직전)</b>에서 나간다. 즉 <b>개발자가 순서에 개입하는 유일한 수단은 flush 경계를 하나 더 만드는 것</b>이다.
+</div>
+
+<div class="split">
+  <div class="pane b">
+    <h4>언제 정말 불가피한가</h4>
+    <ul>
+      <li>행 전체를 <b>새 스키마로 재구성</b>해야 해서 필드 매핑이 1:1이 아닐 때</li>
+      <li>상속 매핑에서 <b>타입이 바뀌는</b> 경우 — 엔티티 타입 자체가 달라지면 UPDATE로 표현할 수 없다</li>
+      <li>이력 테이블처럼 <b>행 교체가 도메인 의미 자체</b>일 때</li>
+    </ul>
+  </div>
+  <div class="pane r">
+    <h4>주의점 둘</h4>
+    <ul>
+      <li><b>반드시 주석으로 이유를 남긴다.</b> 이유 없는 <code>flush()</code>는 다음 사람이 "불필요해 보이는데?" 하며 지우고, <b>버그가 조용히 부활</b>한다 (→ 8-1절의 순서 단정 테스트가 이걸 막는다)</li>
+      <li><b>flush로 DELETE를 먼저 보내면 그 행의 락을 커밋까지 쥔다.</b> 이 사이에 <b>외부 API 호출 같은 긴 작업</b>을 넣으면 안 된다</li>
+    </ul>
+  </div>
+</div>
+
+<h3>7-3. soft delete 환경이면 — 유니크 제약 자체를 분리한다</h3>
+
+<p>물리 삭제 대신 <code>deleted_at</code> 플래그로 지우는 방식(soft delete)을 쓴다면, <b>"지운 행"이 테이블에 그대로 남아 있으므로 순서와 무관하게 유니크 제약이 계속 충돌</b>한다. 이 경우 처방은 코드가 아니라 <b>제약의 정의를 바꾸는 것</b>이다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 탈퇴 후에도 이메일 영원히 재사용 불가</div>
+<pre><code><span class="ln-bad"><span class="kw">constraint</span> uk_member_email <span class="kw">unique</span> (email)</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after (MySQL)</span> 살아 있는 행끼리만 유니크</div>
+<pre><code><span class="cm">-- deleted_at 을 NOT NULL DEFAULT '9999-12-31 00:00:00'</span>
+<span class="cm">-- 같은 sentinel 로 두는 것이 핵심이다</span>
+<span class="ln-good"><span class="kw">constraint</span> uk_member_email <span class="kw">unique</span> (email, deleted_at)</span></code></pre>
+  </div>
+</div>
+
+<div class="codehead good"><span class="tag">after (PostgreSQL)</span> 부분 인덱스가 더 깔끔하다</div>
+<pre><code><span class="kw">create unique index</span> uk_member_email_alive
+    <span class="kw">on</span> member (email) <span class="kw">where</span> deleted_at <span class="kw">is null</span>;</code></pre>
+
+<div class="callout trap" style="margin-bottom:0">
+  <span class="t">가산점 포인트 — MySQL에서 <code>deleted_at</code>을 NULL로 두면 제약이 사실상 무력화된다 <span class="badge trap">함정</span></span>
+  SQL 표준에서 <b>NULL은 서로 같지 않다</b>고 보므로, <code>unique (email, deleted_at)</code>으로 두고 <code>deleted_at</code>을 NULL로 쓰면 <code>(kim@x.com, NULL)</code> 행이 <b>여러 개 들어간다.</b> 그래서 <b>sentinel 값</b>이나 <b>PostgreSQL 부분 인덱스</b>를 쓴다.
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 안전망 — 기계가 지키게 만든다</h2>
+
+<div class="callout trap">
+  <span class="t">"코드 리뷰로 잡는다"는 답은 답이 아니다</span>
+  이 유형의 버그는 <b>소스 코드만 봐서는 안 보인다</b> — <code>delete()</code> 다음에 <code>save()</code>가 있는 것은 <b>지극히 자연스러워 보이고</b>, 문제는 <b>실행 시점에 순서가 뒤집힌다</b>는 데 있기 때문이다. 그래서 <b>실행을 관측하는 장치</b>가 필요하다.
+</div>
+
+<div class="memo green">
+  <h4>안전망 3종 암기 — <b>보고 · 커밋하고 · 진짜 DB로</b></h4>
+  <div class="chain">
+    <span class="chip b">보고 = p6spy로 실제 SQL 순서를 본다</span><span class="arrow">·</span>
+    <span class="chip b">커밋하고 = <code>@Commit</code>으로 롤백이 숨기는 것을 드러낸다</span><span class="arrow">·</span>
+    <span class="chip b">진짜 DB로 = Testcontainers로 벤더 차이를 없앤다</span>
+  </div>
+  <p class="sub" style="margin-bottom:0">세 장치는 각각 <b>순서 · 시점 · 벤더</b>라는 서로 다른 축을 덮는다. 하나만 넣는다면 <b>가운데(커밋)</b>다 — 이유는 9절 마지막 꼬리질문에서.</p>
+</div>
+
+<h3>8-1. 보고 — 실제 SQL 순서를 눈으로 본다 (p6spy / datasource-proxy)</h3>
+
+<p><b><code>show-sql: true</code>나 Hibernate 로거로는 부족하다.</b> 바인딩 값이 <code>?</code>로 찍혀 <b>어떤 행이 지워지고 어떤 행이 들어갔는지 알 수 없고</b>, 여러 스레드가 섞이면 순서도 흐려진다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 이걸로 만족하면 순서 문제를 못 본다</div>
+<pre><code><span class="kw">spring</span>:
+  jpa:
+<span class="ln-bad">    show-sql: <span class="kw">true</span>         <span class="cm"># 바인딩값이 ? 로만 보인다</span></span>
+    properties:
+      hibernate:
+        format_sql: <span class="kw">true</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 완성된 문장을 실행 순서대로 찍는다</div>
+<pre><code><span class="cm">// build.gradle</span>
+<span class="ln-good">testImplementation <span class="st">'com.github.gavlyukovskiy:p6spy-spring-boot-starter:&lt;버전&gt;'</span></span></code></pre>
+<pre style="margin-top:6px"><code><span class="cm">-- p6spy 출력 (실제 순서 · 실제 값)</span>
+1ms | insert into member (email, name) values (<span class="st">'kim@example.com'</span>, <span class="st">'kim2'</span>)
+0ms | delete from member where id=1
+<span class="cm">     ↑ 코드는 delete가 먼저였는데 로그는 insert가 먼저다</span></code></pre>
+  </div>
+</div>
+
+<div class="callout warn">
+  <span class="t">습관으로 만들 것</span>
+  <b>쓰기 로직(특히 삭제·교체·다건 수정)을 건드린 PR에서는 테스트 로그의 SQL 순서를 한 번 눈으로 확인한다.</b> 이것만으로도 5절 유형은 배포 전에 걸러진다.
+</div>
+
+<p>한 걸음 더 가면 <b>순서를 테스트로 단정</b>할 수 있다. <code>datasource-proxy</code>는 실행된 쿼리를 <b>프로그램으로 수집</b>할 수 있다.</p>
+
+<div class="codehead good"><span class="tag">after</span> "DELETE가 INSERT보다 먼저 실행되었는가"를 기계가 검증한다</div>
+<pre><code><span class="kw">@Test</span>
+<span class="kw">void</span> <span class="fn">delete가_insert보다_먼저_나가야_한다</span>() {
+    QueryExecutionListener listener = <span class="cm">/* 실행 SQL을 순서대로 수집 */</span>;
+
+    service.<span class="fn">replaceMember</span>(<span class="st">"kim@example.com"</span>, <span class="st">"kim2"</span>);
+
+    List&lt;String&gt; sqls = listener.<span class="fn">getExecutedSql</span>();
+    <span class="kw">int</span> deleteIdx = <span class="fn">indexOfFirstStartingWith</span>(sqls, <span class="st">"delete from member"</span>);
+    <span class="kw">int</span> insertIdx = <span class="fn">indexOfFirstStartingWith</span>(sqls, <span class="st">"insert into member"</span>);
+<span class="ln-good">    <span class="fn">assertThat</span>(deleteIdx).<span class="fn">isLessThan</span>(insertIdx);   <span class="cm">// 회귀하면 여기서 빨간불</span></span>
+}</code></pre>
+
+<div class="rule ok">나중에 누가 <code>flush()</code>를 "불필요해 보인다"며 지웠을 때 <b>테스트가 막아준다</b> — 주석보다 강한 방어다</div>
+
+<h3>8-2. 커밋하고 — <code>@DataJpaTest</code>의 롤백이 커밋 시점 문제를 숨긴다</h3>
+
+<p>Spring의 테스트는 <b>기본적으로 각 테스트 종료 시 트랜잭션을 롤백</b>한다(<code>@DataJpaTest</code>, <code>@SpringBootTest</code> + <code>@Transactional</code> 모두). 그런데 5절의 예외는 <b>커밋 직전 flush에서</b> 난다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 296" role="img" aria-label="위쪽 레인은 롤백되는 테스트로 커밋 직전 flush가 실행되지 않아 예외를 만날 기회가 없어 초록불이 되고, 아래쪽 레인은 Commit 애노테이션으로 실제 커밋이 일어나 flush에서 유니크 위반이 터져 빨간불이 되는 것을 비교하는 도식">
+    <defs>
+      <marker id="a8g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 테스트, 같은 서비스 코드 — 끝맺음이 롤백이냐 커밋이냐가 결과를 뒤집는다</text>
+
+    <!-- lane 1 -->
+    <rect x="16" y="42" width="1088" height="98" rx="12" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="34" y="64" font-size="12.5" fill="#b91c1c" font-weight="700" class="mono">@DataJpaTest  (기본 — 종료 시 자동 롤백)</text>
+
+    <rect x="34" y="76" width="180" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+    <text x="124" y="96" font-size="11.5" fill="#334155" text-anchor="middle">테스트 시작</text>
+    <text x="124" y="113" font-size="10.5" fill="#64748b" text-anchor="middle">트랜잭션 열림</text>
+
+    <rect x="240" y="76" width="230" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+    <text x="355" y="96" font-size="11.5" fill="#334155" text-anchor="middle">서비스 실행</text>
+    <text x="355" y="113" font-size="10.5" fill="#64748b" text-anchor="middle">DELETE·INSERT "예약"만 됨</text>
+
+    <rect x="496" y="76" width="230" height="46" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+    <text x="611" y="96" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">테스트 종료 → 롤백</text>
+    <text x="611" y="113" font-size="10.5" fill="#7f1d1d" text-anchor="middle">커밋 직전 flush가 실행되지 않는다</text>
+
+    <rect x="752" y="76" width="196" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+    <text x="850" y="96" font-size="11.5" fill="#334155" text-anchor="middle">SQL이 DB에 도달조차</text>
+    <text x="850" y="113" font-size="11.5" fill="#334155" text-anchor="middle">하지 않음</text>
+
+    <rect x="974" y="76" width="112" height="46" rx="9" fill="#f0fdf4" stroke="#16a34a"/>
+    <text x="1030" y="104" font-size="13" fill="#15803d" text-anchor="middle" font-weight="700">초록불 ✓</text>
+
+    <line x1="220" y1="99" x2="236" y2="99" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a8g)"/>
+    <line x1="476" y1="99" x2="492" y2="99" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a8g)"/>
+    <line x1="732" y1="99" x2="748" y2="99" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a8g)"/>
+    <line x1="954" y1="99" x2="970" y2="99" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a8g)"/>
+
+    <!-- lane 2 -->
+    <rect x="16" y="152" width="1088" height="98" rx="12" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="34" y="174" font-size="12.5" fill="#15803d" font-weight="700" class="mono">@DataJpaTest + @Commit  (실제 커밋)</text>
+
+    <rect x="34" y="186" width="180" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+    <text x="124" y="206" font-size="11.5" fill="#334155" text-anchor="middle">테스트 시작</text>
+    <text x="124" y="223" font-size="10.5" fill="#64748b" text-anchor="middle">트랜잭션 열림</text>
+
+    <rect x="240" y="186" width="230" height="46" rx="9" fill="#fff" stroke="#cbd5e1"/>
+    <text x="355" y="206" font-size="11.5" fill="#334155" text-anchor="middle">서비스 실행</text>
+    <text x="355" y="223" font-size="10.5" fill="#64748b" text-anchor="middle">DELETE·INSERT "예약"만 됨</text>
+
+    <rect x="496" y="186" width="230" height="46" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="611" y="206" font-size="11.5" fill="#15803d" text-anchor="middle" font-weight="700">테스트 종료 → 커밋</text>
+    <text x="611" y="223" font-size="10.5" fill="#166534" text-anchor="middle">커밋 직전 flush 실행</text>
+
+    <rect x="752" y="186" width="196" height="46" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="850" y="206" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">INSERT가 먼저 나감</text>
+    <text x="850" y="223" font-size="10.5" fill="#7f1d1d" text-anchor="middle">유니크 위반 발생</text>
+
+    <rect x="974" y="186" width="112" height="46" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+    <text x="1030" y="207" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">빨간불 ✗</text>
+    <text x="1030" y="224" font-size="10" fill="#7f1d1d" text-anchor="middle">= 배포 전에 잡혔다</text>
+
+    <line x1="220" y1="209" x2="236" y2="209" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a8g)"/>
+    <line x1="476" y1="209" x2="492" y2="209" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a8g)"/>
+    <line x1="732" y1="209" x2="748" y2="209" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a8g)"/>
+    <line x1="954" y1="209" x2="970" y2="209" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#a8g)"/>
+
+    <text x="560" y="278" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">롤백되는 테스트는 커밋 시점에 나는 문제를 "구조적으로" 통과시킨다 — 실력이 아니라 구조의 문제다</text>
+  </svg>
+  <figcaption>이 성질에 해당하는 사고는 이 문항 하나가 아니다 — <b>유니크 위반, FK 위반, 데드락, <code>UnexpectedRollbackException</code></b>이 전부 <b>커밋 시점</b>에 표면화된다.</figcaption>
+</figure>
+
+<div class="codehead bad"><span class="tag">before</span> 초록불인데 운영에서 터지는 테스트</div>
+<pre><code><span class="ln-bad"><span class="kw">@DataJpaTest</span>                                  <span class="cm">// 종료 시 자동 롤백</span></span>
+<span class="kw">class</span> MemberServiceTest {
+    <span class="kw">@Test</span>
+    <span class="kw">void</span> <span class="fn">이메일_교체</span>() {
+        service.<span class="fn">replaceMember</span>(<span class="st">"kim@example.com"</span>, <span class="st">"kim2"</span>);
+        <span class="cm">// 테스트 메서드가 끝난다 → 커밋이 아니라 롤백</span>
+        <span class="cm">// → 커밋 직전 flush 가 실행되지 않음 → INSERT/DELETE 가 DB에 도달조차 안 함</span>
+        <span class="cm">// → 유니크 위반이 발생할 기회가 없다 → 그냥 통과한다</span>
+    }
+}</code></pre>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead good"><span class="tag">after (1)</span> <code>@Commit</code> — 가장 손쉽다</div>
+<pre><code><span class="kw">@DataJpaTest</span>
+<span class="kw">class</span> MemberServiceTest {
+    <span class="kw">@Test</span>
+<span class="ln-good">    <span class="kw">@Commit</span>                    <span class="cm">// ← 롤백하지 않고 진짜 커밋</span></span>
+    <span class="kw">void</span> <span class="fn">이메일_교체</span>() {
+        service.<span class="fn">replaceMember</span>(<span class="st">"kim@example.com"</span>, <span class="st">"kim2"</span>);
+        <span class="cm">// 커밋 직전 flush 발생 → insert 가 먼저 나감</span>
+        <span class="cm">// → DataIntegrityViolationException 으로 실패</span>
+        <span class="cm">// = 배포 전에 잡혔다</span>
+    }
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after (2)</span> <code>TestTransaction</code> — 커밋 전후를 나눠 검증</div>
+<pre><code><span class="kw">@Test</span>
+<span class="kw">void</span> <span class="fn">이메일_교체</span>() {
+    service.<span class="fn">replaceMember</span>(<span class="st">"kim@example.com"</span>, <span class="st">"kim2"</span>);
+
+<span class="ln-good">    TestTransaction.<span class="fn">flagForCommit</span>();</span>
+<span class="ln-good">    TestTransaction.<span class="fn">end</span>();        <span class="cm">// ← 여기서 실제 커밋</span></span>
+
+    TestTransaction.<span class="fn">start</span>();      <span class="cm">// 검증용 새 트랜잭션</span>
+    <span class="fn">assertThat</span>(memberRepository.<span class="fn">findByEmail</span>(<span class="st">"kim@example.com"</span>))
+        .<span class="fn">get</span>().<span class="fn">extracting</span>(Member::getName).<span class="fn">isEqualTo</span>(<span class="st">"kim2"</span>);
+}</code></pre>
+  </div>
+</div>
+
+<div class="codehead good"><span class="tag">after (3)</span> 가장 정확한 방법 — 테스트에 트랜잭션을 아예 걸지 않는다</div>
+<pre><code><span class="ln-good"><span class="kw">@SpringBootTest</span>                               <span class="cm">// @Transactional 을 붙이지 않는다</span></span>
+<span class="kw">class</span> MemberServiceIntegrationTest {
+
+    <span class="kw">@AfterEach</span>
+    <span class="kw">void</span> <span class="fn">cleanUp</span>() { memberRepository.<span class="fn">deleteAllInBatch</span>(); }   <span class="cm">// 정리는 직접</span>
+
+    <span class="kw">@Test</span>
+    <span class="kw">void</span> <span class="fn">이메일_교체</span>() {
+        <span class="cm">// 서비스의 @Transactional 이 진짜로 시작되고 진짜로 커밋된다.</span>
+        <span class="cm">// 운영과 같은 트랜잭션 경계 = 운영과 같은 flush 타이밍.</span>
+        service.<span class="fn">replaceMember</span>(<span class="st">"kim@example.com"</span>, <span class="st">"kim2"</span>);
+    }
+}</code></pre>
+
+<div class="callout info">
+  <span class="t">세 방법의 위치</span>
+  <code>@Commit</code>이 <b>가장 손쉽고</b>, <code>TestTransaction</code>은 <b>"커밋 전후"를 나눠 검증</b>하고 싶을 때 쓴다. <b>(3)이 가장 정확하다</b> — 테스트가 트랜잭션을 감싸면 서비스의 <code>@Transactional</code>이 <b>참여(join)</b>해버려서, <b>커밋 타이밍뿐 아니라 <code>REQUIRES_NEW</code>, 롤백 마킹, 지연 로딩 가능 범위까지 전부 운영과 달라지기</b> 때문이다. 정리 비용을 감수할 가치가 있다.
+</div>
+
+<div class="rule red">한 줄로 기억할 것 — <b>"롤백되는 테스트는 커밋 시점에 나는 문제를 구조적으로 통과시킨다"</b></div>
+
+<h3>8-3. 진짜 DB로 — H2가 아니라 Testcontainers</h3>
+
+<p><b>유니크 제약과 데드락의 동작은 DB 벤더마다 다르다.</b> 그래서 <b>"H2에서 통과하고 MySQL에서 터지는"</b> 대표 유형이 바로 이 문항이다.</p>
+
+<div class="grid g2">
+  <div class="tile red"><div class="k" style="font-family:inherit">락 획득 단위와 범위</div><div class="d">MySQL InnoDB는 <b>인덱스에 락</b>을 걸고, 유니크 인덱스 검사 과정에서 <b>gap 락</b>을 잡기도 한다. "행이 겹치지 않는데도" 데드락이 나는 상황이 <b>MySQL에만 존재</b>한다</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">데드락 탐지와 희생자 선택</div><div class="d"><b>누가 롤백되는지, 얼마 만에 탐지되는지</b>가 다르다. H2는 아예 <b>타임아웃으로 처리</b>하기도 한다</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">제약 위반 예외의 형태</div><div class="d"><b>에러 코드·메시지가 달라</b>, 예외를 코드로 분기하는 로직은 <b>H2에서만 맞을 수</b> 있다</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">upsert 문법</div><div class="d"><code>ON DUPLICATE KEY UPDATE</code>, <code>ON CONFLICT</code> — <b>아예 없거나 다르다</b></div></div>
+</div>
+
+<div class="codehead good"><span class="tag">after</span> 운영과 같은 엔진을 컨테이너로 띄운다</div>
+<pre><code><span class="kw">@SpringBootTest</span>
+<span class="kw">@Testcontainers</span>
+<span class="kw">class</span> MemberServiceIntegrationTest {
+
+<span class="ln-good">    <span class="kw">@Container</span></span>
+<span class="ln-good">    <span class="kw">static</span> MySQLContainer&lt;?&gt; mysql = <span class="kw">new</span> <span class="fn">MySQLContainer</span>&lt;&gt;(<span class="st">"mysql:8.0"</span>);</span>
+    <span class="cm">//     ↑ 운영과 같은 메이저 버전으로 맞춘다</span>
+
+    <span class="kw">@DynamicPropertySource</span>
+    <span class="kw">static void</span> <span class="fn">props</span>(DynamicPropertyRegistry r) {
+        r.<span class="fn">add</span>(<span class="st">"spring.datasource.url"</span>,      mysql::getJdbcUrl);
+        r.<span class="fn">add</span>(<span class="st">"spring.datasource.username"</span>, mysql::getUsername);
+        r.<span class="fn">add</span>(<span class="st">"spring.datasource.password"</span>, mysql::getPassword);
+    }
+}</code></pre>
+
+<div class="callout ok">
+  <span class="t">속도 걱정에 대한 답</span>
+  컨테이너를 <code>static</code>으로 두면 <b>클래스 간 재사용</b>되고, Testcontainers의 <b>reusable 모드</b>를 켜면 로컬에서 컨테이너가 살아 있어 재기동 비용도 사라진다. 전략은 <b>"단위 테스트는 H2로 빠르게, DB 의존 동작(제약·락·네이티브 쿼리·마이그레이션)은 Testcontainers로"</b> 나누는 것이다.
+</div>
+
+<h3>8-4. 데드락은 재현 테스트로 고정한다</h3>
+
+<p>데드락은 "부하가 있어야 난다"고 포기하기 쉽지만, <b>두 스레드와 <code>CountDownLatch</code>만 있으면 결정론적으로 재현</b>할 수 있다.</p>
+
+<div class="codehead good"><span class="tag">after</span> 반대 순서로 갱신하면 나는지, 정렬 후에는 안 나는지를 테스트로 고정</div>
+<pre><code><span class="kw">@Test</span>
+<span class="kw">void</span> <span class="fn">정렬하면_데드락이_나지_않는다</span>() <span class="kw">throws</span> Exception {
+    CountDownLatch ready = <span class="kw">new</span> <span class="fn">CountDownLatch</span>(2);
+    CountDownLatch go    = <span class="kw">new</span> <span class="fn">CountDownLatch</span>(1);
+    ExecutorService pool = Executors.<span class="fn">newFixedThreadPool</span>(2);
+
+    Callable&lt;Void&gt; taskA = () -&gt; { ready.<span class="fn">countDown</span>(); go.<span class="fn">await</span>();
+                                   service.<span class="fn">addPoints</span>(List.<span class="fn">of</span>(1L, 2L), 10); <span class="kw">return null</span>; };
+<span class="ln-bad">    Callable&lt;Void&gt; taskB = () -&gt; { ready.<span class="fn">countDown</span>(); go.<span class="fn">await</span>();</span>
+<span class="ln-bad">                                   service.<span class="fn">addPoints</span>(List.<span class="fn">of</span>(2L, 1L), 10); <span class="kw">return null</span>; };</span>
+    <span class="cm">//                                              ↑ 반대 순서로 들어온 요청</span>
+
+    Future&lt;Void&gt; fa = pool.<span class="fn">submit</span>(taskA);
+    Future&lt;Void&gt; fb = pool.<span class="fn">submit</span>(taskB);
+    ready.<span class="fn">await</span>();
+    go.<span class="fn">countDown</span>();               <span class="cm">// 동시에 출발시킨다</span>
+
+    <span class="cm">// addPoints 안에서 정렬하지 않으면 → 한쪽이 DeadlockLoserDataAccessException 으로 실패</span>
+    <span class="cm">// 정렬을 넣으면 → 둘 다 성공</span>
+<span class="ln-good">    <span class="fn">assertThatCode</span>(() -&gt; { fa.<span class="fn">get</span>(); fb.<span class="fn">get</span>(); }).<span class="fn">doesNotThrowAnyException</span>();</span>
+}</code></pre>
+
+<div class="rule red">이 테스트를 <b>정렬 코드를 넣기 전에 먼저 작성해 빨간불을 확인</b>하는 것이 중요하다<br><span style="font-size:.92rem;font-weight:600">빨간불을 못 봤다면 그 테스트는 아무것도 지키지 못한다</span></div>
+
+<h3>8-5. 안전망 체크리스트</h3>
+
+<div class="scroll">
+<table>
+  <caption>이 문항 하나가 아니라 <b>"운영에서만 터지는 JPA 사고" 전반</b>에 공통으로 적용되는 도구 상자</caption>
+  <thead><tr><th>잡고 싶은 것</th><th>장치</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td>SQL 실행 <b>순서</b>·바인딩값</td><td>p6spy / datasource-proxy 로그, <b>쿼리 수집 후 순서 단정 테스트</b></td></tr>
+    <tr class="hl"><td><b>커밋 시점</b>에만 나는 예외</td><td><code>@Commit</code>, <code>TestTransaction</code>, <b>트랜잭션 없는 통합 테스트</b></td></tr>
+    <tr class="hl"><td><b>벤더별</b> 제약·락 동작</td><td>Testcontainers (운영과 같은 엔진·메이저 버전)</td></tr>
+    <tr><td>데드락</td><td>2스레드 + <code>CountDownLatch</code> 재현 테스트</td></tr>
+    <tr><td>예상치 못한 쿼리 증가(N+1)</td><td><code>Statistics.getPrepareStatementCount()</code> / <code>SQLStatementCountValidator</code> 단정</td></tr>
+    <tr><td>위험한 구조 자체</td><td>ArchUnit 룰 (예: 서비스 계층에서 <code>deleteAll</code> 직접 호출 금지)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout ok" style="margin-bottom:0">
+  <span class="t">면접에서의 한 문장</span>
+  "이 유형은 소스만 봐서는 안 보이므로 <b>실행을 관측하는 장치</b>로 잡습니다. <b>p6spy로 실제 SQL 순서</b>를 보고, <b>롤백되는 테스트는 커밋 시점 문제를 숨기니 <code>@Commit</code>으로 실제 커밋</b>을 일으키고, <b>제약·락 동작은 벤더마다 다르니 Testcontainers</b>로 운영과 같은 DB에서 돌립니다."
+</div>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<h3>9-1. 3초 인출 카드 — 보기 전에 먼저 답해보기</h3>
+<div class="grid g2">
+  <div class="tile"><div class="k" style="font-family:inherit">flush 시점 셋?</div><div class="d"><b>커 · 쿼 · 명</b> — 커밋 직전(자동) / 쿼리(JPQL·Criteria·네이티브) 실행 직전(auto-flush) / <code>em.flush()</code> 명시 호출.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">flush와 commit의 차이?</div><div class="d">flush = <b>SQL을 보낸다</b>(우체통), commit = <b>확정한다</b>(배달 확정). <b>제약 검사와 락은 flush 시점</b>에 벌어진다 — 그래서 커밋 전에 예외가 난다.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">auto-flush의 판정 기준?</div><div class="d"><b>query space</b>(쿼리가 읽는 테이블 이름 집합)와 <b>대기 중 작업의 테이블 집합</b>이 <b>겹치는가</b>. <code>DefaultAutoFlushEventListener</code> → <code>areTablesToBeUpdated</code>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit"><code>findById</code>는 왜 예외?</div><div class="d">쿼리가 아니라 <b>PK 조회(lookup)</b>라 판정 경로 자체를 안 탄다. <b>1차 캐시 히트 여부와 무관.</b> 동일성 보장 덕분에 flush 없이도 내 변경분이 보인다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit"><code>ActionQueue</code> 9칸?</div><div class="d"><b>고2 · 인업 · 컬4 · 딜</b> — 고아 둘 → <b>INSERT(3) · UPDATE(4)</b> → 컬렉션 넷 → <b>DELETE(9) 항상 마지막</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">DELETE가 뒤인 이유 둘?</div><div class="d">① <b>FK 위반 회피</b>(필요한 행 먼저 만들고 끊긴 행 나중에 삭제) ② <b>JDBC 배치 효율</b>(같은 종류를 몰아야 묶인다). <b>버그가 아니라 의도</b>.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">유니크 위반의 한 문장 설명?</div><div class="d"><b>"DELETE로 자리를 비운 뒤 INSERT"라는 전제가 성립하지 않는다.</b> DELETE는 9번 칸, INSERT는 3번 칸이므로 <b>넣고 나서 지우기</b>가 된다.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">최선의 처방?</div><div class="d"><code>flush()</code> 끼우기는 <b>증상 대응(차선)</b>. 최선은 <b>DELETE+INSERT를 UPDATE로</b> — PK 유지 · 1건으로 감소 · 생성 이력 보존.</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">Hibernate 보장 / 미보장?</div><div class="d">보장 = <b>타입 순서</b>(INSERT &lt; DELETE). 미보장 = <b>같은 타입 안의 행 순서</b> → <b>락 순서는 내 책임, PK 정렬로 고정</b>.</div></div>
+  <div class="tile"><div class="k" style="font-family:inherit">순서가 흔들리는 경로?</div><div class="d">요청 파라미터 · <code>HashSet</code>/<code>HashMap</code> 순회 · <code>ORDER BY</code> 없는 SELECT · <code>Set</code> 매핑 연관관계 · 서비스마다 다른 테이블 순서.</div></div>
+  <div class="tile ok"><div class="k" style="font-family:inherit">안전망 3종?</div><div class="d"><b>보고</b>(p6spy로 실제 순서) · <b>커밋하고</b>(<code>@Commit</code>으로 롤백이 숨기는 것) · <b>진짜 DB로</b>(Testcontainers로 벤더 차이).</div></div>
+  <div class="tile red"><div class="k" style="font-family:inherit">테스트가 초록불인 이유?</div><div class="d"><b>롤백되면 커밋 직전 flush가 아예 실행되지 않는다</b> — 예외를 만날 기회 자체가 없다. <b>실력이 아니라 구조의 문제.</b></div></div>
+</div>
+
+<h3>9-2. 꼬리질문 — 스스로 답한 뒤 펼쳐서 확인</h3>
+
+<details class="q"><summary><code>save()</code> 직후 <code>findByName()</code>의 결과는 0인가 1인가? 그럼 <code>findById()</code>는? <span class="badge core">필수</span><span class="hint">힌트: 두 답이 다른 이유를 "판정 경로"라는 말로 설명한다</span></summary><div class="a">
+  <p><code>findByName</code>은 <b>1</b>이다. JPQL이므로 <b>실행 직전 auto-flush</b>가 일어나 INSERT가 DB로 나가고, 그 다음 SELECT가 실행되기 때문이다.</p>
+  <p><code>findById</code>는 <b>flush를 유발하지 않는다.</b> PK 조회는 쿼리가 아니라 lookup이라 <b>query space 판정 경로를 타지 않는다.</b> <b>1차 캐시에 있든 없든 마찬가지</b>다 — "캐시에 없으면 DB에 가야 하니 flush하겠지"는 자연스럽지만 <b>틀린 추론</b>이다.</p>
+  <p style="margin-bottom:0"><b>그래도 결과는 올바르다.</b> 새로 저장한 엔티티는 이미 1차 캐시에 있어 그대로 반환되고, 수정된 엔티티는 <b>동일성 보장</b> 덕분에 DB에서 옛 값을 읽어와도 캐시의 인스턴스를 돌려주기 때문이다. <b>PK 조회는 flush 없이도 읽기 일관성이 성립하므로 flush할 이유가 없다.</b></p>
+</div></details>
+
+<details class="q"><summary><code>ActionQueue</code>의 순서를 바꿀 수 있나요? DELETE를 먼저 보내고 싶다면? <span class="badge core">필수</span><span class="hint">힌트: "못 바꾼다"로 끝내지 말고, 개입할 수 있는 유일한 지점을 말한다</span></summary><div class="a">
+  <p><b>타입별 순서는 바꿀 수 없다.</b> Hibernate 구현에 박혀 있고(<code>ActionQueue.OrderedActions</code> 열거형의 <b>선언 순서가 곧 실행 순서</b>다), 이유가 <b>FK 위반 회피 + JDBC 배치 효율</b>이라는 설계 의도이기 때문이다.</p>
+  <p>개발자가 순서에 개입할 수 있는 <b>유일한 수단은 <code>flush()</code>로 실행 경계를 하나 더 만드는 것</b>이다 — DELETE만 쌓아두고 flush하면 그 flush에는 DELETE밖에 없으므로 DELETE가 먼저 나간다.</p>
+  <p>다만 <b>순서를 강제하려 든다는 것 자체가 설계 신호</b>다. "지웠다 다시 넣는" 모델을 <b>"고친다"로 바꿀 수 있는지</b>를 먼저 검토하는 편이 낫다.</p>
+  <p style="margin-bottom:0">참고로 <b>같은 타입 안의 순서</b>는 <code>hibernate.order_inserts</code> / <code>hibernate.order_updates</code>로 PK 정렬을 켤 수 있는데, 이건 <b>배치 효율을 위한 옵션</b>이고 <b>기본값은 꺼져 있으며 한 번의 flush 안에서만 유효</b>하다. <span class="badge bonus">가산점</span></p>
+</div></details>
+
+<details class="q"><summary>커밋도 안 했는데 왜 유니크 제약 위반이 나나요? <span class="badge trap">함정</span><span class="hint">힌트: 그리고 그 예외를 try/catch로 잡으면 어떻게 되는지까지</span></summary><div class="a">
+  <p><b>flush와 commit이 다르기 때문</b>이다. flush는 <b>SQL을 DB로 보내는 것</b>이고, DB는 <b>SQL을 받는 즉시 제약을 검사하고 락을 잡는다.</b> 커밋은 그 뒤에 "확정하라"고 말할 뿐이다. 그래서 <b>flush 시점에 이미 <code>ConstraintViolationException</code>이 발생</b>하고, Spring이 <code>DataIntegrityViolationException</code>으로 번역해 올려준다.</p>
+  <div class="rule red">여기서 이어지는 함정 — <b>이 예외를 <code>try/catch</code>로 잡아도 트랜잭션은 살아나지 않는다</b></div>
+  <p style="margin-bottom:0">제약 위반이 나면 <b>Hibernate 세션이 오염 상태</b>로 간주되고 Spring 트랜잭션에 <b>rollback-only 플래그</b>가 찍히므로, catch 후 정상 종료해도 커밋 시점에 <b><code>UnexpectedRollbackException</code></b>이 터지며 <b>catch 블록 안에서 한 작업까지 함께 롤백</b>된다. 처방은 후속 작업을 <b><code>REQUIRES_NEW</code>로 분리</b>하거나 <b>예외를 트랜잭션 경계 밖에서</b> 잡는 것이다. <span class="badge bonus">가산점</span></p>
+</div></details>
+
+<details class="q"><summary>데드락 순서를 Hibernate가 정렬해 주지 않나요? 왜 코드로 고정해야 하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 보장하는 것과 보장하지 않는 것을 먼저 갈라 놓고 시작한다</span></summary><div class="a">
+  <p><b>Hibernate가 보장하는 것과 보장하지 않는 것을 정확히 나눠야 한다.</b></p>
+  <div class="split" style="margin:10px 0">
+    <div class="pane b"><h4>보장하는 것 — 작업 "타입"의 순서</h4><p style="margin:0;font-size:.93rem">INSERT는 <b>항상</b> DELETE보다 먼저다. <b>내가 바꿀 수 없으니 알고 피해야 할 규칙.</b></p></div>
+    <div class="pane r"><h4>보장하지 않는 것 — 같은 타입 안의 행 순서</h4><p style="margin:0;font-size:.93rem">기본 설정에서 UPDATE들은 대체로 <b>영속성 컨텍스트에 올라온 순서</b>로 나가고, 그 순서는 <b>요청 파라미터 · <code>Set</code> 순회 · <code>ORDER BY</code> 없는 SELECT</b>에 따라 <b>요청마다 달라진다.</b></p></div>
+  </div>
+  <p>그래서 <b>락 획득 순서는 내 코드의 책임</b>이고, 처방은 <b>처리 대상을 항상 같은 기준(보통 PK 오름차순)으로 정렬한 뒤 순회하는 것</b>이다.</p>
+  <p><code>hibernate.order_updates</code>가 부분적으로 돕지만 <b>보험 이상은 아니다</b> — <b>기본값이 꺼져 있고, 한 번의 flush 안에서만 유효하며, <code>SELECT ... FOR UPDATE</code>나 벌크 JPQL처럼 Hibernate의 UPDATE 액션을 거치지 않는 락 획득은 전혀 덮지 못한다.</b></p>
+  <p style="margin-bottom:0">한 걸음 더 가면 <b>트랜잭션 자체를 짧게 자르는 것</b>이 근본 처방이다. 1000건을 한 트랜잭션에서 UPDATE하면 정렬을 해도 <b>락 보유 시간이 길어 경합이 커지므로</b>, 배치로 쪼개거나 아예 <b>벌크 UPDATE 한 문장</b>으로 내리는 편이 낫다.</p>
+</div></details>
+
+<details class="q"><summary>이 유형을 배포 전에 발견하는 장치를 팀에 하나만 넣는다면 무엇을 넣겠나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 비용 대비 커버 범위로 고르고, 그 다음 순서까지 말한다</span></summary><div class="a">
+  <p><b><code>@DataJpaTest</code>의 자동 롤백을 걷어내는 것</b>을 고르겠다. 이유는 <b>비용 대비 커버 범위</b>다.</p>
+  <p>p6spy는 로그를 남길 뿐 <b>사람이 봐야</b> 하고, Testcontainers는 <b>인프라 변경</b>이 필요하다. 반면 <b>"쓰기 로직의 통합 테스트는 실제 커밋까지 간다"</b>는 규칙 하나는 <code>@Commit</code> 한 줄 또는 테스트 클래스에서 <code>@Transactional</code>을 빼는 것으로 끝나는데, 이것만으로 <b>유니크 위반, FK 위반, <code>UnexpectedRollbackException</code>, 커밋 시점 flush 순서 문제, 데드락</b>이 한꺼번에 표면으로 올라온다.</p>
+  <p><b>롤백되는 테스트는 커밋 시점 문제를 구조적으로 통과시킨다</b> — 이 한 가지 성질이 <b>지금까지 통과해 온 초록불의 신뢰도를 통째로 깎아먹고 있기</b> 때문이다.</p>
+  <p>그 다음 순서는 이렇게 붙이겠다. ② <b>p6spy를 테스트 프로파일 기본으로</b> 켜서 SQL 순서가 항상 로그에 남게 한다 ③ 쓰기 핵심 경로에는 <b>쿼리 수·순서 단정 테스트</b>를 붙여 사람의 눈에서 기계로 옮긴다 ④ 제약·락에 의존하는 시나리오는 <b>Testcontainers</b>로 옮긴다.</p>
+  <div class="rule red" style="margin-bottom:0">원칙은 하나다 — <b>"사람이 잘 보자"는 대책이 아니다.<br>회귀를 막으려면 빨간불이 되는 테스트가 존재해야 한다</b></div>
+</div></details>
+
+<h4 style="margin-top:28px">추가 꼬리질문 — 한 칸씩 더 파고드는 것들</h4>
+
+<details class="q"><summary>저장 로직 테스트를 <code>findById</code>로 검증했더니 항상 통과합니다. 무엇이 문제인가요? <span class="badge trap">함정</span><span class="hint">힌트: 그 검증에서 flush가 몇 번 일어났는지 세어본다</span></summary><div class="a">
+  <p><b>그 테스트는 아무것도 검증하지 못하고 있다.</b> <code>save()</code>는 <b>INSERT를 예약</b>만 하고, 뒤이은 <code>findById()</code>는 <b>PK 조회라 auto-flush를 유발하지 않으며</b>, 찾는 엔티티는 <b>이미 1차 캐시에 있으므로 SQL 없이 그대로 반환</b>된다. 즉 <b>flush가 한 번도 일어나지 않은 채 방금 내가 넣은 그 객체를 되돌려받은 것</b>이고, <b>DB에 정말 들어갔는지는 전혀 검증되지 않는다.</b></p>
+  <p>고치는 방법은 셋이다. ① 검증을 <b>JPQL 기반 조회</b>(<code>findByEmail</code> 등)로 바꿔 <b>auto-flush를 유발</b>시킨다 ② 검증 전에 <b><code>flush()</code> + <code>clear()</code></b>로 1차 캐시를 비워 <b>DB에서 진짜 읽어오게</b> 만든다 ③ <b><code>@Commit</code>이나 트랜잭션 없는 통합 테스트</b>로 실제 커밋까지 간다.</p>
+  <p style="margin-bottom:0"><b>②가 특히 유용한 이유</b>는 <code>clear()</code> 없이 <code>flush()</code>만 하면 <b>여전히 1차 캐시가 답을 주기 때문</b>이다. <b>"내가 만든 인스턴스가 아니라 DB가 준 값으로 검증한다"</b>는 것이 이 유형 테스트의 원칙이다.</p>
+</div></details>
+
+<details class="q"><summary><code>@Transactional(readOnly = true)</code>에서는 flush가 일어나나요? <span class="badge bonus">가산점</span><span class="hint">힌트: JPA 표준의 기능이 아니라 Spring + Hibernate 조합의 동작이다</span></summary><div class="a">
+  <p><b>Hibernate를 구현체로 쓰는 Spring 환경에서는 flush 모드가 <code>MANUAL</code>로 바뀌어, 변경 감지에 의한 UPDATE가 나가지 않는다.</b> 읽기 전용임을 선언했으니 <b>스냅샷 비교와 flush 자체를 건너뛰어 비용을 아끼는 것</b>이 목적이다.</p>
+  <p>여기서 실무 함정이 둘 나온다.</p>
+  <p><b>① "읽기 전용인데 값을 바꿨더니 저장이 안 된다"</b> — 예외도 안 나고 <b>조용히 무시</b>된다. 쓰기 로직에 <code>readOnly = true</code>가 잘못 붙어 있으면 <b>버그가 소리 없이 생긴다.</b></p>
+  <p style="margin-bottom:0"><b>② 그렇다고 "읽기 전용이니 안전하다"고 믿으면 안 된다</b> — 벌크 JPQL(<code>@Modifying</code>)이나 네이티브 DML은 <b>영속성 컨텍스트를 거치지 않고 DB로 직접 나가므로</b> flush 모드와 무관하다. <b>readOnly가 막아주는 것은 "변경 감지에 의한 flush"이지 "모든 쓰기"가 아니다.</b></p>
+</div></details>
+
+<details class="q"><summary>PK 생성 전략(IDENTITY vs SEQUENCE)이 이 문제에 영향을 주나요? <span class="badge bonus">가산점</span><span class="hint">힌트: "언제 id를 알 수 있는가"가 "언제 INSERT를 보내야 하는가"를 정한다</span></summary><div class="a">
+  <p><b>영향을 준다. 그리고 IDENTITY 쪽이 더 나쁘다.</b></p>
+  <p><code>GenerationType.IDENTITY</code>는 PK를 <b>DB의 auto_increment에 맡긴다.</b> 그런데 Hibernate는 <b>엔티티를 영속 상태로 만들려면 id가 있어야 하고, 그 id는 DB만 안다.</b> 그래서 <code>persist()</code> 시점에 <b>INSERT를 즉시 실행</b>해 id를 받아온다(소스에서 <b>early insert</b>라 부르며, <code>ActionQueue.addInsertAction()</code>이 <code>isEarlyInsert()</code>인 경우 큐에 쌓지 않고 바로 <code>executeInserts()</code>를 호출한다).</p>
+  <div class="rule red">그래서 IDENTITY에서는 <b>INSERT는 이미 나갔는데 DELETE는 flush까지 대기</b>한다 — 순서 역전이 <b>더 확실하게</b> 일어난다</div>
+  <p style="margin-bottom:0">덤으로 <b>IDENTITY는 INSERT를 배치로 묶는 것도 사실상 불가능</b>하다(건건이 id를 받아와야 하므로). 대량 INSERT 성능이 중요하면 <b>SEQUENCE + allocationSize</b> 쪽이 유리하다.</p>
+</div></details>
+
+<details class="q"><summary>JPQL 한 줄이 왜 "관계없어 보이는" UPDATE까지 유발할 수 있나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 판정과 실행은 다른 단계다. 그리고 네이티브 쿼리는 판정 자체를 못 한다</span></summary><div class="a">
+  <p>먼저 갈라야 할 것이 있다. <b>query space 겹침 판정은 "flush를 할 것인가 말 것인가"를 정하는 단계</b>이지, <b>"겹치는 테이블의 변경만 골라 보낸다"는 보장이 아니다.</b> 그래서 <b>"내 조회는 orders만 건드리니 member 변경은 안 나가겠지"라고 가정한 코드는 위험하다.</b></p>
+  <p><b>네이티브 쿼리에서는 더 분명하다.</b> Hibernate는 SQL 문자열을 파싱해 테이블을 알아내지 않으므로, <b>"어느 테이블을 건드리는지 모른다"고 보고 보수적으로 전체를 flush</b>한다(<code>NativeQueryImpl.prepareForExecution()</code>이 동기화 대상 query space가 없으면 <code>session.flush()</code>를 그냥 호출한다).</p>
+  <p><b>그래서 통계용 네이티브 쿼리 한 줄 때문에 트랜잭션 중간에 예상 못 한 UPDATE가 무더기로 나가는 사고</b>가 생긴다. 나쁜 점은 결과가 틀리는 게 아니라 <b>락을 훨씬 일찍 잡게 되어 경합·데드락 확률이 올라간다는 것</b>이다.</p>
+  <p style="margin-bottom:0">좁히는 방법은 <code>NativeQuery.addSynchronizedEntityClass(...)</code>(또는 <code>addSynchronizedQuerySpace</code>)로 <b>관련 엔티티를 명시</b>하는 것이고, 더 나은 방법은 <b>읽기 전용 통계 조회를 쓰기 트랜잭션과 섞지 않는 것</b>이다.</p>
+</div></details>
+
+<details class="q"><summary>동료가 <code>save()</code> 뒤에 습관처럼 <code>saveAndFlush()</code>를 씁니다. 어떤 리뷰를 남기겠나요?<span class="hint">힌트: "불필요하다"로 끝내면 절반이다. 무엇을 대가로 지불하는지 말한다</span></summary><div class="a">
+  <p><b>대부분의 경우 불필요하고, 공짜가 아니다.</b> 이유를 세 층으로 말한다.</p>
+  <p><b>① 정확성을 위해 필요한 경우가 거의 없다.</b> 같은 트랜잭션 안에서 JPQL로 조회하면 <b>auto-flush가 알아서 해주고</b>, PK로 조회하면 <b>1차 캐시가 답을 준다.</b> 즉 "저장한 게 안 보일까 봐" 붙이는 <code>saveAndFlush()</code>는 <b>이미 보장된 것을 중복으로 사는 것</b>이다.</p>
+  <p><b>② 비용은 락 보유 시간이다.</b> flush로 UPDATE/DELETE가 나가면 <b>그 순간부터 커밋까지 그 행의 쓰기 락을 쥔다.</b> 트랜잭션 앞쪽에서 flush하고 뒤에서 외부 API를 호출하면 <b>락 보유가 수백 ms로 늘어</b> 경합과 데드락 확률이 올라간다.</p>
+  <p><b>③ 배치 기회를 깎는다.</b> 건건이 flush하면 <b>같은 종류의 SQL을 모아 한 번에 보내는 JDBC 배치</b>가 성립하지 않는다.</p>
+  <p style="margin-bottom:0">그래서 리뷰 코멘트는 이렇게 남긴다 — <b>"이 <code>flush</code>가 필요한 이유가 순서 강제인지, DB 생성 값 읽기인지, 대량 처리의 <code>clear()</code> 짝인지 알려주세요. 셋 중 하나가 아니면 지우고, 맞다면 그 이유를 주석으로 남겨 주세요."</b> 이유 없는 <code>flush()</code>는 <b>다음 사람이 지워서 버그를 부활시키거나, 반대로 무서워서 못 지우고 계속 남는다.</b></p>
+</div></details>
+
+<!-- ===================== SUMMARY ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  flush는 <b>커밋 직전 · JPQL 실행 직전(auto-flush) · <code>em.flush()</code></b> 세 시점에 일어나고 <b><code>findById</code>는 PK 조회라 그 판정 경로를 타지 않으며</b>, flush가 SQL을 내보내는 순서는 내 코드 순서가 아니라 <b>Hibernate가 FK 안전과 JDBC 배치를 위해 고정해 둔 <code>ActionQueue</code> 순서(DELETE가 항상 마지막)</b>다 — 그래서 <b>"지우고 넣기"는 "넣고 지우기"가 되고</b>, 최선의 처방은 <code>flush()</code>를 끼우는 것이 아니라 <b>DELETE+INSERT를 UPDATE로 바꾸는 것</b>이며, 같은 원리로 생기는 데드락은 <b>Hibernate가 지켜주지 않으니 PK 정렬로 코드에 고정</b>하고, 이 모든 것은 <b>p6spy · <code>@Commit</code> · Testcontainers</b>로 배포 전에 기계가 잡게 만든다.
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/03-jpa-orm/15-flush-timing-and-sql-ordering.md</code> · 이어서 볼 문서: 영속성 컨텍스트와 변경 감지(<code>02-persistence-context-dirty-checking.md</code>) · 복합 유니크 제약과 동시 INSERT(<code>14-unique-constraint-concurrent-insert.md</code>) · 벌크 연산과 영속성 컨텍스트(<code>11-bulk-operation-persistence-context.md</code>) · 대량 INSERT와 JDBC batch(<code>21-bulk-insert-jdbc-batch.md</code>)</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,1635 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>낙관적 락(@Version)과 비관적 락 — 잠그지 않고 사후에 감지하는 것 vs 먼저 잠그는 것</title>
+<style>
+:root{
+  --bg:#f6f7f9;--card:#ffffff;--text:#1f2937;--muted:#6b7280;--line:#e5e7eb;
+  --accent:#2563eb;--accent-soft:#eff6ff;--accent-line:#bfdbfe;
+  --danger:#dc2626;--danger-soft:#fef2f2;--danger-line:#fecaca;
+  --ok:#16a34a;--ok-soft:#f0fdf4;--ok-line:#bbf7d0;
+  --warn:#d97706;--warn-soft:#fffbeb;--warn-line:#fde68a;
+  --code-bg:#1e293b;--code-fg:#e2e8f0;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;font-size:16px;line-height:1.7;word-break:keep-all}
+main{max-width:960px;margin:0 auto;padding:28px 16px 80px}
+h1{font-size:1.65rem;line-height:1.35;margin:0 0 8px;color:var(--text)}
+h2{font-size:1.3rem;margin:56px 0 14px;padding-left:12px;border-left:5px solid var(--accent);line-height:1.35;scroll-margin-top:16px}
+h3{font-size:1.08rem;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:1rem;margin:20px 0 8px}
+p{margin:10px 0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:#e8ebf0;padding:1px 5px;border-radius:4px}
+strong{color:#111827}
+.sub{color:var(--muted);font-size:.95rem}
+
+/* hero */
+.hero{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.hero .q{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent-line);border-radius:999px;padding:2px 12px;font-size:.85rem;font-weight:600;margin-bottom:10px}
+.hero .lead{font-size:1.02rem;background:var(--accent-soft);border-left:5px solid var(--accent);border-radius:8px;padding:14px 16px;margin:14px 0 0}
+.hero .lead b{color:var(--accent)}
+.answer3{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
+.answer3 li{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.answer3 .n{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+
+/* toc */
+.toc{margin:18px 0 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+.toc ol{margin:6px 0 0;padding-left:20px;columns:2;column-gap:20px}
+.toc li{margin:3px 0;break-inside:avoid;font-size:.95rem}
+
+/* cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.callout{border-radius:10px;padding:12px 16px;margin:14px 0;border:1px solid}
+.callout.info{background:var(--accent-soft);border-color:var(--accent-line)}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn-line)}
+.callout.trap{background:var(--danger-soft);border-color:var(--danger-line)}
+.callout.ok{background:var(--ok-soft);border-color:var(--ok-line)}
+.callout .t{font-weight:700;display:block;margin-bottom:4px}
+.callout.trap .t{color:var(--danger)}
+.callout.ok .t{color:var(--ok)}
+.callout.warn .t{color:var(--warn)}
+.callout.info .t{color:var(--accent)}
+
+/* memory cards */
+.memo{border:2px solid var(--accent);border-radius:14px;background:var(--card);padding:14px 16px;margin:22px 0;position:relative}
+.memo::before{content:"암기";position:absolute;top:-12px;left:14px;background:var(--accent);color:#fff;font-size:.75rem;font-weight:700;padding:2px 10px;border-radius:999px;letter-spacing:.05em}
+.memo.red{border-color:var(--danger)}.memo.red::before{background:var(--danger);content:"함정"}
+.memo.green{border-color:var(--ok)}.memo.green::before{background:var(--ok);content:"규칙"}
+.memo h4{margin:6px 0 10px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.grid.g4{grid-template-columns:repeat(4,1fr)}
+.tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fafbfc}
+.tile .k{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:.92rem}
+.tile .s{font-size:.8rem;color:var(--muted)}
+.tile .d{font-size:.92rem;margin-top:4px}
+.tile.red .k{color:var(--danger)}
+.tile.ok .k{color:var(--ok)}
+.tile.big{text-align:center;padding:14px 10px}
+.tile.big .k{font-size:1.5rem;font-family:inherit}
+.rule{font-size:1.05rem;font-weight:700;text-align:center;padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);margin:10px 0}
+.rule.red{background:var(--danger-soft);color:var(--danger)}
+.rule.ok{background:var(--ok-soft);color:var(--ok)}
+
+/* chips */
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.chip{border-radius:999px;padding:4px 12px;font-size:.88rem;font-weight:600;border:1px solid}
+.chip.b{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.chip.r{background:var(--danger-soft);border-color:var(--danger-line);color:var(--danger)}
+.chip.w{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+.chip.g{background:var(--ok-soft);border-color:var(--ok-line);color:var(--ok)}
+.arrow{color:var(--muted);font-weight:700}
+
+/* badges */
+.badge{display:inline-block;font-size:.72rem;font-weight:700;padding:1px 8px;border-radius:999px;vertical-align:middle;margin-left:6px;letter-spacing:.02em}
+.badge.senior{background:#111827;color:#fff}
+.badge.bonus{background:var(--ok);color:#fff}
+.badge.trap{background:var(--danger);color:#fff}
+.badge.core{background:var(--accent);color:#fff}
+
+/* tables */
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--card)}
+th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{background:#f1f3f7;font-weight:700;white-space:nowrap}
+td code{white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+td.bad{color:var(--danger);font-weight:600}
+td.good{color:var(--ok);font-weight:600}
+td.dash{color:var(--muted);text-align:center}
+table.wide{width:1120px;margin-left:calc(50% - 560px)}
+caption{caption-side:top;text-align:left;font-size:.88rem;color:var(--muted);padding-bottom:6px}
+
+/* figures */
+figure{margin:18px 0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+figure svg{display:block;width:100%;height:auto}
+figcaption{font-size:.88rem;color:var(--muted);margin-top:8px;line-height:1.55}
+.wide{width:1120px;margin-left:calc(50% - 560px)}
+svg text{font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}
+svg .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+/* split panes */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:14px 0;align-items:start}
+.split.wide{width:1120px;margin-left:calc(50% - 560px)}
+.pane{border-radius:12px;padding:14px 16px;border:1px solid;background:var(--card)}
+.pane h4{margin:0 0 8px;font-size:1rem}
+.pane.r{background:var(--danger-soft);border-color:var(--danger-line)}
+.pane.r h4{color:var(--danger)}
+.pane.g{background:var(--ok-soft);border-color:var(--ok-line)}
+.pane.g h4{color:var(--ok)}
+.pane.b{background:var(--accent-soft);border-color:var(--accent-line)}
+.pane.b h4{color:var(--accent)}
+.pane ul{margin:6px 0 0;padding-left:18px}
+.pane li{margin:4px 0;font-size:.94rem}
+
+/* steps */
+.step{display:grid;grid-template-columns:40px 1fr;gap:12px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .body{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.step.red .n{background:var(--danger)}
+.step.ok .n{background:var(--ok)}
+
+/* code */
+pre{background:var(--code-bg);color:var(--code-fg);font-family:var(--mono);font-size:.82rem;line-height:1.6;padding:14px 16px;border-radius:10px;overflow-x:auto;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.codehead{display:flex;align-items:center;gap:8px;margin:14px 0 -4px;font-weight:700}
+.codehead.bad{color:var(--danger)}.codehead.good{color:var(--ok)}
+.codehead .tag{font-size:.72rem;padding:1px 8px;border-radius:999px;color:#fff}
+.codehead.bad .tag{background:var(--danger)}.codehead.good .tag{background:var(--ok)}
+.codehead.plain .tag{background:var(--accent)}
+.ln-bad{display:block;background:rgba(220,38,38,.28);margin:0 -16px;padding:0 16px;border-left:3px solid var(--danger)}
+.ln-good{display:block;background:rgba(22,163,74,.26);margin:0 -16px;padding:0 16px;border-left:3px solid var(--ok)}
+.cm{color:#94a3b8}
+.kw{color:#93c5fd}
+.st{color:#fcd34d}
+.fn{color:#86efac}
+.note{display:inline-block;background:#334155;color:#fbbf24;font-size:.72rem;padding:0 6px;border-radius:4px;margin-left:6px;font-family:inherit}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin:12px 0}
+.cmp pre{margin-top:6px}
+.cmp.wide{width:1120px;margin-left:calc(50% - 560px)}
+
+/* details */
+details.q{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+details.q summary{cursor:pointer;padding:13px 16px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::before{content:"Q";flex:none;width:26px;height:26px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.85rem;margin-top:2px}
+details.q[open] summary{border-bottom:1px solid var(--line);background:#fafbfc}
+details.q .a{padding:12px 16px 16px}
+details.q .a p:first-child{margin-top:0}
+.hint{font-size:.85rem;color:var(--muted);font-weight:400;display:block;margin-top:2px}
+
+/* banner */
+.banner{margin-top:56px;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;border-radius:16px;padding:22px 24px;font-size:1.02rem;line-height:1.75}
+.banner .t{font-size:.8rem;letter-spacing:.12em;opacity:.85;font-weight:700;margin-bottom:8px}
+.banner b{color:#fde68a}
+.banner code{background:rgba(255,255,255,.18);color:#fff}
+.foot{margin-top:18px;font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <span class="q">03 JPA · ORM &nbsp;|&nbsp; 중급⭐⭐ &nbsp;|&nbsp; 사전 학습용</span>
+  <h1>낙관적 락(<code>@Version</code>)과 비관적 락<br><span class="sub">잠그지 않고 사후에 감지하는 것 vs 먼저 잠그는 것</span></h1>
+  <p class="sub" style="margin:4px 0 0">면접 질문: <b>"JPA의 낙관적 락(<code>@Version</code>)과 비관적 락의 차이, 각각 언제 사용하나요?"</b></p>
+
+  <div class="lead">
+    <b>핵심 관전 포인트</b> — 첫 문장에서 오해부터 부순다: <b>낙관적 락은 락이 아니다. 아무것도 잠그지 않고, 충돌을 사후에 감지할 뿐이다.</b> 흔한 오해가 "업데이트 직전에 다시 조회해서 값이 같은지 확인한 뒤 갱신한다"(check-then-act)인데, <b>별도 SELECT는 존재하지 않는다.</b> 하이버네이트가 날리는 것은 <code>UPDATE ... SET (필드들), version = ? WHERE id = ? AND version = ?</code> <b>한 문장</b>이고, 확인이 <code>WHERE</code>절 안에 들어가 있기 때문에 확인과 갱신 사이에 틈이 없다. 충돌 판정 근거는 값 비교가 아니라 <b>영향받은 행 수(affected rows)가 0인지</b>이고, 0이면 <code>OptimisticLockException</code>(Spring 계층에서는 <code>ObjectOptimisticLockingFailureException</code>)이 난다. <b>비관적 락(<code>PESSIMISTIC_WRITE</code> = <code>SELECT ... FOR UPDATE</code>)은 반대로 조회 시점부터 DB가 실제로 행을 잠근다.</b> 선택 기준은 <b>충돌 빈도 × 재시도 비용</b>이지만, 여기에 두 가지를 더 붙여야 답이 완성된다. ① <b>재시도는 반드시 새 트랜잭션에서</b> 해야 한다 — 같은 트랜잭션에서 재시도하면 1차 캐시에 옛 버전 엔티티가 남아 영원히 실패한다. ② <b>비관적 락의 숨은 대가는 스레드가 아니라 DB 커넥션이다</b> — 락 대기 시간 내내 커넥션을 점유하므로 가상 스레드로도 풀 고갈은 해결되지 않는다. 그리고 마지막 축 하나: <b>"기다리느냐 마느냐"가 아니라 "얼마나 오래 기다리게 하느냐"</b>다. 같은 로우를 치는 이상 직렬화는 피할 수 없지만, 락 보유 구간에서 네트워크 왕복과 자바 계산을 걷어내면 임계 구간의 자릿수가 달라진다.
+  </div>
+
+  <ul class="answer3" aria-label="첫 답변 3문장">
+    <li><span class="n">1</span><div><b>낙관적 락은 락이 아니다 — 잠그지 않고 사후에 감지한다</b> — 별도 SELECT 없이 <code>UPDATE ... SET ..., version=? WHERE id=? AND version=?</code> <b>한 문장</b>을 날리고, <b>영향 행 수가 0인지</b>로 충돌을 판정한다. 확인이 <code>WHERE</code>절 안에 있으므로 <b>확인과 갱신 사이에 틈이 없다.</b></div></li>
+    <li><span class="n">2</span><div><b>비관적 락은 조회 시점부터 DB가 진짜로 잠근다</b> — <code>PESSIMISTIC_WRITE</code>는 <code>SELECT ... FOR UPDATE</code>로 번역되어 <b>사전 차단</b>한다. 대신 락 대기 내내 <b>애플리케이션 스레드 + DB 커넥션 + 열린 트랜잭션</b>을 함께 붙잡으므로, <b>가상 스레드로도 커넥션 풀 고갈은 해결되지 않는다.</b></div></li>
+    <li><span class="n">3</span><div><b>선택 기준은 충돌 확률 × 재시도 비용 × 실패를 노출해도 되는가다</b> — 낙관적을 고르면 <b>재시도는 반드시 새 트랜잭션에서</b>(같은 트랜잭션이면 1차 캐시 때문에 영원히 실패), 비관적을 고르면 <b>락 타임아웃이 세트</b>다. 둘 다 답이 아닌 고경합에서는 <b>임계 구간의 길이</b>라는 축을 먼저 본다.</div></li>
+  </ul>
+</header>
+
+<nav class="toc" aria-label="목차">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">질문 + 출제 의도</a></li>
+    <li><a href="#s1">막으려는 사고 — lost update</a></li>
+    <li><a href="#s2">대책은 두 갈래뿐 — 사전 차단 vs 사후 감지</a></li>
+    <li><a href="#s3">낙관적 락 — 실제로 나가는 SQL과 감지 방식</a></li>
+    <li><a href="#s4"><code>@Version</code> 실전 — 예외 타입·위치와 주의점 4가지</a></li>
+    <li><a href="#s5">재시도의 함정 — 같은 트랜잭션이면 영원히 실패한다</a></li>
+    <li><a href="#s6">비관적 락 — 붙잡히는 건 스레드가 아니라 커넥션이다</a></li>
+    <li><a href="#s7">놓치기 쉬운 축 — 임계 구간의 길이</a></li>
+    <li><a href="#s8">무엇을 고를 것인가 — 3축과 한 장 정리</a></li>
+    <li><a href="#s9">보장은 테스트에서 나온다</a></li>
+    <li><a href="#s10">인출 카드 · 꼬리질문 셀프 테스트</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 0 ===================== -->
+<h2 id="s0">0. 질문 + 출제 의도</h2>
+<div class="card">
+  <p><b>질문</b>: "JPA의 낙관적 락(<code>@Version</code>)과 비관적 락의 차이, 각각 언제 사용하나요?"</p>
+  <p><b>출제 의도</b>: rationale은 이렇게 적고 있다 — "동시 수정 시나리오(같은 회차를 두 관리자가 편집)에서 <b>충돌 빈도와 재시도 비용을 따져 선택하는 판단력.</b> '락이 필요하다'까지는 다 알지만 '<b>어떤 락인지</b>'의 근거를 대는 사람은 적다."</p>
+  <div class="grid g3">
+    <div class="tile"><div class="k" style="font-family:inherit">채점 지점 ①</div><div class="d">각각이 <b>DB 레벨에서 실제로 무슨 SQL을 만드는가</b>를 아는가</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">채점 지점 ②</div><div class="d">그 차이가 <b>어떤 부작용</b>(재시도 폭풍 / 커넥션 점유)<b>으로 이어지는가</b>를 연결할 수 있는가</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">채점 지점 ③</div><div class="d">우리 서비스의 트래픽 특성에 맞춰 <b>근거를 대며 고를 수 있는가</b></div></div>
+  </div>
+  <div class="callout trap"><span class="t">함정 ① — "낙관적 락"이라는 이름에 속아 "가벼운 락"으로 이해하는 것</span>
+    낙관적 락은 가벼운 락이 아니라 <b>락이 아예 아니다.</b> 이 차이를 놓치면 <b>"확인과 갱신 사이에 틈이 있으니 결국 안전하지 않다 → 비관적 락밖에 없다"</b>는 오결론까지 자동으로 따라온다.
+  </div>
+  <div class="callout trap"><span class="t">함정 ② — "충돌이 드물면 낙관적, 잦으면 비관적"에서 멈추는 것</span>
+    방향은 맞지만 이건 <b>정의를 바꿔 말한 것</b>에 가깝다. 면접관이 원하는 건 <b>"드물다"를 무엇으로 판단하고, 틀렸을 때 각각 어떤 모습으로 무너지는가</b>다.
+  </div>
+  <div class="callout info" style="margin-bottom:0"><span class="t">이 페이지가 가는 길</span>
+    <b>1~5절</b>은 낙관적 락이 무엇을 하고 무엇을 안 하는가(그리고 세트로 따라오는 재시도), <b>6~7절</b>은 비관적 락이 대신 치르는 비용과 그것을 줄이는 축, <b>8~9절</b>은 무엇을 고르고 그 선택을 어떻게 테스트로 보장하는가다.
+  </div>
+</div>
+
+<!-- ===================== 1 ===================== -->
+<h2 id="s1">1. 막으려는 사고부터 — lost update, 갱신 하나가 조용히 증발하는 현상</h2>
+
+<p>락 이야기를 시작하기 전에 <b>락으로 막으려는 사고가 무엇인지</b>부터 봐야 한다. 그 사고의 이름이 <b>lost update(갱신 유실)</b>다.</p>
+
+<div class="rule">두 트랜잭션이 같은 행을 <b>각자 읽고, 각자 계산해서, 각자 쓰면</b>,<br>나중에 쓴 쪽이 먼저 쓴 쪽의 갱신을 덮어써서 <b>갱신 하나가 사라진다</b></div>
+
+<p>"유실"이라는 이름은 여기서 왔다 — <b>에러도 안 나고 로그도 안 남는데 결과만 틀려 있다.</b> 상품 1번의 재고가 100이고, 두 주문 요청이 동시에 "1개 차감"을 처리하는 장면을 초 단위로 펼치면 사고 지점이 보인다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 392" role="img" aria-label="트랜잭션 A와 B가 시각 t1부터 t5까지 같은 상품 행을 각각 읽고 계산해 쓰는 타임라인. t1과 t2에서 둘 다 재고 100을 읽고, t3에서 A가 99로 커밋하고, t4에서 B가 t2에 읽은 낡은 100을 근거로 다시 99로 커밋해 A의 차감이 덮여 사라진다">
+    <defs>
+      <marker id="lu-r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">lost update — UPDATE는 전부 정상 실행됐는데 결과만 틀려 있다</text>
+
+    <!-- column headers -->
+    <text x="60" y="52" font-size="12" fill="#6b7280" text-anchor="middle" font-weight="700">시각</text>
+    <text x="300" y="52" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">트랜잭션 A (주문 1)</text>
+    <text x="680" y="52" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">트랜잭션 B (주문 2)</text>
+    <text x="1000" y="52" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="700">DB의 stock</text>
+
+    <!-- lanes -->
+    <line x1="92" y1="62" x2="92" y2="352" stroke="#e5e7eb"/>
+    <line x1="502" y1="62" x2="502" y2="352" stroke="#e5e7eb"/>
+    <line x1="882" y1="62" x2="882" y2="352" stroke="#e5e7eb"/>
+
+    <!-- t1 -->
+    <text x="60" y="90" font-size="12" fill="#6b7280" text-anchor="middle" class="mono">t1</text>
+    <rect x="106" y="68" width="384" height="42" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="120" y="86" font-size="11.5" fill="#1e40af" class="mono">SELECT stock FROM product WHERE id=1</text>
+    <text x="120" y="103" font-size="11.5" fill="#1d4ed8" font-weight="700">→ 100 을 손에 쥔다</text>
+    <rect x="920" y="70" width="160" height="34" rx="8" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="1000" y="93" font-size="13" fill="#334155" text-anchor="middle" font-weight="700" class="mono">100</text>
+
+    <!-- t2 -->
+    <text x="60" y="140" font-size="12" fill="#6b7280" text-anchor="middle" class="mono">t2</text>
+    <rect x="516" y="118" width="352" height="42" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="530" y="136" font-size="11.5" fill="#92400e" class="mono">SELECT stock FROM product WHERE id=1</text>
+    <text x="530" y="153" font-size="11.5" fill="#b45309" font-weight="700">→ 역시 100 을 손에 쥔다</text>
+    <rect x="920" y="120" width="160" height="34" rx="8" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="1000" y="143" font-size="13" fill="#334155" text-anchor="middle" font-weight="700" class="mono">100</text>
+
+    <!-- t3 -->
+    <text x="60" y="200" font-size="12" fill="#6b7280" text-anchor="middle" class="mono">t3</text>
+    <rect x="106" y="168" width="384" height="60" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="120" y="186" font-size="11.5" fill="#1e40af">자바에서 100 - 1 = 99 계산</text>
+    <text x="120" y="203" font-size="11.5" fill="#1e40af" class="mono">UPDATE product SET stock = 99 ...</text>
+    <text x="120" y="220" font-size="11.5" fill="#1d4ed8" font-weight="700" class="mono">COMMIT</text>
+    <rect x="920" y="180" width="160" height="34" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="1000" y="203" font-size="13" fill="#166534" text-anchor="middle" font-weight="700" class="mono">99</text>
+
+    <!-- t4 -->
+    <text x="60" y="272" font-size="12" fill="#6b7280" text-anchor="middle" class="mono">t4</text>
+    <rect x="516" y="238" width="352" height="78" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="530" y="256" font-size="11.5" fill="#7f1d1d">자바에서 100 - 1 = 99 계산</text>
+    <text x="530" y="273" font-size="11" fill="#b91c1c" font-weight="700">(t2 에 읽은 100 을 근거로 한 계산이다)</text>
+    <text x="530" y="292" font-size="11.5" fill="#7f1d1d" class="mono">UPDATE product SET stock = 99 ...</text>
+    <text x="530" y="309" font-size="11.5" fill="#b91c1c" font-weight="700" class="mono">COMMIT</text>
+    <rect x="920" y="258" width="160" height="34" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="1000" y="281" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700" class="mono">99 (그대로)</text>
+    <line x1="874" y1="277" x2="912" y2="277" stroke="#dc2626" stroke-width="1.8" marker-end="url(#lu-r)"/>
+    <text x="686" y="332" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">★ 사고 지점 — 이 UPDATE는 완벽히 정상 실행되고, 영향 행 수도 1이 나온다</text>
+
+    <!-- t5 band -->
+    <rect x="106" y="346" width="974" height="36" rx="9" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="120" y="369" font-size="12.5" fill="#b91c1c" font-weight="700">t5 &nbsp; 결과: 2개를 팔았는데 재고는 1만 줄었다 — A 의 차감이 B 에게 덮여 사라졌다. 에러도, 로그도 없다.</text>
+    <text x="60" y="369" font-size="12" fill="#6b7280" text-anchor="middle" class="mono">t5</text>
+  </svg>
+  <figcaption><b>DB 입장에서는 아무 문제가 없다.</b> 두 UPDATE 모두 정상이고 영향 행 수도 1이다. 잘못된 것은 <b>"읽고 → 계산하고 → 쓴다" 사이에 남이 끼어들 수 있다는 사실을 무시한 애플리케이션의 판단</b>이다. 같은 사고가 도메인만 바꿔 반복된다 — 두 관리자의 공지사항 동시 편집, 포인트 적립, 좋아요 수, 계좌 잔액이 전부 같은 구조다.</figcaption>
+</figure>
+
+<h3>1-1. "격리 수준을 올리면 되지 않나요?" — 막히지 않는다</h3>
+
+<p>여기서 자연스럽게 나오는 반문이 "트랜잭션 격리 수준을 올리면 되는 것 아닌가"다. <b>대부분의 서비스가 쓰는 기본 격리 수준에서는 막히지 않는다.</b></p>
+
+<div class="split">
+  <div class="pane r">
+    <h4>기본 격리 수준에서는 그대로 통과한다</h4>
+    <ul>
+      <li>MySQL(InnoDB) 기본값 <b>REPEATABLE READ</b> → 통과</li>
+      <li>PostgreSQL·Oracle 기본값 <b>READ COMMITTED</b> → 통과</li>
+    </ul>
+    <p style="margin:8px 0 0;font-size:.93rem"><b>읽기도 정상이고 쓰기도 정상이며, 둘을 이어붙인 애플리케이션의 판단만 낡았기 때문이다.</b></p>
+  </div>
+  <div class="pane b">
+    <h4>SERIALIZABLE이면 막히지만</h4>
+    <p style="margin:0;font-size:.93rem">대가가 <b>전면적</b>이다 — <b>모든 트랜잭션이 직렬화 비용을 낸다.</b> 이 문제 하나 때문에 꺼낼 선택지가 아니다.</p>
+    <p style="margin:8px 0 0;font-size:.93rem;color:#1d4ed8"><b>그래서 읽고 쓰는 그 구간을 애플리케이션이 직접 보호해야 한다.</b></p>
+  </div>
+</div>
+
+<!-- ===================== 2 ===================== -->
+<h2 id="s2">2. 대책은 원리상 두 갈래뿐 — 사전 차단 vs 사후 감지</h2>
+
+<p>보호하는 방법은 원리상 두 갈래뿐이다. <b>이 표가 이 문항 전체의 뼈대다.</b></p>
+
+<div class="scroll">
+<table>
+  <caption>두 갈래 — 이름의 유래까지 붙여 두면 정의를 외울 필요가 없다</caption>
+  <thead><tr><th></th><th style="color:#1d4ed8">사전 차단</th><th style="color:#16a34a">사후 감지</th></tr></thead>
+  <tbody>
+    <tr><td><b>발상</b></td><td>남이 못 끼어들게 <b>미리 잠근다</b></td><td>끼어들면 <b>나중에 알아채고 실패시킨다</b></td></tr>
+    <tr><td>t1에서 하는 일</td><td>읽으면서 그 행을 잠근다. B는 t2에서 대기</td><td>그냥 읽는다. B도 그냥 읽는다</td></tr>
+    <tr><td>충돌 시 모습</td><td>B가 기다렸다가 <b>최신 값으로 다시 계산</b></td><td>B의 UPDATE가 <b>실패</b>하고 예외</td></tr>
+    <tr class="hl"><td><b>이름</b></td><td><b>비관적 락</b>(pessimistic)</td><td><b>낙관적 락</b>(optimistic)</td></tr>
+    <tr><td>이름의 유래</td><td>"충돌이 날 것"이라고 <b>비관</b>하고 미리 대비</td><td>"충돌은 안 날 것"이라고 <b>낙관</b>하고 사후 확인</td></tr>
+    <tr><td><b>평시 비용</b></td><td>잠금·해제 비용을 <b>항상</b> 낸다</td><td class="good"><b>0</b> — 충돌이 없으면 아무 추가 비용이 없다</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="rule">"어느 쪽이 좋은가"가 아니라 <b>"우리 상황에서 충돌이 예외인가 기본값인가"</b>가 선택을 가른다</div>
+
+<h3>2-1. 회의실 비유 — 문을 잠그느냐, 나올 때 확인하느냐</h3>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 300" role="img" aria-label="왼쪽은 비관적 락을 회의실 문을 잠그고 들어가는 것에 비유하고, 오른쪽은 낙관적 락을 문을 잠그지 않되 나올 때 두고 간 종이가 그대로인지 확인하는 것에 비유한 대비 도식">
+    <defs>
+      <marker id="rm-b" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+      <marker id="rm-g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">같은 사고를 막는 두 가지 태도 — 문을 잠그느냐, 나올 때 확인하느냐</text>
+
+    <!-- pessimistic -->
+    <rect x="14" y="42" width="536" height="244" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="282" y="68" font-size="14" font-weight="700" fill="#1d4ed8" text-anchor="middle">비관적 락 — 회의실 문을 잠그고 들어간다</text>
+
+    <rect x="40" y="86" width="150" height="86" rx="10" fill="#fff" stroke="#93c5fd"/>
+    <text x="115" y="112" font-size="12" fill="#1e40af" text-anchor="middle" font-weight="700">A 가 입장</text>
+    <text x="115" y="134" font-size="11.5" fill="#1e40af" text-anchor="middle">문을 잠근다</text>
+    <text x="115" y="156" font-size="11.5" fill="#1d4ed8" text-anchor="middle" class="mono">FOR UPDATE</text>
+
+    <rect x="212" y="86" width="150" height="86" rx="10" fill="#fff" stroke="#93c5fd"/>
+    <text x="287" y="112" font-size="12" fill="#1e40af" text-anchor="middle" font-weight="700">B 는 문 앞에서</text>
+    <text x="287" y="134" font-size="12" fill="#b45309" text-anchor="middle" font-weight="700">기다린다</text>
+    <text x="287" y="156" font-size="11" fill="#92400e" text-anchor="middle">(그동안 아무 일도 못 한다)</text>
+
+    <rect x="384" y="86" width="142" height="86" rx="10" fill="#fff" stroke="#93c5fd"/>
+    <text x="455" y="112" font-size="12" fill="#1e40af" text-anchor="middle" font-weight="700">A 가 나오면</text>
+    <text x="455" y="134" font-size="11.5" fill="#1e40af" text-anchor="middle">B 가 들어가 <tspan font-weight="700">최신 값</tspan>으로</text>
+    <text x="455" y="156" font-size="11.5" fill="#1e40af" text-anchor="middle">다시 계산한다</text>
+
+    <line x1="192" y1="129" x2="208" y2="129" stroke="#2563eb" stroke-width="1.8" marker-end="url(#rm-b)"/>
+    <line x1="364" y1="129" x2="380" y2="129" stroke="#2563eb" stroke-width="1.8" marker-end="url(#rm-b)"/>
+
+    <rect x="40" y="188" width="486" height="80" rx="10" fill="#fff" stroke="#bfdbfe"/>
+    <text x="56" y="210" font-size="12.5" fill="#1d4ed8" font-weight="700">얻는 것 — 충돌 자체가 성립하지 않는다. 재실행이 없다.</text>
+    <text x="56" y="232" font-size="12.5" fill="#b91c1c" font-weight="700">치르는 것 — 기다리는 동안 DB 커넥션과 열린 트랜잭션을 붙잡는다.</text>
+    <text x="56" y="254" font-size="12" fill="#7f1d1d">그리고 <tspan font-weight="700">평시에도</tspan> 잠금·해제 비용을 낸다 (충돌이 없어도 낸다)</text>
+
+    <!-- optimistic -->
+    <rect x="570" y="42" width="536" height="244" rx="14" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="838" y="68" font-size="14" font-weight="700" fill="#166534" text-anchor="middle">낙관적 락 — 잠그지 않고, 나올 때 종이를 확인한다</text>
+
+    <rect x="596" y="86" width="150" height="86" rx="10" fill="#fff" stroke="#86efac"/>
+    <text x="671" y="112" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">A 도 B 도</text>
+    <text x="671" y="134" font-size="11.5" fill="#166534" text-anchor="middle">그냥 들어간다</text>
+    <text x="671" y="156" font-size="11" fill="#15803d" text-anchor="middle">(대기 0 · 추가 쿼리 0)</text>
+
+    <rect x="768" y="86" width="150" height="86" rx="10" fill="#fff" stroke="#86efac"/>
+    <text x="843" y="112" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">나올 때 확인</text>
+    <text x="843" y="134" font-size="11.5" fill="#166534" text-anchor="middle">"두고 간 종이가</text>
+    <text x="843" y="156" font-size="11.5" fill="#166534" text-anchor="middle">그대로인가?"</text>
+
+    <rect x="940" y="86" width="142" height="86" rx="10" fill="#fff" stroke="#86efac"/>
+    <text x="1011" y="108" font-size="11.5" fill="#166534" text-anchor="middle">그대로 → 정상</text>
+    <text x="1011" y="132" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">바뀌었다 → 예외</text>
+    <text x="1011" y="156" font-size="11" fill="#7f1d1d" text-anchor="middle">→ 처음부터 다시</text>
+
+    <line x1="748" y1="129" x2="764" y2="129" stroke="#16a34a" stroke-width="1.8" marker-end="url(#rm-g)"/>
+    <line x1="920" y1="129" x2="936" y2="129" stroke="#16a34a" stroke-width="1.8" marker-end="url(#rm-g)"/>
+
+    <rect x="596" y="188" width="486" height="80" rx="10" fill="#fff" stroke="#bbf7d0"/>
+    <text x="612" y="210" font-size="12.5" fill="#166534" font-weight="700">얻는 것 — 충돌이 없으면 비용이 정확히 0이다. WHERE 에 조건 하나가 붙을 뿐.</text>
+    <text x="612" y="232" font-size="12.5" fill="#b91c1c" font-weight="700">치르는 것 — 충돌하면 비즈니스 로직 전체를 다시 실행해야 한다.</text>
+    <text x="612" y="254" font-size="12" fill="#7f1d1d">그리고 <tspan font-weight="700">실패를 사용자에게 노출</tspan>하는 경로가 생긴다</text>
+  </svg>
+  <figcaption>낙관적 락의 진짜 장점은 <b>"평소에는 잠그는 비용이 0원"</b>이라는 것이다 — 충돌이 없을 때 <b>추가 쿼리도, 대기도, 커넥션 점유도 없다.</b> 그 대신 <b>"아무도 안 들어올 거라는 데 베팅"</b>하는 것이고, 베팅이 틀렸을 때의 청구서가 <b>로직 전체의 재실행</b>이다.</figcaption>
+</figure>
+
+<!-- ===================== 3 ===================== -->
+<h2 id="s3">3. 낙관적 락 — 실제로 나가는 SQL과, 충돌을 감지하는 방식</h2>
+
+<h3>3-1. 첫 번째 못 — 낙관적 락은 락이 아니다</h3>
+
+<p>낙관적 락을 설명할 때 <b>가장 먼저 부숴야 할 오해</b>가 있다. 많은 사람이 <code>@Version</code>의 동작을 <b>"확인하고(check) 나서 행동한다(act)"</b>, 즉 <b>check-then-act</b>로 상상한다. 그리고 <b>이 모델이 맞다면 정말로 안전하지 않다.</b></p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 336" role="img" aria-label="왼쪽은 SELECT로 버전을 다시 확인한 뒤 UPDATE하는 check-then-act 모델로 확인과 갱신 사이에 다른 트랜잭션이 끼어들 틈이 있음을 보여주고, 오른쪽은 실제 하이버네이트가 확인 조건을 UPDATE의 WHERE절 안에 넣은 한 문장을 날려 틈이 없음을 보여주는 대비 도식">
+    <defs>
+      <marker id="ct-r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"틈"이 있느냐 없느냐 — 두 문장인가 한 문장인가로 갈린다</text>
+
+    <!-- LEFT: myth -->
+    <rect x="14" y="42" width="536" height="282" rx="14" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="282" y="68" font-size="14" font-weight="700" fill="#b91c1c" text-anchor="middle">사람들이 상상하는 모델 (check-then-act) — 실제가 아니다</text>
+
+    <rect x="40" y="82" width="330" height="30" rx="7" fill="#fff" stroke="#fecaca"/>
+    <text x="54" y="102" font-size="11.5" fill="#7f1d1d" class="mono">① SELECT version ... → version = 3</text>
+    <rect x="40" y="118" width="330" height="30" rx="7" fill="#fff" stroke="#fecaca"/>
+    <text x="54" y="138" font-size="11.5" fill="#7f1d1d">② 애플리케이션에서 로직 수행</text>
+    <rect x="40" y="154" width="330" height="30" rx="7" fill="#fff" stroke="#fecaca"/>
+    <text x="54" y="174" font-size="11.5" fill="#7f1d1d" class="mono">③ SELECT version ... → "아직도 3인가?"</text>
+
+    <!-- gap -->
+    <rect x="40" y="192" width="330" height="42" rx="7" fill="#fee2e2" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="205" y="210" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">◆ 여기가 틈 ◆</text>
+    <text x="205" y="228" font-size="11" fill="#7f1d1d" text-anchor="middle">다른 트랜잭션이 version 을 4로 올려버린다</text>
+
+    <rect x="40" y="240" width="330" height="30" rx="7" fill="#fff" stroke="#fecaca"/>
+    <text x="54" y="260" font-size="11.5" fill="#7f1d1d" class="mono">④ 같으면 UPDATE 실행 → 낡은 확인 결과로 덮어쓴다</text>
+
+    <line x1="392" y1="213" x2="378" y2="213" stroke="#dc2626" stroke-width="1.8" marker-end="url(#ct-r)"/>
+    <rect x="398" y="176" width="136" height="76" rx="9" fill="#fff" stroke="#dc2626"/>
+    <text x="466" y="198" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">확인과 행동이</text>
+    <text x="466" y="216" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">두 문장이면</text>
+    <text x="466" y="236" font-size="11.5" fill="#b91c1c" text-anchor="middle">그 사이는 <tspan font-weight="700">언제나 뚫린다</tspan></text>
+
+    <rect x="40" y="282" width="494" height="30" rx="7" fill="#fff" stroke="#fecaca"/>
+    <text x="54" y="302" font-size="11.5" fill="#7f1d1d">1절의 lost update 와 <tspan font-weight="700">정확히 같은 구조</tspan> — 이 전제에서 출발하면 "비관적 락뿐"이라는 오결론에 도달한다</text>
+
+    <!-- RIGHT: reality -->
+    <rect x="570" y="42" width="536" height="282" rx="14" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="838" y="68" font-size="14" font-weight="700" fill="#166534" text-anchor="middle">실제 하이버네이트 — 확인이 WHERE 안으로 들어간다</text>
+
+    <rect x="596" y="82" width="484" height="30" rx="7" fill="#fff" stroke="#bbf7d0"/>
+    <text x="610" y="102" font-size="11.5" fill="#166534" class="mono">① findById(1) → 엔티티를 읽는다 (version = 3)</text>
+    <rect x="596" y="118" width="484" height="30" rx="7" fill="#fff" stroke="#bbf7d0"/>
+    <text x="610" y="138" font-size="11.5" fill="#166534">② 애플리케이션에서 로직 수행 (변경 감지)</text>
+
+    <rect x="596" y="158" width="484" height="76" rx="9" fill="#1e293b" stroke="#334155"/>
+    <text x="612" y="180" font-size="11.5" fill="#94a3b8" class="mono">③ 커밋 직전 flush — 나가는 것은 이 한 문장뿐</text>
+    <text x="612" y="200" font-size="11.5" fill="#e2e8f0" class="mono">update product set name=?, stock=?, version=?</text>
+    <text x="612" y="220" font-size="11.5" fill="#e2e8f0" class="mono">  where id=? <tspan fill="#fcd34d" font-weight="700">and version=?</tspan>   ← 확인이 조건절 안에</text>
+
+    <rect x="596" y="244" width="484" height="30" rx="7" fill="#fff" stroke="#16a34a" stroke-width="2"/>
+    <text x="838" y="264" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">한 문장 = DB가 원자적으로 처리 = 끼어들 틈이 없다</text>
+
+    <rect x="596" y="282" width="484" height="30" rx="7" fill="#fff" stroke="#bbf7d0"/>
+    <text x="610" y="302" font-size="11.5" fill="#166534">"재확인 SELECT"는 <tspan font-weight="700">존재하지 않는다</tspan> — 결론이 틀린 게 아니라 <tspan font-weight="700">전제가 틀린 것</tspan>이다</text>
+  </svg>
+  <figcaption><b>이 오해에서 출발하면 "낙관적 락은 근본적으로 구멍이 있고, 틈을 없애려면 비관적 락뿐"이라는 결론에 논리적으로 도달한다.</b> 실제 <code>@Version</code>은 애초에 ①③④ 같은 여러 문장을 쓰지 않는다.</figcaption>
+</figure>
+
+<h3>3-2. <code>@Version</code>이 만드는 SQL — 한 줄이 전부다</h3>
+
+<div class="cmp">
+  <div>
+    <div class="codehead plain"><span class="tag">엔티티</span> 붙이는 것은 필드 하나</div>
+<pre><code><span class="kw">@Entity</span>
+<span class="kw">public class</span> Product {
+    <span class="kw">@Id</span> <span class="kw">@GeneratedValue</span>
+    <span class="kw">private</span> Long id;
+
+    <span class="kw">private</span> String name;
+    <span class="kw">private int</span> stock;
+
+<span class="ln-good">    <span class="kw">@Version</span>                 <span class="cm">// ← 이 한 줄이 전부다</span></span>
+    <span class="kw">private</span> Long version;
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead plain"><span class="tag">서비스</span> 코드는 평소와 완전히 같다</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">rename</span>(Long id, String newName) {
+    Product p = productRepository.<span class="fn">findById</span>(id)
+                    .<span class="fn">orElseThrow</span>();   <span class="cm">// version = 3 을 읽음</span>
+    p.<span class="fn">setName</span>(newName);          <span class="cm">// 변경 감지(dirty checking)</span>
+}   <span class="cm">// ← 커밋 시점에 flush → 아래 UPDATE 가 나간다</span>
+
+<span class="cm">// 개발자가 쓰는 코드에는 락에 대한 언급이 전혀 없다.
+// 그래서 "무슨 SQL이 나가는가"를 아는 것이 채점 지점이 된다.</span></code></pre>
+  </div>
+</div>
+
+<div class="codehead plain"><span class="tag">SQL 로그</span> <code>spring.jpa.show-sql=true</code> + 바인딩 파라미터</div>
+<pre><code><span class="cm">-- 사람들이 있을 거라고 생각하는 "재확인 SELECT" — 이런 건 나가지 않는다.
+-- select version from product where id=?      ← 존재하지 않음</span>
+
+<span class="cm">-- 실제로 나가는 것은 이 한 줄뿐이다.</span>
+update
+    product
+set
+    name=?,
+    stock=?,
+<span class="ln-good">    version=?          <span class="cm">-- 바인딩 값 = 읽어온 버전 + 1  (즉 4)</span></span>
+where
+    id=?
+<span class="ln-good">    and version=?      <span class="cm">-- 바인딩 값 = 읽어온 버전      (즉 3)</span></span></code></pre>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> <code>@Version</code> 없는 엔티티</div>
+<pre><code>update product set name=?, stock=?
+<span class="ln-bad">  where id=?</span>
+<span class="cm">--      ↑ id 만 본다.
+--        남이 뭘 바꿨든 그냥 덮어쓴다
+--        = 1절의 lost update</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> <code>@Version</code> 붙인 엔티티</div>
+<pre><code>update product set name=?, stock=?, version=?
+<span class="ln-good">  where id=? and version=?</span>
+<span class="cm">--                ↑ "내가 읽었을 때
+--                   그대로일 때만 써라"</span></code></pre>
+  </div>
+</div>
+
+<p><code>AND version = 3</code>이라는 조건 하나가 하는 일을 말로 풀면 이렇다 — <b>"내가 t1에 읽었던 그 상태가 지금도 유지되고 있을 때만 이 UPDATE를 적용하라."</b> 1절 t4에서 B의 UPDATE가 그냥 통과해버린 이유는 조건이 <code>WHERE id = 1</code> 하나뿐이었기 때문이고, <code>AND version = 3</code>을 붙이면 그 UPDATE는 <b>한 행도 못 고치고 0을 리턴한다.</b> 그 0이 곧 충돌 신호다.</p>
+
+<div class="memo">
+  <h4>가산점 한 줄 — 로그에는 <code>version + 1</code>이 아니라 <code>version=?</code>로 찍힌다 <span class="badge bonus">가산점</span></h4>
+  <p style="margin-bottom:0"><b>하이버네이트는 새 버전 값을 메모리에서 계산해(읽은 값 + 1) 파라미터로 바인딩한다.</b> 개념적으로는 <code>version + 1</code>이 맞지만, <b>실제 SQL 문자열</b>을 물으면 <code>version=?</code>라고 답하는 편이 정확하다. "직접 로그를 본 사람"과 "책으로만 읽은 사람"이 갈리는 지점이다.</p>
+</div>
+
+<h3>3-3. 충돌은 무엇으로 감지하는가 — 값 비교가 아니라 "영향 행 수"</h3>
+
+<p><b>이 부분이 이 문항의 채점 포인트다.</b> 하이버네이트는 UPDATE 결과로 돌아온 <b>영향받은 행 수(affected rows)</b>만 본다. JDBC의 <code>PreparedStatement.executeUpdate()</code>가 리턴하는 그 정수다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 268" role="img" aria-label="UPDATE 한 문장이 실행된 뒤 영향 행 수가 1이면 정상이고 version이 4로 올라가며, 0이면 WHERE 조건에 걸리는 행이 없다는 뜻이므로 누군가 이미 버전을 올린 것이고 OptimisticLockException이 발생한다는 두 갈래 도식">
+    <defs>
+      <marker id="af-g" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+      <marker id="af-r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="450" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">충돌 판정은 "숫자 하나"로 끝난다</text>
+
+    <rect x="20" y="44" width="300" height="66" rx="10" fill="#1e293b" stroke="#334155"/>
+    <text x="36" y="70" font-size="11.5" fill="#e2e8f0" class="mono">UPDATE ... SET version=4</text>
+    <text x="36" y="92" font-size="11.5" fill="#e2e8f0" class="mono">  WHERE id=1 <tspan fill="#fcd34d">AND version=3</tspan></text>
+
+    <path d="M322 66 L360 66" stroke="#16a34a" stroke-width="2" marker-end="url(#af-g)"/>
+    <path d="M322 92 L360 92" stroke="#dc2626" stroke-width="2" marker-end="url(#af-r)"/>
+
+    <!-- rows=1 -->
+    <rect x="366" y="42" width="514" height="76" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="382" y="66" font-size="13" fill="#166534" font-weight="700">영향 행 수 <tspan font-size="17">1</tspan> &nbsp;·&nbsp; 아무도 안 건드렸다</text>
+    <text x="382" y="88" font-size="12" fill="#166534">정상 커밋. DB 의 version 은 이제 <tspan font-weight="700">4</tspan>.</text>
+    <text x="382" y="108" font-size="11.5" fill="#15803d">추가 쿼리도 대기도 없었다 — 평시 비용 0 이 여기서 나온다</text>
+
+    <!-- rows=0 -->
+    <rect x="366" y="130" width="514" height="118" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="382" y="154" font-size="13" fill="#b91c1c" font-weight="700">영향 행 수 <tspan font-size="17">0</tspan> &nbsp;·&nbsp; WHERE 조건에 걸리는 행이 없다</text>
+    <text x="382" y="176" font-size="12" fill="#7f1d1d">= 누군가 이미 version 을 4 이상으로 올렸다</text>
+    <text x="382" y="196" font-size="12" fill="#b91c1c" font-weight="700">= 충돌!</text>
+    <rect x="382" y="206" width="482" height="30" rx="7" fill="#fff" stroke="#fecaca"/>
+    <text x="396" y="226" font-size="11.5" fill="#b91c1c" class="mono">OptimisticLockException / ObjectOptimisticLockingFailureException</text>
+
+    <rect x="20" y="130" width="300" height="118" rx="10" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="170" y="154" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">감지 시점에 주목</text>
+    <text x="170" y="178" font-size="11.5" fill="#92400e" text-anchor="middle">이 판정은 <tspan font-weight="700">UPDATE 가 이미</tspan></text>
+    <text x="170" y="196" font-size="11.5" fill="#92400e" text-anchor="middle"><tspan font-weight="700">실패한 뒤</tspan>에 일어난다</text>
+    <text x="170" y="222" font-size="11.5" fill="#b45309" text-anchor="middle">막는(prevention) 장치가 아니라</text>
+    <text x="170" y="240" font-size="11.5" fill="#b45309" text-anchor="middle" font-weight="700">감지(detection) 장치다</text>
+  </svg>
+  <figcaption>즉 <b>"충돌이 났다"를 알아내는 방법은 데이터를 다시 읽어서 비교하는 게 아니라, DB가 돌려준 숫자가 0인지 보는 것</b>이다. 값 비교도, 재조회도 없다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>낙관적 락 3단 인출 — <b>한 · 영 · 새</b></h4>
+  <div class="chain">
+    <span class="chip g"><b>한</b> 문장</span><span class="arrow">→</span><span class="chip g">별도 SELECT 없이 <code>UPDATE ... WHERE id=? AND version=?</code></span>
+  </div>
+  <div class="chain">
+    <span class="chip b"><b>영</b>향 행 수 0</span><span class="arrow">→</span><span class="chip b">값 비교가 아니라 숫자 0으로 사후 감지</span>
+  </div>
+  <div class="chain">
+    <span class="chip r"><b>새</b> 트랜잭션</span><span class="arrow">→</span><span class="chip r">재시도는 반드시 트랜잭션 바깥에서 (5절)</span>
+  </div>
+  <div class="rule ok" style="margin-bottom:0">낙관적 락은 잠그지 않는다. <b>"충돌하지 않을 것"에 베팅하고, 틀렸을 때 예외를 받는다.</b></div>
+</div>
+
+<!-- ===================== 4 ===================== -->
+<h2 id="s4">4. <code>@Version</code> 실전 — 예외의 타입과 위치, 그리고 주의점 4가지</h2>
+
+<h3>4-1. 같은 사건인데 계층마다 이름이 다르다</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>계층</th><th>타입</th><th>언제 보게 되나</th></tr></thead>
+  <tbody>
+    <tr><td>JPA 표준</td><td><code>jakarta.persistence.OptimisticLockException</code></td><td>순수 JPA(<code>EntityManager</code>) 사용 시</td></tr>
+    <tr><td>하이버네이트</td><td><code>org.hibernate.StaleObjectStateException</code></td><td>하이버네이트가 내부에서 던지는 원본</td></tr>
+    <tr class="hl"><td><b>Spring</b></td><td><code>org.springframework.orm.ObjectOptimisticLockingFailureException</code></td><td><b>Spring Data JPA 사용 시 실무에서 보는 것</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout trap"><span class="t">잡는 타입을 틀리면 재시도가 통째로 무력화된다</span>
+  Spring은 <b>예외 변환(exception translation)</b>을 거쳐 벤더별 예외를 자기 계층의 <code>DataAccessException</code> 계열로 바꾼다. 그래서 Spring Data JPA를 쓰는 코드에서 잡아야 할 것은 <code>ObjectOptimisticLockingFailureException</code>(또는 그 부모인 <code>OptimisticLockingFailureException</code>)이다. <b><code>catch (OptimisticLockException e)</code>만 걸어두면 안 잡히는 경우가 생긴다.</b>
+</div>
+
+<h3>4-2. 실무에서 더 중요한 것 — <b>예외가 터지는 위치</b></h3>
+
+<div class="codehead bad"><span class="tag">착각</span> "메서드 안에서 try-catch 하면 되겠지"</div>
+<pre><code><span class="kw">@Transactional</span>
+<span class="kw">public void</span> <span class="fn">rename</span>(Long id, String newName) {
+    Product p = productRepository.<span class="fn">findById</span>(id).<span class="fn">orElseThrow</span>();
+    p.<span class="fn">setName</span>(newName);
+<span class="ln-bad">    <span class="cm">// ← 여기서는 아무 일도 안 일어난다. UPDATE 는 아직 안 나갔다.</span></span>
+<span class="ln-bad">}   <span class="cm">// ← 커밋 직전 flush 에서 UPDATE 가 나가고, 여기서 예외가 터진다</span></span>
+    <span class="cm">//   즉 예외는 "메서드 본문 밖", 트랜잭션 경계에서 발생한다</span></code></pre>
+
+<p>변경 감지는 flush 시점에 UPDATE를 만들고, flush는 보통 <b>커밋 직전</b>이다. 따라서 <b>메서드 안에서 <code>try-catch</code>로 감싸도 이 예외는 안 잡힌다.</b> 예외를 메서드 안에서 보고 싶다면 <code>saveAndFlush()</code>나 <code>entityManager.flush()</code>로 flush를 앞당겨야 한다. <b>이 사실이 5절(재시도)의 전제가 된다.</b></p>
+
+<h3>4-3. 주의점 ① 엔티티가 실제로 바뀌어야 검사된다</h3>
+
+<p>변경된 필드가 없으면 <b>UPDATE 자체가 안 나가고, UPDATE가 없으면 버전 검사도 없다.</b> "읽기만 하고 다른 엔티티를 바꾼" 경우 그 읽은 엔티티는 보호되지 않는다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> Product를 읽기만 하고 조건으로 삼는다</div>
+<pre><code>Product p = productRepository.<span class="fn">findById</span>(id)
+                .<span class="fn">orElseThrow</span>();   <span class="cm">// stock = 5 확인</span>
+<span class="kw">if</span> (p.<span class="fn">getStock</span>() &gt;= 1) {
+    orderRepository.<span class="fn">save</span>(<span class="kw">new</span> Order(...));  <span class="cm">// Order 만 INSERT</span>
+}
+<span class="ln-bad"><span class="cm">// Product 는 안 바뀌었으니 UPDATE 도 없고, version 검사도 없다.</span></span>
+<span class="cm">// 그 사이 다른 트랜잭션이 stock 을 0으로 만들어도 우리는 모른다.</span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 읽기만 한 엔티티에도 락 모드를 명시한다</div>
+<pre><code><span class="cm">// 커밋 시 version 을 확인만 한다</span>
+<span class="ln-good">Product p = entityManager.<span class="fn">find</span>(Product.class, id,
+        LockModeType.OPTIMISTIC);</span>
+
+<span class="cm">// 또는 "이 엔티티를 건드렸다"고 버전을 강제로 올린다</span>
+<span class="ln-good">        LockModeType.OPTIMISTIC_FORCE_INCREMENT;</span>
+<span class="cm">// → version 을 +1 해서 UPDATE 를 강제 발행</span></code></pre>
+  </div>
+</div>
+
+<div class="callout info" style="margin-top:14px"><span class="t"><code>OPTIMISTIC_FORCE_INCREMENT</code>는 애그리거트 루트 보호에 쓴다</span>
+  <b>애그리거트</b>란 "함께 변경되고 함께 일관성을 지켜야 하는 엔티티 묶음"이고, 그 대표가 <b>루트</b>다. 자식(<code>OrderItem</code>)만 바뀌었는데 부모(<code>Order</code>)의 버전을 올려서 <b>"이 주문 전체가 변경됐다"</b>고 표시하는 식이다.
+</div>
+
+<h3>4-4. 주의점 ② 벌크 연산은 버전을 올리지 않는다</h3>
+
+<p><code>@Modifying</code> JPQL이나 네이티브 UPDATE는 <b>영속성 컨텍스트와 <code>@Version</code>을 모두 우회한다.</b> 버전을 올려야 한다면 SQL에 직접 써야 한다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> version이 그대로 남는다</div>
+<pre><code><span class="kw">@Modifying</span>
+<span class="kw">@Query</span>(<span class="st">"update Product p set p.stock = p.stock - 1 "</span> +
+       <span class="st">"where p.id = :id"</span>)
+<span class="kw">int</span> <span class="fn">decrease</span>(<span class="kw">@Param</span>(<span class="st">"id"</span>) Long id);
+<span class="ln-bad"><span class="cm">// → 다른 트랜잭션의 낙관적 락이 이 변경을 감지하지 못한다</span></span></code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 벌크에서도 버전을 직접 올린다</div>
+<pre><code><span class="kw">@Modifying</span>(clearAutomatically = <span class="kw">true</span>, flushAutomatically = <span class="kw">true</span>)
+<span class="kw">@Query</span>(<span class="st">"update Product p set p.stock = p.stock - 1, "</span> +
+<span class="ln-good">       <span class="st">"p.version = p.version + 1 "</span> +</span>
+       <span class="st">"where p.id = :id and p.stock &gt;= 1"</span>)
+<span class="kw">int</span> <span class="fn">decrease</span>(<span class="kw">@Param</span>(<span class="st">"id"</span>) Long id);</code></pre>
+  </div>
+</div>
+
+<h3>4-5. 주의점 ③ 버전 필드 타입 &nbsp;/&nbsp; ④ 준영속 엔티티</h3>
+
+<div class="grid g2">
+  <div class="tile">
+    <div class="k" style="font-family:inherit">③ 타입은 정수 계열로</div>
+    <div class="d">JPA 스펙이 보장하는 것은 정수 계열(<code>int</code>·<code>Integer</code>·<code>short</code>·<code>Short</code>·<code>long</code>·<code>Long</code>)과 <code>java.sql.Timestamp</code>다. <b>타임스탬프는 피하는 게 좋다</b> — 시계 정밀도가 낮으면 <b>서로 다른 두 수정이 같은 값이 되어 충돌을 놓칠 수 있다.</b> 숫자를 쓰면 그런 여지가 없다.</div>
+  </div>
+  <div class="tile ok">
+    <div class="k" style="font-family:inherit">④ 준영속 엔티티에도 버전이 실린다</div>
+    <div class="d"><b>준영속(detached)</b>은 한 번 영속 상태였다가 영속성 컨텍스트의 관리에서 벗어난 객체다. 화면에서 받은 DTO에 version을 담아 <code>merge()</code>하면 <b>"화면을 연 시점" 기준의 충돌 검사</b>가 된다 — <b>두 관리자 동시 편집 시나리오를 푸는 정석</b>이다. 다만 <code>merge()</code>는 전 필드를 덮어쓰므로 <b>PATCH 용도로는 쓸 수 없다.</b></div>
+  </div>
+</div>
+
+<div class="memo red">
+  <h4><code>@Version</code>을 붙였는데 충돌이 감지되지 않는 4가지 — <b>안 · 벌 · 다 · 인</b></h4>
+  <div class="grid g4">
+    <div class="tile red"><div class="k">안</div><div class="s">안 바뀜</div><div class="d">엔티티가 <b>변경되지 않으면</b> UPDATE도 버전 검사도 없다 → <code>LockModeType.OPTIMISTIC</code> 명시</div></div>
+    <div class="tile red"><div class="k">벌</div><div class="s">벌크 연산</div><div class="d"><code>@Modifying</code>·네이티브 SQL은 <b>version을 우회</b>한다 → SQL에 직접 <code>version + 1</code></div></div>
+    <div class="tile red"><div class="k">다</div><div class="s">다른 행</div><div class="d"><code>@Version</code>은 <b>그 엔티티 행 하나</b>만 보호한다. 자식만 바뀌면 부모 버전은 그대로 → <code>OPTIMISTIC_FORCE_INCREMENT</code></div></div>
+    <div class="tile red"><div class="k">인</div><div class="s">INSERT</div><div class="d">낙관적 락은 <b>"이미 있는 행"의 갱신 충돌</b>만 다룬다. 동시 INSERT 중복은 <b>DB 유니크 제약</b>이 막아야 한다</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">네 가지의 공통점은 하나다 — <b>"버전이 실린 UPDATE가 그 행에 나가지 않았다."</b> 이 문장으로 되짚으면 네 케이스를 외우지 않아도 즉석에서 재구성할 수 있다.</p>
+</div>
+
+<!-- ===================== 5 ===================== -->
+<h2 id="s5">5. 재시도의 함정 — 같은 트랜잭션에서 재시도하면 영원히 실패한다 <span class="badge senior">시니어 변별</span></h2>
+
+<p>낙관적 락은 <b>"실패할 수 있다"를 전제로 하는 구조</b>다. 그러니 <b>재시도가 세트로 따라온다.</b> 그런데 여기가 실무에서 가장 많이 틀리는 지점이고, 이 문항의 백미이기도 하다.</p>
+
+<div class="codehead bad"><span class="tag">before</span> 절대 성공하지 않는 재시도 — 100번으로 늘려도 100번 다 실패한다</div>
+<pre><code><span class="ln-bad"><span class="kw">@Transactional</span>                                  <span class="cm">// ← 루프가 이 안에 있다</span></span>
+<span class="kw">public void</span> <span class="fn">decrease</span>(Long id) {
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; 3; i++) {
+        <span class="kw">try</span> {
+            Product p = productRepository.<span class="fn">findById</span>(id).<span class="fn">orElseThrow</span>();
+            p.<span class="fn">setStock</span>(p.<span class="fn">getStock</span>() - 1);
+            productRepository.<span class="fn">flush</span>();      <span class="cm">// 여기서 UPDATE + 충돌 감지</span>
+            <span class="kw">return</span>;
+        } <span class="kw">catch</span> (ObjectOptimisticLockingFailureException e) {
+<span class="ln-bad">            <span class="cm">// 다시 시도 → 그런데 findById 가 DB 를 다시 읽지 않는다</span></span>
+        }
+    }
+}</code></pre>
+
+<p>얼핏 보면 문제가 없어 보인다. 실패하면 다시 조회하고 다시 계산해서 다시 쓰겠다는 것이니 직관에도 맞는다. <b>그런데 이 코드는 3번 다 실패한다.</b> 이유가 두 겹이다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="같은 트랜잭션 안에서 재시도 루프를 돌 때 1회차는 DB에서 version 3 엔티티를 읽어 1차 캐시에 담고 실패하며, 2회차와 3회차는 findById가 1차 캐시에 적중해 DB로 가지 않고 여전히 version 3 객체를 돌려주므로 같은 실패를 반복한다는 것을 보여주는 도식">
+    <defs>
+      <marker id="rt-s" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#94a3b8"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">재시도 루프가 도는 동안 DB 상태는 한 번도 다시 읽히지 않는다</text>
+
+    <!-- transaction envelope -->
+    <rect x="16" y="40" width="792" height="272" rx="14" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="36" y="64" font-size="13" fill="#b91c1c" font-weight="700" class="mono">@Transactional  ── 하나의 트랜잭션 = 하나의 영속성 컨텍스트 ──</text>
+
+    <!-- 1st -->
+    <rect x="36" y="78" width="752" height="66" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="52" y="98" font-size="12" fill="#7f1d1d" font-weight="700">루프 1회차</text>
+    <text x="150" y="98" font-size="11.5" fill="#7f1d1d" class="mono">findById → DB SELECT → version=3 객체를 1차 캐시에 담음</text>
+    <text x="150" y="118" font-size="11.5" fill="#7f1d1d" class="mono">flush → UPDATE ... WHERE version=3 → 영향 행 수 0 → 예외</text>
+    <text x="150" y="136" font-size="11" fill="#b45309">(그 사이 다른 트랜잭션이 DB 의 version 을 4로 올려둔 상태)</text>
+
+    <!-- 2nd -->
+    <rect x="36" y="152" width="752" height="60" rx="10" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+    <text x="52" y="172" font-size="12" fill="#b91c1c" font-weight="700">루프 2회차</text>
+    <text x="150" y="172" font-size="11.5" fill="#b91c1c" class="mono" font-weight="700">findById → 1차 캐시 적중 → DB 안 감 → 여전히 version=3 객체</text>
+    <text x="150" y="192" font-size="11.5" fill="#7f1d1d" class="mono">flush → UPDATE ... WHERE version=3 → 또 0 → 또 예외</text>
+
+    <!-- 3rd -->
+    <rect x="36" y="220" width="752" height="38" rx="10" fill="#fff" stroke="#fecaca"/>
+    <text x="52" y="244" font-size="12" fill="#7f1d1d" font-weight="700">루프 3회차</text>
+    <text x="150" y="244" font-size="11.5" fill="#7f1d1d">... 이하 동일. 몇 번을 돌려도 결과가 같다.</text>
+
+    <!-- rollback-only band -->
+    <rect x="36" y="266" width="752" height="34" rx="9" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="52" y="288" font-size="12" fill="#b91c1c" font-weight="700">그리고 이 트랜잭션에는 이미 "롤백만 가능(rollback-only)" 표시가 찍혀 있다 — catch 로 삼켜도 지워지지 않는다</text>
+
+    <!-- right: DB -->
+    <rect x="828" y="78" width="276" height="180" rx="12" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="966" y="102" font-size="13" fill="#334155" text-anchor="middle" font-weight="700">DB 의 실제 상태</text>
+    <rect x="852" y="118" width="228" height="40" rx="8" fill="#fff" stroke="#cbd5e1"/>
+    <text x="966" y="143" font-size="13" fill="#334155" text-anchor="middle" font-weight="700" class="mono">version = 4</text>
+    <text x="966" y="182" font-size="11.5" fill="#64748b" text-anchor="middle">1회차 이후로 계속 4인데</text>
+    <text x="966" y="202" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">우리 손에는 3짜리 옛 객체가</text>
+    <text x="966" y="222" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">계속 들려 있다</text>
+    <text x="966" y="246" font-size="11" fill="#64748b" text-anchor="middle">= 2회차부터 이 선을 넘어가지 않는다</text>
+
+    <line x1="800" y1="182" x2="822" y2="182" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#rt-s)"/>
+    <text x="811" y="172" font-size="10" fill="#94a3b8" text-anchor="middle">✕</text>
+  </svg>
+  <figcaption><b>첫째, 1차 캐시 때문에 "다시 조회"가 일어나지 않는다.</b> 영속성 컨텍스트는 트랜잭션 하나에 하나씩 붙어 있고 읽어온 엔티티를 id를 키로 보관한다. <code>findById(id)</code>를 두 번째로 부르면 하이버네이트는 <b>DB로 SELECT를 보내지 않고 캐시의 객체를 그대로 돌려준다</b>(같은 트랜잭션 안이라면 같은 행은 같은 객체여야 한다는 JPA의 동일성 보장). <b>둘째, 트랜잭션에 이미 롤백 표시가 찍혀 있다.</b> 루프가 운 좋게 성공한 것처럼 리턴하더라도 <b>커밋 시점에 트랜잭션이 통째로 롤백된다.</b></figcaption>
+</figure>
+
+<div class="rule red">문제의 두 축(<b>1차 캐시</b>와 <b>롤백 표시</b>)이 모두 <b>"트랜잭션 하나"</b>에 묶여 있다<br><span style="font-size:.95rem">→ 그것들을 버리려면 <b>트랜잭션 자체를 끝내야 한다</b> → <b>재시도는 트랜잭션 바깥에서 일어나야 한다</b></span></div>
+
+<h3>5-1. 올바른 형태 — 재시도의 매 회차가 새 트랜잭션이어야 한다</h3>
+
+<div class="cmp wide">
+  <div>
+    <div class="codehead good"><span class="tag">after ①</span> 재시도만 담당하는 빈 — <code>@Transactional</code> 없음</div>
+<pre><code><span class="kw">@Service</span>
+<span class="kw">@RequiredArgsConstructor</span>
+<span class="kw">public class</span> StockFacade {
+
+    <span class="kw">private final</span> StockService stockService;
+
+<span class="ln-good">    <span class="kw">@Retryable</span>(</span>
+        retryFor = ObjectOptimisticLockingFailureException.class,
+        maxAttempts = 5,
+        backoff = <span class="kw">@Backoff</span>(delay = 50, multiplier = 2.0,
+                           maxDelay = 500, <span class="st">random = true</span>)
+    )
+    <span class="kw">public void</span> <span class="fn">decrease</span>(Long id) {
+<span class="ln-good">        stockService.<span class="fn">decrease</span>(id);   <span class="cm">// 호출마다 새 트랜잭션</span></span>
+    }
+
+    <span class="kw">@Recover</span>                          <span class="cm">// ← 포기 경로. 필수다.</span>
+    <span class="kw">public void</span> <span class="fn">recover</span>(ObjectOptimisticLockingFailureException e,
+                        Long id) {
+        <span class="kw">throw new</span> StockConflictException(<span class="st">"잠시 후 다시 시도해 주세요"</span>, e);
+    }
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after ②</span> 트랜잭션만 담당하는 빈</div>
+<pre><code><span class="kw">@Service</span>
+<span class="kw">@RequiredArgsConstructor</span>
+<span class="kw">public class</span> StockService {
+
+    <span class="kw">private final</span> ProductRepository productRepository;
+
+<span class="ln-good">    <span class="kw">@Transactional</span>                   <span class="cm">// ← 트랜잭션만 담당</span></span>
+    <span class="kw">public void</span> <span class="fn">decrease</span>(Long id) {
+        Product p = productRepository.<span class="fn">findById</span>(id).<span class="fn">orElseThrow</span>();
+        <span class="kw">if</span> (p.<span class="fn">getStock</span>() &lt; 1) <span class="kw">throw new</span> OutOfStockException();
+        p.<span class="fn">setStock</span>(p.<span class="fn">getStock</span>() - 1);
+    }
+    <span class="cm">// ← 커밋. 충돌이면 여기서 예외
+    //    → 트랜잭션 롤백 → 영속성 컨텍스트도 함께 폐기</span>
+}
+
+<span class="cm">// 달라진 것은 "재시도 루프의 위치" 하나뿐이다.
+// BEFORE: 루프가 @Transactional 안
+// AFTER : 루프(@Retryable)가 @Transactional 바깥</span></code></pre>
+  </div>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 280" role="img" aria-label="BEFORE는 하나의 긴 트랜잭션 안에서 시도 1,2,3이 이어져 1차 캐시와 롤백 표시가 계속 유지되므로 한 번 실패하면 끝까지 실패하고, AFTER는 시도마다 트랜잭션이 열리고 닫히며 실패할 때마다 영속성 컨텍스트가 폐기되어 다음 시도가 DB에서 최신 버전을 다시 읽어 성공하는 것을 보여주는 도식">
+    <defs>
+      <marker id="tx-a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">달라진 것은 루프의 위치 하나 — 그런데 결과가 정반대가 된다</text>
+
+    <!-- BEFORE -->
+    <text x="20" y="62" font-size="13" fill="#b91c1c" font-weight="700">BEFORE</text>
+    <rect x="106" y="44" width="880" height="76" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="122" y="64" font-size="11.5" fill="#b91c1c" class="mono" font-weight="700">@Transactional ────────────────────────────────────────────────</text>
+    <rect x="130" y="72" width="150" height="36" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="205" y="95" font-size="12" fill="#7f1d1d" text-anchor="middle">시도 1 → 실패</text>
+    <rect x="296" y="72" width="150" height="36" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="371" y="95" font-size="12" fill="#7f1d1d" text-anchor="middle">시도 2 → 실패</text>
+    <rect x="462" y="72" width="150" height="36" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="537" y="95" font-size="12" fill="#7f1d1d" text-anchor="middle">시도 3 → 실패</text>
+    <text x="636" y="88" font-size="11.5" fill="#b91c1c" font-weight="700">1차 캐시도 롤백 표시도 그대로 유지된다</text>
+    <text x="636" y="106" font-size="11.5" fill="#b91c1c" font-weight="700">→ 한 번 실패하면 끝까지 실패한다</text>
+    <rect x="994" y="60" width="110" height="44" rx="9" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="1049" y="88" font-size="13" fill="#b91c1c" text-anchor="middle" font-weight="700">전부 실패</text>
+
+    <!-- AFTER -->
+    <text x="20" y="182" font-size="13" fill="#166534" font-weight="700">AFTER</text>
+    <rect x="106" y="140" width="880" height="118" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="122" y="160" font-size="11.5" fill="#166534" class="mono" font-weight="700">@Retryable ── 트랜잭션 바깥 ── 매 회차가 새 트랜잭션 ──────────────</text>
+
+    <rect x="130" y="170" width="180" height="34" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="220" y="192" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">시도1 [ @Transactional ]</text>
+    <text x="220" y="220" font-size="11" fill="#b45309" text-anchor="middle">실패 → 컨텍스트 폐기</text>
+
+    <rect x="330" y="170" width="180" height="34" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="420" y="192" font-size="11.5" fill="#7f1d1d" text-anchor="middle" class="mono">시도2 [ @Transactional ]</text>
+    <text x="420" y="220" font-size="11" fill="#b45309" text-anchor="middle">실패 → 컨텍스트 폐기</text>
+
+    <rect x="530" y="170" width="180" height="34" rx="8" fill="#fff" stroke="#16a34a" stroke-width="2"/>
+    <text x="620" y="192" font-size="11.5" fill="#166534" text-anchor="middle" class="mono" font-weight="700">시도3 [ @Transactional ]</text>
+    <text x="620" y="220" font-size="11" fill="#166534" text-anchor="middle" font-weight="700">성공</text>
+
+    <line x1="314" y1="187" x2="326" y2="187" stroke="#16a34a" stroke-width="1.8" marker-end="url(#tx-a)"/>
+    <line x1="514" y1="187" x2="526" y2="187" stroke="#16a34a" stroke-width="1.8" marker-end="url(#tx-a)"/>
+
+    <rect x="730" y="164" width="244" height="76" rx="9" fill="#fff" stroke="#bbf7d0"/>
+    <text x="746" y="184" font-size="11.5" fill="#166534" font-weight="700">왜 이게 되는가</text>
+    <text x="746" y="203" font-size="11" fill="#166534">롤백 → 영속성 컨텍스트 통째 폐기</text>
+    <text x="746" y="220" font-size="11" fill="#166534">→ 다음 호출의 findById 가</text>
+    <text x="746" y="236" font-size="11" fill="#166534" font-weight="700">정말로 DB 에서 최신 version 을 읽는다</text>
+
+    <rect x="994" y="176" width="110" height="44" rx="9" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="1049" y="204" font-size="13" fill="#166534" text-anchor="middle" font-weight="700">성공</text>
+  </svg>
+  <figcaption>"다시 조회해서 재실행"이라는 직관 자체는 옳지만, <b>그 '다시 조회'가 성립하려면 영속성 컨텍스트가 새것이어야 한다</b>는 조건이 붙는다. 롤백 표시도 그 트랜잭션과 함께 사라진다.</figcaption>
+</figure>
+
+<h3>5-2. 왜 굳이 빈을 분리했나 — 프록시(AOP) 순서 문제 <span class="badge bonus">가산점</span></h3>
+
+<p><code>@Retryable</code>과 <code>@Transactional</code>을 <b>같은 메서드에</b> 붙이면 순서가 어긋날 위험이 있다. 둘 다 스프링이 <b>프록시로 가로채</b> 동작하는 기능이라, <b>어느 프록시가 바깥에 오느냐</b>로 결과가 완전히 달라진다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 260" role="img" aria-label="올바른 순서는 요청이 재시도 프록시를 먼저 지나고 그 안에 트랜잭션 프록시가 있어 커밋 실패까지 재시도가 감싸지만, 잘못된 순서는 트랜잭션 프록시가 바깥이라 재시도가 트랜잭션 안에 갇혀 커밋 시점 예외를 잡지 못하는 것을 보여주는 중첩 박스 도식">
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">낙관적 락 예외는 커밋 시점에 터진다 — 그래서 재시도가 트랜잭션보다 바깥이어야 한다</text>
+
+    <!-- correct -->
+    <rect x="14" y="42" width="536" height="204" rx="14" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="282" y="68" font-size="13.5" font-weight="700" fill="#166534" text-anchor="middle">올바른 순서 (O)</text>
+    <rect x="40" y="82" width="484" height="112" rx="11" fill="#fff" stroke="#16a34a"/>
+    <text x="56" y="102" font-size="12" fill="#166534" font-weight="700">재시도 프록시</text>
+    <rect x="70" y="112" width="428" height="70" rx="10" fill="#ecfdf5" stroke="#86efac"/>
+    <text x="86" y="132" font-size="12" fill="#166534" font-weight="700">트랜잭션 프록시</text>
+    <rect x="102" y="142" width="372" height="30" rx="8" fill="#fff" stroke="#bbf7d0"/>
+    <text x="288" y="162" font-size="12" fill="#166534" text-anchor="middle" class="mono">메서드 본문</text>
+    <text x="282" y="216" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">커밋 실패까지 재시도가 감쌌다</text>
+    <text x="282" y="234" font-size="11.5" fill="#15803d" text-anchor="middle">→ 매 회차가 새 트랜잭션 → 5-1 이 성립한다</text>
+
+    <!-- wrong -->
+    <rect x="570" y="42" width="536" height="204" rx="14" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="838" y="68" font-size="13.5" font-weight="700" fill="#b91c1c" text-anchor="middle">잘못된 순서 (X)</text>
+    <rect x="596" y="82" width="484" height="112" rx="11" fill="#fff" stroke="#dc2626"/>
+    <text x="612" y="102" font-size="12" fill="#b91c1c" font-weight="700">트랜잭션 프록시</text>
+    <rect x="626" y="112" width="428" height="70" rx="10" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="642" y="132" font-size="12" fill="#b91c1c" font-weight="700">재시도 프록시 &nbsp;— 트랜잭션 안에 갇혔다</text>
+    <rect x="658" y="142" width="372" height="30" rx="8" fill="#fff" stroke="#fecaca"/>
+    <text x="844" y="162" font-size="12" fill="#7f1d1d" text-anchor="middle" class="mono">메서드 본문</text>
+    <text x="838" y="216" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">① 커밋은 재시도가 다 끝난 뒤 → 예외를 잡을 기회조차 없다</text>
+    <text x="838" y="234" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">② 잡아도 1차 캐시가 그대로 → 5절 앞부분의 무한 실패</text>
+  </svg>
+  <figcaption>Spring Retry의 기본 순서 설정은 재시도 advice가 트랜잭션보다 바깥에 오도록 잡혀 있고 <code>@EnableRetry(order = ...)</code>로 조정할 수도 있지만, <b>프록시 순서라는 눈에 안 보이는 규칙에 코드의 정확성을 의존시키는 것 자체가 나쁜 설계다.</b> 빈을 나누면 호출 스택에 순서가 드러나므로 읽는 사람이 헷갈릴 여지가 없다.</figcaption>
+</figure>
+
+<div class="callout warn"><span class="t">덤 — 자기 호출(self-invocation) 함정도 같이 막힌다</span>
+  같은 클래스 안에서 <code>this.decrease()</code>처럼 자기 메서드를 호출하면 <b>프록시를 거치지 않아</b> <code>@Retryable</code>도 <code>@Transactional</code>도 <b>아예 동작하지 않는다.</b> 빈 분리는 이 함정도 함께 제거한다.
+</div>
+
+<h3>5-3. 재시도를 안전하게 만드는 것들, 그리고 남는 한계</h3>
+
+<div class="memo green">
+  <h4>재시도 3종 세트 — <b>새 트랜잭션 · 백오프+지터 · 상한과 포기 경로</b></h4>
+  <div class="grid g3">
+    <div class="tile ok"><div class="k">새 트랜잭션</div><div class="d">매 회차가 <b>새 영속성 컨텍스트</b>여야 <code>findById</code>가 DB를 다시 읽는다. 빈을 분리해 강제한다.</div></div>
+    <div class="tile ok"><div class="k">지수 백오프 + 지터</div><div class="d">대기를 회차마다 곱해 늘리고(50→100→200→400ms) <b>난수를 섞는다.</b> 지터가 없으면 실패한 요청들이 <b>정확히 같은 시각에 깨어나</b> 또 같이 부딪힌다(<b>thundering herd</b>).</div></div>
+    <div class="tile ok"><div class="k">상한 + 포기 경로</div><div class="d"><code>maxAttempts</code>와 <code>@Recover</code>. 상한이 없으면 <b>6절의 커넥션 고갈과 똑같은 결말</b>로 간다.</div></div>
+  </div>
+</div>
+
+<div class="callout trap"><span class="t">그래도 남는 한계 — 재시도 폭풍(retry storm)</span>
+  한정판 재고처럼 <b>초당 500건이 전부 같은 로우 하나</b>를 치면 이야기가 달라진다.
+  <div class="chain" style="margin-top:8px">
+    <span class="chip r">1라운드 500건 → 1건 성공, 499건 영향 행 수 0</span><span class="arrow">→</span>
+    <span class="chip r">2라운드 499건 <b>전부 처음부터 재실행</b> → 1건 성공</span><span class="arrow">→</span>
+    <span class="chip r">3라운드 498건 …</span>
+  </div>
+  <p style="margin:8px 0 0"><b>성공 1건당 낭비되는 작업량이 대기 중인 요청 수에 비례</b>한다. 낙관적 락의 전제("충돌은 드물다")가 깨진 상황이고, 여기서 낙관적 락은 <b>틀린 도구</b>다. 게다가 재시도 비용은 UPDATE 한 번이 아니라 <b>비즈니스 로직 전체의 재실행</b>이다 — 로직 안에 외부 API 호출이라도 있으면 <b>재시도는 곧 그 API를 5배 때리는 것</b>이 된다.</p>
+</div>
+
+<!-- ===================== 6 ===================== -->
+<h2 id="s6">6. 비관적 락 — 진짜로 잠그고, 대신 커넥션을 붙잡는다</h2>
+
+<h3>6-1. 무엇이 어떤 SQL로 나가는가</h3>
+
+<div class="cmp">
+  <div>
+    <div class="codehead plain"><span class="tag">코드</span> 리포지토리 메서드에 락 모드를 건다</div>
+<pre><code><span class="kw">public interface</span> ProductRepository
+        <span class="kw">extends</span> JpaRepository&lt;Product, Long&gt; {
+
+<span class="ln-good">    <span class="kw">@Lock</span>(LockModeType.PESSIMISTIC_WRITE)</span>
+    <span class="kw">@Query</span>(<span class="st">"select p from Product p where p.id = :id"</span>)
+    Optional&lt;Product&gt; <span class="fn">findByIdForUpdate</span>(<span class="kw">@Param</span>(<span class="st">"id"</span>) Long id);
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead plain"><span class="tag">SQL</span> 위 메서드가 만드는 것 (MySQL/PostgreSQL 기준)</div>
+<pre><code>select p.id, p.name, p.stock, p.version
+  from product p
+ where p.id = ?
+<span class="ln-good"> for update</span>
+<span class="cm">--  ↑ 이 행은 지금부터 내 트랜잭션이 커밋/롤백할 때까지
+--    다른 트랜잭션이 못 건드린다</span></code></pre>
+  </div>
+</div>
+
+<p><code>FOR UPDATE</code>가 붙는 순간 1절의 타임라인이 달라진다. <b>t2에서 B가 같은 행을 읽으려 하면 B는 거기서 멈춰 서서 A의 커밋을 기다리고</b>, A가 커밋한 뒤에야 99라는 최신 값을 읽는다. 그러면 B의 계산은 <b>99 - 1 = 98</b>이 되어 lost update가 <b>애초에 성립하지 않는다.</b> "사전 차단"이라는 표현이 이 뜻이다.</p>
+
+<div class="scroll">
+<table>
+  <caption>락 모드 3종 — 실무에서 쓰는 건 사실상 <code>PESSIMISTIC_WRITE</code> 하나다</caption>
+  <thead><tr><th>모드</th><th>하는 일</th><th>전형적 SQL</th></tr></thead>
+  <tbody>
+    <tr><td><code>PESSIMISTIC_READ</code></td><td>공유 락 — 남의 읽기는 허용, 쓰기는 차단</td><td><code>for share</code> (구버전 MySQL은 <code>lock in share mode</code>)</td></tr>
+    <tr class="hl"><td><code>PESSIMISTIC_WRITE</code></td><td><b>배타 락 — 읽기·쓰기 모두 차단</b></td><td><code>for update</code></td></tr>
+    <tr><td><code>PESSIMISTIC_FORCE_INCREMENT</code></td><td>배타 락 + version 강제 증가</td><td><code>for update</code> + version UPDATE</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout warn"><span class="t">모르면 <code>PESSIMISTIC_WRITE</code>를 쓰는 게 안전하다</span>
+  <code>PESSIMISTIC_READ</code>는 <b>DB와 방언에 따라 지원 범위가 다르고, 공유 락을 지원하지 않는 DB에서는 배타 락으로 강등되어 결과적으로 <code>PESSIMISTIC_WRITE</code>와 같아질 수 있다.</b> 또 공유 락은 <b>"둘 다 읽고 둘 다 쓰려고 하는" 전형적인 데드락 패턴</b>을 만들기 쉽다. <code>PESSIMISTIC_FORCE_INCREMENT</code>는 잠금과 동시에 버전을 올려서, <b>비관적 락으로 보호한 변경을 낙관적 락 진영(준영속 화면 편집 등)에도 알려야 할 때</b> 쓴다.
+</div>
+
+<h3>6-2. 숨은 대가 — 붙잡히는 건 스레드가 아니라 커넥션이다 <span class="badge senior">시니어 변별</span></h3>
+
+<p>"비관적 락으로 바꾸면 재시도 폭풍은 사라진다"는 <b>맞다.</b> 499건은 재실행하지 않고 <b>그냥 기다린다.</b> 문제는 <b>기다리는 동안 무엇을 붙잡고 있느냐</b>다.</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="위쪽은 낙관적 락 재시도 대기가 애플리케이션 스레드만 붙잡는 반면 비관적 락 대기는 스레드와 DB 커넥션과 열린 트랜잭션을 함께 붙잡는다는 비교이고, 아래쪽은 커넥션 풀 20개가 락 대기로 모두 소진되어 락과 무관한 로그인 조회 API까지 커넥션을 얻지 못하는 장애 전파를 보여주는 도식">
+    <defs>
+      <marker id="cn-r" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#dc2626"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">"기다린다"는 같은데, 기다리는 동안 쥐고 있는 것이 다르다</text>
+
+    <!-- optimistic -->
+    <rect x="14" y="42" width="536" height="112" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="34" y="66" font-size="13" font-weight="700" fill="#166534">낙관적 락 + 재시도로 대기하는 요청</text>
+    <rect x="34" y="78" width="200" height="34" rx="8" fill="#fff" stroke="#16a34a"/>
+    <text x="134" y="100" font-size="12" fill="#166534" text-anchor="middle" font-weight="700">애플리케이션 스레드</text>
+    <rect x="246" y="78" width="284" height="34" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="5 4"/>
+    <text x="388" y="100" font-size="12" fill="#94a3b8" text-anchor="middle">DB 커넥션 — 이미 풀로 반납됨</text>
+    <text x="34" y="136" font-size="11.5" fill="#166534">트랜잭션은 이미 <tspan font-weight="700">롤백</tspan>돼서 커넥션은 풀로 돌아가 있다. 백오프 대기 중에도 DB 자원은 0.</text>
+
+    <!-- pessimistic -->
+    <rect x="570" y="42" width="536" height="112" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="590" y="66" font-size="13" font-weight="700" fill="#b91c1c">비관적 락으로 대기하는 요청</text>
+    <rect x="590" y="78" width="150" height="34" rx="8" fill="#fff" stroke="#dc2626"/>
+    <text x="665" y="100" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">스레드</text>
+    <rect x="750" y="78" width="150" height="34" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="825" y="100" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">DB 커넥션</text>
+    <rect x="910" y="78" width="176" height="34" rx="8" fill="#fee2e2" stroke="#dc2626"/>
+    <text x="998" y="100" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">열린 트랜잭션</text>
+    <text x="590" y="136" font-size="11.5" fill="#b91c1c"><tspan class="mono">SELECT ... FOR UPDATE</tspan> 를 보낸 상태로 응답을 기다린다 = <tspan font-weight="700">커넥션이 반납될 수 없다</tspan></text>
+
+    <!-- pool -->
+    <rect x="14" y="172" width="1092" height="212" rx="14" fill="#fff" stroke="#e5e7eb"/>
+    <text x="36" y="198" font-size="13.5" font-weight="700" fill="#1f2937">그래서 벌어지는 일 — 커넥션 풀 20개, 락을 기다리는 요청 21개</text>
+
+    <!-- pool box -->
+    <rect x="36" y="212" width="470" height="150" rx="11" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="52" y="234" font-size="12" fill="#b91c1c" font-weight="700">HikariCP 커넥션 풀 (maximumPoolSize = 20)</text>
+    <g fill="#dc2626">
+      <rect x="52" y="244" width="38" height="22" rx="5"/><rect x="96" y="244" width="38" height="22" rx="5"/><rect x="140" y="244" width="38" height="22" rx="5"/><rect x="184" y="244" width="38" height="22" rx="5"/><rect x="228" y="244" width="38" height="22" rx="5"/>
+      <rect x="272" y="244" width="38" height="22" rx="5"/><rect x="316" y="244" width="38" height="22" rx="5"/><rect x="360" y="244" width="38" height="22" rx="5"/><rect x="404" y="244" width="38" height="22" rx="5"/><rect x="448" y="244" width="38" height="22" rx="5"/>
+      <rect x="52" y="272" width="38" height="22" rx="5"/><rect x="96" y="272" width="38" height="22" rx="5"/><rect x="140" y="272" width="38" height="22" rx="5"/><rect x="184" y="272" width="38" height="22" rx="5"/><rect x="228" y="272" width="38" height="22" rx="5"/>
+      <rect x="272" y="272" width="38" height="22" rx="5"/><rect x="316" y="272" width="38" height="22" rx="5"/><rect x="360" y="272" width="38" height="22" rx="5"/><rect x="404" y="272" width="38" height="22" rx="5"/><rect x="448" y="272" width="38" height="22" rx="5"/>
+    </g>
+    <text x="271" y="318" font-size="12" fill="#b91c1c" text-anchor="middle" font-weight="700">20개 전부 "재고 API 의 락 대기"가 점유</text>
+    <text x="271" y="338" font-size="11.5" fill="#7f1d1d" text-anchor="middle">DB 는 놀고 있는데 커넥션은 풀에서 빠져 있다</text>
+    <text x="271" y="356" font-size="11" fill="#7f1d1d" text-anchor="middle">대기 시간이 <tspan font-weight="700">남의 트랜잭션 길이</tspan>에 달려 있어 우리가 통제할 수 없다</text>
+
+    <line x1="512" y1="286" x2="546" y2="286" stroke="#dc2626" stroke-width="2" marker-end="url(#cn-r)"/>
+
+    <!-- victims -->
+    <rect x="552" y="212" width="530" height="150" rx="11" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="568" y="234" font-size="12" fill="#b45309" font-weight="700">21번째부터 — 락과 아무 관계 없는 API 까지 커넥션을 못 얻는다</text>
+    <rect x="568" y="246" width="160" height="34" rx="8" fill="#fff" stroke="#fde68a"/>
+    <text x="648" y="268" font-size="12" fill="#92400e" text-anchor="middle" class="mono">POST /login</text>
+    <rect x="738" y="246" width="160" height="34" rx="8" fill="#fff" stroke="#fde68a"/>
+    <text x="818" y="268" font-size="12" fill="#92400e" text-anchor="middle" class="mono">GET /products</text>
+    <rect x="908" y="246" width="160" height="34" rx="8" fill="#fff" stroke="#fde68a"/>
+    <text x="988" y="268" font-size="12" fill="#92400e" text-anchor="middle" class="mono">GET /me/orders</text>
+    <rect x="568" y="292" width="500" height="54" rx="9" fill="#fef2f2" stroke="#dc2626"/>
+    <text x="818" y="314" font-size="12.5" fill="#b91c1c" text-anchor="middle" font-weight="700">재고 API 하나의 경합이 서비스 전체를 마비시킨다</text>
+    <text x="818" y="334" font-size="11.5" fill="#7f1d1d" text-anchor="middle">= <tspan font-weight="700">장애 격리가 깨지는 구조</tspan></text>
+  </svg>
+  <figcaption><b>이것은 OSIV 트레이드오프 문서의 커넥션 고갈과 정확히 같은 축의 문제다.</b> 거기서는 "아무 일도 하지 않는 커넥션을 잡는다"가 <b>렌더링·외부 API 구간</b>이었고, 여기서는 그 구간이 <b>락 대기</b>일 뿐이다. 락 대기는 그중에서도 최악의 형태다 — <b>대기 시간이 남의 트랜잭션 길이에 달려 있어 우리가 통제할 수 없기 때문이다.</b></figcaption>
+</figure>
+
+<div class="memo red">
+  <h4>가장 자주 나오는 오해 — "가상 스레드를 쓰면 되지 않나요?" <span class="badge senior">시니어 변별</span></h4>
+  <div class="split" style="margin:10px 0">
+    <div class="pane b"><h4>가상 스레드가 싸게 만든 것</h4><p style="margin:0;font-size:.93rem"><b>스레드</b>다. 스레드를 수만 개 만들어도 부담이 없어졌다.</p></div>
+    <div class="pane r"><h4>그런데 이 상황의 병목</h4><p style="margin:0;font-size:.93rem"><b>커넥션 풀 크기</b>이고, 그건 <b>그대로 20개</b>다. 오히려 스레드가 싸져서 동시 요청을 더 많이 받아들이면 <b>커넥션을 기다리는 줄만 더 길어진다.</b></p></div>
+  </div>
+  <p>게다가 <b>락 대기는 DB 서버 안에서 일어나는 블로킹</b>이라 JVM이 스레드를 언마운트해 다른 일을 시킬 수도 없다.</p>
+  <div class="rule red" style="margin-bottom:0">답은 "가상 스레드로 해결하겠다"가 아니라 — <b>"자원의 종류를 구분하고 격리하겠다"</b><br><span style="font-size:.92rem;font-weight:600">락 타임아웃으로 점유 시간의 상한을 못 박고, 가능하면 별도 커넥션 풀로 벌크헤드를 만든다</span></div>
+</div>
+
+<h3>6-3. 락 타임아웃 — 무한정 기다리게 두지 않는다</h3>
+
+<p>기본값으로 두면 요청은 <b>DB가 정한 시간만큼 하염없이 기다린다.</b> 락 대기 시간에 상한을 걸어야 <b>커넥션 점유 시간의 최댓값</b>이 정해진다.</p>
+
+<div class="codehead good"><span class="tag">good</span> 락 대기 상한을 명시한다</div>
+<pre><code><span class="kw">public interface</span> ProductRepository <span class="kw">extends</span> JpaRepository&lt;Product, Long&gt; {
+
+    <span class="kw">@Lock</span>(LockModeType.PESSIMISTIC_WRITE)
+<span class="ln-good">    <span class="kw">@QueryHints</span>(<span class="kw">@QueryHint</span>(name = <span class="st">"jakarta.persistence.lock.timeout"</span>, value = <span class="st">"3000"</span>))</span>
+    <span class="kw">@Query</span>(<span class="st">"select p from Product p where p.id = :id"</span>)
+    Optional&lt;Product&gt; <span class="fn">findByIdForUpdate</span>(<span class="kw">@Param</span>(<span class="st">"id"</span>) Long id);
+}</code></pre>
+
+<div class="grid g3">
+  <div class="tile ok"><div class="k">value = "0"</div><div class="s">즉시 실패 · SQL로는 <code>for update nowait</code></div><div class="d">"기다리느니 바로 실패 응답을 주겠다"는 정책. <b>대기 줄을 아예 만들지 않으므로 커넥션 보호에는 가장 강력하다.</b></div></div>
+  <div class="tile"><div class="k">value = "3000"</div><div class="s">3초 대기 후 실패</div><div class="d">커넥션 점유 시간의 최댓값이 <b>3초로 못 박힌다.</b></div></div>
+  <div class="tile red"><div class="k">타임아웃 시 예외</div><div class="s">타입</div><div class="d"><code>jakarta.persistence.LockTimeoutException</code><br>(Spring 계층에서는 <code>CannotAcquireLockException</code> 계열)</div></div>
+</div>
+
+<div class="callout warn" style="margin-top:12px"><span class="t">주의 — 이 힌트의 실제 지원 범위는 DB와 방언에 따라 다르다</span>
+  <code>NOWAIT</code>(0)은 비교적 널리 지원되지만, <b>임의의 대기 시간(예: 3초)을 SQL 구문으로 표현하지 못하는 DB도 있다.</b> MySQL(InnoDB)의 경우 락 대기 상한은 서버 설정(<code>innodb_lock_wait_timeout</code>)이 기본 방어선이다. 면접에서는 <b>"쓰는 DB에서 실제로 어떤 SQL로 번역되는지 로그로 확인하고 쓴다"는 태도</b>를 보여주는 게 중요하다.
+</div>
+
+<h3>6-4. 데드락과 락 획득 순서</h3>
+
+<p>두 트랜잭션이 <b>서로 다른 순서로</b> 두 행을 잠그면 교착 상태가 된다. <b>데드락</b>은 "서로가 상대가 쥔 것을 기다려 둘 다 영원히 진행하지 못하는 상태"를 말한다.</p>
+
+<div class="cmp">
+  <div>
+    <div class="codehead bad"><span class="tag">before</span> 요청마다 잠그는 순서가 다르다</div>
+<pre><code><span class="cm">// A: 계좌 1 잠금 → 계좌 2 잠금 시도
+// B: 계좌 2 잠금 → 계좌 1 잠금 시도  ⇒ 순환 대기 = 데드락</span>
+<span class="kw">public void</span> <span class="fn">transfer</span>(Long fromId, Long toId, <span class="kw">long</span> amount) {
+<span class="ln-bad">    Account from = repo.<span class="fn">findByIdForUpdate</span>(fromId).<span class="fn">orElseThrow</span>();</span>
+<span class="ln-bad">    Account to   = repo.<span class="fn">findByIdForUpdate</span>(toId).<span class="fn">orElseThrow</span>();</span>
+    ...
+}</code></pre>
+  </div>
+  <div>
+    <div class="codehead good"><span class="tag">after</span> 항상 같은 기준(id 오름차순)으로 잠근다</div>
+<pre><code><span class="kw">public void</span> <span class="fn">transfer</span>(Long fromId, Long toId, <span class="kw">long</span> amount) {
+<span class="ln-good">    List&lt;Long&gt; ordered = Stream.<span class="fn">of</span>(fromId, toId).<span class="fn">sorted</span>().<span class="fn">toList</span>();</span>
+    Map&lt;Long, Account&gt; locked = ordered.<span class="fn">stream</span>()
+            .<span class="fn">map</span>(id -&gt; repo.<span class="fn">findByIdForUpdate</span>(id).<span class="fn">orElseThrow</span>())
+            .<span class="fn">collect</span>(<span class="fn">toMap</span>(Account::getId, identity()));
+    <span class="cm">// 모든 트랜잭션이 작은 id 부터 잠그므로 순환 대기가 성립할 수 없다</span>
+    ...
+}</code></pre>
+  </div>
+</div>
+
+<div class="rule ok">여러 행을 잠가야 한다면, <b>시스템 전체가 합의한 하나의 순서로 잠근다</b> — 순환이 없으면 데드락도 없다</div>
+
+<p>DB는 데드락을 감지하면 한쪽을 희생시켜 예외를 던진다. <b>이 경우는 재시도가 정당하다</b> — 상대가 이미 물러났으므로 다시 하면 성공할 가능성이 높다. <b>낙관적 락 재시도와 같은 원칙</b>(새 트랜잭션 + 백오프 + 상한)이 그대로 적용된다.</p>
+
+<!-- ===================== 7 ===================== -->
+<h2 id="s7">7. 놓치기 쉬운 축 — "기다리느냐"가 아니라 "얼마나 오래 기다리느냐" <span class="badge bonus">가산점</span></h2>
+
+<p>"어떤 방법을 써도 같은 로우를 1씩 깎는 이상, 어딘가에서는 순서대로 처리될 수밖에 없다" — <b>이 직관은 완전히 옳다.</b> 낙관적 락이든 비관적 락이든 Redis 분산 락이든, <b>직렬화 지점을 없앨 수는 없고 위치만 옮길 뿐이다.</b></p>
+
+<div class="memo">
+  <h4>그래서 축을 바꾼다 — <b>임계 구간(critical section)</b>의 길이</h4>
+  <p><b>임계 구간</b>은 "한 번에 하나만 들어갈 수 있는 구간"이다. 직렬화를 없애는 게 아니라 <b>직렬화되는 구간을 짧게 만드는 것</b>이 목표다.</p>
+  <div class="grid g3">
+    <div class="tile big"><div class="k" style="font-family:var(--mono);font-size:1.05rem">처리량 ≈ 1 / 임계 구간</div><div class="s">줄을 없앨 수 없다면 창구 처리 시간을 줄이는 것이 유일한 개선 축</div></div>
+    <div class="tile big"><div class="k">5ms</div><div class="s">임계 구간</div><div class="d">→ 초당 <b>200건</b></div></div>
+    <div class="tile big ok"><div class="k">0.5ms</div><div class="s">임계 구간</div><div class="d">→ 초당 <b>2,000건</b></div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">같은 "줄 서기"인데 <b>앞사람이 창구에서 5분 있느냐 5초 있느냐</b>의 차이다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 360" role="img" aria-label="위쪽은 SELECT FOR UPDATE 방식에서 락 보유 구간에 값 전송과 자바 계산과 UPDATE 전송이 들어가 네트워크 왕복이 2에서 3회 발생하는 것을 보여주고, 아래쪽은 조건 판단과 갱신을 한 문장으로 합친 원자적 UPDATE 방식에서 락 보유 구간이 왕복 1회로 줄어드는 것을 보여주는 비교 도식">
+    <defs>
+      <marker id="cs-b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#2563eb"/></marker>
+      <marker id="cs-g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#16a34a"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">락을 쥐고 있는 동안 무엇을 하고 있는가 — 왕복 2~3회 vs 왕복 1회</text>
+
+    <text x="240" y="52" font-size="12" fill="#6b7280" text-anchor="middle" font-weight="700">애플리케이션(JVM)</text>
+    <text x="700" y="52" font-size="12" fill="#6b7280" text-anchor="middle" font-weight="700">DB</text>
+
+    <!-- BEFORE -->
+    <rect x="14" y="62" width="880" height="150" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="32" y="84" font-size="13" fill="#b91c1c" font-weight="700" class="mono">SELECT ... FOR UPDATE 방식</text>
+    <line x1="240" y1="92" x2="240" y2="202" stroke="#94a3b8" stroke-width="1.4"/>
+    <line x1="700" y1="92" x2="700" y2="202" stroke="#94a3b8" stroke-width="1.4"/>
+
+    <text x="150" y="106" font-size="11.5" fill="#7f1d1d" text-anchor="end" class="mono">BEGIN</text>
+    <line x1="240" y1="120" x2="694" y2="120" stroke="#2563eb" stroke-width="1.6" marker-end="url(#cs-b)"/>
+    <text x="467" y="115" font-size="11" fill="#1d4ed8" text-anchor="middle" class="mono">SELECT ... FOR UPDATE</text>
+    <text x="712" y="124" font-size="11" fill="#166534" font-weight="700">← 여기서 락 획득</text>
+    <line x1="694" y1="140" x2="246" y2="140" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#cs-b)"/>
+    <text x="467" y="135" font-size="11" fill="#64748b" text-anchor="middle">값 전송 (왕복 1)</text>
+    <text x="234" y="160" font-size="11.5" fill="#7f1d1d" text-anchor="end">자바에서 stock - 1 계산, 검증 로직</text>
+    <line x1="240" y1="176" x2="694" y2="176" stroke="#2563eb" stroke-width="1.6" marker-end="url(#cs-b)"/>
+    <text x="467" y="171" font-size="11" fill="#1d4ed8" text-anchor="middle" class="mono">UPDATE ...  (왕복 2)</text>
+    <line x1="240" y1="196" x2="694" y2="196" stroke="#2563eb" stroke-width="1.6" marker-end="url(#cs-b)"/>
+    <text x="467" y="191" font-size="11" fill="#1d4ed8" text-anchor="middle" class="mono">COMMIT      (왕복 3)</text>
+    <text x="712" y="200" font-size="11" fill="#b91c1c" font-weight="700">← 여기서 락 해제</text>
+
+    <!-- lock bar before -->
+    <rect x="902" y="112" width="26" height="90" rx="6" fill="#dc2626"/>
+    <text x="946" y="140" font-size="12" fill="#b91c1c" font-weight="700">락 보유 구간</text>
+    <text x="946" y="158" font-size="11.5" fill="#7f1d1d">= 네트워크 왕복 2~3회</text>
+    <text x="946" y="174" font-size="11.5" fill="#7f1d1d">&nbsp;&nbsp;+ JVM 처리 시간</text>
+    <text x="946" y="194" font-size="11.5" fill="#b91c1c" font-weight="700">⇒ 밀리초 단위</text>
+
+    <!-- AFTER -->
+    <rect x="14" y="226" width="880" height="118" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="32" y="248" font-size="13" fill="#166534" font-weight="700" class="mono">UPDATE product SET stock = stock - 1 WHERE id = ? AND stock &gt;= 1</text>
+    <line x1="240" y1="256" x2="240" y2="332" stroke="#94a3b8" stroke-width="1.4"/>
+    <line x1="700" y1="256" x2="700" y2="332" stroke="#94a3b8" stroke-width="1.4"/>
+
+    <text x="150" y="270" font-size="11.5" fill="#166534" text-anchor="end" class="mono">BEGIN</text>
+    <line x1="240" y1="286" x2="694" y2="286" stroke="#16a34a" stroke-width="1.6" marker-end="url(#cs-g)"/>
+    <text x="467" y="281" font-size="11" fill="#166534" text-anchor="middle" class="mono">UPDATE ...  (왕복 1)</text>
+    <text x="712" y="284" font-size="10.5" fill="#166534" font-weight="700">← 락 획득 + 조건 판단 + 갱신을</text>
+    <text x="712" y="298" font-size="10.5" fill="#166534" font-weight="700">&nbsp;&nbsp; DB 내부에서 한 번에</text>
+    <line x1="694" y1="308" x2="246" y2="308" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#cs-g)"/>
+    <text x="467" y="303" font-size="11" fill="#64748b" text-anchor="middle">영향 행 수</text>
+    <line x1="240" y1="328" x2="694" y2="328" stroke="#16a34a" stroke-width="1.6" marker-end="url(#cs-g)"/>
+    <text x="467" y="323" font-size="11" fill="#166534" text-anchor="middle" class="mono">COMMIT</text>
+
+    <rect x="902" y="278" width="26" height="54" rx="6" fill="#16a34a"/>
+    <text x="946" y="298" font-size="12" fill="#166534" font-weight="700">락 보유 구간 = 왕복 1회</text>
+    <text x="946" y="316" font-size="11" fill="#166534">값 전송 + 자바 계산 + UPDATE</text>
+    <text x="946" y="332" font-size="11" fill="#166534" font-weight="700">전송이 통째로 빠진다</text>
+  </svg>
+  <figcaption>조건 검사가 <b>DB 엔진 안에서</b> 일어나므로 애플리케이션을 왕복할 이유가 없다. 임계 구간의 길이가 <b>자릿수 단위로</b> 줄어든다(정확한 배수는 네트워크 지연·DB 사양에 따라 다르다).</figcaption>
+</figure>
+
+<div class="callout warn"><span class="t">정직하게 덧붙일 것 — 행 락은 문장이 끝날 때가 아니라 <b>커밋할 때</b> 풀린다</span>
+  그러니 <b>"한 문장이면 락이 마이크로초만 걸린다"는 말은 정확하지 않다.</b> 줄어드는 것은 <b>락 보유 구간 안에 들어 있던 왕복 횟수와 애플리케이션 처리 시간</b>이다. 이 트랜잭션이 <b>그 UPDATE 하나만 하고 즉시 커밋하는 형태</b>여야 효과가 온전히 난다.
+</div>
+
+<h3>7-1. 부수 효과 — 같은 숫자 0인데 의미가 다르다</h3>
+
+<div class="codehead good"><span class="tag">good</span> 영향 행 수 0 = "재고 없음"이라는 최종 결론</div>
+<pre><code><span class="kw">int</span> affected = productRepository.<span class="fn">decreaseStock</span>(id);   <span class="cm">// @Modifying UPDATE</span>
+<span class="ln-good"><span class="kw">if</span> (affected == 0) {</span>
+    <span class="kw">throw new</span> OutOfStockException();   <span class="cm">// 재시도 아님 — 즉시 품절 응답</span>
+}</code></pre>
+
+<div class="split">
+  <div class="pane b">
+    <h4>낙관적 락의 <b>0</b></h4>
+    <p style="margin:0;font-size:.94rem"><code>AND version = 3</code>이 거짓 → <b>"누가 먼저 갔으니 다시 해봐라"</b><br>→ <b>재시도가 필요하다</b></p>
+  </div>
+  <div class="pane g">
+    <h4>원자적 UPDATE의 <b>0</b></h4>
+    <p style="margin:0;font-size:.94rem"><code>AND stock &gt;= 1</code>이 거짓 → <b>"재고가 없다"는 최종 결론</b><br>→ <b>재시도 자체가 필요 없다</b> = 재시도 폭풍이 구조적으로 사라진다</p>
+  </div>
+</div>
+
+<div class="callout info" style="margin-bottom:0"><span class="t">이 문항에서의 만점 선 — 딱 여기까지 <span class="badge bonus">가산점</span></span>
+  이 방식도 공짜는 아니다 — <b>영속성 컨텍스트를 우회하고, 도메인 로직이 SQL로 새어 나가며, "몇 개 남았는지"를 알려면 다시 읽어야 한다.</b> <b>낙관적 락 / 비관적 락 / 원자적 UPDATE / 분산 락 4종의 본격적인 비교는 고난이도 전용 문항</b>("재고 차감/포인트 차감 같은 동시성 갱신 문제를 … 각각으로 풀 때의 트레이드오프")<b>에서 다룬다.</b> 이 문항에서는 <b>"임계 구간의 길이라는 축이 존재한다"는 것을 아는 선까지</b>가 만점이고, 면접에서도 딱 여기까지 말하고 <b>"자세한 비교는 케이스에 따라"</b>로 넘기는 게 깔끔하다.
+</div>
+
+<!-- ===================== 8 ===================== -->
+<h2 id="s8">8. 무엇을 고를 것인가 — "충돌이 드물면 낙관적"의 다음 단계</h2>
+
+<p>"드물다"를 감으로 말하면 근거가 안 된다. 실제로는 <b>세 가지를 본다.</b></p>
+
+<div class="memo">
+  <h4>선택 3축 — <b>확 · 비 · 노</b></h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">확 — 충돌 확률</div><div class="d">필요한 숫자 셋: <b>대상 행의 개수</b>, <b>초당 쓰기 요청 수</b>, <b>트랜잭션 하나가 그 행을 붙잡는 시간.</b> <b>"행 하나당 초당 몇 건이 오는가"</b>로 환산해 보는 습관이 핵심이다.</div></div>
+    <div class="tile"><div class="k">비 — 재시도 비용</div><div class="d"><b>재시도 비용 = 비즈니스 로직 전체의 재실행 비용</b>이다. UPDATE 한 번이 아니다. <b>특히 외부 API 호출</b>이 있으면 재시도할 때마다 <b>부수 효과가 반복</b>(중복 결제 등)될 수 있다.</div></div>
+    <div class="tile"><div class="k">노 — 실패 노출 가능성</div><div class="d">"다른 사용자가 먼저 수정했습니다. 새로고침 후 다시 시도해 주세요"가 <b>합리적인 안내로 받아들여지는 화면</b>인가. 결제 버튼에 "충돌했으니 다시"는 곤란하다.</div></div>
+  </div>
+  <p style="margin-bottom:0" class="sub">회원 10만 명의 <b>프로필 수정</b>은 요청이 10만 개 행에 흩어져 충돌 확률이 사실상 0이고, <b>한정판 상품 1개 행에 초당 500건</b>이면 충돌은 예외가 아니라 <b>기본값</b>이다. 같은 "쓰기 API"인데 답이 정반대다.</p>
+</div>
+
+<figure class="wide">
+  <svg viewBox="0 0 1120 296" role="img" aria-label="충돌 확률이 낮으면 낙관적 락, 높으면 먼저 임계 구간을 줄일 수 있는지 검토하고, 재시도 비용이 크거나 실패를 노출할 수 없으면 비관적 락에 락 타임아웃을 붙이는 판단 흐름도">
+    <defs>
+      <marker id="dc-a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    </defs>
+    <text x="560" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">판단 흐름 — 세 질문을 순서대로 던진다</text>
+
+    <!-- start -->
+    <rect x="20" y="128" width="176" height="58" rx="10" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="108" y="152" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">같은 행에 동시 수정이</text>
+    <text x="108" y="172" font-size="12" fill="#334155" text-anchor="middle" font-weight="700">겹칠 확률은?</text>
+
+    <line x1="198" y1="142" x2="240" y2="96" stroke="#64748b" stroke-width="1.6" marker-end="url(#dc-a)"/>
+    <text x="214" y="112" font-size="11" fill="#16a34a" font-weight="700">낮다</text>
+    <line x1="198" y1="172" x2="240" y2="216" stroke="#64748b" stroke-width="1.6" marker-end="url(#dc-a)"/>
+    <text x="214" y="204" font-size="11" fill="#dc2626" font-weight="700">높다</text>
+
+    <!-- low path -->
+    <rect x="246" y="58" width="232" height="62" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="362" y="82" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">재시도 비용이 작고</text>
+    <text x="362" y="102" font-size="12.5" fill="#166534" text-anchor="middle" font-weight="700">실패를 노출해도 되는가?</text>
+    <line x1="480" y1="89" x2="520" y2="89" stroke="#64748b" stroke-width="1.6" marker-end="url(#dc-a)"/>
+    <text x="500" y="80" font-size="11" fill="#16a34a" font-weight="700">예</text>
+    <rect x="526" y="60" width="230" height="58" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="641" y="84" font-size="13.5" fill="#166534" text-anchor="middle" font-weight="700">낙관적 락 (@Version)</text>
+    <text x="641" y="104" font-size="11" fill="#15803d" text-anchor="middle">+ 새 트랜잭션 재시도 · 백오프 · 상한</text>
+
+    <!-- high path -->
+    <rect x="246" y="188" width="232" height="62" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="362" y="212" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">먼저: 임계 구간을</text>
+    <text x="362" y="232" font-size="12.5" fill="#b45309" text-anchor="middle" font-weight="700">줄일 수 있는가? (7절)</text>
+    <line x1="480" y1="204" x2="520" y2="176" stroke="#64748b" stroke-width="1.6" marker-end="url(#dc-a)"/>
+    <text x="500" y="176" font-size="11" fill="#16a34a" font-weight="700">예</text>
+    <rect x="526" y="140" width="230" height="52" rx="10" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="641" y="162" font-size="12.5" fill="#1d4ed8" text-anchor="middle" font-weight="700">조건+갱신을 한 문장으로</text>
+    <text x="641" y="181" font-size="11" fill="#1e40af" text-anchor="middle">(원자적 UPDATE · 영향 행 수 0 = 최종 결론)</text>
+
+    <line x1="480" y1="234" x2="520" y2="248" stroke="#64748b" stroke-width="1.6" marker-end="url(#dc-a)"/>
+    <text x="500" y="264" font-size="11" fill="#dc2626" font-weight="700">아니오</text>
+    <rect x="526" y="222" width="230" height="58" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="641" y="246" font-size="13.5" fill="#b91c1c" text-anchor="middle" font-weight="700">비관적 락 (FOR UPDATE)</text>
+    <text x="641" y="266" font-size="11" fill="#7f1d1d" text-anchor="middle">락 타임아웃 없이 쓰면 커넥션 고갈 예약</text>
+
+    <!-- right notes -->
+    <rect x="782" y="52" width="322" height="98" rx="11" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="798" y="74" font-size="12" fill="#166534" font-weight="700">낙관적이 정답인 전형</text>
+    <text x="798" y="94" font-size="11.5" fill="#166534">· 관리자 화면 <tspan font-weight="700">동시 편집</tspan> — 충돌 안내가 올바른 동작</text>
+    <text x="798" y="112" font-size="11.5" fill="#166534">· 주문·결제 <tspan font-weight="700">상태 전이</tspan> (재시도 웹훅 · 중복 클릭 방어)</text>
+    <text x="798" y="132" font-size="11.5" fill="#166534">· 일반 엔티티 수정 — <tspan font-weight="700">평시 비용 0 이므로 기본값</tspan></text>
+
+    <rect x="782" y="164" width="322" height="116" rx="11" fill="#fef2f2" stroke="#fecaca"/>
+    <text x="798" y="186" font-size="12" fill="#b91c1c" font-weight="700">비관적이 정답인 전형 — 세트로 말할 것</text>
+    <text x="798" y="206" font-size="11.5" fill="#7f1d1d">· 충돌이 <tspan font-weight="700">상시적인 소수의 행</tspan> — 계좌 · 인기 재고</text>
+    <text x="798" y="224" font-size="11.5" fill="#7f1d1d">· <tspan font-weight="700">재시도가 비싸거나 위험한</tspan> 로직</text>
+    <text x="798" y="242" font-size="11.5" fill="#7f1d1d">· 정합성이 UX 보다 <tspan font-weight="700">절대적으로 우선</tspan> (정산 · 잔액)</text>
+    <text x="798" y="266" font-size="11.5" fill="#b91c1c" font-weight="700">→ 타임아웃 · 획득 순서 · 짧은 트랜잭션 · 풀 여유</text>
+
+  </svg>
+  <figcaption><b>충돌 확률이 높을 때 곧바로 "비관적 락"으로 뛰지 않는 것</b>이 이 흐름의 핵심이다 — 그 구간에서는 낙관적 락은 <b>재시도 폭풍</b>, 비관적 락은 <b>커넥션 점유</b>로 각각 무너지므로, <b>둘 다 답이 아닐 수 있다는 것을 먼저 인정하고 7절의 축(임계 구간 줄이기)을 검토</b>하는 순서가 맞다.</figcaption>
+</figure>
+
+<div class="memo green">
+  <h4>비관적 락을 고른다면 반드시 세트로 말해야 하는 4가지 — <b>타 · 순 · 짧 · 풀</b></h4>
+  <div class="grid g4">
+    <div class="tile"><div class="k">타</div><div class="s">락 타임아웃</div><div class="d">커넥션 점유 시간의 <b>상한을 못 박는다</b> (6-3)</div></div>
+    <div class="tile"><div class="k">순</div><div class="s">락 획득 순서</div><div class="d">여러 행이면 <b>합의된 하나의 순서</b>로 (6-4)</div></div>
+    <div class="tile"><div class="k">짧</div><div class="s">짧은 트랜잭션</div><div class="d"><b>락 잡은 상태에서 외부 API 호출 금지</b></div></div>
+    <div class="tile"><div class="k">풀</div><div class="s">커넥션 풀 여유</div><div class="d">가능하면 <b>별도 풀로 격리</b>해 벌크헤드</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">이걸 같이 말하지 않으면 "비관적 락으로 하겠습니다"는 <b>커넥션 고갈을 예약한 답변</b>이다</div>
+</div>
+
+<h3>8-1. 한 장으로 정리</h3>
+
+<table class="wide">
+  <caption>면접 전날 이 표만 다시 봐도 된다 — 마지막 두 줄이 변별 지점이다</caption>
+  <thead><tr><th style="width:150px"></th><th>낙관적 락 (<code>@Version</code>)</th><th>비관적 락 (<code>PESSIMISTIC_WRITE</code>)</th></tr></thead>
+  <tbody>
+    <tr><td><b>실제 동작</b></td><td>잠그지 않음. UPDATE의 <code>WHERE version=?</code> 조건</td><td><code>SELECT ... FOR UPDATE</code>로 DB가 행을 잠금</td></tr>
+    <tr><td><b>충돌 판정</b></td><td>영향 행 수 0 → 예외 (<b>사후 감지</b>)</td><td>애초에 동시 진입 불가 (<b>사전 차단</b>)</td></tr>
+    <tr><td>평시 비용</td><td class="good">0 (조건 하나 추가)</td><td>락 획득·해제 + 대기</td></tr>
+    <tr><td>충돌 시 비용</td><td class="bad">로직 전체 재실행</td><td class="good">대기 (재실행 없음)</td></tr>
+    <tr class="hl"><td><b>붙잡는 자원</b></td><td>애플리케이션 스레드</td><td><b>스레드 + DB 커넥션 + 열린 트랜잭션</b></td></tr>
+    <tr class="hl"><td><b>고경합 시 실패 모습</b></td><td class="bad">재시도 폭풍</td><td class="bad">커넥션 풀 고갈 → <b>전체 장애</b></td></tr>
+  </tbody>
+</table>
+
+<!-- ===================== 9 ===================== -->
+<h2 id="s9">9. 보장은 테스트에서 나온다 — <code>CountDownLatch</code>로 출발선 만들기</h2>
+
+<p>동시성 버그는 <b>평소에 안 나고, 트래픽이 몰릴 때만 난다.</b> 그래서 "이 코드는 동시성에 안전합니다"를 말로 하면 아무 보장이 안 된다. <b>재현하는 테스트를 코드로 고정하는 것이 유일한 방법</b>이다.</p>
+
+<figure>
+  <svg viewBox="0 0 900 232" role="img" aria-label="그냥 루프로 스레드를 제출하면 먼저 만든 스레드가 이미 끝나 경합이 생기지 않지만, CountDownLatch로 전원이 준비될 때까지 대기시켰다가 출발 신호로 동시에 출발시키면 실제 경합이 재현된다는 대비 도식">
+    <text x="450" y="24" font-size="15" font-weight="700" fill="#1f2937" text-anchor="middle">핵심은 "N개를 만들어놓고 <tspan fill="#2563eb">동시에</tspan> 출발시키는 것"</text>
+
+    <!-- bad -->
+    <rect x="14" y="42" width="426" height="82" rx="11" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+    <text x="32" y="64" font-size="12.5" fill="#b91c1c" font-weight="700">그냥 루프로 제출하면</text>
+    <rect x="32" y="74" width="70" height="26" rx="6" fill="#fff" stroke="#fecaca"/><text x="67" y="92" font-size="11" fill="#7f1d1d" text-anchor="middle">T1 완료</text>
+    <rect x="112" y="74" width="70" height="26" rx="6" fill="#fff" stroke="#fecaca"/><text x="147" y="92" font-size="11" fill="#7f1d1d" text-anchor="middle">T2 완료</text>
+    <rect x="192" y="74" width="70" height="26" rx="6" fill="#fff" stroke="#fecaca"/><text x="227" y="92" font-size="11" fill="#7f1d1d" text-anchor="middle">T3 시작</text>
+    <text x="352" y="92" font-size="11.5" fill="#b91c1c" text-anchor="middle" font-weight="700">겹치지 않는다</text>
+    <text x="32" y="116" font-size="11" fill="#7f1d1d">먼저 만든 스레드가 이미 끝나 있어 <tspan font-weight="700">경합이 안 생긴다</tspan> → 테스트가 항상 초록불</text>
+
+    <!-- good -->
+    <rect x="460" y="42" width="426" height="82" rx="11" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+    <text x="478" y="64" font-size="12.5" fill="#166534" font-weight="700">CountDownLatch 로 출발선을 만들면</text>
+    <line x1="600" y1="72" x2="600" y2="106" stroke="#16a34a" stroke-width="3"/>
+    <g fill="#fff" stroke="#16a34a">
+      <rect x="522" y="74" width="66" height="12" rx="4"/><rect x="522" y="90" width="66" height="12" rx="4"/>
+    </g>
+    <text x="555" y="116" font-size="10.5" fill="#166534" text-anchor="middle">100개 대기</text>
+    <g fill="#dcfce7" stroke="#16a34a">
+      <rect x="612" y="74" width="120" height="12" rx="4"/><rect x="612" y="90" width="120" height="12" rx="4"/>
+    </g>
+    <text x="800" y="92" font-size="11.5" fill="#166534" text-anchor="middle" font-weight="700">동시에 같은 행을 친다</text>
+    <text x="478" y="116" font-size="10.5" fill="#166534">출발 신호</text>
+
+    <!-- latches -->
+    <rect x="14" y="140" width="872" height="80" rx="11" fill="#fff" stroke="#e5e7eb"/>
+    <text x="34" y="162" font-size="12.5" fill="#1f2937" font-weight="700">래치 3개의 역할 — 준비 · 출발 · 종료</text>
+    <rect x="34" y="172" width="272" height="36" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="48" y="195" font-size="11.5" fill="#1d4ed8" class="mono">ready(100) — 전원이 출발선에 설 때까지</text>
+    <rect x="316" y="172" width="252" height="36" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+    <text x="330" y="195" font-size="11.5" fill="#166534" class="mono">start(1) — 출발 신호 한 번</text>
+    <rect x="578" y="172" width="288" height="36" rx="8" fill="#fffbeb" stroke="#fde68a"/>
+    <text x="592" y="195" font-size="11.5" fill="#b45309" class="mono">done(100) — 전원 종료를 기다린다</text>
+  </svg>
+  <figcaption><code>CountDownLatch</code>는 <b>정해진 횟수만큼 카운트가 내려갈 때까지 스레드를 대기시키는 동기화 도구</b>다. <code>ready</code>로 전원을 모으고, <code>start</code> 하나로 동시에 풀어주고, <code>done</code>으로 전원이 끝나기를 기다린다.</figcaption>
+</figure>
+
+<div class="codehead good"><span class="tag">good</span> 동시 출발 테스트 — <code>@Transactional</code>이 없다는 점에 주목</div>
+<pre><code><span class="kw">@SpringBootTest</span>
+<span class="cm">// @Transactional 을 붙이지 않는다 (9-2 참고)</span>
+<span class="kw">class</span> StockConcurrencyTest {
+
+    <span class="kw">@Autowired</span> StockFacade stockFacade;            <span class="cm">// 재시도 포함 진입점</span>
+    <span class="kw">@Autowired</span> ProductRepository productRepository;
+    <span class="kw">@Autowired</span> TransactionTemplate txTemplate;
+
+    Long productId;
+
+    <span class="kw">@BeforeEach</span>
+    <span class="kw">void</span> <span class="fn">setUp</span>() {
+<span class="ln-good">        <span class="cm">// 테스트 트랜잭션이 아니라 "커밋되는" 트랜잭션으로 픽스처를 만든다</span></span>
+        productId = txTemplate.<span class="fn">execute</span>(status -&gt;
+                productRepository.<span class="fn">save</span>(<span class="kw">new</span> Product(<span class="st">"한정판"</span>, 100)).<span class="fn">getId</span>());
+    }
+
+    <span class="kw">@Test</span>
+    <span class="kw">void</span> <span class="fn">동시에_100건이_차감해도_재고는_정확히_0이_된다</span>() <span class="kw">throws</span> Exception {
+        <span class="kw">int</span> threadCount = 100;
+        ExecutorService pool = Executors.<span class="fn">newFixedThreadPool</span>(32);
+
+        CountDownLatch ready = <span class="kw">new</span> CountDownLatch(threadCount);   <span class="cm">// 전원 준비 완료 대기</span>
+        CountDownLatch start = <span class="kw">new</span> CountDownLatch(1);             <span class="cm">// 출발 신호</span>
+        CountDownLatch done  = <span class="kw">new</span> CountDownLatch(threadCount);   <span class="cm">// 전원 종료 대기</span>
+
+        AtomicInteger success  = <span class="kw">new</span> AtomicInteger();
+        AtomicInteger conflict = <span class="kw">new</span> AtomicInteger();
+
+        <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; threadCount; i++) {
+            pool.<span class="fn">submit</span>(() -&gt; {
+                ready.<span class="fn">countDown</span>();
+                <span class="kw">try</span> {
+<span class="ln-good">                    start.<span class="fn">await</span>();          <span class="cm">// ← 전원이 대기하다가 동시에 출발</span></span>
+                    stockFacade.<span class="fn">decrease</span>(productId);
+                    success.<span class="fn">incrementAndGet</span>();
+                } <span class="kw">catch</span> (ObjectOptimisticLockingFailureException
+                         | StockConflictException e) {
+                    conflict.<span class="fn">incrementAndGet</span>();  <span class="cm">// 충돌은 "실패"가 아니라 관측 대상이다</span>
+                } <span class="kw">catch</span> (Exception e) {
+                    <span class="kw">throw new</span> RuntimeException(e);
+                } <span class="kw">finally</span> {
+                    done.<span class="fn">countDown</span>();
+                }
+            });
+        }
+
+        ready.<span class="fn">await</span>();                              <span class="cm">// 100개가 전부 출발선에 설 때까지</span>
+<span class="ln-good">        start.<span class="fn">countDown</span>();                         <span class="cm">// 동시 출발!</span></span>
+        <span class="fn">assertThat</span>(done.<span class="fn">await</span>(30, TimeUnit.SECONDS)).<span class="fn">isTrue</span>();
+        pool.<span class="fn">shutdown</span>();
+
+<span class="ln-good">        <span class="cm">// 테스트의 영속성 컨텍스트가 아니라 DB 의 최종 상태를 읽어야 한다</span></span>
+        <span class="kw">int</span> finalStock = txTemplate.<span class="fn">execute</span>(status -&gt;
+                productRepository.<span class="fn">findById</span>(productId).<span class="fn">orElseThrow</span>().<span class="fn">getStock</span>());
+
+        <span class="fn">assertThat</span>(finalStock).<span class="fn">isEqualTo</span>(100 - success.<span class="fn">get</span>());  <span class="cm">// ① 초과 차감이 없다</span>
+        <span class="fn">assertThat</span>(success.<span class="fn">get</span>() + conflict.<span class="fn">get</span>()).<span class="fn">isEqualTo</span>(threadCount);  <span class="cm">// ②</span>
+        <span class="fn">assertThat</span>(finalStock).<span class="fn">isZero</span>();                          <span class="cm">// ③ 재시도가 제대로 돌았다면 0</span>
+    }
+}</code></pre>
+
+<div class="memo">
+  <h4>단정할 것 세 가지</h4>
+  <div class="grid g3">
+    <div class="tile"><div class="k">① 산술이 맞는가</div><div class="d">최종 재고 = 초기 − 성공 건수. <b>초과 차감·lost update가 없는가</b></div></div>
+    <div class="tile"><div class="k">② 합계가 맞는가</div><div class="d">성공 + 충돌 = 전체 요청 수. <b>조용히 사라진 요청이 없는가</b></div></div>
+    <div class="tile"><div class="k">③ 최종 수렴하는가</div><div class="d">재시도를 붙였다면 <b>최종적으로 전부 성공했는가</b></div></div>
+  </div>
+  <div class="rule" style="margin-bottom:0"><code>@Version</code>을 일부러 떼고 돌려서 <b>먼저 실패시켜 보는 것</b>까지가 세트다<br><span style="font-size:.92rem;font-weight:600">최종 재고가 0이 아니라 한참 큰 값으로 남는다 — 그게 1절에서 그린 lost update의 모습이고, 테스트가 진짜 동작한다는 증거다</span></div>
+</div>
+
+<h3>9-1. 함정 — <code>@Transactional</code>을 붙이면 재현되지 않는다 <span class="badge trap">함정</span></h3>
+
+<div class="codehead bad"><span class="tag">bad</span> 이 테스트는 동시성을 재현하지 못한다</div>
+<pre><code><span class="kw">@SpringBootTest</span>
+<span class="ln-bad"><span class="kw">@Transactional</span>                    <span class="cm">// ← 이 한 줄이 테스트를 무력화한다</span></span>
+<span class="kw">class</span> StockConcurrencyTest { ... }</code></pre>
+
+<div class="memo red">
+  <h4>이유가 세 겹 — <b>픽 · 스 · 검</b></h4>
+  <div class="grid g3">
+    <div class="tile red"><div class="k">픽 — 픽스처가 커밋되지 않는다</div><div class="d">테스트 메서드의 트랜잭션은 끝에서 <b>롤백된다.</b> <code>@BeforeEach</code>에서 저장한 상품이 <b>다른 스레드(=다른 커넥션)에서 보이지 않는다.</b> 워커들이 전부 "상품 없음"으로 실패하거나 락 대기에 걸린다.</div></div>
+    <div class="tile red"><div class="k">스 — 트랜잭션은 스레드에 묶여 있다</div><div class="d">테스트 스레드의 트랜잭션·영속성 컨텍스트는 <b>워커 스레드로 전파되지 않는다.</b> 테스트가 의도한 경계와 실제 실행 경계가 다르다.</div></div>
+    <div class="tile red"><div class="k">검 — 검증도 오염된다</div><div class="d">마지막에 <code>findById()</code>로 확인하면 <b>테스트 스레드의 1차 캐시에 남은 옛날 엔티티</b>를 돌려받는다. <b>DB는 0인데 테스트는 100을 본다</b> — 5절의 1차 캐시 문제가 검증 단계에서 재현되는 것이다.</div></div>
+  </div>
+  <div class="rule red" style="margin-bottom:0">동시성 테스트에는 <code>@Transactional</code>을 붙이지 않는다<br><span style="font-size:.92rem;font-weight:600">대신 <code>TransactionTemplate</code>으로 <b>커밋되는</b> 픽스처를 만들고 <code>@AfterEach</code>에서 직접 지운다</span></div>
+</div>
+
+<h3>9-2. 두 가지 더</h3>
+
+<div class="split">
+  <div class="pane b">
+    <h4>DB를 실제와 같은 것으로</h4>
+    <p style="margin:0;font-size:.94rem">H2 인메모리는 <b>락과 격리 수준 동작이 MySQL/PostgreSQL과 다르다.</b> 동시성 테스트만큼은 <b>Testcontainers로 운영과 같은 DB 엔진</b>을 띄우는 게 맞다. <b>H2에서 통과한 동시성 테스트는 보장의 근거가 되지 못한다.</b></p>
+  </div>
+  <div class="pane g">
+    <h4>느린 건 버그가 아니라 재현이다 <span class="badge bonus">가산점</span></h4>
+    <p style="margin:0;font-size:.94rem">스레드 100개가 전부 <code>SELECT ... FOR UPDATE</code>를 하면 <b>풀 크기만큼만 진입</b>하고 나머지는 커넥션을 기다린다. 테스트가 이유 없이 느리거나 타임아웃이 나면 <b>6-2의 커넥션 고갈을 테스트가 그대로 재현한 것</b>이다. <b>그 시간을 측정해 임계값으로 고정해두면 성능 회귀 테스트가 된다.</b></p>
+  </div>
+</div>
+
+<!-- ===================== 10 ===================== -->
+<h2 id="s10">10. 인출 카드 · 꼬리질문 셀프 테스트</h2>
+
+<div class="card">
+  <h4 style="margin-top:0">면접 전날 3분 인출 — 다섯 개의 머리글자만 붙잡으면 전부 따라온다</h4>
+  <div class="grid g2">
+    <div class="tile ok"><div class="k">한 · 영 · 새</div><div class="s">낙관적 락의 전부</div><div class="d"><b>한</b> 문장(<code>UPDATE ... WHERE id=? AND version=?</code>) · <b>영</b>향 행 수 0 으로 사후 감지 · 재시도는 <b>새</b> 트랜잭션에서</div></div>
+    <div class="tile red"><div class="k">안 · 벌 · 다 · 인</div><div class="s"><code>@Version</code>이 못 잡는 4종</div><div class="d"><b>안</b> 바뀜 · <b>벌</b>크 연산 · <b>다</b>른 행 · <b>인</b>서트. 공통점은 "버전이 실린 UPDATE가 그 행에 안 나갔다"</div></div>
+    <div class="tile"><div class="k">타 · 순 · 짧 · 풀</div><div class="s">비관적 락 세트</div><div class="d">락 <b>타</b>임아웃 · 락 획득 <b>순</b>서 · <b>짧</b>은 트랜잭션(외부 호출 금지) · 커넥션 <b>풀</b> 여유</div></div>
+    <div class="tile"><div class="k">확 · 비 · 노</div><div class="s">선택 3축</div><div class="d">충돌 <b>확</b>률(행 하나당 초당 몇 건) · 재시도 <b>비</b>용(= 로직 전체 재실행) · 실패를 <b>노</b>출해도 되는가</div></div>
+    <div class="tile red"><div class="k">픽 · 스 · 검</div><div class="s">테스트에 <code>@Transactional</code> 금지 이유</div><div class="d"><b>픽</b>스처 미커밋 · 트랜잭션은 <b>스</b>레드에 묶임 · <b>검</b>증이 1차 캐시로 오염</div></div>
+    <div class="tile"><div class="k">1 / 임계 구간</div><div class="s">고경합의 마지막 축</div><div class="d">직렬화는 못 없앤다. <b>줄이는 것은 "창구에 머무는 시간"</b> — 락 보유 구간의 왕복 횟수를 걷어낸다</div></div>
+  </div>
+</div>
+
+<h3>10-1. 문서가 직접 다루는 꼬리질문</h3>
+
+<details class="q"><summary>확인하는 순간과 업데이트하는 순간 사이에 다른 트랜잭션이 끼어들면 어떻게 되나요? <span class="badge core">필수</span><span class="hint">힌트: "그런 일이 생기면"으로 답하지 말고, 전제 자체를 부순다</span></summary><div class="a">
+  <p><b>그 '사이'가 존재하지 않는다는 것이 답이다.</b> 확인이 별도 SELECT가 아니라 <code>UPDATE ... WHERE id = ? AND version = ?</code>의 <b>조건절 안</b>에 있기 때문이다. <b>DB는 한 문장을 원자적으로 처리하고, 그 행에 대해 UPDATE는 내부적으로 직렬화된다.</b> 두 트랜잭션이 동시에 같은 조건으로 UPDATE를 날리면 한쪽만 영향 행 수 1을 받고, 나머지는 0을 받는다.</p>
+  <p>일반화하면 이렇다 — <b>check-then-act가 위험한 이유는 "두 문장"이기 때문이고, 해결책은 락을 거는 것만이 아니라 두 문장을 한 문장으로 합치는 것이다.</b></p>
+  <div class="chain">
+    <span class="chip b"><code>@Version</code> — 확인을 <code>WHERE</code>로</span>
+    <span class="chip b">유니크 제약 — 중복 체크 대신 제약 위반을 잡기</span>
+    <span class="chip b">원자적 UPDATE — 조건을 <code>WHERE</code>로 (7절)</span>
+    <span class="chip b">Redis <code>SETNX</code></span>
+  </div>
+  <p style="margin-bottom:0" class="sub">네 가지가 전부 같은 원리다. 이 연결을 말하면 "암기한 사람"이 아니라 "원리를 잡은 사람"으로 들린다.</p>
+</div></details>
+
+<details class="q"><summary>낙관적 락 재시도를 걸었는데 예외가 계속 나거나 아예 안 잡힙니다. 왜죠? <span class="badge core">필수</span><span class="hint">힌트: 세 가지를 순서대로 의심한다</span></summary><div class="a">
+  <div class="step red"><div class="n">1</div><div class="body"><b>재시도가 트랜잭션 안에 있다.</b> 낙관적 락 예외는 <b>커밋 시점</b>에 터지므로, 트랜잭션 안쪽의 <code>try-catch</code>나 <code>@Retryable</code>은 <b>잡을 기회조차 없다.</b> 잡히더라도 1차 캐시 때문에 무한 실패한다. → <b>재시도 빈과 트랜잭션 빈을 분리한다.</b></div></div>
+  <div class="step red"><div class="n">2</div><div class="body"><b>잡는 예외 타입이 틀렸다.</b> Spring Data JPA에서는 <code>OptimisticLockException</code>이 아니라 <code>ObjectOptimisticLockingFailureException</code>으로 변환되어 올라온다.</div></div>
+  <div class="step red"><div class="n">3</div><div class="body"><b>자기 호출(self-invocation)이다.</b> 같은 클래스 안에서 <code>this.method()</code>로 부르면 프록시를 안 거쳐 <code>@Retryable</code>이 <b>아예 적용되지 않는다.</b></div></div>
+  <p style="margin-bottom:0">세 가지 모두 <b>"예외가 어디서 터지고, 누가 그것을 감싸고 있는가"</b>라는 하나의 질문으로 수렴한다.</p>
+</div></details>
+
+<details class="q"><summary>비관적 락을 쓰면 대기하는 요청들이 스레드를 붙잡습니다. 가상 스레드로 해결되나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "무엇이 싸졌는가"와 "무엇이 병목인가"를 갈라 말한다</span></summary><div class="a">
+  <p><b>해결되지 않는다.</b> 가상 스레드가 싸게 만든 자원은 <b>스레드</b>지만, 이 상황의 병목은 <b>DB 커넥션 풀</b>이다. <code>SELECT ... FOR UPDATE</code>로 대기 중인 요청은 <b>커넥션과 열린 트랜잭션을 함께 붙잡고 있고</b>, 풀 크기는 가상 스레드와 무관하게 그대로다. <b>오히려 스레드가 싸져서 동시 유입이 늘면 커넥션 대기 줄만 길어진다.</b></p>
+  <p>그리고 더 나쁜 건 <b>영향 범위</b>다. 커넥션은 서비스 전체가 공유하는 자원이라, <b>재고 API 하나의 경합이 로그인·조회 등 락과 아무 관계 없는 API까지 마비</b>시킨다.</p>
+  <p style="margin-bottom:0">그래서 답은 이렇게 맺는다 — 반드시 <b>락 타임아웃으로 커넥션 점유 시간의 상한을 못 박고</b>, 가능하면 <b>별도 커넥션 풀(또는 별도 인스턴스)로 격리</b>해 벌크헤드를 만든다. <b>"가상 스레드로 해결하겠다"가 아니라 "자원의 종류를 구분하고 격리하겠다"가 답이다.</b></p>
+</div></details>
+
+<details class="q"><summary>그럼 Redis 분산 락을 쓰면 되지 않나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "개선되는 것"을 먼저 인정하고, 그 다음에 한계를 댄다</span></summary><div class="a">
+  <p><b>DB 커넥션을 대기에서 떼어낸다는 점에서는 개선이 맞다.</b> 대기 줄이 DB 밖으로 나가므로 <b>커넥션 풀이 락 대기로 고갈되지는 않는다.</b> 다중 인스턴스 환경에서 JVM 락으로는 불가능한 조정을 해주는 것도 사실이다.</p>
+  <p><b>다만 이 문항의 시나리오를 근본적으로 풀지는 못한다.</b> 500건이 여전히 줄을 서고, 임계 구간은 오히려 <b>Redis 왕복까지 더해져 길어질 수 있다.</b> 게다가 락과 데이터가 서로 다른 시스템에 있으므로 <b>Redis 장애 시 정합성 보장이 통째로 사라지고</b>, TTL이 만료됐는데 작업이 아직 안 끝난 경우 같은 <b>새로운 실패 모드</b>가 생긴다.</p>
+  <div class="chain">
+    <span class="chip b">① 임계 구간 자체를 줄일 수 있는가 (7절)</span><span class="arrow">→</span>
+    <span class="chip b">② 단일 DB로 해결되면 분산 락 불필요</span><span class="arrow">→</span>
+    <span class="chip b">③ 여러 시스템에 걸친 자원 조정이 필요할 때만</span>
+  </div>
+  <div class="rule" style="margin-bottom:0">분산 락은 <b>"성능 해법"이 아니라 "경계를 넘는 조정이 필요할 때의 도구"</b>다</div>
+</div></details>
+
+<details class="q"><summary><code>@Version</code>을 붙였는데 충돌이 감지되지 않는 경우가 있나요? <span class="badge core">필수</span><span class="hint">힌트: 안·벌·다·인</span></summary><div class="a">
+  <p><b>있다. 네 가지가 대표적이다.</b></p>
+  <ul>
+    <li><b>안 — 엔티티가 변경되지 않은 경우.</b> UPDATE가 안 나가면 버전 검사도 없다. 읽기만 한 엔티티를 보호하려면 <code>LockModeType.OPTIMISTIC</code>이나 <code>OPTIMISTIC_FORCE_INCREMENT</code>를 명시해야 한다.</li>
+    <li><b>벌 — 벌크 연산(<code>@Modifying</code>)이나 네이티브 SQL로 우회한 경우.</b> version을 직접 올리지 않으면 다른 트랜잭션은 그 변경을 감지하지 못한다.</li>
+    <li><b>다 — 다른 행을 바꾼 경우.</b> <code>@Version</code>은 그 엔티티 행 하나만 보호한다. 자식 컬렉션만 바뀌었다면 부모의 버전은 그대로다 → <code>OPTIMISTIC_FORCE_INCREMENT</code>로 애그리거트 단위 보호를 건다.</li>
+    <li><b>인 — 애초에 없던 행을 만드는 경우(INSERT).</b> 낙관적 락은 <b>"이미 있는 행"의 갱신 충돌</b>만 다룬다. 동시 INSERT로 인한 중복은 <b>DB 유니크 제약</b>이 막아야 한다 — 별도 문항의 주제다.</li>
+  </ul>
+  <p style="margin-bottom:0">네 가지를 따로 외우지 말고 <b>"버전이 실린 UPDATE가 그 행에 나갔는가?"</b> 하나로 되짚으면 즉석에서 재구성된다.</p>
+</div></details>
+
+<details class="q"><summary>낙관적 동시성 제어를 HTTP API 계층에서는 어떻게 표현하나요? <span class="badge bonus">가산점</span><span class="hint">힌트: <code>@Version</code>과 정확히 같은 구조가 HTTP 명세에도 있다</span></summary><div class="a">
+  <p>서버가 응답에 <b><code>ETag</code></b>(리소스의 현재 버전 식별자)를 실어 보내고, 클라이언트는 수정 요청에 <b><code>If-Match: &lt;그 ETag&gt;</code></b>를 담아 보낸다. 서버는 현재 버전과 다르면 <b><code>412 Precondition Failed</code></b>를 돌려준다.</p>
+  <div class="split" style="margin:10px 0">
+    <div class="pane b"><h4>DB 계층</h4><p style="margin:0;font-size:.93rem"><code>UPDATE ... WHERE id=? <b>AND version=?</b></code><br>→ 영향 행 수 0 → <code>OptimisticLockException</code></p></div>
+    <div class="pane g"><h4>HTTP 계층</h4><p style="margin:0;font-size:.93rem"><code>PUT /notices/1</code> + <code><b>If-Match: "3"</b></code><br>→ 버전 불일치 → <code>412 Precondition Failed</code></p></div>
+  </div>
+  <p style="margin-bottom:0"><b><code>ETag</code>를 엔티티의 <code>@Version</code> 값으로 만들면 DB의 낙관적 락이 API 계약으로 그대로 번역된다.</b> "두 관리자가 같은 화면을 편집"하는 시나리오를 안전하게 만드는 표준적인 방법이고, 이 연결을 말할 수 있으면 <b>계층을 넘나드는 설계 감각</b>을 보여주게 된다.</p>
+</div></details>
+
+<h3>10-2. 한 칸씩 더 파고드는 꼬리질문</h3>
+
+<details class="q"><summary><code>PESSIMISTIC_WRITE</code>를 걸었는데도 갱신이 유실됐습니다. 어떻게 그럴 수 있죠? <span class="badge trap">함정</span><span class="hint">힌트: 락은 "그 락을 잡는 경로들끼리만" 유효하다</span></summary><div class="a">
+  <p><b>같은 행을 건드리는 다른 경로가 락을 잡지 않고 지나갔기 때문이다.</b> 비관적 락은 <b>모든 접근 경로가 같은 규약을 지킬 때만</b> 성립하는 <b>협조적 장치</b>다.</p>
+  <p>전형적인 구멍은 이렇다. 주문 API는 <code>findByIdForUpdate()</code>로 잠그고 차감하는데, <b>관리자 재고 조정 화면은 평범한 <code>findById()</code>로 읽어 계산하고 저장한다.</b> 관리자 쪽은 락 없이 읽은 낡은 값으로 UPDATE를 날리므로 <b>1절의 lost update가 그대로 재현된다</b> — 심지어 그 UPDATE는 행 락을 기다렸다가 <b>순서대로 얌전히 덮어쓴다.</b></p>
+  <div class="rule red">"이 행을 어떻게 잠글까"가 아니라 <b>"이 행을 바꾸는 코드 경로가 전부 몇 개인가"</b>를 먼저 센다</div>
+  <p style="margin-bottom:0"><b>여기서 <code>@Version</code>의 값어치가 드러난다.</b> 낙관적 락은 <b>규약을 안 지킨 경로도 결국 UPDATE는 해야 하므로</b>, 그 UPDATE에 버전 조건이 실려 있는 한 <b>"누가 어디서 바꿨든" 감지된다.</b> 그래서 실무에서는 <b>비관적 락을 쓰는 엔티티에도 <code>@Version</code>을 함께 두는</b> 선택이 흔하다 — 비관적 락은 경합 경로를 직렬화하고, <code>@Version</code>은 <b>규약을 벗어난 경로에 대한 안전망</b>이 된다.</p>
+</div></details>
+
+<details class="q"><summary>운영 중인 테이블에 <code>@Version</code> 컬럼을 나중에 추가하려고 합니다. 주의할 점은? <span class="badge trap">함정</span><span class="hint">힌트: 기존 행의 version 값이 무엇이 되는지 생각한다</span></summary><div class="a">
+  <p><b>기존 행의 version을 NULL로 두면 두 가지가 동시에 깨진다.</b></p>
+  <ul>
+    <li><b>버전 조건이 아무 행에도 매치되지 않는다.</b> SQL에서 <code>NULL</code>과의 <code>=</code> 비교는 참이 되지 않으므로, <code>WHERE id = ? AND version = NULL</code>은 <b>영향 행 수가 항상 0</b>이다. 즉 <b>아무도 안 건드렸는데도 항상 충돌로 판정</b>된다.</li>
+    <li><b>새 엔티티로 오인될 수 있다.</b> Spring Data JPA는 (원시 타입이 아닌) 버전 필드가 <code>null</code>이면 그 엔티티를 <b>"아직 저장된 적 없는 새 엔티티"로 판단</b>한다. <code>save()</code> 호출이 UPDATE가 아니라 INSERT 경로를 타면서 엉뚱한 실패로 이어진다.</li>
+  </ul>
+  <div class="rule ok">컬럼 추가 마이그레이션은 <b><code>NOT NULL DEFAULT 0</code> + 기존 행 백필</b>이 세트다</div>
+  <p style="margin-bottom:0">배포 순서도 함께 말하면 좋다 — <b>① 컬럼을 nullable로 추가하고 기존 행을 0으로 채운 뒤 ② <code>NOT NULL</code>로 조이고 ③ 그 다음에 <code>@Version</code>이 붙은 애플리케이션을 배포</b>한다. 반대로 하면 <b>구버전 인스턴스가 version을 채우지 않고 INSERT하는 창</b>이 생긴다.</p>
+</div></details>
+
+<details class="q"><summary>낙관적 락 충돌이 났을 때, 자동으로 재시도해야 하나요 아니면 사용자에게 물어야 하나요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: "재실행해도 사용자의 의도가 그대로인가"를 기준으로 가른다</span></summary><div class="a">
+  <p><b>기준은 하나다 — 최신 값으로 다시 실행했을 때 사용자의 의도가 그대로 유지되는가.</b></p>
+  <div class="split" style="margin:10px 0">
+    <div class="pane g"><h4>자동 재시도해도 되는 것</h4><p style="margin:0;font-size:.93rem"><b>재고 1개 차감, 포인트 적립.</b> 사용자의 의도는 <b>"1개 줄여라"</b>라는 <b>상대적 연산</b>이므로, 최신 값 99에 다시 적용해도 <b>의도가 그대로다.</b> 사용자는 충돌이 있었다는 사실조차 알 필요가 없다.</p></div>
+    <div class="pane r"><h4>물어봐야 하는 것</h4><p style="margin:0;font-size:.93rem"><b>공지사항 본문 편집.</b> 의도가 <b>"본문을 이 내용으로 바꿔라"</b>라는 <b>절대적 치환</b>이라, 자동 재시도하면 <b>그 사이 남이 저장한 수정을 조용히 덮어쓴다</b> — 막으려던 lost update를 재시도로 되살리는 셈이다.</p></div>
+  </div>
+  <p>그래서 편집 화면에서는 <b>충돌을 숨기지 말고 노출하는 것이 올바른 동작</b>이다. 좋은 안내는 세 가지를 담는다 — <b>① 무슨 일이 일어났는지(다른 사용자가 먼저 저장함) ② 무엇이 달라졌는지(가능하면 변경된 필드 표시) ③ 무엇을 하면 되는지(새로고침 후 다시 작성 / 내 내용으로 덮어쓰기 선택).</b></p>
+  <p style="margin-bottom:0" class="sub">이 구분은 8절의 세 번째 축("실패를 노출해도 되는가")을 <b>화면 단위로 내려서 판단</b>하는 것과 같다.</p>
+</div></details>
+
+<details class="q"><summary>재시도 횟수는 몇 번이 적당한가요? <span class="badge senior">시니어 변별</span><span class="hint">힌트: 숫자를 말하기 전에 그 숫자를 어디서 끌어오는지를 말한다</span></summary><div class="a">
+  <p><b>정해진 정답 숫자는 없고, 두 가지에서 역산한다.</b></p>
+  <div class="grid g2">
+    <div class="tile"><div class="k" style="font-family:inherit">위에서 — 응답 시간 예산</div><div class="d"><b>(1회 시도 시간 + 백오프 대기)의 누적 합이 그 API의 응답 SLA를 넘지 않아야 한다.</b> 지수 백오프는 뒤로 갈수록 대기가 급격히 커지므로, 실제로 넣을 수 있는 횟수는 생각보다 적다.</div></div>
+    <div class="tile"><div class="k" style="font-family:inherit">아래에서 — 충돌 확률</div><div class="d">충돌이 <b>정말 드물다면</b> 1~2회로도 대부분 성공한다. <b>횟수를 늘려야만 성공률이 맞춰진다면 그건 "낙관적 락이 틀린 도구"라는 신호</b>다 — 횟수를 올릴 게 아니라 8절로 돌아가 도구를 다시 고른다.</div></div>
+  </div>
+  <p style="margin:10px 0 0">그리고 <b>횟수보다 중요한 것이 세 가지</b>다 — <b>지터</b>(없으면 실패한 요청들이 같은 시각에 깨어나 또 부딪힌다), <b>포기 경로</b>(<code>@Recover</code>로 사용자에게 돌려줄 응답), <b>관측</b>(충돌률과 재시도 횟수를 지표로 남겨야 "드물다"를 숫자로 말할 수 있다).</p>
+  <p style="margin-bottom:0" class="sub"><b>충돌률 지표가 없으면 8절의 첫 번째 축("확률")을 영원히 감으로 말하게 된다.</b> 재시도를 넣는 김에 카운터를 함께 넣는 것이 정석이다.</p>
+</div></details>
+
+<details class="q"><summary>그냥 격리 수준을 SERIALIZABLE로 올리면 안 되나요? <span class="badge trap">함정</span><span class="hint">힌트: "막힌다/안 막힌다"가 아니라 "대가의 범위"로 답한다</span></summary><div class="a">
+  <p><b>막히기는 한다. 문제는 대가의 범위다.</b></p>
+  <p>먼저 정리할 것 — <b>기본 격리 수준에서는 lost update가 막히지 않는다.</b> MySQL(InnoDB)의 REPEATABLE READ에서도, PostgreSQL·Oracle의 READ COMMITTED에서도 1절의 시나리오는 그대로 통과한다. <b>읽기도 정상, 쓰기도 정상이고, 둘을 이어붙인 애플리케이션의 판단만 낡았기 때문</b>이다.</p>
+  <p>SERIALIZABLE로 올리면 막히지만, 그것은 <b>"이 한 줄의 문제"를 "데이터소스 전체의 문제"로 키우는 선택</b>이다. <b>그 커넥션을 쓰는 모든 트랜잭션이 직렬화 비용을 낸다</b> — 문제와 아무 상관 없는 조회까지 포함해서. 반면 <code>@Version</code>은 <b>그 엔티티에만</b> 적용되고 <b>평시 비용이 0</b>이다.</p>
+  <div class="rule" style="margin-bottom:0">보호 범위는 <b>필요한 만큼만, 가능한 한 좁게</b> — 이것이 격리 수준 대신 락을 고르는 이유다</div>
+</div></details>
+
+<details class="q"><summary>낙관적 락과 비관적 락을 한 시스템에서 같이 쓸 수 있나요? <span class="badge bonus">가산점</span><span class="hint">힌트: 락 모드는 엔티티가 아니라 "조회 경로"에 건다</span></summary><div class="a">
+  <p><b>쓸 수 있고, 실무에서 자주 그렇게 한다.</b> <code>@Version</code>은 <b>엔티티에 붙는 속성</b>이지만, <code>@Lock(LockModeType.PESSIMISTIC_WRITE)</code>는 <b>리포지토리 메서드(= 조회 경로)에 붙는 지시</b>다. 그래서 <b>같은 엔티티라도 경로마다 다른 전략</b>을 쓸 수 있다.</p>
+  <ul>
+    <li><b>일반 수정 경로</b>(관리자 정보 편집 등) → <code>findById()</code> + <code>@Version</code>의 사후 감지</li>
+    <li><b>고경합 차감 경로</b>(주문 시 재고 차감) → <code>findByIdForUpdate()</code>로 사전 차단 + 락 타임아웃</li>
+  </ul>
+  <p>둘을 잇는 지점이 <code>PESSIMISTIC_FORCE_INCREMENT</code>다. <b>비관적 락으로 보호한 변경도 version을 올려주므로</b>, 그 사이 화면을 열어두고 있던 <b>준영속 편집자(낙관적 진영)에게도 "이미 바뀌었다"가 전달된다.</b></p>
+  <p style="margin-bottom:0" class="sub">앞의 "<code>PESSIMISTIC_WRITE</code>를 걸었는데도 갱신이 유실됐다" 질문과 짝지어 말하면 더 좋다 — <b><code>@Version</code>은 락 규약을 벗어난 경로에 대한 안전망</b> 역할을 하므로, 비관적 락을 쓰는 엔티티에도 함께 두는 것이 방어적이다.</p>
+</div></details>
+
+<details class="q"><summary>"충돌이 드물다"를 어떻게 숫자로 판단하나요? <span class="badge core">필수</span><span class="hint">힌트: 세 개의 숫자를 하나의 지표로 환산한다</span></summary><div class="a">
+  <p><b>필요한 숫자는 셋이다 — 대상 행의 개수, 초당 쓰기 요청 수, 트랜잭션 하나가 그 행을 붙잡는 시간.</b> 이 셋을 <b>"행 하나당 초당 몇 건이 오는가"</b>로 환산하는 것이 핵심이다.</p>
+  <div class="split" style="margin:10px 0">
+    <div class="pane g"><h4>회원 10만 명의 프로필 수정</h4><p style="margin:0;font-size:.93rem">요청이 <b>10만 개 행에 흩어진다.</b> 같은 행이 동시에 겹칠 확률이 <b>사실상 0</b> → <b>낙관적 락. 평시 비용 0으로 안전망만 얻는다.</b></p></div>
+    <div class="pane r"><h4>한정판 상품 1개 행에 초당 500건</h4><p style="margin:0;font-size:.93rem">전부 <b>같은 행 하나</b>로 몰린다. 충돌은 예외가 아니라 <b>기본값</b> → 낙관적 락은 <b>재시도 폭풍</b>, 비관적 락은 <b>커넥션 점유</b>. <b>7절의 임계 구간 축을 먼저 검토한다.</b></p></div>
+  </div>
+  <p style="margin-bottom:0">그리고 <b>추정으로 시작하되 지표로 끝낸다.</b> 충돌 예외 발생 건수와 재시도 횟수를 카운터로 남겨두면, 다음 논의에서는 <b>"드문 것 같습니다"가 아니라 "지난주 충돌률이 이 정도였습니다"로 말할 수 있다.</b> <b>같은 API인데 이벤트 기간에만 도구가 틀려지는 경우</b>도 이 지표로만 잡힌다.</p>
+</div></details>
+
+<!-- ===================== 한 줄 요약 ===================== -->
+<section class="banner" id="summary">
+  <div class="t">한 줄 요약</div>
+  락 이야기의 출발점은 <b>lost update</b> — 두 트랜잭션이 같은 행을 각자 읽고 각자 계산해 각자 쓰면 갱신 하나가 조용히 증발한다 — 이고, 그것을 막는 길은 <b>사전 차단(비관적)과 사후 감지(낙관적)</b> 둘뿐이다. <b>낙관적 락은 락이 아니다</b> — 별도 SELECT 없이 <code>UPDATE ... SET ..., version = ? WHERE id = ? AND version = ?</code> <b>한 문장</b>을 날리고 <b>영향 행 수가 0인지로 충돌을 사후 감지</b>할 뿐이며, 그래서 평시 비용이 0인 대신 <b>충돌 시 로직 전체를 새 트랜잭션에서 재시도</b>해야 한다(같은 트랜잭션에서 재시도하면 1차 캐시와 롤백 표시 때문에 영원히 실패한다). 반면 <b>비관적 락은 진짜로 잠그는 대신 락 대기 시간 내내 DB 커넥션을 붙잡아</b> 가상 스레드로도 못 막는 풀 고갈을 부른다 — OSIV의 "놀고 있는 커넥션" 문제와 같은 축이다. 선택 기준은 <b>충돌 확률 × 재시도 비용 × 실패를 노출해도 되는가</b>이고, <b>둘 다 답이 아닌 고경합 구간에서는 "기다림을 없앨 수 있나"가 아니라 "기다리는 구간을 짧게 만들 수 있나"를 물어야 한다.</b> 그리고 이 모든 판단은 <b><code>CountDownLatch</code>로 동시 출발시킨 테스트로 재현해 고정하기 전까지는 주장일 뿐이다.</b>
+</section>
+
+<p class="foot">원본: <code>interview-questions/knowledge/03-jpa-orm/10-optimistic-vs-pessimistic-lock.md</code> · 이어서 볼 문서: 영속성 컨텍스트와 변경 감지(<code>02-persistence-context-dirty-checking.md</code>) · merge vs 변경 감지(<code>05-merge-vs-dirty-checking.md</code>) · OSIV 트레이드오프(<code>09-osiv-tradeoff-and-migration.md</code>) · 벌크 연산과 영속성 컨텍스트(<code>11-bulk-operation-persistence-context.md</code>) · 고난이도: 동시성 갱신 4종 비교(낙관적 · 비관적 · 원자적 UPDATE · 분산 락)</p>
+</main>
+</body>
+</html>
